@@ -1,5 +1,5 @@
 import { loadFeature, describeFeature } from '@amiceli/vitest-cucumber'
-import { expect } from 'vitest'
+import { expect, type TaskContext } from 'vitest'
 
 const feature = await loadFeature('../../features/hello-world.feature')
 
@@ -8,22 +8,22 @@ describeFeature(feature, ({ Scenario }) => {
     let schmock: any
     let response: any
 
-    Given('a Schmock instance with the following configuration:', (docString: string) => {
+    Given('a Schmock instance with the following configuration:', (_, docString: string) => {
       const config = JSON.parse(docString)
       // For now, just create a mock object to see the test fail properly
       schmock = { config }
     })
 
-    When('I make a GET request to {string}', async (path: string) => {
+    When('I make a GET request to {string}', async (_, path: string) => {
       // This should fail since schmock.get doesn't exist yet
       response = await schmock.get(path)
     })
 
-    Then('the response status code should be {int}', (expectedStatus: number) => {
+    Then('the response status code should be {int}', (_, expectedStatus: number) => {
       expect(response.status).toBe(expectedStatus)
     })
 
-    And('the response body should be:', (docString: string) => {
+    And('the response body should be:', (_, docString: string) => {
       expect(response.body).toEqual(JSON.parse(docString))
     })
   })
