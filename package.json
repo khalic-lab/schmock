@@ -5,13 +5,13 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "bun run --filter @schmock/core build",
-    "test": "bun run --filter @schmock/core test && bun run --filter @schmock/core test:bdd",
-    "test:unit": "bun run --filter @schmock/core test",
-    "test:bdd": "bun run --filter @schmock/core test:bdd",
-    "lint": "bun run --filter @schmock/core lint",
-    "lint:fix": "bun run --filter @schmock/core lint:fix",
-    "typecheck": "bun run --filter @schmock/core build:types"
+    "build": "bun run --filter @schmock/builder build",
+    "test": "bun run --filter @schmock/builder test && bun run --filter @schmock/builder test:bdd",
+    "test:unit": "bun run --filter @schmock/builder test",
+    "test:bdd": "bun run --filter @schmock/builder test:bdd",
+    "lint": "bun run --filter @schmock/builder lint",
+    "lint:fix": "bun run --filter @schmock/builder lint:fix",
+    "typecheck": "bun run --filter @schmock/builder build:types"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.2",
