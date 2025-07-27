@@ -1,1 +1,1 @@
-export type {};
+export { Schmock } from './schmock'
