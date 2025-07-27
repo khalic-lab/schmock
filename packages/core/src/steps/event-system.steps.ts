@@ -139,7 +139,7 @@ describeFeature(feature, ({ Background, Scenario }) => {
   })
 
   Scenario('Remove event handler', ({ Given, When, Then, And }) => {
-    let handlerToRemove: Function;
+    let handlerToRemove: (data: any) => void;
 
     Given("I register a handler for \"request:start\" event", () => {
       handlerToRemove = (data: any) => {

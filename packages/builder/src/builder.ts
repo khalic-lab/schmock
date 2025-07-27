@@ -98,6 +98,8 @@ export class SchmockBuilder<TState = any> implements Builder<TState> {
  * @internal
  */
 class SchmockInstance<TState> implements MockInstance<TState> {
+  private eventHandlers = new Map<string, Set<(data: any) => void>>()
+
   constructor(
     private routes: CompiledRoute<TState>[],
     private state: TState,
@@ -117,51 +119,75 @@ class SchmockInstance<TState> implements MockInstance<TState> {
     body: any
     headers: Record<string, string>
   }> {
-    // Find matching route
-    const route = this.findRoute(method, path)
-    
-    if (!route) {
-      return {
-        status: 404,
-        body: { error: 'Not Found' },
-        headers: {}
+    // Emit request:start event
+    this.emit('request:start', { method, path })
+
+    try {
+      // Find matching route
+      const route = this.findRoute(method, path)
+      
+      if (!route) {
+        const response = {
+          status: 404,
+          body: { error: 'Not Found' },
+          headers: {}
+        }
+        this.emit('request:end', { method, path, status: 404 })
+        return response
       }
-    }
 
-    // Extract params from path
-    const params = this.extractParams(route, path)
+      // Extract params from path
+      const params = this.extractParams(route, path)
 
-    // Build context
-    const context: ResponseContext<TState> = {
-      state: this.state,
-      params,
-      query: options?.query || {},
-      body: options?.body,
-      headers: options?.headers || {},
-      method,
-      path
-    }
+      // Build context
+      const context: ResponseContext<TState> = {
+        state: this.state,
+        params,
+        query: options?.query || {},
+        body: options?.body,
+        headers: options?.headers || {},
+        method,
+        path
+      }
 
-    // Execute response function
-    const result = await route.definition.response(context)
+      // Execute response function
+      const result = await route.definition.response(context)
 
-    // Parse result
-    if (Array.isArray(result)) {
-      // Check if it's a tuple response [status, body, headers?]
-      if (typeof result[0] === 'number') {
-        const [status, body, headers] = result
-        return {
-          status,
-          body,
-          headers: headers || {}
+      // Parse result
+      let response: { status: number; body: any; headers: Record<string, string> }
+      
+      if (Array.isArray(result)) {
+        // Check if it's a tuple response [status, body, headers?]
+        if (typeof result[0] === 'number') {
+          const [status, body, headers] = result
+          response = {
+            status,
+            body,
+            headers: headers || {}
+          }
+        } else {
+          response = {
+            status: 200,
+            body: result,
+            headers: {}
+          }
+        }
+      } else {
+        response = {
+          status: 200,
+          body: result,
+          headers: {}
         }
       }
-    }
 
-    return {
-      status: 200,
-      body: result,
-      headers: {}
+      // Emit request:end event
+      this.emit('request:end', { method, path, status: response.status })
+
+      return response
+    } catch (error) {
+      // Emit error event
+      this.emit('error', { error: error as Error, method, path })
+      throw error
     }
   }
 
@@ -187,5 +213,40 @@ class SchmockInstance<TState> implements MockInstance<TState> {
     })
 
     return params
+  }
+
+  /**
+   * Subscribe to an event.
+   */
+  on(event: string, handler: (data: any) => void): void {
+    if (!this.eventHandlers.has(event)) {
+      this.eventHandlers.set(event, new Set())
+    }
+    this.eventHandlers.get(event)!.add(handler)
+  }
+
+  /**
+   * Unsubscribe from an event.
+   */
+  off(event: string, handler: (data: any) => void): void {
+    this.eventHandlers.get(event)?.delete(handler)
+  }
+
+  /**
+   * Emit an event to all registered handlers.
+   */
+  private emit(event: string, data: any): void {
+    const handlers = this.eventHandlers.get(event)
+    if (!handlers) return
+
+    for (const handler of handlers) {
+      try {
+        handler(data)
+      } catch (error) {
+        if (event !== 'error') {
+          this.emit('error', { error: error as Error })
+        }
+      }
+    }
   }
 }
