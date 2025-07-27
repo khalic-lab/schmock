@@ -60,7 +60,7 @@ export class SchmockBuilder<TState = any> implements Builder<TState> {
     const state = this.options.state
     const config = this.options.config || {}
 
-    return new SchmockInstance(compiledRoutes, state, config)
+    return new SchmockInstance(compiledRoutes, state as TState, config)
   }
 
   /**

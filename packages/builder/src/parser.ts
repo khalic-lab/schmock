@@ -48,7 +48,7 @@ export function parseRouteKey(routeKey: string): ParsedRoute {
   const pattern = new RegExp(`^${regexPath}$`)
   
   return {
-    method: method satisfies HttpMethod,
+    method: method as HttpMethod,
     path,
     pattern,
     params
