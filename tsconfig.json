@@ -1,16 +1,22 @@
 {
-  "extends": "@tsconfig/strictest/tsconfig.json",
   "compilerOptions": {
-    "lib": ["ESNext"],
-    "module": "esnext",
-    "target": "esnext",
+    "target": "ES2022",
+    "module": "ES2022",
     "moduleResolution": "bundler",
-    "moduleDetection": "force",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
     "allowSyntheticDefaultImports": true,
     "declaration": true,
     "emitDeclarationOnly": true,
-    "outDir": "dist"
+    "composite": true,
+    "baseUrl": ".",
+    "paths": {
+      "@schmock/core": ["packages/core/src"],
+      "@features/*": ["features/*"]
+    }
   },
-  "include": ["src/**/*"],
+  "include": ["packages/**/*.ts", "types/**/*.d.ts"],
   "exclude": ["node_modules", "dist"]
 }

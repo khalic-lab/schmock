@@ -1,0 +1,74 @@
+flowchart TD
+    subgraph "User Journey: From Simple to Sophisticated"
+        
+        subgraph D1["Day 1: Basic Mocking"]
+            START[npm install<br/>@schmock/core<br/>@schmock/angular]
+            CONFIG1[Create schemas/<br/>user.json]
+            BASIC[Configure basic routes]
+            WORK1[✅ Basic mocking works!]
+            
+            START --> CONFIG1
+            CONFIG1 --> BASIC
+            BASIC --> WORK1
+        end
+        
+        subgraph D3["Day 3: Better Data"]
+            NEED1[Need realistic data]
+            PLUGIN1[npm install<br/>@schmock/plugin-schema]
+            USE1[Add schema plugin<br/>with faker]
+            WORK2[✅ Realistic fake data!]
+            
+            WORK1 --> NEED1
+            NEED1 --> PLUGIN1
+            PLUGIN1 --> USE1
+            USE1 --> WORK2
+        end
+        
+        subgraph W2["Week 2: Business Rules"]
+            NEED2[Data needs constraints]
+            PLUGIN2[npm install<br/>@schmock/plugin-constraints]
+            RULES[Add constraints/<br/>user.constraints.js]
+            USE2[Apply business rules]
+            WORK3[✅ Valid business data!]
+            
+            WORK2 --> NEED2
+            NEED2 --> PLUGIN2
+            PLUGIN2 --> RULES
+            RULES --> USE2
+            USE2 --> WORK3
+        end
+        
+        subgraph M2["Month 2: Stateful API"]
+            NEED3[CRUD operations]
+            PLUGIN3[npm install<br/>@schmock/plugin-state<br/>@schmock/plugin-query]
+            STATE[Add SQLite persistence]
+            QUERY[Add query capabilities]
+            WORK4[✅ Full API behavior!]
+            
+            WORK3 --> NEED3
+            NEED3 --> PLUGIN3
+            PLUGIN3 --> STATE
+            STATE --> QUERY
+            QUERY --> WORK4
+        end
+        
+        subgraph ADV["Advanced Usage"]
+            CUSTOM[Write custom plugin]
+            SHARE[Share with community]
+            CONTRIBUTE[Contribute to core]
+            
+            WORK4 --> CUSTOM
+            CUSTOM --> SHARE
+            SHARE --> CONTRIBUTE
+        end
+        
+    end
+    
+    style START fill:#4caf50,color:#fff
+    style WORK1 fill:#8bc34a,color:#fff
+    style WORK2 fill:#8bc34a,color:#fff
+    style WORK3 fill:#8bc34a,color:#fff
+    style WORK4 fill:#8bc34a,color:#fff
+    style CUSTOM fill:#ff9800,color:#fff
+    style SHARE fill:#ff9800,color:#fff
+    style CONTRIBUTE fill:#ff9800,color:#fff
