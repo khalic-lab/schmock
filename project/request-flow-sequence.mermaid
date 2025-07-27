@@ -1,0 +1,26 @@
+sequenceDiagram
+    participant Client
+    participant Interceptor
+    participant Router
+    participant SchemaEngine
+    participant ConstraintEngine
+    participant DataGenerator
+    participant SQLite
+    participant Response
+    
+    Client->>Interceptor: GET /api/orders
+    Interceptor->>Router: Match route pattern
+    Router->>SchemaEngine: Load order.schema.json
+    Router->>ConstraintEngine: Load order.constraints.js
+    
+    alt First Request (no data exists)
+        SchemaEngine->>DataGenerator: Generate base structure
+        ConstraintEngine->>DataGenerator: Apply business rules
+        DataGenerator->>SQLite: Store generated records
+    else Subsequent Request
+        Router->>SQLite: Query existing data
+    end
+    
+    SQLite->>ConstraintEngine: Validate relationships
+    ConstraintEngine->>Response: Format response
+    Response->>Client: Return mock data
