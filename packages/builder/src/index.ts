@@ -1,9 +1,9 @@
-import { SchmockBuilder } from './builder'
-import type { Builder } from './types'
+import { SchmockBuilder } from "./builder";
+import type { Builder } from "./types";
 
 /**
  * Create a new Schmock mock builder.
- * 
+ *
  * @example
  * ```typescript
  * const mock = schmock()
@@ -13,26 +13,26 @@ import type { Builder } from './types'
  *     }
  *   })
  *   .build()
- * 
+ *
  * const response = await mock.handle('GET', '/users')
  * ```
- * 
+ *
  * @returns A new builder instance
  */
 export function schmock(): Builder {
-  return new SchmockBuilder()
+  return new SchmockBuilder();
 }
 
 // Re-export types
-export type { 
+export type {
   Builder,
-  MockInstance,
-  ResponseContext,
-  ResponseResult,
-  ResponseFunction,
-  RouteDefinition,
-  Routes,
   BuilderConfig,
   HttpMethod,
-  RouteKey
-} from './types'
+  MockInstance,
+  ResponseContext,
+  ResponseFunction,
+  ResponseResult,
+  RouteDefinition,
+  RouteKey,
+  Routes,
+} from "./types";
