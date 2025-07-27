@@ -178,50 +178,9 @@ declare namespace Schmock {
   }
 
   /**
-   * Core Schmock orchestrator (no HTTP methods)
-   */
-  interface CoreInstance {
-    /**
-     * Register a plugin
-     * @param plugin - Plugin to register
-     * @returns Self for chaining
-     */
-    use(plugin: Plugin): CoreInstance
-    
-    /**
-     * Process a request through the plugin pipeline
-     * @param path - Request path
-     * @param context - Processing context
-     * @returns Generated/transformed data
-     */
-    process(path: string, context?: ProcessContext): Promise<any>
-    
-    /**
-     * Subscribe to an event
-     * @param event - Event name
-     * @param handler - Event handler
-     */
-    on<K extends keyof EventMap>(event: K, handler: (data: EventMap[K]) => void): void
-    
-    /**
-     * Unsubscribe from an event
-     * @param event - Event name
-     * @param handler - Event handler to remove
-     */
-    off<K extends keyof EventMap>(event: K, handler: (data: EventMap[K]) => void): void
-    
-    /**
-     * Emit an event
-     * @param event - Event name
-     * @param data - Event data
-     */
-    emit<K extends keyof EventMap>(event: K, data: EventMap[K]): void
-  }
-
-  /**
    * Schmock instance with HTTP methods (for backward compatibility)
    */
-  interface Core extends CoreInstance {
+  interface Core {
     /**
      * Register a plugin (overrides return type for chaining)
      */
@@ -436,5 +395,15 @@ declare namespace Schmock {
       body: any
       headers: Record<string, string>
     }>
+    
+    /**
+     * Subscribe to an event
+     */
+    on(event: string, handler: (data: any) => void): void
+    
+    /**
+     * Unsubscribe from an event
+     */
+    off(event: string, handler: (data: any) => void): void
   }
 }

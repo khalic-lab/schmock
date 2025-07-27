@@ -102,7 +102,7 @@ describeFeature(feature, ({ Background, Scenario }) => {
       expect(response.status).toBe(status);
     })
 
-    And("the response body should be empty", (_) => {
+    And("the response body should be empty", () => {
       expect(response.body).toBeUndefined();
     })
 
@@ -215,7 +215,7 @@ describeFeature(feature, ({ Background, Scenario }) => {
       expect(requestEventData.request.method).toBe(method);
     })
 
-    And("the event data should contain the request body", (_) => {
+    And("the event data should contain the request body", () => {
       expect(requestEventData.request.body).toBeDefined();
       expect(requestEventData.request.body).toHaveProperty("name", "Test User");
     })
