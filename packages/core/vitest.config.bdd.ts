@@ -8,6 +8,7 @@ export default defineConfig({
     include: ['packages/core/src/**/*.steps.ts'],
     exclude: ['node_modules', 'dist'],
     root: resolve(__dirname, '../..'), // Set root to monorepo root
+    reporter: ['basic'],
   },
   resolve: {
     alias: {
