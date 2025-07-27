@@ -1,5 +1,6 @@
 import { loadFeature, describeFeature } from '@amiceli/vitest-cucumber'
 import { expect, type TaskContext } from 'vitest'
+import { Schmock } from '../index'
 
 const feature = await loadFeature('../../features/hello-world.feature')
 
@@ -10,12 +11,10 @@ describeFeature(feature, ({ Scenario }) => {
 
     Given('a Schmock instance with the following configuration:', (_, docString: string) => {
       const config = JSON.parse(docString)
-      // For now, just create a mock object to see the test fail properly
-      schmock = { config }
+      schmock = new Schmock(config)
     })
 
     When('I make a GET request to "/api/user"', async () => {
-      // This should fail since schmock.get doesn't exist yet
       response = await schmock.get("/api/user")
     })
 
