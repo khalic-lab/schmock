@@ -1,16 +1,17 @@
 import { loadFeature, describeFeature } from '@amiceli/vitest-cucumber'
 import { expect, type TaskContext } from 'vitest'
-import { Schmock } from '../index'
+import { Schmock } from '../schmock'
+import type { SchmockConfig } from '../types'
 
 const feature = await loadFeature('../../features/hello-world.feature')
 
 describeFeature(feature, ({ Scenario }) => {
   Scenario('Mocking a GET request', ({ Given, When, Then, And }) => {
-    let schmock: any
+    let schmock: Schmock
     let response: any
 
     Given('a Schmock instance with the following configuration:', (_, docString: string) => {
-      const config = JSON.parse(docString)
+      const config: SchmockConfig = JSON.parse(docString)
       schmock = new Schmock(config)
     })
 

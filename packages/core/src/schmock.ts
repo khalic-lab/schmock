@@ -11,10 +11,12 @@ import type {
 export class Schmock implements SchmockCore {
   private config: SchmockConfig;
   private routes: Map<string, SchmockRoute>;
+  private eventHandlers: Map<string, ((data: any) => void)[]>;
 
   constructor(config: SchmockConfig) {
     this.config = config;
     this.routes = new Map();
+    this.eventHandlers = new Map();
     this.initializeRoutes();
   }
 
@@ -32,27 +34,50 @@ export class Schmock implements SchmockCore {
     path: string,
     _options?: Partial<Omit<SchmockRequest, "method" | "path">>,
   ): Promise<SchmockResponse> {
+    const request: SchmockRequest = {
+      path,
+      method: "GET",
+      headers: _options?.headers || {},
+      query: _options?.query || {},
+      params: _options?.params || {},
+      body: _options?.body,
+    };
+
     const route = this.routes.get(path);
 
+    // Emit request:start event
+    this.emit("request:start", { request, route: route || { data: null } });
+
     if (!route) {
-      return {
+      const response: SchmockResponse = {
         status: 404,
         body: { error: "Not Found" },
         headers: {},
       };
+
+      // Emit request:end event
+      this.emit("request:end", { request, response });
+
+      return response;
     }
 
-    return {
+    const response: SchmockResponse = {
       status: 200,
       body: route.data,
       headers: {
         "Content-Type": "application/json",
       },
     };
+
+    // Emit request:end event
+    this.emit("request:end", { request, response });
+
+    return response;
   }
 
-  // Stubs for interface compliance - to be implemented
-  use(_plugin: SchmockPlugin): SchmockCore {
+  use(plugin: SchmockPlugin): SchmockCore {
+    // Emit plugin:registered event
+    this.emit("plugin:registered", { plugin });
     return this;
   }
 
@@ -99,23 +124,42 @@ export class Schmock implements SchmockCore {
   }
 
   on<K extends keyof SchmockEventMap>(
-    _event: K,
-    _handler: (data: SchmockEventMap[K]) => void,
+    event: K,
+    handler: (data: SchmockEventMap[K]) => void,
   ): void {
-    // To be implemented
+    if (!this.eventHandlers.has(event)) {
+      this.eventHandlers.set(event, []);
+    }
+    this.eventHandlers.get(event)?.push(handler);
   }
 
   off<K extends keyof SchmockEventMap>(
-    _event: K,
-    _handler: (data: SchmockEventMap[K]) => void,
+    event: K,
+    handler: (data: SchmockEventMap[K]) => void,
   ): void {
-    // To be implemented
+    const handlers = this.eventHandlers.get(event);
+    if (handlers) {
+      const index = handlers.indexOf(handler);
+      if (index > -1) {
+        handlers.splice(index, 1);
+      }
+    }
   }
 
   emit<K extends keyof SchmockEventMap>(
-    _event: K,
-    _data: SchmockEventMap[K],
+    event: K,
+    data: SchmockEventMap[K],
   ): void {
-    // To be implemented
+    const handlers = this.eventHandlers.get(event);
+    if (handlers) {
+      handlers.forEach((handler) => {
+        try {
+          handler(data);
+        } catch (error) {
+          // Emit error event if handler fails
+          this.emit("error", { error: error as Error });
+        }
+      });
+    }
   }
 }
