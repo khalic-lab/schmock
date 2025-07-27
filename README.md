@@ -1,31 +1,33 @@
 # Schmock 🎭
 
-> Schema-driven mock API generator with business constraints
+> Schema-driven mock API generator with fluent API and plugin system
 
 ## Overview
 
-Schmock is a powerful mock API generator that allows you to quickly create predictable, schema-driven mock endpoints for frontend development. Unlike traditional mock servers, Schmock is designed with extensibility in mind through its plugin system.
+Schmock is a powerful mock API generator that allows you to quickly create predictable, schema-driven mock endpoints for frontend development. With its new fluent API, you can define complex mock behaviors in a clean, readable way.
 
 ## Features
 
 - 🚀 **Quick Setup**: Get a mock API running in under 30 seconds
+- ✨ **Fluent API**: Clean, chainable syntax for defining mocks
 - 📋 **Schema-Driven**: Use JSON Schema to define your data structures
 - 🔌 **Plugin System**: Extend functionality with custom plugins
 - 🎯 **Type-Safe**: Full TypeScript support with ambient types
 - 🧪 **BDD/TDD Ready**: Built with testing in mind
 - 🏗️ **Monorepo Structure**: Organized for scalability
+- 🔄 **Stateful Mocks**: Maintain state between requests
 
 ## Installation
 
 ```sh
 # Using bun (recommended)
-bun add @schmock/core
+bun add @schmock/builder
 
 # Using npm
-npm install @schmock/core
+npm install @schmock/builder
 
 # Using yarn
-yarn add @schmock/core
+yarn add @schmock/builder
 ```
 
 ## Quick Start
@@ -33,84 +35,194 @@ yarn add @schmock/core
 ### Basic Usage
 
 ```typescript
-import { Schmock } from '@schmock/core'
+import { schmock } from '@schmock/builder'
 
-// Define your mock API configuration
-const config = {
-  routes: {
-    '/api/users': {
-      data: [
+// Create a mock API with fluent syntax
+const mock = schmock()
+  .routes({
+    'GET /api/users': {
+      response: () => [
         { id: 1, name: 'John Doe', email: 'john@example.com' },
         { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
       ]
     },
-    '/api/users/1': {
-      data: { id: 1, name: 'John Doe', email: 'john@example.com' }
+    'GET /api/users/:id': {
+      response: ({ params }) => {
+        const users = [
+          { id: 1, name: 'John Doe', email: 'john@example.com' },
+          { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
+        ]
+        return users.find(u => u.id === Number(params.id)) || [404, { error: 'User not found' }]
+      }
     }
-  }
-}
-
-// Create a Schmock instance
-const schmock = new Schmock(config)
+  })
+  .build()
 
 // Make requests
-const response = await schmock.get('/api/users')
+const response = await mock.handle('GET', '/api/users')
 console.log(response.status) // 200
 console.log(response.body) // [{ id: 1, name: 'John Doe', ... }, ...]
+
+// With parameters
+const userResponse = await mock.handle('GET', '/api/users/1')
+console.log(userResponse.body) // { id: 1, name: 'John Doe', ... }
 ```
 
-### Simple String Response
+### Stateful Mocks
 
 ```typescript
-const schmock = new Schmock({
-  routes: {
-    '/api/status': 'OK',
-    '/api/version': '1.0.0'
-  }
-})
+const mock = schmock()
+  .state({ users: [] })
+  .routes({
+    'GET /api/users': {
+      response: ({ state }) => state.users
+    },
+    'POST /api/users': {
+      response: ({ body, state }) => {
+        const newUser = { 
+          id: Date.now(), 
+          ...body, 
+          createdAt: new Date().toISOString() 
+        }
+        state.users.push(newUser)
+        return [201, newUser]
+      }
+    },
+    'DELETE /api/users/:id': {
+      response: ({ params, state }) => {
+        const index = state.users.findIndex(u => u.id === Number(params.id))
+        if (index === -1) return [404, { error: 'User not found' }]
+        state.users.splice(index, 1)
+        return [204, null]
+      }
+    }
+  })
+  .build()
 
-const response = await schmock.get('/api/status')
-console.log(response.body) // 'OK'
+// Create a user
+const created = await mock.handle('POST', '/api/users', {
+  body: { name: 'Alice', email: 'alice@example.com' }
+})
+console.log(created.status) // 201
+
+// List users
+const list = await mock.handle('GET', '/api/users')
+console.log(list.body) // [{ id: 123456, name: 'Alice', ... }]
 ```
 
-### Handling 404s
+### Custom Status Codes and Headers
 
 ```typescript
-const schmock = new Schmock({
-  routes: {
-    '/api/users': { data: [] }
-  }
-})
+const mock = schmock()
+  .routes({
+    'POST /api/upload': {
+      response: ({ body }) => [
+        201,
+        { id: 123, filename: body.name },
+        { 'Location': '/api/files/123' }
+      ]
+    },
+    'GET /api/protected': {
+      response: ({ headers }) => {
+        if (!headers.authorization) {
+          return [401, { error: 'Unauthorized' }]
+        }
+        return { data: 'secret' }
+      }
+    }
+  })
+  .build()
 
-const response = await schmock.get('/api/unknown')
-console.log(response.status) // 404
-console.log(response.body) // { error: 'Not Found' }
+// Response with custom headers
+const upload = await mock.handle('POST', '/api/upload', {
+  body: { name: 'document.pdf' }
+})
+console.log(upload.status) // 201
+console.log(upload.headers.Location) // '/api/files/123'
+```
+
+### Configuration Options
+
+```typescript
+const mock = schmock()
+  .config({ 
+    namespace: '/api/v2',  // Prefix all routes
+    delay: [100, 500]      // Random delay between 100-500ms
+  })
+  .routes({
+    'GET /users': {  // Actually responds to /api/v2/users
+      response: () => [{ id: 1, name: 'John' }]
+    }
+  })
+  .build()
 ```
 
 ## Advanced Usage
+
+### Query Parameters and Headers
+
+```typescript
+const mock = schmock()
+  .routes({
+    'GET /api/search': {
+      response: ({ query }) => ({
+        results: [],
+        query: query.q,
+        page: Number(query.page) || 1
+      })
+    },
+    'GET /api/me': {
+      response: ({ headers }) => ({
+        authenticated: !!headers.authorization,
+        user: headers.authorization ? { id: 1, name: 'John' } : null
+      })
+    }
+  })
+  .build()
+
+// With query parameters
+const search = await mock.handle('GET', '/api/search', {
+  query: { q: 'typescript', page: '2' }
+})
+console.log(search.body) // { results: [], query: 'typescript', page: 2 }
+
+// With headers
+const me = await mock.handle('GET', '/api/me', {
+  headers: { authorization: 'Bearer token123' }
+})
+console.log(me.body.authenticated) // true
+```
 
 ### With Express/HTTP Server (Coming Soon)
 
 ```typescript
 import express from 'express'
-import { createSchmockMiddleware } from '@schmock/express'
+import { toExpress } from '@schmock/express'
 
 const app = express()
-const schmock = new Schmock(config)
 
-app.use('/mock', createSchmockMiddleware(schmock))
+const mock = schmock()
+  .routes({
+    'GET /api/users': {
+      response: () => [{ id: 1, name: 'John' }]
+    }
+  })
+  .build()
+
+app.use('/mock', toExpress(mock))
 app.listen(3000)
 ```
 
 ### Schema-Based Generation (Coming Soon)
 
 ```typescript
-import { Schmock } from '@schmock/core'
-import { SchemaPlugin } from '@schmock/plugin-schema'
+import { schmock } from '@schmock/builder'
+import { schemaPlugin } from '@schmock/plugin-schema'
 
-const schmock = new Schmock({
-  routes: {
-    '/api/users': {
+const mock = schmock()
+  .use(schemaPlugin())
+  .routes({
+    'GET /api/users': {
       schema: {
         type: 'array',
         items: {
@@ -123,11 +235,42 @@ const schmock = new Schmock({
         }
       }
     }
-  }
-})
-
-schmock.use(new SchemaPlugin())
+  })
+  .build()
 ```
+
+## API Reference
+
+### Route Definition
+
+Routes use the format `'METHOD /path'` as keys:
+
+```typescript
+schmock().routes({
+  'GET /users': { response: () => [] },
+  'POST /users': { response: ({ body }) => [201, body] },
+  'PUT /users/:id': { response: ({ params, body }) => ({ ...body, id: params.id }) },
+  'DELETE /users/:id': { response: () => [204, null] }
+})
+```
+
+### Response Types
+
+Response functions can return:
+- **Direct value**: Returns as 200 OK
+- **`[status, body]`**: Custom status code
+- **`[status, body, headers]`**: Custom status, body, and headers
+
+### Context Object
+
+Response functions receive a context with:
+- `state`: Shared mutable state
+- `params`: Path parameters (e.g., `:id`)
+- `query`: Query string parameters
+- `body`: Request body
+- `headers`: Request headers
+- `method`: HTTP method
+- `path`: Request path
 
 ## Development
 
@@ -154,7 +297,8 @@ bun run build
 ```
 schmock/
 ├── packages/
-│   ├── core/           # Core Schmock functionality
+│   ├── builder/        # New fluent API builder
+│   ├── core/           # Core Schmock functionality (legacy)
 │   ├── express/        # Express middleware (planned)
 │   └── plugin-schema/  # Schema plugin (planned)
 ├── features/           # BDD feature files
@@ -177,15 +321,18 @@ See [CLAUDE.md](./CLAUDE.md) for detailed development guidelines.
 ## Roadmap
 
 - [x] Basic static mocking with GET requests
-- [ ] Support for all HTTP methods (POST, PUT, DELETE, PATCH)
-- [ ] Dynamic route patterns (e.g., `/api/users/:id`)
+- [x] Support for all HTTP methods (POST, PUT, DELETE, PATCH)
+- [x] Dynamic route patterns (e.g., `/api/users/:id`)
+- [x] State management between requests
+- [x] Fluent API with builder pattern
+- [x] Custom status codes and headers
 - [ ] Schema-based data generation
 - [ ] Plugin system implementation
 - [ ] Express middleware adapter
 - [ ] Request validation
 - [ ] Response delays and error simulation
-- [ ] State management between requests
 - [ ] GraphQL support
+- [ ] WebSocket support
 
 ## License
 
