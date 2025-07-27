@@ -1,1 +1,0 @@
-export { Schmock } from "./schmock";

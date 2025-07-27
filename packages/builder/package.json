@@ -1,6 +1,6 @@
 {
-  "name": "@schmock/core",
-  "description": "Core package for Schmock",
+  "name": "@schmock/builder",
+  "description": "Fluent API builder for Schmock",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,15 +24,12 @@
     "test": "vitest",
     "test:watch": "vitest --watch",
     "test:bdd": "vitest run --config vitest.config.bdd.ts",
-    "test:bdd:ci": "vitest run --config vitest.config.bdd.ts --reporter=json --silent",
     "lint": "biome check src/*.ts",
     "lint:fix": "biome check --write --unsafe src/*.ts"
   },
   "license": "MIT",
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^5.1.2",
-    "@cucumber/cucumber": "^12.1.0",
-    "@types/json-schema": "^7.0.15",
     "@types/node": "^24.1.0",
     "@vitest/ui": "^3.2.4",
     "vitest": "^3.2.4"
