@@ -14,13 +14,13 @@ describeFeature(feature, ({ Scenario }) => {
       schmock = { config }
     })
 
-    When('I make a GET request to {string}', async (_, path: string) => {
+    When('I make a GET request to "/api/user"', async () => {
       // This should fail since schmock.get doesn't exist yet
-      response = await schmock.get(path)
+      response = await schmock.get("/api/user")
     })
 
-    Then('the response status code should be {int}', (_, expectedStatus: number) => {
-      expect(response.status).toBe(expectedStatus)
+    Then('the response status code should be 200', () => {
+      expect(response.status).toBe(200)
     })
 
     And('the response body should be:', (_, docString: string) => {
