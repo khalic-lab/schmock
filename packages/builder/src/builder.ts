@@ -1,66 +1,68 @@
-import type { 
-  Builder, 
-  BuilderConfig, 
-  Routes, 
+type Plugin = Schmock.Plugin;
+
+import type { ParsedRoute } from "./parser";
+import { parseRouteKey } from "./parser";
+import type {
+  Builder,
+  BuilderConfig,
+  HttpMethod,
   MockInstance,
-  RouteDefinition,
   ResponseContext,
-  HttpMethod
-} from './types'
-import { parseRouteKey } from './parser'
-import type { ParsedRoute } from './parser'
+  RouteDefinition,
+  Routes,
+} from "./types";
 
 interface BuilderState<TState> {
-  config?: BuilderConfig
-  routes?: Routes<TState>
-  state?: TState
-  plugins: any[]
+  config?: BuilderConfig;
+  routes?: Routes<TState>;
+  state?: TState;
+  plugins: Plugin[];
 }
 
 interface CompiledRoute<TState> extends ParsedRoute {
-  definition: RouteDefinition<TState>
+  definition: RouteDefinition<TState>;
 }
 
 /**
  * Fluent builder for creating Schmock instances.
- * 
+ *
  * @internal
  */
-export class SchmockBuilder<TState = any> implements Builder<TState> {
+export class SchmockBuilder<TState = unknown> implements Builder<TState> {
   private options: BuilderState<TState> = {
-    plugins: []
-  }
+    plugins: [],
+  };
 
   config(options: BuilderConfig): Builder<TState> {
-    this.options.config = { ...this.options.config, ...options }
-    return this
+    this.options.config = { ...this.options.config, ...options };
+    return this;
   }
 
   routes(routes: Routes<TState>): Builder<TState> {
-    this.options.routes = { ...this.options.routes, ...routes }
-    return this
+    this.options.routes = { ...this.options.routes, ...routes };
+    return this;
   }
 
   state<T>(initial: T): Builder<T> {
-    const newBuilder = new SchmockBuilder<T>()
+    const newBuilder = new SchmockBuilder<T>();
     newBuilder.options = {
       ...this.options,
-      state: initial
-    } as BuilderState<T>
-    return newBuilder
+      state: initial,
+    } as BuilderState<T>;
+    return newBuilder;
   }
 
-  use(plugin: any): Builder<TState> {
-    this.options.plugins.push(plugin)
-    return this
+  use(plugin: Plugin): Builder<TState> {
+    this.options.plugins.push(plugin);
+    return this;
   }
 
   build(): MockInstance<TState> {
-    const compiledRoutes = this.compileRoutes()
-    const state = this.options.state
-    const config = this.options.config || {}
+    const compiledRoutes = this.compileRoutes();
+    const state = this.options.state;
+    // Config is compiled into routes, not needed for runtime
 
-    return new SchmockInstance(compiledRoutes, state as TState, config)
+    return new SchmockInstance(compiledRoutes, state as TState);
   }
 
   /**
@@ -68,76 +70,78 @@ export class SchmockBuilder<TState = any> implements Builder<TState> {
    * Applies namespace prefix if configured.
    */
   private compileRoutes(): CompiledRoute<TState>[] {
-    const routes = this.options.routes || {}
-    const namespace = this.options.config?.namespace || ''
-    
+    const routes = this.options.routes || {};
+    const namespace = this.options.config?.namespace || "";
+
     return Object.entries(routes).map(([routeKey, definition]) => {
-      const parsed = parseRouteKey(routeKey)
-      
+      if (!definition) {
+        throw new Error(`Route definition is required for ${routeKey}`);
+      }
+      const parsed = parseRouteKey(routeKey);
+
       // Apply namespace if configured
       if (namespace) {
-        parsed.path = namespace + parsed.path
+        parsed.path = namespace + parsed.path;
         // Rebuild pattern with namespace
         const regexPath = parsed.path
-          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-          .replace(/:([^/]+)/g, '([^/]+)')
-        parsed.pattern = new RegExp(`^${regexPath}$`)
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          .replace(/:([^/]+)/g, "([^/]+)");
+        parsed.pattern = new RegExp(`^${regexPath}$`);
       }
-      
+
       return {
         ...parsed,
-        definition: definition!
-      }
-    })
+        definition,
+      };
+    });
   }
 }
 
 /**
  * Mock instance that handles requests based on configured routes.
- * 
+ *
  * @internal
  */
 class SchmockInstance<TState> implements MockInstance<TState> {
-  private eventHandlers = new Map<string, Set<(data: any) => void>>()
+  private eventHandlers = new Map<string, Set<(data: unknown) => void>>();
 
   constructor(
     private routes: CompiledRoute<TState>[],
     private state: TState,
-    private config: BuilderConfig
   ) {}
 
   async handle(
-    method: HttpMethod, 
-    path: string, 
+    method: HttpMethod,
+    path: string,
     options?: {
-      headers?: Record<string, string>
-      body?: any
-      query?: Record<string, string>
-    }
+      headers?: Record<string, string>;
+      body?: unknown;
+      query?: Record<string, string>;
+    },
   ): Promise<{
-    status: number
-    body: any
-    headers: Record<string, string>
+    status: number;
+    body: unknown;
+    headers: Record<string, string>;
   }> {
     // Emit request:start event
-    this.emit('request:start', { method, path })
+    this.emit("request:start", { method, path });
 
     try {
       // Find matching route
-      const route = this.findRoute(method, path)
-      
+      const route = this.findRoute(method, path);
+
       if (!route) {
         const response = {
           status: 404,
-          body: { error: 'Not Found' },
-          headers: {}
-        }
-        this.emit('request:end', { method, path, status: 404 })
-        return response
+          body: { error: "Not Found" },
+          headers: {},
+        };
+        this.emit("request:end", { method, path, status: 404 });
+        return response;
       }
 
       // Extract params from path
-      const params = this.extractParams(route, path)
+      const params = this.extractParams(route, path);
 
       // Build context
       const context: ResponseContext<TState> = {
@@ -147,104 +151,114 @@ class SchmockInstance<TState> implements MockInstance<TState> {
         body: options?.body,
         headers: options?.headers || {},
         method,
-        path
-      }
+        path,
+      };
 
       // Execute response function
-      const result = await route.definition.response(context)
+      const result = await route.definition.response(context);
 
       // Parse result
-      let response: { status: number; body: any; headers: Record<string, string> }
-      
+      let response: {
+        status: number;
+        body: unknown;
+        headers: Record<string, string>;
+      };
+
       if (Array.isArray(result)) {
         // Check if it's a tuple response [status, body, headers?]
-        if (typeof result[0] === 'number') {
-          const [status, body, headers] = result
+        if (typeof result[0] === "number") {
+          const [status, body, headers] = result;
           response = {
             status,
             body,
-            headers: headers || {}
-          }
+            headers: headers || {},
+          };
         } else {
           response = {
             status: 200,
             body: result,
-            headers: {}
-          }
+            headers: {},
+          };
         }
       } else {
         response = {
           status: 200,
           body: result,
-          headers: {}
-        }
+          headers: {},
+        };
       }
 
       // Emit request:end event
-      this.emit('request:end', { method, path, status: response.status })
+      this.emit("request:end", { method, path, status: response.status });
 
-      return response
+      return response;
     } catch (error) {
       // Emit error event
-      this.emit('error', { error: error as Error, method, path })
-      throw error
+      this.emit("error", { error: error as Error, method, path });
+      throw error;
     }
   }
 
   /**
    * Find a route that matches the given method and path.
    */
-  private findRoute(method: HttpMethod, path: string): CompiledRoute<TState> | undefined {
-    return this.routes.find(route => 
-      route.method === method && route.pattern.test(path)
-    )
+  private findRoute(
+    method: HttpMethod,
+    path: string,
+  ): CompiledRoute<TState> | undefined {
+    return this.routes.find(
+      (route) => route.method === method && route.pattern.test(path),
+    );
   }
 
   /**
    * Extract parameter values from the path based on the route pattern.
    */
-  private extractParams(route: CompiledRoute<TState>, path: string): Record<string, string> {
-    const match = path.match(route.pattern)
-    if (!match) return {}
+  private extractParams(
+    route: CompiledRoute<TState>,
+    path: string,
+  ): Record<string, string> {
+    const match = path.match(route.pattern);
+    if (!match) return {};
 
-    const params: Record<string, string> = {}
+    const params: Record<string, string> = {};
     route.params.forEach((param, index) => {
-      params[param] = match[index + 1]
-    })
+      params[param] = match[index + 1];
+    });
 
-    return params
+    return params;
   }
 
   /**
    * Subscribe to an event.
    */
-  on(event: string, handler: (data: any) => void): void {
+  on(event: string, handler: (data: unknown) => void): void {
     if (!this.eventHandlers.has(event)) {
-      this.eventHandlers.set(event, new Set())
+      this.eventHandlers.set(event, new Set());
     }
-    this.eventHandlers.get(event)!.add(handler)
+    this.eventHandlers.get(event)?.add(handler);
   }
 
   /**
    * Unsubscribe from an event.
    */
-  off(event: string, handler: (data: any) => void): void {
-    this.eventHandlers.get(event)?.delete(handler)
+  off(event: string, handler: (data: unknown) => void): void {
+    this.eventHandlers.get(event)?.delete(handler);
   }
 
   /**
    * Emit an event to all registered handlers.
    */
-  private emit(event: string, data: any): void {
-    const handlers = this.eventHandlers.get(event)
-    if (!handlers) return
+  private emit(event: string, data: unknown): void {
+    const handlers = this.eventHandlers.get(event);
+    if (!handlers) return;
 
     for (const handler of handlers) {
       try {
-        handler(data)
+        handler(data);
       } catch (error) {
-        if (event !== 'error') {
-          this.emit('error', { error: error as Error })
+        if (event !== "error") {
+          this.emit("error", { error: error as Error });
         }
       }
     }
