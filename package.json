@@ -6,7 +6,12 @@
   ],
   "scripts": {
     "build": "bun run --filter @schmock/core build",
-    "lint": "bun run --filter @schmock/core lint"
+    "test": "bun run --filter @schmock/core test && bun run --filter @schmock/core test:bdd",
+    "test:unit": "bun run --filter @schmock/core test",
+    "test:bdd": "bun run --filter @schmock/core test:bdd",
+    "lint": "bun run --filter @schmock/core lint",
+    "lint:fix": "bun run --filter @schmock/core lint:fix",
+    "typecheck": "bun run --filter @schmock/core build:types"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.2",
