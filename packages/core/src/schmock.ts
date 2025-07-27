@@ -11,7 +11,7 @@ import type {
 export class Schmock implements SchmockCore {
   private config: SchmockConfig;
   private routes: Map<string, SchmockRoute>;
-  private eventHandlers: Map<string, ((data: any) => void)[]>;
+  private eventHandlers: Map<string, ((data: unknown) => void)[]>;
 
   constructor(config: SchmockConfig) {
     this.config = config;
