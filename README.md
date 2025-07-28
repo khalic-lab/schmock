@@ -1,5 +1,7 @@
 # Schmock 🎭
 
+🚧 under development, wait for v1 for usage
+
 > Schema-driven mock API generator with fluent API and plugin system
 
 ## Overview
