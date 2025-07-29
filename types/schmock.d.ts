@@ -63,7 +63,7 @@ declare namespace Schmock {
     /** Request path (e.g., "/api/users/123") */
     path: string;
     /** HTTP method */
-    method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+    method: HttpMethod;
     /** Request headers */
     headers: Record<string, string>;
     /** Request body (for POST, PUT, PATCH) */
