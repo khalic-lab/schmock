@@ -11,10 +11,7 @@ Schmock is a powerful mock API generator that allows you to quickly create predi
 - 🚀 **Quick Setup**: Get a mock API running in under 30 seconds
 - ✨ **Fluent API**: Clean, chainable syntax for defining mocks
 - 📋 **Schema-Driven**: Use JSON Schema to define your data structures
-- 🔌 **Plugin System**: Extend functionality with custom plugins
 - 🎯 **Type-Safe**: Full TypeScript support with ambient types
-- 🧪 **BDD/TDD Ready**: Built with testing in mind
-- 🏗️ **Monorepo Structure**: Organized for scalability
 - 🔄 **Stateful Mocks**: Maintain state between requests
 
 ## Installation

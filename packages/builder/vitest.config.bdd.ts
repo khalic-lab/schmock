@@ -5,6 +5,8 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["src/**/*.steps.ts"],
-    reporters: ["default"],
+    reporters: [
+      ['default', { summary: false }]
+    ]
   },
 });
