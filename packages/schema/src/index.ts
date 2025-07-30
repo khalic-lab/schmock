@@ -17,6 +17,10 @@ jsf.option({
   failOnInvalidFormat: false,
 });
 
+// Resource limits for safety
+const MAX_ARRAY_SIZE = 10000;
+const MAX_NESTING_DEPTH = 10;
+
 interface SchemaRouteExtension {
   schema?: JSONSchema7;
   count?: number;
@@ -77,14 +81,29 @@ export function schemaPlugin(): Schmock.Plugin {
 export function generateFromSchema(options: SchemaGenerationContext): any {
   const { schema, count, overrides, params, state, query } = options;
 
+  // Validate schema
+  validateSchema(schema);
+
   let generated: any;
 
   // Handle array schemas with count
   if (schema.type === "array" && schema.items) {
     const itemCount = determineArrayCount(schema, count);
+
+    // Check for resource limits
+    if (itemCount > MAX_ARRAY_SIZE) {
+      throw new Error(
+        `Array size ${itemCount} exceeds maximum allowed size of ${MAX_ARRAY_SIZE}`,
+      );
+    }
+
     const itemSchema = Array.isArray(schema.items)
       ? schema.items[0]
       : schema.items;
+
+    if (!itemSchema) {
+      throw new Error("Array schema must have valid items definition");
+    }
 
     generated = [];
     for (let i = 0; i < itemCount; i++) {
@@ -104,11 +123,102 @@ export function generateFromSchema(options: SchemaGenerationContext): any {
   return generated;
 }
 
+function validateSchema(schema: JSONSchema7): void {
+  if (!schema || typeof schema !== "object") {
+    throw new Error("Schema must be a valid JSON Schema object");
+  }
+
+  if (Object.keys(schema).length === 0) {
+    throw new Error("Schema cannot be empty");
+  }
+
+  // Check for invalid schema types
+  if (schema.type && !["object", "array", "string", "number", "integer", "boolean", "null"].includes(schema.type as string)) {
+    throw new Error(`Invalid schema type: ${schema.type}`);
+  }
+
+  // Check for circular references (basic check)
+  if (hasCircularReference(schema)) {
+    throw new Error("Schema contains circular references which are not supported");
+  }
+
+  // Check nesting depth
+  if (calculateNestingDepth(schema) > MAX_NESTING_DEPTH) {
+    throw new Error(`Schema nesting depth exceeds maximum allowed depth of ${MAX_NESTING_DEPTH}`);
+  }
+}
+
+function hasCircularReference(schema: JSONSchema7, visited = new Set()): boolean {
+  if (visited.has(schema)) {
+    return true;
+  }
+
+  visited.add(schema);
+
+  if (schema.$ref === "#") {
+    return true;
+  }
+
+  if (schema.type === "object" && schema.properties) {
+    for (const prop of Object.values(schema.properties)) {
+      if (typeof prop === "object" && prop !== null) {
+        if (hasCircularReference(prop as JSONSchema7, new Set(visited))) {
+          return true;
+        }
+      }
+    }
+  }
+
+  if (schema.type === "array" && schema.items) {
+    const items = Array.isArray(schema.items) ? schema.items : [schema.items];
+    for (const item of items) {
+      if (typeof item === "object" && item !== null) {
+        if (hasCircularReference(item as JSONSchema7, new Set(visited))) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+function calculateNestingDepth(schema: JSONSchema7, depth = 0): number {
+  if (depth > MAX_NESTING_DEPTH) {
+    return depth;
+  }
+
+  let maxDepth = depth;
+
+  if (schema.type === "object" && schema.properties) {
+    for (const prop of Object.values(schema.properties)) {
+      if (typeof prop === "object" && prop !== null) {
+        maxDepth = Math.max(maxDepth, calculateNestingDepth(prop as JSONSchema7, depth + 1));
+      }
+    }
+  }
+
+  if (schema.type === "array" && schema.items) {
+    const items = Array.isArray(schema.items) ? schema.items : [schema.items];
+    for (const item of items) {
+      if (typeof item === "object" && item !== null) {
+        maxDepth = Math.max(maxDepth, calculateNestingDepth(item as JSONSchema7, depth + 1));
+      }
+    }
+  }
+
+  return maxDepth;
+}
+
 function determineArrayCount(
   schema: JSONSchema7,
   explicitCount?: number,
 ): number {
   if (explicitCount !== undefined) {
+    // Handle negative or invalid counts
+    if (explicitCount < 0) {
+      return 0;
+    }
     return explicitCount;
   }
 
