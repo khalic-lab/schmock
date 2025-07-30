@@ -60,9 +60,9 @@ export class SchmockBuilder<TState = unknown> implements Builder<TState> {
   build(): MockInstance<TState> {
     const compiledRoutes = this.compileRoutes();
     const state = this.options.state;
-    // Config is compiled into routes, not needed for runtime
+    const plugins = this.options.plugins;
 
-    return new SchmockInstance(compiledRoutes, state as TState);
+    return new SchmockInstance(compiledRoutes, state as TState, plugins);
   }
 
   /**
@@ -108,6 +108,7 @@ class SchmockInstance<TState> implements MockInstance<TState> {
   constructor(
     private routes: CompiledRoute<TState>[],
     private state: TState,
+    private plugins: Plugin[] = [],
   ) {}
 
   async handle(
@@ -154,8 +155,22 @@ class SchmockInstance<TState> implements MockInstance<TState> {
         path,
       };
 
-      // Execute response function
-      const result = await route.definition.response(context);
+      // Execute response function or generate data via plugins
+      let result: any;
+      
+      if (route.definition.response) {
+        // Route has explicit response function
+        // Enhance context with plugin helpers if route has schema
+        const enhancedContext = await this.enhanceContextWithPlugins(context, route);
+        result = await route.definition.response(enhancedContext);
+      } else {
+        // No response function - try plugins
+        result = await this.generateViaPlugins(route, context);
+        
+        if (result === undefined) {
+          throw new Error(`No response function or plugin could handle route: ${method} ${path}`);
+        }
+      }
 
       // Parse result
       let response: {
@@ -195,7 +210,16 @@ class SchmockInstance<TState> implements MockInstance<TState> {
     } catch (error) {
       // Emit error event
       this.emit("error", { error: error as Error, method, path });
-      throw error;
+      
+      // Return error response instead of throwing
+      const errorResponse = {
+        status: 500,
+        body: { error: error instanceof Error ? error.message : String(error) },
+        headers: {},
+      };
+      
+      this.emit("request:end", { method, path, status: 500 });
+      return errorResponse;
     }
   }
 
@@ -244,6 +268,67 @@ class SchmockInstance<TState> implements MockInstance<TState> {
    */
   off(event: string, handler: (data: unknown) => void): void {
     this.eventHandlers.get(event)?.delete(handler);
+  }
+
+  /**
+   * Generate data via plugins when no response function is provided.
+   */
+  private async generateViaPlugins(route: CompiledRoute<TState>, context: ResponseContext<TState>): Promise<any> {
+    const pluginContext: Schmock.PluginContext = {
+      path: context.path,
+      route: route.definition as any,
+      method: context.method,
+      params: context.params,
+      state: new Map(), // Plugin state - separate from route state
+    };
+
+    // Try each plugin's generate method
+    for (const plugin of this.plugins) {
+      if (plugin.generate) {
+        try {
+          const result = await plugin.generate(pluginContext);
+          if (result !== undefined && result !== null) {
+            return result;
+          }
+        } catch (error) {
+          // Plugin failed, continue to next plugin or let caller handle error
+          this.emit("error", { error: error as Error, context: pluginContext });
+          // Don't return here, let the error propagate up to the handle method
+          throw error;
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Enhance response context with plugin helpers.
+   */
+  private async enhanceContextWithPlugins(context: ResponseContext<TState>, route: CompiledRoute<TState>): Promise<ResponseContext<TState> & any> {
+    const enhanced = { ...context };
+
+    // Check if any plugin can provide schema helpers
+    for (const plugin of this.plugins) {
+      if (plugin.name === 'schema' && (route.definition as any).schema) {
+        // Add generateFromSchema helper for schema plugin
+        (enhanced as any).generateFromSchema = (options?: any) => {
+          const { generateFromSchema } = require('@schmock/schema');
+          return generateFromSchema({
+            schema: (route.definition as any).schema,
+            count: options?.count || (route.definition as any).count,
+            overrides: options?.overrides || (route.definition as any).overrides,
+            params: context.params,
+            state: context.state,
+            query: context.query,
+            ...options
+          });
+        };
+        break;
+      }
+    }
+
+    return enhanced;
   }
 
   /**

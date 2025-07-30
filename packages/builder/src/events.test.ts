@@ -112,9 +112,10 @@ describe("event system", () => {
 
     mock.on("error", errorHandler);
 
-    await expect(mock.handle("GET", "/error")).rejects.toThrow(
-      "Response error",
-    );
+    const response = await mock.handle("GET", "/error");
+    
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({ error: "Response error" });
 
     expect(errorHandler).toHaveBeenCalledWith({
       error: expect.objectContaining({
