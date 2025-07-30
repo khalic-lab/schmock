@@ -5,15 +5,18 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "bun run --filter @schmock/builder build && bun run --filter @schmock/express build",
-    "test": "bun run --filter @schmock/builder test && bun run --filter @schmock/builder test:bdd",
-    "test:unit": "bun run --filter @schmock/builder test",
+    "clean": "bun run clean:src && bun run clean:dist",
+    "clean:src": "node scripts/clean-generated.js",
+    "clean:dist": "rm -rf packages/*/dist",
+    "build": "bun run clean:src && bun run --filter @schmock/schema build && bun run --filter @schmock/builder build && bun run --filter @schmock/express build",
+    "test": "bun run --filter @schmock/schema test && bun run --filter @schmock/builder test && bun run --filter @schmock/express test && bun run --filter @schmock/builder test:bdd",
+    "test:unit": "bun run --filter @schmock/schema test && bun run --filter @schmock/builder test && bun run --filter @schmock/express test",
     "test:bdd": "bun run --filter @schmock/builder test:bdd",
     "test:e2e": "cd e2e && bun run vitest run",
     "test:e2e:watch": "cd e2e && bun run vitest",
-    "lint": "bun run --filter @schmock/builder lint",
-    "lint:fix": "bun run --filter @schmock/builder lint:fix",
-    "typecheck": "bun run --filter @schmock/builder build:types"
+    "lint": "bun run --filter '*' lint",
+    "lint:fix": "bun run --filter '*' lint:fix",
+    "typecheck": "bun run --filter '*' build:types"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.2",

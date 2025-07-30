@@ -1,6 +1,6 @@
 {
-  "name": "@schmock/builder",
-  "description": "Fluent API builder for Schmock",
+  "name": "@schmock/schema",
+  "description": "JSON Schema-based automatic data generation for Schmock",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -21,19 +21,19 @@
     "build": "bun build:lib && bun build:types",
     "build:lib": "bun build --minify --outdir=dist src/index.ts",
     "build:types": "tsc -p tsconfig.json",
-    "pretest": "rm -f src/*.js src/*.d.ts || true",
     "test": "vitest",
     "test:watch": "vitest --watch",
-    "pretest:bdd": "rm -f src/*.js src/*.d.ts || true",
-    "test:bdd": "vitest run --config vitest.config.bdd.ts",
     "lint": "biome check src/*.ts",
     "lint:fix": "biome check --write --unsafe src/*.ts"
   },
   "license": "MIT",
+  "dependencies": {
+    "json-schema-faker": "^0.5.6",
+    "@faker-js/faker": "^8.4.1"
+  },
   "devDependencies": {
-    "@amiceli/vitest-cucumber": "^5.1.2",
+    "@types/json-schema": "^7.0.15",
     "@types/node": "^24.1.0",
-    "@vitest/ui": "^3.2.4",
     "vitest": "^3.2.4"
   }
 }
