@@ -5,9 +5,9 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "bun run --filter @schmock/schema build && bun run --filter @schmock/builder build && bun run --filter @schmock/express build",
-    "test": "bun run --filter @schmock/schema test && bun run --filter @schmock/builder test && bun run --filter @schmock/builder test:bdd",
-    "test:unit": "bun run --filter @schmock/schema test && bun run --filter @schmock/builder test",
+    "build": "bun run --filter @schmock/builder build && bun run --filter @schmock/express build",
+    "test": "bun run --filter @schmock/builder test && bun run --filter @schmock/builder test:bdd",
+    "test:unit": "bun run --filter @schmock/builder test",
     "test:bdd": "bun run --filter @schmock/builder test:bdd",
     "test:e2e": "cd e2e && bun run vitest run",
     "test:e2e:watch": "cd e2e && bun run vitest",
