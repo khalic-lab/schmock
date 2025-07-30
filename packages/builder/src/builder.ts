@@ -157,18 +157,23 @@ class SchmockInstance<TState> implements MockInstance<TState> {
 
       // Execute response function or generate data via plugins
       let result: any;
-      
+
       if (route.definition.response) {
         // Route has explicit response function
         // Enhance context with plugin helpers if route has schema
-        const enhancedContext = await this.enhanceContextWithPlugins(context, route);
+        const enhancedContext = await this.enhanceContextWithPlugins(
+          context,
+          route,
+        );
         result = await route.definition.response(enhancedContext);
       } else {
         // No response function - try plugins
         result = await this.generateViaPlugins(route, context);
-        
+
         if (result === undefined) {
-          throw new Error(`No response function or plugin could handle route: ${method} ${path}`);
+          throw new Error(
+            `No response function or plugin could handle route: ${method} ${path}`,
+          );
         }
       }
 
@@ -210,14 +215,14 @@ class SchmockInstance<TState> implements MockInstance<TState> {
     } catch (error) {
       // Emit error event
       this.emit("error", { error: error as Error, method, path });
-      
+
       // Return error response instead of throwing
       const errorResponse = {
         status: 500,
         body: { error: error instanceof Error ? error.message : String(error) },
         headers: {},
       };
-      
+
       this.emit("request:end", { method, path, status: 500 });
       return errorResponse;
     }
@@ -273,7 +278,10 @@ class SchmockInstance<TState> implements MockInstance<TState> {
   /**
    * Generate data via plugins when no response function is provided.
    */
-  private async generateViaPlugins(route: CompiledRoute<TState>, context: ResponseContext<TState>): Promise<any> {
+  private async generateViaPlugins(
+    route: CompiledRoute<TState>,
+    context: ResponseContext<TState>,
+  ): Promise<any> {
     const pluginContext: Schmock.PluginContext = {
       path: context.path,
       route: route.definition as any,
@@ -305,23 +313,27 @@ class SchmockInstance<TState> implements MockInstance<TState> {
   /**
    * Enhance response context with plugin helpers.
    */
-  private async enhanceContextWithPlugins(context: ResponseContext<TState>, route: CompiledRoute<TState>): Promise<ResponseContext<TState> & any> {
+  private async enhanceContextWithPlugins(
+    context: ResponseContext<TState>,
+    route: CompiledRoute<TState>,
+  ): Promise<ResponseContext<TState> & any> {
     const enhanced = { ...context };
 
     // Check if any plugin can provide schema helpers
     for (const plugin of this.plugins) {
-      if (plugin.name === 'schema' && (route.definition as any).schema) {
+      if (plugin.name === "schema" && (route.definition as any).schema) {
         // Add generateFromSchema helper for schema plugin
         (enhanced as any).generateFromSchema = (options?: any) => {
-          const { generateFromSchema } = require('@schmock/schema');
+          const { generateFromSchema } = require("@schmock/schema");
           return generateFromSchema({
             schema: (route.definition as any).schema,
             count: options?.count || (route.definition as any).count,
-            overrides: options?.overrides || (route.definition as any).overrides,
+            overrides:
+              options?.overrides || (route.definition as any).overrides,
             params: context.params,
             state: context.state,
             query: context.query,
-            ...options
+            ...options,
           });
         };
         break;
