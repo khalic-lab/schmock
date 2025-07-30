@@ -1,5 +1,12 @@
 type Plugin = Schmock.Plugin;
 
+import {
+  PluginError,
+  ResponseGenerationError,
+  RouteDefinitionError,
+  RouteNotFoundError,
+  SchmockError,
+} from "./errors";
 import type { ParsedRoute } from "./parser";
 import { parseRouteKey } from "./parser";
 import type {
@@ -62,7 +69,7 @@ export class SchmockBuilder<TState = unknown> implements Builder<TState> {
     const state = this.options.state;
     // Config is compiled into routes, not needed for runtime
 
-    return new SchmockInstance(compiledRoutes, state as TState);
+    return new SchmockInstance(compiledRoutes, state as TState, this.options.plugins);
   }
 
   /**
@@ -75,7 +82,7 @@ export class SchmockBuilder<TState = unknown> implements Builder<TState> {
 
     return Object.entries(routes).map(([routeKey, definition]) => {
       if (!definition) {
-        throw new Error(`Route definition is required for ${routeKey}`);
+        throw new RouteDefinitionError(routeKey, "Route definition is required");
       }
       const parsed = parseRouteKey(routeKey);
 
@@ -108,6 +115,7 @@ class SchmockInstance<TState> implements MockInstance<TState> {
   constructor(
     private routes: CompiledRoute<TState>[],
     private state: TState,
+    private plugins: Plugin[] = [],
   ) {}
 
   async handle(
@@ -131,9 +139,11 @@ class SchmockInstance<TState> implements MockInstance<TState> {
       const route = this.findRoute(method, path);
 
       if (!route) {
+        const error = new RouteNotFoundError(method, path);
+        this.emit("error", { error, method, path });
         const response = {
           status: 404,
-          body: { error: "Not Found" },
+          body: { error: error.message, code: error.code },
           headers: {},
         };
         this.emit("request:end", { method, path, status: 404 });
@@ -154,8 +164,23 @@ class SchmockInstance<TState> implements MockInstance<TState> {
         path,
       };
 
-      // Execute response function
-      const result = await route.definition.response(context);
+      // Execute response function or generate data via plugins
+      let result: any;
+
+      if (route.definition.response) {
+        // Route has explicit response function
+        result = await route.definition.response(context);
+      } else {
+        // No response function - try plugins
+        result = await this.generateViaPlugins(route, context);
+
+        if (result === undefined) {
+          throw new ResponseGenerationError(
+            `${method} ${path}`,
+            new Error("No response function or plugin could handle route"),
+          );
+        }
+      }
 
       // Parse result
       let response: {
@@ -195,7 +220,18 @@ class SchmockInstance<TState> implements MockInstance<TState> {
     } catch (error) {
       // Emit error event
       this.emit("error", { error: error as Error, method, path });
-      throw error;
+      // Return error response instead of throwing
+      const errorResponse = {
+        status: 500,
+        body: {
+          error: error instanceof Error ? error.message : String(error),
+          code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
+        },
+        headers: {},
+      };
+
+      this.emit("request:end", { method, path, status: 500 });
+      return errorResponse;
     }
   }
 
@@ -244,6 +280,41 @@ class SchmockInstance<TState> implements MockInstance<TState> {
    */
   off(event: string, handler: (data: unknown) => void): void {
     this.eventHandlers.get(event)?.delete(handler);
+  }
+
+  /**
+   * Generate data via plugins when no response function is provided.
+   */
+  private async generateViaPlugins(
+    route: CompiledRoute<TState>,
+    context: ResponseContext<TState>,
+  ): Promise<any> {
+    const pluginContext: Schmock.PluginContext = {
+      path: context.path,
+      route: route.definition as any,
+      method: context.method,
+      params: context.params,
+      state: new Map(), // Plugin state - separate from route state
+    };
+
+    // Try each plugin's generate method
+    for (const plugin of this.plugins) {
+      if (plugin.generate) {
+        try {
+          const result = await plugin.generate(pluginContext);
+          if (result !== undefined && result !== null) {
+            return result;
+          }
+        } catch (error) {
+          // Wrap plugin errors
+          const pluginError = new PluginError(plugin.name, error as Error);
+          this.emit("error", { error: pluginError, context: pluginContext });
+          throw pluginError;
+        }
+      }
+    }
+
+    return undefined;
   }
 
   /**

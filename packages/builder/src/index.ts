@@ -36,3 +36,13 @@ export type {
   RouteKey,
   Routes,
 } from "./types";
+
+// Re-export errors
+export {
+  SchmockError,
+  RouteNotFoundError,
+  RouteParseError,
+  ResponseGenerationError,
+  PluginError,
+  RouteDefinitionError,
+} from "./errors";
