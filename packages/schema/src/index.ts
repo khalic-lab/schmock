@@ -173,10 +173,11 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
           } catch (error: unknown) {
             // Re-throw with proper path context
             if (error instanceof SchemaValidationError) {
+              const context = error.context as { issue?: string; suggestion?: string } | undefined;
               throw new SchemaValidationError(
                 `${path}.properties.${propName}.faker`,
-                (error.context as any)?.issue || "Invalid faker method",
-                (error.context as any)?.suggestion
+                context?.issue || "Invalid faker method",
+                context?.suggestion
               );
             }
             throw error;
