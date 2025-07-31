@@ -209,7 +209,7 @@ class SchmockInstance<TState> implements MockInstance<TState> {
   constructor(
     private routes: CompiledRoute<TState>[],
     private state: TState,
-    private plugins: Plugin[] = [],
+    plugins: Plugin[] = [],
     debugEnabled = false,
   ) {
     this.logger = new DebugLogger(debugEnabled);
@@ -486,7 +486,7 @@ class SchmockInstance<TState> implements MockInstance<TState> {
    * Generate data via plugins when no response function is provided.
    */
   private async generateViaPlugins(
-    route: CompiledRoute<TState>,
+    _route: CompiledRoute<TState>,
     context: Schmock.PluginContext,
   ): Promise<any> {
     const pluginsWithGenerate = this.sortedPlugins.filter((p) => p.generate);
