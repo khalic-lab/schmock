@@ -13,7 +13,7 @@ import {
 } from "@angular/common/http";
 import { Injectable } from "@angular/core";
 import type { MockInstance } from "@schmock/builder";
-import { Observable, of, throwError } from "rxjs";
+import { Observable } from "rxjs";
 
 /**
  * Configuration options for Angular adapter
