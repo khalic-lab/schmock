@@ -37,6 +37,8 @@ declare namespace Schmock {
   interface Config {
     /** Route definitions mapped by path pattern */
     routes: Record<string, Route | any>;
+    /** Enable debug mode for detailed logging */
+    debug?: boolean;
   }
 
   /**
@@ -104,6 +106,14 @@ declare namespace Schmock {
     setup?(core: Core): void | Promise<void>;
 
     /**
+     * Called before request handling
+     * Can modify the request context or reject the request
+     * @param context - Plugin context with request details
+     * @returns Modified context or void
+     */
+    beforeRequest?(context: PluginContext): PluginContext | void | Promise<PluginContext | void>;
+
+    /**
      * Called before any data generation
      * Can return data to short-circuit the pipeline
      * @param context - Plugin context
@@ -119,6 +129,14 @@ declare namespace Schmock {
     generate?(context: PluginContext): any | void | Promise<any | void>;
 
     /**
+     * Transform generated data
+     * @param data - Data from generation or previous transform
+     * @param context - Plugin context
+     * @returns Transformed data
+     */
+    afterGenerate?(data: any, context: PluginContext): any | Promise<any>;
+
+    /**
      * Transform data (from route config or previous plugin)
      * @param data - Current data
      * @param context - Plugin context
@@ -127,11 +145,22 @@ declare namespace Schmock {
     transform?(data: any, context: PluginContext): any | Promise<any>;
 
     /**
-     * Called before returning response (cannot modify data)
-     * @param data - Final data
+     * Called before returning response
+     * Last chance to modify the response data
+     * @param response - Response object
      * @param context - Plugin context
+     * @returns Modified response or void
      */
-    beforeResponse?(data: any, context: PluginContext): void | Promise<void>;
+    beforeResponse?(response: ResponseResult, context: PluginContext): ResponseResult | void | Promise<ResponseResult | void>;
+
+    /**
+     * Called when an error occurs
+     * Can handle, transform, or suppress errors
+     * @param error - The error that occurred
+     * @param context - Plugin context
+     * @returns Modified error, response data, or void to continue error propagation
+     */
+    onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
   }
 
   /**
@@ -142,12 +171,20 @@ declare namespace Schmock {
     path: string;
     /** Matched route configuration */
     route: Route;
-    /** HTTP method (optional) */
-    method?: string;
+    /** HTTP method */
+    method: HttpMethod;
     /** Route parameters */
-    params?: Record<string, string>;
+    params: Record<string, string>;
+    /** Query parameters */
+    query: Record<string, string>;
+    /** Request headers */
+    headers: Record<string, string>;
+    /** Request body */
+    body?: any;
     /** Shared state between plugins for this request */
     state: Map<string, any>;
+    /** Route-specific state */
+    routeState?: any;
   }
 
   /**
@@ -299,6 +336,8 @@ declare namespace Schmock {
     namespace?: string;
     /** Response delay in ms, or [min, max] for random delay */
     delay?: number | [number, number];
+    /** Enable debug mode for detailed logging */
+    debug?: boolean;
   }
 
   /**
@@ -406,7 +445,7 @@ declare namespace Schmock {
     /**
      * Register a plugin
      */
-    use(plugin: Plugin): Builder<TState>;
+    use(plugin: Plugin | (() => Plugin)): Builder<TState>;
 
     /**
      * Build the mock instance

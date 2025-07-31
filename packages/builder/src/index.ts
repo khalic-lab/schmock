@@ -23,6 +23,18 @@ export function schmock(): Builder {
   return new SchmockBuilder();
 }
 
+// Re-export errors
+export {
+  PluginError,
+  ResourceLimitError,
+  ResponseGenerationError,
+  RouteDefinitionError,
+  RouteNotFoundError,
+  RouteParseError,
+  SchemaGenerationError,
+  SchemaValidationError,
+  SchmockError,
+} from "./errors";
 // Re-export types
 export type {
   Builder,
