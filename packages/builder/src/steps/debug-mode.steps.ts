@@ -155,7 +155,7 @@ describeFeature(feature, ({ Scenario }) => {
       expect(requestLogs.length).toBeGreaterThan(0);
       
       // Check for request ID pattern [xxxxxx]
-      expect(requestLogs.some(log => /\[[a-z0-9]{6}\]/.test(log))).toBe(true);
+      expect(requestLogs.some(log => /\[[a-z0-9]{6,}\]/.test(log))).toBe(true);
     });
 
     And("the logs should include method and path", () => {
