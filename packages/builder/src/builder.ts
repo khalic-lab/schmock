@@ -294,7 +294,11 @@ class SchmockInstance<TState> implements MockInstance<TState> {
       route: route.definition as any,
       method: context.method,
       params: context.params,
+      query: context.query,
+      headers: context.headers,
+      body: context.body,
       state: new Map(), // Plugin state - separate from route state
+      routeState: context.state,
     };
 
     // Try each plugin's generate method

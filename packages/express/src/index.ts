@@ -7,7 +7,7 @@ import type { MockInstance } from "@schmock/builder";
  * Convert Schmock response to Express response
  */
 function schmockToExpressResponse(
-  schmockResponse: Schmock.Response,
+  schmockResponse: { status: number; body: any; headers: Record<string, string> },
   res: Response
 ): void {
   // Set status code

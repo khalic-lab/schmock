@@ -32,61 +32,6 @@ declare namespace Schmock {
    */
   type RouteKey = `${HttpMethod} ${string}`;
   /**
-   * Main configuration object for Schmock instance
-   */
-  interface Config {
-    /** Route definitions mapped by path pattern */
-    routes: Record<string, Route | any>;
-  }
-
-  /**
-   * Route configuration for a single endpoint
-   */
-  interface Route {
-    /** Static data to return */
-    data?: any;
-    /** JSON Schema for validation and generation */
-    schema?: string | import("json-schema").JSONSchema7;
-    /** Custom handler function */
-    handler?: RequestHandler;
-  }
-
-  /**
-   * Function that handles requests and returns response data
-   */
-  type RequestHandler = (request: Request) => any | Promise<any>;
-
-  /**
-   * Incoming HTTP request representation
-   */
-  interface Request {
-    /** Request path (e.g., "/api/users/123") */
-    path: string;
-    /** HTTP method */
-    method: HttpMethod;
-    /** Request headers */
-    headers: Record<string, string>;
-    /** Request body (for POST, PUT, PATCH) */
-    body?: any;
-    /** Query parameters */
-    query: Record<string, string>;
-    /** Path parameters extracted from route pattern */
-    params: Record<string, string>;
-  }
-
-  /**
-   * HTTP response to be sent back
-   */
-  interface Response {
-    /** HTTP status code */
-    status: number;
-    /** Response body */
-    body: any;
-    /** Response headers */
-    headers: Record<string, string>;
-  }
-
-  /**
    * Plugin interface for extending Schmock functionality
    */
   interface Plugin {
@@ -97,11 +42,6 @@ declare namespace Schmock {
     /** Control execution order */
     enforce?: "pre" | "post";
 
-    /**
-     * Called once when plugin is registered
-     * @param core - Schmock instance
-     */
-    setup?(core: Core): void | Promise<void>;
 
     /**
      * Called before any data generation
@@ -127,11 +67,38 @@ declare namespace Schmock {
     transform?(data: any, context: PluginContext): any | Promise<any>;
 
     /**
-     * Called before returning response (cannot modify data)
-     * @param data - Final data
-     * @param context - Plugin context
+     * Called before request handling
+     * Can modify the request context or reject the request
+     * @param context - Plugin context with request details
+     * @returns Modified context or void
      */
-    beforeResponse?(data: any, context: PluginContext): void | Promise<void>;
+    beforeRequest?(context: PluginContext): PluginContext | void | Promise<PluginContext | void>;
+
+    /**
+     * Transform generated data
+     * @param data - Data from generation or previous transform
+     * @param context - Plugin context
+     * @returns Transformed data
+     */
+    afterGenerate?(data: any, context: PluginContext): any | Promise<any>;
+
+    /**
+     * Called before returning response
+     * Last chance to modify the response data
+     * @param response - Response object
+     * @param context - Plugin context
+     * @returns Modified response or void
+     */
+    beforeResponse?(response: ResponseResult, context: PluginContext): ResponseResult | void | Promise<ResponseResult | void>;
+
+    /**
+     * Called when an error occurs
+     * Can handle, transform, or suppress errors
+     * @param error - The error that occurred
+     * @param context - Plugin context
+     * @returns Modified error, response data, or void to continue error propagation
+     */
+    onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
   }
 
   /**
@@ -141,153 +108,23 @@ declare namespace Schmock {
     /** Request path */
     path: string;
     /** Matched route configuration */
-    route: Route;
-    /** HTTP method (optional) */
-    method?: string;
-    /** Route parameters */
-    params?: Record<string, string>;
-    /** Shared state between plugins for this request */
-    state: Map<string, any>;
-  }
-
-  /**
-   * Context for processing requests (used by standalone/HTTP implementations)
-   */
-  interface ProcessContext {
+    route: any;
     /** HTTP method */
-    method?: string;
+    method: HttpMethod;
+    /** Route parameters */
+    params: Record<string, string>;
+    /** Query parameters */
+    query: Record<string, string>;
     /** Request headers */
-    headers?: Record<string, string>;
+    headers: Record<string, string>;
     /** Request body */
     body?: any;
-    /** Query parameters */
-    query?: Record<string, string>;
-    /** Path parameters */
-    params?: Record<string, string>;
+    /** Shared state between plugins for this request */
+    state: Map<string, any>;
+    /** Route-specific state */
+    routeState?: any;
   }
 
-  /**
-   * Events emitted during request lifecycle
-   */
-  interface EventMap {
-    /** Emitted when request processing starts */
-    "request:start": { request: Request; route: Route };
-    /** Emitted when request processing ends */
-    "request:end": { request: Request; response: Response };
-    /** Emitted before data generation */
-    "generate:start": PluginContext;
-    /** Emitted after data generation */
-    "generate:end": { context: PluginContext; data: any };
-    /** Emitted when plugin is registered */
-    "plugin:registered": { plugin: Plugin };
-    /** Emitted on errors */
-    error: { error: Error; context?: PluginContext };
-  }
-
-  /**
-   * Schmock instance with HTTP methods (for backward compatibility)
-   */
-  interface Core {
-    /**
-     * Register a plugin (overrides return type for chaining)
-     */
-    use(plugin: Plugin): Core;
-
-    /**
-     * Make a request with any HTTP method
-     * @param method - HTTP method
-     * @param path - Request path
-     * @param options - Additional request options
-     */
-    request(
-      method: Request["method"],
-      path: string,
-      options?: Partial<Omit<Request, "method" | "path">>,
-    ): Promise<Response>;
-
-    /**
-     * Make a GET request
-     * @param path - Request path
-     * @param options - Additional request options
-     */
-    get(
-      path: string,
-      options?: Partial<Omit<Request, "method" | "path">>,
-    ): Promise<Response>;
-
-    /**
-     * Make a POST request
-     * @param path - Request path
-     * @param body - Request body
-     * @param options - Additional request options
-     */
-    post(
-      path: string,
-      body?: any,
-      options?: Partial<Omit<Request, "method" | "path" | "body">>,
-    ): Promise<Response>;
-
-    /**
-     * Make a PUT request
-     * @param path - Request path
-     * @param body - Request body
-     * @param options - Additional request options
-     */
-    put(
-      path: string,
-      body?: any,
-      options?: Partial<Omit<Request, "method" | "path" | "body">>,
-    ): Promise<Response>;
-
-    /**
-     * Make a DELETE request
-     * @param path - Request path
-     * @param options - Additional request options
-     */
-    delete(
-      path: string,
-      options?: Partial<Omit<Request, "method" | "path">>,
-    ): Promise<Response>;
-
-    /**
-     * Make a PATCH request
-     * @param path - Request path
-     * @param body - Request body
-     * @param options - Additional request options
-     */
-    patch(
-      path: string,
-      body?: any,
-      options?: Partial<Omit<Request, "method" | "path" | "body">>,
-    ): Promise<Response>;
-
-    /**
-     * Subscribe to an event
-     * @param event - Event name
-     * @param handler - Event handler
-     */
-    on<K extends keyof EventMap>(
-      event: K,
-      handler: (data: EventMap[K]) => void,
-    ): void;
-
-    /**
-     * Unsubscribe from an event
-     * @param event - Event name
-     * @param handler - Event handler to remove
-     */
-    off<K extends keyof EventMap>(
-      event: K,
-      handler: (data: EventMap[K]) => void,
-    ): void;
-
-    /**
-     * Emit an event
-     * @param event - Event name
-     * @param data - Event data
-     */
-    emit<K extends keyof EventMap>(event: K, data: EventMap[K]): void;
-  }
 
   // ===== Fluent Builder API Types =====
 
@@ -299,6 +136,8 @@ declare namespace Schmock {
     namespace?: string;
     /** Response delay in ms, or [min, max] for random delay */
     delay?: number | [number, number];
+    /** Enable debug mode for detailed logging */
+    debug?: boolean;
   }
 
   /**
@@ -406,7 +245,7 @@ declare namespace Schmock {
     /**
      * Register a plugin
      */
-    use(plugin: Plugin): Builder<TState>;
+    use(plugin: Plugin | (() => Plugin)): Builder<TState>;
 
     /**
      * Build the mock instance
