@@ -16,6 +16,7 @@
       "@schmock/builder": ["packages/builder/src"],
       "@schmock/express": ["packages/express/src"],
       "@schmock/schema": ["packages/schema/src"],
+      "@schmock/angular": ["packages/angular/src"],
       "@features/*": ["features/*"]
     }
   },
