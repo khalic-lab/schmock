@@ -5,7 +5,7 @@ import {
   ResourceLimitError,
   SchemaGenerationError,
   SchemaValidationError,
-} from "@schmock/builder";
+} from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import jsf from "json-schema-faker";
 

@@ -16,7 +16,7 @@ function schmock(): MockInstance
 
 **Example**:
 ```typescript
-import { schmock } from '@schmock/builder';
+import { schmock } from '@schmock/core';
 
 const mock = schmock();
 ```
@@ -483,7 +483,7 @@ import {
   SchemaValidationError,
   SchemaGenerationError,
   ResourceLimitError 
-} from '@schmock/builder';
+} from '@schmock/core';
 ```
 
 ### Error Context

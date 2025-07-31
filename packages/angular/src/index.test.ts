@@ -8,7 +8,7 @@ import {
   HttpRequest,
   HttpResponse,
 } from "@angular/common/http";
-import type { MockInstance } from "@schmock/builder";
+import type { MockInstance } from "@schmock/core";
 import { of } from "rxjs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSchmockInterceptor, provideSchmockInterceptor } from "./index";

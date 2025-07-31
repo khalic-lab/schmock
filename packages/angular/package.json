@@ -20,7 +20,7 @@
     "lint:fix": "biome check --write src"
   },
   "dependencies": {
-    "@schmock/builder": "workspace:*",
+    "@schmock/core": "workspace:*",
     "rxjs": "^7.8.1"
   },
   "peerDependencies": {

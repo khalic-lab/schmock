@@ -20,16 +20,16 @@ export async function buildLocalPackages(): Promise<PackageInfo[]> {
   
   const packages: PackageInfo[] = [];
   
-  // Pack builder package
-  const builderDir = join(rootDir, "packages/builder");
-  execSync("npm pack --silent", { cwd: builderDir, stdio: "pipe" });
+  // Pack core package
+  const coreDir = join(rootDir, "packages/core");
+  execSync("npm pack --silent", { cwd: coreDir, stdio: "pipe" });
   
   // Find the generated tarball
-  const builderTarball = "schmock-builder-0.1.0.tgz"; // Based on package.json name/version
+  const coreTarball = "schmock-core-0.1.0.tgz"; // Based on package.json name/version
   
   packages.push({
-    name: "@schmock/builder",
-    tarballPath: join(builderDir, builderTarball)
+    name: "@schmock/core",
+    tarballPath: join(coreDir, coreTarball)
   });
   
   // Pack express package

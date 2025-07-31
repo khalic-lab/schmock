@@ -84,7 +84,7 @@ describe("Express Integration E2E", () => {
     const { join } = await import("node:path");
     
     await writeFile(join(project.dir, "index.js"), `import express from 'express';
-import { schmock } from '@schmock/builder';
+import { schmock } from '@schmock/core';
 import { toExpress } from '@schmock/express';
 
 const app = express();

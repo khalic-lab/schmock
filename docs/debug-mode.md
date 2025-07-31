@@ -7,7 +7,7 @@ Schmock includes a comprehensive debug mode that provides detailed logging throu
 Debug mode can be enabled through the `config()` method when building your Schmock instance:
 
 ```typescript
-import { schmock } from '@schmock/builder';
+import { schmock } from '@schmock/core';
 
 const mock = schmock()
   .config({ debug: true })

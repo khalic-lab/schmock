@@ -5,7 +5,7 @@
  * Run with: bun run examples/debug-example.ts
  */
 
-import { schmock } from "../packages/builder/src/index";
+import { schmock } from "../packages/core/src/index";
 import { schemaPlugin } from "../packages/schema/src/index";
 
 // Example logging plugin

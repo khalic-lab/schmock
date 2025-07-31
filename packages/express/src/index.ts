@@ -1,7 +1,7 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
-import type { MockInstance } from "@schmock/builder";
-import { SchmockError } from "@schmock/builder";
+import type { MockInstance } from "@schmock/core";
+import { SchmockError } from "@schmock/core";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 /**

@@ -13,7 +13,7 @@
     "composite": true,
     "baseUrl": ".",
     "paths": {
-      "@schmock/builder": ["packages/builder/src"],
+      "@schmock/core": ["packages/core/src"],
       "@schmock/express": ["packages/express/src"],
       "@schmock/schema": ["packages/schema/src"],
       "@schmock/angular": ["packages/angular/src"],
