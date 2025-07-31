@@ -18,11 +18,10 @@ export class SchmockError extends Error {
  */
 export class RouteNotFoundError extends SchmockError {
   constructor(method: string, path: string) {
-    super(
-      `Route not found: ${method} ${path}`,
-      "ROUTE_NOT_FOUND",
-      { method, path },
-    );
+    super(`Route not found: ${method} ${path}`, "ROUTE_NOT_FOUND", {
+      method,
+      path,
+    });
     this.name = "RouteNotFoundError";
   }
 }
@@ -60,11 +59,10 @@ export class ResponseGenerationError extends SchmockError {
  */
 export class PluginError extends SchmockError {
   constructor(pluginName: string, error: Error) {
-    super(
-      `Plugin "${pluginName}" failed: ${error.message}`,
-      "PLUGIN_ERROR",
-      { pluginName, originalError: error },
-    );
+    super(`Plugin "${pluginName}" failed: ${error.message}`, "PLUGIN_ERROR", {
+      pluginName,
+      originalError: error,
+    });
     this.name = "PluginError";
   }
 }
