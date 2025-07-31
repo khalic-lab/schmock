@@ -20,8 +20,8 @@
     "build:types": "tsc -p tsconfig.json",
     "test": "vitest",
     "test:watch": "vitest --watch",
-    "lint": "biome check src/**/*.ts",
-    "lint:fix": "biome check --write --unsafe src/**/*.ts"
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write --unsafe src/"
   },
   "dependencies": {},
   "devDependencies": {

@@ -26,12 +26,6 @@ jsf.option({
 const MAX_ARRAY_SIZE = 10000;
 const MAX_NESTING_DEPTH = 10; // Reasonable limit for schema nesting
 
-interface SchemaRouteExtension {
-  schema?: JSONSchema7;
-  count?: number;
-  overrides?: Record<string, any>;
-}
-
 interface SchemaGenerationContext {
   schema: JSONSchema7;
   count?: number;
@@ -195,11 +189,13 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
           } catch (error: unknown) {
             // Re-throw with proper path context
             if (error instanceof SchemaValidationError) {
-              const context = error.context as { issue?: string; suggestion?: string } | undefined;
+              const context = error.context as
+                | { issue?: string; suggestion?: string }
+                | undefined;
               throw new SchemaValidationError(
                 `${path}.properties.${propName}.faker`,
                 context?.issue || "Invalid faker method",
-                context?.suggestion
+                context?.suggestion,
               );
             }
             throw error;
