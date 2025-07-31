@@ -10,6 +10,6 @@
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"],
   "references": [
-    { "path": "../builder" }
+    { "path": "../core" }
   ]
 }

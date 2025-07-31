@@ -75,7 +75,7 @@ async function createBasicExpressTemplate(targetDir: string): Promise<void> {
 
   // index.js template
   await writeFile(join(targetDir, "index.js"), `import express from 'express';
-import { schmock } from '@schmock/builder';
+import { schmock } from '@schmock/core';
 import { toExpress } from '@schmock/express';
 
 const app = express();

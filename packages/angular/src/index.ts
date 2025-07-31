@@ -12,7 +12,7 @@ import {
   HttpResponse,
 } from "@angular/common/http";
 import { Injectable } from "@angular/core";
-import type { MockInstance } from "@schmock/builder";
+import type { MockInstance } from "@schmock/core";
 import { Observable } from "rxjs";
 
 /**

@@ -1,6 +1,6 @@
 {
-  "name": "@schmock/builder",
-  "description": "Fluent API builder for Schmock",
+  "name": "@schmock/core",
+  "description": "Core functionality for Schmock",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",

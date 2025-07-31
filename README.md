@@ -20,13 +20,13 @@ Schmock is a powerful mock API generator that allows you to quickly create predi
 
 ```sh
 # Using bun (recommended)
-bun add @schmock/builder
+bun add @schmock/core
 
 # Using npm
-npm install @schmock/builder
+npm install @schmock/core
 
 # Using yarn
-yarn add @schmock/builder
+yarn add @schmock/core
 ```
 
 ## Quick Start
@@ -34,7 +34,7 @@ yarn add @schmock/builder
 ### Basic Usage
 
 ```typescript
-import { schmock } from '@schmock/builder'
+import { schmock } from '@schmock/core'
 
 // Create a mock API with fluent syntax
 const mock = schmock()
@@ -215,7 +215,7 @@ app.listen(3000)
 ### Schema-Based Generation (Coming Soon)
 
 ```typescript
-import { schmock } from '@schmock/builder'
+import { schmock } from '@schmock/core'
 import { schemaPlugin } from '@schmock/plugin-schema'
 
 const mock = schmock()
@@ -296,7 +296,7 @@ bun run build
 ```
 schmock/
 ├── packages/
-│   ├── builder/        # New fluent API builder
+│   ├── core/           # Core Schmock functionality with fluent API
 │   ├── core/           # Core Schmock functionality (legacy)
 │   ├── express/        # Express middleware (planned)
 │   └── plugin-schema/  # Schema plugin (planned)
@@ -323,7 +323,7 @@ See [CLAUDE.md](./CLAUDE.md) for detailed development guidelines.
 - [x] Support for all HTTP methods (POST, PUT, DELETE, PATCH)
 - [x] Dynamic route patterns (e.g., `/api/users/:id`)
 - [x] State management between requests
-- [x] Fluent API with builder pattern
+- [x] Fluent API with core functionality
 - [x] Custom status codes and headers
 - [ ] Schema-based data generation
 - [ ] Plugin system implementation

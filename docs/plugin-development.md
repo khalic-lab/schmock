@@ -224,7 +224,7 @@ function errorPlugin(): Plugin {
 Always develop plugins in TypeScript for better type safety:
 
 ```typescript
-import type { Plugin, PluginContext } from '@schmock/builder';
+import type { Plugin, PluginContext } from '@schmock/core';
 
 export function myPlugin(): Plugin {
   return {
@@ -369,7 +369,7 @@ Example `package.json`:
   "types": "dist/index.d.ts",
   "keywords": ["schmock", "plugin", "auth", "mock"],
   "peerDependencies": {
-    "@schmock/builder": "^1.0.0"
+    "@schmock/core": "^1.0.0"
   }
 }
 ```
