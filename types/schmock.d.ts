@@ -37,6 +37,8 @@ declare namespace Schmock {
   interface Config {
     /** Route definitions mapped by path pattern */
     routes: Record<string, Route | any>;
+    /** Enable debug mode for detailed logging */
+    debug?: boolean;
   }
 
   /**
@@ -334,6 +336,8 @@ declare namespace Schmock {
     namespace?: string;
     /** Response delay in ms, or [min, max] for random delay */
     delay?: number | [number, number];
+    /** Enable debug mode for detailed logging */
+    debug?: boolean;
   }
 
   /**
