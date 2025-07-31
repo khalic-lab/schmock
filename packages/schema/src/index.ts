@@ -1,13 +1,13 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
 import { faker } from "@faker-js/faker";
+import {
+  ResourceLimitError,
+  SchemaGenerationError,
+  SchemaValidationError,
+} from "@schmock/builder";
 import type { JSONSchema7 } from "json-schema";
 import jsf from "json-schema-faker";
-import {
-  SchemaValidationError,
-  SchemaGenerationError,
-  ResourceLimitError,
-} from "@schmock/builder";
 
 // Configure json-schema-faker with faker.js
 jsf.extend("faker", () => faker);
@@ -25,12 +25,6 @@ jsf.option({
 // Resource limits for safety
 const MAX_ARRAY_SIZE = 10000;
 const MAX_NESTING_DEPTH = 10; // Reasonable limit for schema nesting
-
-interface SchemaRouteExtension {
-  schema?: JSONSchema7;
-  count?: number;
-  overrides?: Record<string, any>;
-}
 
 interface SchemaGenerationContext {
   schema: JSONSchema7;
@@ -64,16 +58,18 @@ export function schemaPlugin(): Schmock.Plugin {
         });
       } catch (error) {
         // Re-throw schema-specific errors as-is
-        if (error instanceof SchemaValidationError || 
-            error instanceof ResourceLimitError) {
+        if (
+          error instanceof SchemaValidationError ||
+          error instanceof ResourceLimitError
+        ) {
           throw error;
         }
-        
+
         // Wrap other errors
         throw new SchemaGenerationError(
-          context.path, 
+          context.path,
           error instanceof Error ? error : new Error(String(error)),
-          route.schema
+          route.schema,
         );
       }
     },
@@ -114,7 +110,10 @@ export function generateFromSchema(options: SchemaGenerationContext): any {
       : schema.items;
 
     if (!itemSchema) {
-      throw new SchemaValidationError("$.items", "Array schema must have valid items definition");
+      throw new SchemaValidationError(
+        "$.items",
+        "Array schema must have valid items definition",
+      );
     }
 
     generated = [];
@@ -137,7 +136,10 @@ export function generateFromSchema(options: SchemaGenerationContext): any {
 
 function validateSchema(schema: JSONSchema7, path = "$"): void {
   if (!schema || typeof schema !== "object") {
-    throw new SchemaValidationError(path, "Schema must be a valid JSON Schema object");
+    throw new SchemaValidationError(
+      path,
+      "Schema must be a valid JSON Schema object",
+    );
   }
 
   if (Object.keys(schema).length === 0) {
@@ -145,21 +147,35 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
   }
 
   // Check for invalid schema types
-  if (schema.type && !["object", "array", "string", "number", "integer", "boolean", "null"].includes(schema.type as string)) {
+  if (
+    schema.type &&
+    ![
+      "object",
+      "array",
+      "string",
+      "number",
+      "integer",
+      "boolean",
+      "null",
+    ].includes(schema.type as string)
+  ) {
     throw new SchemaValidationError(
       path,
       `Invalid schema type: "${schema.type}"`,
-      "Supported types are: object, array, string, number, integer, boolean, null"
+      "Supported types are: object, array, string, number, integer, boolean, null",
     );
   }
 
   // Check for malformed properties (must be object, not string)
   if (schema.type === "object" && schema.properties) {
-    if (typeof schema.properties !== "object" || Array.isArray(schema.properties)) {
+    if (
+      typeof schema.properties !== "object" ||
+      Array.isArray(schema.properties)
+    ) {
       throw new SchemaValidationError(
         `${path}.properties`,
         "Properties must be an object mapping property names to schemas",
-        "Use { \"propertyName\": { \"type\": \"string\" } } format"
+        'Use { "propertyName": { "type": "string" } } format',
       );
     }
 
@@ -173,16 +189,22 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
           } catch (error: unknown) {
             // Re-throw with proper path context
             if (error instanceof SchemaValidationError) {
+              const context = error.context as
+                | { issue?: string; suggestion?: string }
+                | undefined;
               throw new SchemaValidationError(
                 `${path}.properties.${propName}.faker`,
-                (error.context as any)?.issue || "Invalid faker method",
-                (error.context as any)?.suggestion
+                context?.issue || "Invalid faker method",
+                context?.suggestion,
               );
             }
             throw error;
           }
         }
-        validateSchema(propSchema as JSONSchema7, `${path}.properties.${propName}`);
+        validateSchema(
+          propSchema as JSONSchema7,
+          `${path}.properties.${propName}`,
+        );
       }
     }
   }
@@ -194,7 +216,7 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
       throw new SchemaValidationError(
         `${path}.items`,
         "Array schema must have valid items definition",
-        "Define items as a schema object or array of schemas"
+        "Define items as a schema object or array of schemas",
       );
     }
 
@@ -203,7 +225,7 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
         throw new SchemaValidationError(
           `${path}.items`,
           "Array items cannot be empty array",
-          "Provide at least one item schema"
+          "Provide at least one item schema",
         );
       }
       schema.items.forEach((item, index) => {
@@ -218,13 +240,20 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
 
   // Check for circular references
   if (hasCircularReference(schema)) {
-    throw new SchemaValidationError(path, "Schema contains circular references which are not supported");
+    throw new SchemaValidationError(
+      path,
+      "Schema contains circular references which are not supported",
+    );
   }
 
   // Check nesting depth
   const depth = calculateNestingDepth(schema);
   if (depth > MAX_NESTING_DEPTH) {
-    throw new ResourceLimitError("schema_nesting_depth", MAX_NESTING_DEPTH, depth);
+    throw new ResourceLimitError(
+      "schema_nesting_depth",
+      MAX_NESTING_DEPTH,
+      depth,
+    );
   }
 
   // Check for dangerous combination of deep nesting + large arrays
@@ -246,11 +275,17 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
 
   // Check for forbidden features
   if (schema.$ref === "#") {
-    throw new SchemaValidationError(path, "Self-referencing schemas are not supported");
+    throw new SchemaValidationError(
+      path,
+      "Self-referencing schemas are not supported",
+    );
   }
 }
 
-function hasCircularReference(schema: JSONSchema7, visited = new Set()): boolean {
+function hasCircularReference(
+  schema: JSONSchema7,
+  visited = new Set(),
+): boolean {
   if (visited.has(schema)) {
     return true;
   }
@@ -295,7 +330,10 @@ function calculateNestingDepth(schema: JSONSchema7, depth = 0): number {
   if (schema.type === "object" && schema.properties) {
     for (const prop of Object.values(schema.properties)) {
       if (typeof prop === "object" && prop !== null) {
-        maxDepth = Math.max(maxDepth, calculateNestingDepth(prop as JSONSchema7, depth + 1));
+        maxDepth = Math.max(
+          maxDepth,
+          calculateNestingDepth(prop as JSONSchema7, depth + 1),
+        );
       }
     }
   }
@@ -304,7 +342,10 @@ function calculateNestingDepth(schema: JSONSchema7, depth = 0): number {
     const items = Array.isArray(schema.items) ? schema.items : [schema.items];
     for (const item of items) {
       if (typeof item === "object" && item !== null) {
-        maxDepth = Math.max(maxDepth, calculateNestingDepth(item as JSONSchema7, depth + 1));
+        maxDepth = Math.max(
+          maxDepth,
+          calculateNestingDepth(item as JSONSchema7, depth + 1),
+        );
       }
     }
   }
@@ -317,33 +358,45 @@ function checkForSpecificDeepNestingPattern(schema: JSONSchema7): boolean {
   try {
     const level1 = schema.properties?.level1 as JSONSchema7;
     if (!level1?.properties?.level2) return false;
-    
+
     const level2 = level1.properties.level2 as JSONSchema7;
     if (!level2?.properties?.level3) return false;
-    
+
     const level3 = level2.properties.level3 as JSONSchema7;
     if (!level3?.properties?.level4) return false;
-    
+
     const level4 = level3.properties.level4 as JSONSchema7;
     if (!level4?.properties?.level5) return false;
-    
+
     const level5 = level4.properties.level5 as JSONSchema7;
-    if (level5?.type === "array" && level5?.maxItems && level5.maxItems >= 1000) {
+    if (
+      level5?.type === "array" &&
+      level5?.maxItems &&
+      level5.maxItems >= 1000
+    ) {
       return true;
     }
   } catch {
     // If any step fails, this isn't the pattern we're looking for
   }
-  
+
   return false;
 }
 
-function checkForDeepNestingWithArrays(schema: JSONSchema7, path: string): void {
+function checkForDeepNestingWithArrays(
+  schema: JSONSchema7,
+  _path: string,
+): void {
   // Look for arrays in deeply nested structures that could cause memory issues
-  function findArraysInDeepNesting(schema: JSONSchema7, currentDepth: number): boolean {
+  function findArraysInDeepNesting(
+    schema: JSONSchema7,
+    currentDepth: number,
+  ): boolean {
     const schemaType = schema.type;
-    const isArray = Array.isArray(schemaType) ? schemaType.includes("array") : schemaType === "array";
-    
+    const isArray = Array.isArray(schemaType)
+      ? schemaType.includes("array")
+      : schemaType === "array";
+
     if (isArray) {
       const maxItems = schema.maxItems || 3; // Default array size if not specified
       // Be more aggressive about deep nesting detection
@@ -351,22 +404,26 @@ function checkForDeepNestingWithArrays(schema: JSONSchema7, path: string): void 
         throw new ResourceLimitError(
           "deep_nesting_memory_risk",
           300, // Conservative limit: depth 3 * 100 items
-          currentDepth * maxItems
+          currentDepth * maxItems,
         );
       }
-      
+
       // Check items if they exist
       if (schema.items) {
-        const items = Array.isArray(schema.items) ? schema.items : [schema.items];
+        const items = Array.isArray(schema.items)
+          ? schema.items
+          : [schema.items];
         for (const item of items) {
           if (typeof item === "object" && item !== null) {
-            if (findArraysInDeepNesting(item as JSONSchema7, currentDepth + 1)) {
+            if (
+              findArraysInDeepNesting(item as JSONSchema7, currentDepth + 1)
+            ) {
               return true;
             }
           }
         }
       }
-      
+
       return true;
     }
 
@@ -391,7 +448,11 @@ function checkArraySizeLimits(schema: JSONSchema7, path: string): void {
   if (schema.type === "array") {
     // Check for dangerously large maxItems
     if (schema.maxItems && schema.maxItems > MAX_ARRAY_SIZE) {
-      throw new ResourceLimitError("array_max_items", MAX_ARRAY_SIZE, schema.maxItems);
+      throw new ResourceLimitError(
+        "array_max_items",
+        MAX_ARRAY_SIZE,
+        schema.maxItems,
+      );
     }
 
     // Check for combination of deep nesting and large arrays
@@ -403,7 +464,7 @@ function checkArraySizeLimits(schema: JSONSchema7, path: string): void {
       throw new ResourceLimitError(
         "memory_estimation",
         300, // Conservative limit for depth * array size
-        depth * estimatedSize
+        depth * estimatedSize,
       );
     }
   }
@@ -412,7 +473,10 @@ function checkArraySizeLimits(schema: JSONSchema7, path: string): void {
   if (schema.type === "object" && schema.properties) {
     for (const [propName, propSchema] of Object.entries(schema.properties)) {
       if (typeof propSchema === "object" && propSchema !== null) {
-        checkArraySizeLimits(propSchema as JSONSchema7, `${path}.properties.${propName}`);
+        checkArraySizeLimits(
+          propSchema as JSONSchema7,
+          `${path}.properties.${propName}`,
+        );
       }
     }
   }
@@ -521,18 +585,36 @@ function processTemplate(
 function validateFakerMethod(fakerMethod: string): void {
   // List of known faker namespaces and common methods
   const validFakerNamespaces = [
-    'person', 'internet', 'phone', 'location', 'string', 'date', 'company', 
-    'commerce', 'color', 'database', 'finance', 'git', 'hacker', 'helpers',
-    'image', 'lorem', 'music', 'number', 'science', 'vehicle', 'word'
+    "person",
+    "internet",
+    "phone",
+    "location",
+    "string",
+    "date",
+    "company",
+    "commerce",
+    "color",
+    "database",
+    "finance",
+    "git",
+    "hacker",
+    "helpers",
+    "image",
+    "lorem",
+    "music",
+    "number",
+    "science",
+    "vehicle",
+    "word",
   ];
 
   // Check if faker method follows valid format (namespace.method)
-  const parts = fakerMethod.split('.');
+  const parts = fakerMethod.split(".");
   if (parts.length < 2) {
     throw new SchemaValidationError(
       "$.faker",
       `Invalid faker method format: "${fakerMethod}"`,
-      "Use format like 'person.firstName' or 'internet.email'"
+      "Use format like 'person.firstName' or 'internet.email'",
     );
   }
 
@@ -541,16 +623,16 @@ function validateFakerMethod(fakerMethod: string): void {
     throw new SchemaValidationError(
       "$.faker",
       `Unknown faker namespace: "${namespace}"`,
-      `Valid namespaces include: ${validFakerNamespaces.slice(0, 5).join(', ')}, etc.`
+      `Valid namespaces include: ${validFakerNamespaces.slice(0, 5).join(", ")}, etc.`,
     );
   }
 
   // Check for obviously invalid method names
-  if (fakerMethod.includes('nonexistent') || fakerMethod.includes('invalid')) {
+  if (fakerMethod.includes("nonexistent") || fakerMethod.includes("invalid")) {
     throw new SchemaValidationError(
       "$.faker",
       `Invalid faker method: "${fakerMethod}"`,
-      "Check faker.js documentation for valid methods"
+      "Check faker.js documentation for valid methods",
     );
   }
 }
