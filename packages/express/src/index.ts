@@ -2,6 +2,67 @@
 
 import type { Request, Response, NextFunction, RequestHandler } from "express";
 import type { MockInstance } from "@schmock/builder";
+import { SchmockError } from "@schmock/builder";
+
+/**
+ * Configuration options for Express adapter
+ */
+export interface ExpressAdapterOptions {
+  /**
+   * Custom error formatter
+   * @param error - The error that occurred
+   * @param req - Express request
+   * @returns Custom error response
+   */
+  errorFormatter?: (error: Error, req: Request) => any;
+  
+  /**
+   * Whether to pass non-Schmock errors to Express error handler
+   * @default true
+   */
+  passErrorsToNext?: boolean;
+  
+  /**
+   * Custom header transformation
+   * @param headers - Express headers
+   * @returns Transformed headers for Schmock
+   */
+  transformHeaders?: (headers: Request['headers']) => Record<string, string>;
+  
+  /**
+   * Custom query transformation
+   * @param query - Express query
+   * @returns Transformed query for Schmock
+   */
+  transformQuery?: (query: Request['query']) => Record<string, string>;
+  
+  /**
+   * Request interceptor - called before handling request
+   * @param req - Express request
+   * @param res - Express response
+   * @returns Modified request data or void
+   */
+  beforeRequest?: (req: Request, res: Response) => {
+    method?: string;
+    path?: string;
+    headers?: Record<string, string>;
+    body?: any;
+    query?: Record<string, string>;
+  } | void | Promise<any>;
+  
+  /**
+   * Response interceptor - called before sending response
+   * @param schmockResponse - Response from Schmock
+   * @param req - Express request
+   * @param res - Express response
+   * @returns Modified response or void
+   */
+  beforeResponse?: (
+    schmockResponse: Schmock.Response,
+    req: Request,
+    res: Response
+  ) => Schmock.Response | void | Promise<Schmock.Response | void>;
+}
 
 /**
  * Convert Schmock response to Express response
@@ -37,28 +98,91 @@ function schmockToExpressResponse(
 }
 
 /**
+ * Default header transformer
+ */
+function defaultTransformHeaders(headers: Request['headers']): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [
+      key, 
+      Array.isArray(value) ? value[0] : value || ""
+    ])
+  );
+}
+
+/**
+ * Default query transformer
+ */
+function defaultTransformQuery(query: Request['query']): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (typeof value === 'string') {
+      result[key] = value;
+    } else if (Array.isArray(value)) {
+      result[key] = value[0] ? String(value[0]) : '';
+    } else if (value != null) {
+      result[key] = String(value);
+    }
+  }
+  return result;
+}
+
+/**
  * Convert a Schmock mock instance to Express middleware
  */
-export function toExpress(mock: MockInstance): RequestHandler {
+export function toExpress(
+  mock: MockInstance,
+  options: ExpressAdapterOptions = {}
+): RequestHandler {
+  const {
+    errorFormatter,
+    passErrorsToNext = true,
+    transformHeaders = defaultTransformHeaders,
+    transformQuery = defaultTransformQuery,
+    beforeRequest,
+    beforeResponse
+  } = options;
+
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
+      // Run request interceptor if provided
+      let requestData = {
+        method: req.method as Schmock.HttpMethod,
+        path: req.path,
+        headers: transformHeaders(req.headers),
+        body: req.body,
+        query: transformQuery(req.query)
+      };
+
+      if (beforeRequest) {
+        const intercepted = await beforeRequest(req, res);
+        if (intercepted) {
+          requestData = {
+            ...requestData,
+            ...intercepted
+          };
+        }
+      }
+
       // Handle request with Schmock
-      const schmockResponse = await mock.handle(
-        req.method as Schmock.HttpMethod,
-        req.path,
+      let schmockResponse = await mock.handle(
+        requestData.method,
+        requestData.path,
         {
-          headers: Object.fromEntries(
-            Object.entries(req.headers).map(([key, value]) => [
-              key, 
-              Array.isArray(value) ? value[0] : value || ""
-            ])
-          ),
-          body: req.body,
-          query: req.query as Record<string, string>
+          headers: requestData.headers,
+          body: requestData.body,
+          query: requestData.query
         }
       );
       
       if (schmockResponse) {
+        // Run response interceptor if provided
+        if (beforeResponse) {
+          const intercepted = await beforeResponse(schmockResponse, req, res);
+          if (intercepted) {
+            schmockResponse = intercepted;
+          }
+        }
+
         // Convert and send Schmock response
         schmockToExpressResponse(schmockResponse, res);
       } else {
@@ -66,8 +190,21 @@ export function toExpress(mock: MockInstance): RequestHandler {
         next();
       }
     } catch (error) {
-      // Pass errors to Express error handler
-      next(error);
+      // Handle errors based on configuration
+      if (error instanceof SchmockError && errorFormatter) {
+        // Use custom error formatter for Schmock errors
+        const formatted = errorFormatter(error, req);
+        res.status(500).json(formatted);
+      } else if (passErrorsToNext) {
+        // Pass errors to Express error handler
+        next(error);
+      } else {
+        // Handle error directly
+        res.status(500).json({
+          error: error instanceof Error ? error.message : 'Internal Server Error',
+          code: error instanceof SchmockError ? error.code : 'INTERNAL_ERROR'
+        });
+      }
     }
   };
 }

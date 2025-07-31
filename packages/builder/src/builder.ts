@@ -59,9 +59,17 @@ export class SchmockBuilder<TState = unknown> implements Builder<TState> {
     return newBuilder;
   }
 
-  use(plugin: Plugin): Builder<TState> {
-    this.options.plugins.push(plugin);
-    return this;
+  use(plugin: Plugin | (() => Plugin)): Builder<TState> {
+    try {
+      const resolvedPlugin = typeof plugin === 'function' ? plugin() : plugin;
+      this.options.plugins.push(resolvedPlugin);
+      return this;
+    } catch (error) {
+      throw new PluginError(
+        typeof plugin === 'function' ? 'unknown' : plugin.name || 'unknown',
+        error as Error
+      );
+    }
   }
 
   build(): MockInstance<TState> {
@@ -111,12 +119,16 @@ export class SchmockBuilder<TState = unknown> implements Builder<TState> {
  */
 class SchmockInstance<TState> implements MockInstance<TState> {
   private eventHandlers = new Map<string, Set<(data: unknown) => void>>();
+  private sortedPlugins: Plugin[];
 
   constructor(
     private routes: CompiledRoute<TState>[],
     private state: TState,
     private plugins: Plugin[] = [],
-  ) {}
+  ) {
+    // Sort plugins by enforce property
+    this.sortedPlugins = this.sortPlugins(plugins);
+  }
 
   async handle(
     method: HttpMethod,
@@ -150,19 +162,51 @@ class SchmockInstance<TState> implements MockInstance<TState> {
         return response;
       }
 
-      // Extract params from path
-      const params = this.extractParams(route, path);
+      // Build initial plugin context
+      let pluginContext: Schmock.PluginContext = {
+        path,
+        route: route.definition as any,
+        method,
+        params: this.extractParams(route, path),
+        query: options?.query || {},
+        headers: options?.headers || {},
+        body: options?.body,
+        state: new Map(),
+        routeState: this.state,
+      };
 
-      // Build context
+      // Run beforeRequest hooks
+      pluginContext = await this.runBeforeRequestHooks(pluginContext);
+
+      // Build response context for route functions
       const context: ResponseContext<TState> = {
         state: this.state,
-        params,
-        query: options?.query || {},
-        body: options?.body,
-        headers: options?.headers || {},
+        params: pluginContext.params,
+        query: pluginContext.query,
+        body: pluginContext.body,
+        headers: pluginContext.headers,
         method,
         path,
       };
+
+      // Check beforeGenerate hooks for early response
+      const earlyResponse = await this.runBeforeGenerateHooks(pluginContext);
+      if (earlyResponse !== undefined) {
+        // Plugin returned early response
+        let result = earlyResponse;
+        
+        // Run afterGenerate hooks
+        result = await this.runAfterGenerateHooks(result, pluginContext);
+        
+        // Parse and prepare response
+        let response = this.parseResponse(result);
+        
+        // Run beforeResponse hooks
+        response = await this.runBeforeResponseHooks(response, pluginContext);
+        
+        this.emit("request:end", { method, path, status: response.status });
+        return response;
+      }
 
       // Execute response function or generate data via plugins
       let result: any;
@@ -172,7 +216,7 @@ class SchmockInstance<TState> implements MockInstance<TState> {
         result = await route.definition.response(context);
       } else {
         // No response function - try plugins
-        result = await this.generateViaPlugins(route, context);
+        result = await this.generateViaPlugins(route, pluginContext);
 
         if (result === undefined) {
           throw new ResponseGenerationError(
@@ -182,50 +226,52 @@ class SchmockInstance<TState> implements MockInstance<TState> {
         }
       }
 
-      // Parse result
-      let response: {
-        status: number;
-        body: unknown;
-        headers: Record<string, string>;
-      };
+      // Run afterGenerate hooks
+      result = await this.runAfterGenerateHooks(result, pluginContext);
 
-      if (Array.isArray(result)) {
-        // Check if it's a tuple response [status, body, headers?]
-        if (typeof result[0] === "number") {
-          const [status, body, headers] = result;
-          response = {
-            status,
-            body,
-            headers: headers || {},
-          };
-        } else {
-          response = {
-            status: 200,
-            body: result,
-            headers: {},
-          };
-        }
-      } else {
-        response = {
-          status: 200,
-          body: result,
-          headers: {},
-        };
-      }
+      // Parse and prepare response
+      let response = this.parseResponse(result);
+
+      // Run beforeResponse hooks
+      response = await this.runBeforeResponseHooks(response, pluginContext);
 
       // Emit request:end event
       this.emit("request:end", { method, path, status: response.status });
 
       return response;
     } catch (error) {
+      // Create plugin context for error handling
+      const errorContext: Schmock.PluginContext = {
+        path,
+        method,
+        params: {},
+        query: options?.query || {},
+        headers: options?.headers || {},
+        body: options?.body,
+        state: new Map(),
+        route: {} as any, // Empty route for error context
+        routeState: this.state,
+      };
+
+      // Run onError hooks
+      const errorResult = await this.runOnErrorHooks(error as Error, errorContext);
+
+      // Check if plugin handled the error with a response
+      if (errorResult && typeof errorResult === 'object' && 'status' in errorResult) {
+        const response = errorResult as { status: number; body: unknown; headers: Record<string, string> };
+        this.emit("request:end", { method, path, status: response.status });
+        return response;
+      }
+
       // Emit error event
-      this.emit("error", { error: error as Error, method, path });
-      // Return error response instead of throwing
+      this.emit("error", { error: errorResult as Error, method, path });
+
+      // Return error response
       const errorResponse = {
         status: 500,
         body: {
-          error: error instanceof Error ? error.message : String(error),
-          code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
+          error: errorResult instanceof Error ? errorResult.message : String(errorResult),
+          code: errorResult instanceof SchmockError ? errorResult.code : "INTERNAL_ERROR",
         },
         headers: {},
       };
@@ -287,28 +333,20 @@ class SchmockInstance<TState> implements MockInstance<TState> {
    */
   private async generateViaPlugins(
     route: CompiledRoute<TState>,
-    context: ResponseContext<TState>,
+    context: Schmock.PluginContext,
   ): Promise<any> {
-    const pluginContext: Schmock.PluginContext = {
-      path: context.path,
-      route: route.definition as any,
-      method: context.method,
-      params: context.params,
-      state: new Map(), // Plugin state - separate from route state
-    };
-
     // Try each plugin's generate method
-    for (const plugin of this.plugins) {
+    for (const plugin of this.sortedPlugins) {
       if (plugin.generate) {
         try {
-          const result = await plugin.generate(pluginContext);
+          const result = await plugin.generate(context);
           if (result !== undefined && result !== null) {
             return result;
           }
         } catch (error) {
           // Wrap plugin errors
           const pluginError = new PluginError(plugin.name, error as Error);
-          this.emit("error", { error: pluginError, context: pluginContext });
+          this.emit("error", { error: pluginError, context });
           throw pluginError;
         }
       }
@@ -333,5 +371,153 @@ class SchmockInstance<TState> implements MockInstance<TState> {
         }
       }
     }
+  }
+
+  /**
+   * Sort plugins by enforce property
+   */
+  private sortPlugins(plugins: Plugin[]): Plugin[] {
+    const pre = plugins.filter(p => p.enforce === "pre");
+    const normal = plugins.filter(p => !p.enforce);
+    const post = plugins.filter(p => p.enforce === "post");
+    return [...pre, ...normal, ...post];
+  }
+
+  /**
+   * Parse response from various formats
+   */
+  private parseResponse(result: any): { status: number; body: unknown; headers: Record<string, string> } {
+    if (Array.isArray(result)) {
+      // Check if it's a tuple response [status, body, headers?]
+      if (typeof result[0] === "number") {
+        const [status, body, headers] = result;
+        return {
+          status,
+          body,
+          headers: headers || {},
+        };
+      } else {
+        return {
+          status: 200,
+          body: result,
+          headers: {},
+        };
+      }
+    } else {
+      return {
+        status: 200,
+        body: result,
+        headers: {},
+      };
+    }
+  }
+
+  /**
+   * Run beforeRequest hooks
+   */
+  private async runBeforeRequestHooks(context: Schmock.PluginContext): Promise<Schmock.PluginContext> {
+    let currentContext = context;
+    
+    for (const plugin of this.sortedPlugins) {
+      if (plugin.beforeRequest) {
+        try {
+          const result = await plugin.beforeRequest(currentContext);
+          if (result) {
+            currentContext = result;
+          }
+        } catch (error) {
+          throw new PluginError(plugin.name, error as Error);
+        }
+      }
+    }
+    
+    return currentContext;
+  }
+
+  /**
+   * Run beforeGenerate hooks
+   */
+  private async runBeforeGenerateHooks(context: Schmock.PluginContext): Promise<any> {
+    for (const plugin of this.sortedPlugins) {
+      if (plugin.beforeGenerate) {
+        try {
+          const result = await plugin.beforeGenerate(context);
+          if (result !== undefined && result !== null) {
+            return result;
+          }
+        } catch (error) {
+          throw new PluginError(plugin.name, error as Error);
+        }
+      }
+    }
+    
+    return undefined;
+  }
+
+  /**
+   * Run afterGenerate hooks
+   */
+  private async runAfterGenerateHooks(data: any, context: Schmock.PluginContext): Promise<any> {
+    let currentData = data;
+    
+    for (const plugin of this.sortedPlugins) {
+      if (plugin.afterGenerate) {
+        try {
+          currentData = await plugin.afterGenerate(currentData, context);
+        } catch (error) {
+          throw new PluginError(plugin.name, error as Error);
+        }
+      }
+    }
+    
+    return currentData;
+  }
+
+  /**
+   * Run beforeResponse hooks
+   */
+  private async runBeforeResponseHooks(
+    response: { status: number; body: unknown; headers: Record<string, string> },
+    context: Schmock.PluginContext
+  ): Promise<{ status: number; body: unknown; headers: Record<string, string> }> {
+    let currentResponse = response;
+    
+    for (const plugin of this.sortedPlugins) {
+      if (plugin.beforeResponse) {
+        try {
+          const result = await plugin.beforeResponse(currentResponse as any, context);
+          if (result) {
+            currentResponse = result as any;
+          }
+        } catch (error) {
+          throw new PluginError(plugin.name, error as Error);
+        }
+      }
+    }
+    
+    return currentResponse;
+  }
+
+  /**
+   * Run onError hooks
+   */
+  private async runOnErrorHooks(error: Error, context: Schmock.PluginContext): Promise<Error | any> {
+    let lastError = error;
+    
+    for (const plugin of this.sortedPlugins) {
+      if (plugin.onError) {
+        try {
+          const result = await plugin.onError(lastError, context);
+          if (result) {
+            return result;
+          }
+        } catch (hookError) {
+          // If error hook itself fails, update the error but continue
+          lastError = new PluginError(plugin.name, hookError as Error);
+        }
+      }
+    }
+    
+    return lastError;
   }
 }
