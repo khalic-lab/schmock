@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { schmock } from "./index";
 
 describe("Plugin Lifecycle", () => {
@@ -32,13 +32,13 @@ describe("Plugin Lifecycle", () => {
         beforeResponse: vi.fn((response) => {
           hookCalls.push("beforeResponse");
           return response;
-        })
+        }),
       };
 
       mock = schmock()
         .use(plugin)
         .routes({
-          "GET /test": {}
+          "GET /test": {},
         })
         .build();
 
@@ -49,7 +49,7 @@ describe("Plugin Lifecycle", () => {
         "beforeGenerate",
         "generate",
         "afterGenerate",
-        "beforeResponse"
+        "beforeResponse",
       ]);
     });
 
@@ -62,13 +62,13 @@ describe("Plugin Lifecycle", () => {
         onError: vi.fn((error) => {
           hookCalls.push("onError");
           return error;
-        })
+        }),
       };
 
       mock = schmock()
         .use(plugin)
         .routes({
-          "GET /error": {}
+          "GET /error": {},
         })
         .build();
 
@@ -89,7 +89,7 @@ describe("Plugin Lifecycle", () => {
         generate: () => {
           executionOrder.push("pre");
           return undefined;
-        }
+        },
       };
 
       const normalPlugin = {
@@ -97,14 +97,14 @@ describe("Plugin Lifecycle", () => {
         generate: () => {
           executionOrder.push("normal");
           return { data: "test" };
-        }
+        },
       };
 
       mock = schmock()
         .use(normalPlugin)
         .use(prePlugin) // Added after, but should run first
         .routes({
-          "GET /test": {}
+          "GET /test": {},
         })
         .build();
 
@@ -121,7 +121,7 @@ describe("Plugin Lifecycle", () => {
         afterGenerate: (data: any) => {
           executionOrder.push("normal");
           return data;
-        }
+        },
       };
 
       const postPlugin = {
@@ -130,7 +130,7 @@ describe("Plugin Lifecycle", () => {
         afterGenerate: (data: any) => {
           executionOrder.push("post");
           return data;
-        }
+        },
       };
 
       mock = schmock()
@@ -138,8 +138,8 @@ describe("Plugin Lifecycle", () => {
         .use(normalPlugin)
         .routes({
           "GET /test": {
-            response: () => ({ data: "test" })
-          }
+            response: () => ({ data: "test" }),
+          },
         })
         .build();
 
@@ -158,18 +158,18 @@ describe("Plugin Lifecycle", () => {
             ...ctx,
             headers: {
               ...ctx.headers,
-              "X-Modified": "true"
-            }
+              "X-Modified": "true",
+            },
           };
-        }
+        },
       };
 
       mock = schmock()
         .use(plugin)
         .routes({
           "GET /test": {
-            response: (ctx) => ({ headers: ctx.headers })
-          }
+            response: (ctx) => ({ headers: ctx.headers }),
+          },
         })
         .build();
 
@@ -194,13 +194,13 @@ describe("Plugin Lifecycle", () => {
         afterGenerate: (data: any, ctx: any) => {
           stateValues.afterGenerate = ctx.state.get("value");
           return data;
-        }
+        },
       };
 
       mock = schmock()
         .use(plugin)
         .routes({
-          "GET /test": {}
+          "GET /test": {},
         })
         .build();
 
@@ -220,13 +220,13 @@ describe("Plugin Lifecycle", () => {
         beforeGenerate: () => {
           return { early: true };
         },
-        generate: generateCalled
+        generate: generateCalled,
       };
 
       mock = schmock()
         .use(plugin)
         .routes({
-          "GET /test": {}
+          "GET /test": {},
         })
         .build();
 
@@ -243,9 +243,9 @@ describe("Plugin Lifecycle", () => {
           return {
             status: 503,
             body: { custom: "error" },
-            headers: { "X-Custom": "true" }
+            headers: { "X-Custom": "true" },
           };
-        }
+        },
       };
 
       mock = schmock()
@@ -254,8 +254,8 @@ describe("Plugin Lifecycle", () => {
           "GET /error": {
             response: () => {
               throw new Error("Test error");
-            }
-          }
+            },
+          },
         })
         .build();
 
@@ -273,15 +273,15 @@ describe("Plugin Lifecycle", () => {
         name: "transformer",
         afterGenerate: (data: any) => {
           return { ...data, transformed: true };
-        }
+        },
       };
 
       mock = schmock()
         .use(plugin)
         .routes({
           "GET /test": {
-            response: () => ({ original: true })
-          }
+            response: () => ({ original: true }),
+          },
         })
         .build();
 
@@ -289,19 +289,19 @@ describe("Plugin Lifecycle", () => {
 
       expect(response.body).toEqual({
         original: true,
-        transformed: true
+        transformed: true,
       });
     });
 
     it("multiple plugins compose transformations", async () => {
       const plugin1 = {
         name: "uppercase",
-        afterGenerate: (data: string) => data.toUpperCase()
+        afterGenerate: (data: string) => data.toUpperCase(),
       };
 
       const plugin2 = {
         name: "exclaim",
-        afterGenerate: (data: string) => data + "!"
+        afterGenerate: (data: string) => `${data}!`,
       };
 
       mock = schmock()
@@ -309,8 +309,8 @@ describe("Plugin Lifecycle", () => {
         .use(plugin2)
         .routes({
           "GET /test": {
-            response: () => "hello"
-          }
+            response: () => "hello",
+          },
         })
         .build();
 
@@ -328,18 +328,18 @@ describe("Plugin Lifecycle", () => {
             status: 201,
             headers: {
               ...response.headers,
-              "X-Modified": "true"
-            }
+              "X-Modified": "true",
+            },
           };
-        }
+        },
       };
 
       mock = schmock()
         .use(plugin)
         .routes({
           "GET /test": {
-            response: () => ({ data: "test" })
-          }
+            response: () => ({ data: "test" }),
+          },
         })
         .build();
 
@@ -356,13 +356,13 @@ describe("Plugin Lifecycle", () => {
         name: "failing-plugin",
         generate: () => {
           throw new Error("Plugin error");
-        }
+        },
       };
 
       mock = schmock()
         .use(plugin)
         .routes({
-          "GET /test": {}
+          "GET /test": {},
         })
         .build();
 
@@ -378,15 +378,15 @@ describe("Plugin Lifecycle", () => {
         name: "error-in-hook",
         beforeRequest: () => {
           throw new Error("Hook error");
-        }
+        },
       };
 
       mock = schmock()
         .use(plugin)
         .routes({
           "GET /test": {
-            response: () => ({ data: "test" })
-          }
+            response: () => ({ data: "test" }),
+          },
         })
         .build();
 
@@ -404,13 +404,13 @@ describe("Plugin Lifecycle", () => {
         },
         onError: () => {
           throw new Error("Error handler error");
-        }
+        },
       };
 
       mock = schmock()
         .use(plugin)
         .routes({
-          "GET /test": {}
+          "GET /test": {},
         })
         .build();
 

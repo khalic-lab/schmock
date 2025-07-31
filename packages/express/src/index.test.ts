@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
-import type { Request, Response, NextFunction } from "express";
 import type { MockInstance } from "@schmock/builder";
+import type { NextFunction, Request, Response } from "express";
+import { describe, expect, it, vi } from "vitest";
 import { toExpress } from "./index";
 
 describe("toExpress", () => {
@@ -74,7 +74,12 @@ describe("toExpress", () => {
       off: vi.fn(),
     };
 
-    const req = { method: "GET", path: "/", headers: {}, query: {} } as unknown as Request;
+    const req = {
+      method: "GET",
+      path: "/",
+      headers: {},
+      query: {},
+    } as unknown as Request;
     const res = {
       status: vi.fn().mockReturnThis(),
       send: vi.fn(),
@@ -97,7 +102,12 @@ describe("toExpress", () => {
       off: vi.fn(),
     };
 
-    const req = { method: "GET", path: "/", headers: {}, query: {} } as unknown as Request;
+    const req = {
+      method: "GET",
+      path: "/",
+      headers: {},
+      query: {},
+    } as unknown as Request;
     const res = {} as Response;
     const next = vi.fn() as NextFunction;
 

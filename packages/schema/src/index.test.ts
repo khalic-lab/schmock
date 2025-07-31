@@ -13,7 +13,7 @@ describe("schema generation", () => {
       };
 
       const result = generateFromSchema({ schema });
-      
+
       expect(result).toHaveProperty("id");
       expect(result).toHaveProperty("name");
       expect(typeof result.id).toBe("number");
@@ -32,7 +32,7 @@ describe("schema generation", () => {
       };
 
       const result = generateFromSchema({ schema, count: 5 });
-      
+
       expect(Array.isArray(result)).toBe(true);
       expect(result).toHaveLength(5);
     });
@@ -48,7 +48,7 @@ describe("schema generation", () => {
       };
 
       const result = generateFromSchema({ schema });
-      
+
       expect(result.email).toMatch(/@/);
       expect(result.firstName).toBeTruthy();
       expect(result.createdAt).toBeTruthy();
@@ -68,20 +68,24 @@ describe("schema generation", () => {
         overrides: { userId: "{{params.id}}" },
         params: { id: "123" },
       });
-      
+
       expect(result.userId).toBe(123); // Template converts to number
     });
 
     it("validates schema and throws on invalid input", () => {
-      expect(() => generateFromSchema({ schema: {} as any })).toThrow("Schema cannot be empty");
-      expect(() => generateFromSchema({ schema: null as any })).toThrow("Schema must be a valid JSON Schema object");
+      expect(() => generateFromSchema({ schema: {} as any })).toThrow(
+        "Schema cannot be empty",
+      );
+      expect(() => generateFromSchema({ schema: null as any })).toThrow(
+        "Schema must be a valid JSON Schema object",
+      );
     });
   });
 
   describe("schemaPlugin", () => {
     it("returns plugin with correct metadata", () => {
       const plugin = schemaPlugin();
-      
+
       expect(plugin.name).toBe("schema");
       expect(plugin.version).toBe("0.1.0");
       expect(plugin.generate).toBeTypeOf("function");

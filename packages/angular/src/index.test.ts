@@ -1,11 +1,17 @@
 // Import Angular compiler FIRST before any other imports
-import '@angular/compiler';
+import "@angular/compiler";
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { HttpRequest, HttpHandler, HttpResponse, HttpErrorResponse, HttpEvent } from "@angular/common/http";
-import { Observable, of } from "rxjs";
-import { createSchmockInterceptor, provideSchmockInterceptor } from "./index";
+import {
+  HttpErrorResponse,
+  type HttpEvent,
+  type HttpHandler,
+  HttpRequest,
+  HttpResponse,
+} from "@angular/common/http";
 import type { MockInstance } from "@schmock/builder";
+import { of } from "rxjs";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createSchmockInterceptor, provideSchmockInterceptor } from "./index";
 
 describe("Angular Adapter", () => {
   let mockInstance: MockInstance;
@@ -21,7 +27,7 @@ describe("Angular Adapter", () => {
   describe("createSchmockInterceptor", () => {
     it("creates an interceptor class", () => {
       const InterceptorClass = createSchmockInterceptor(mockInstance);
-      
+
       expect(InterceptorClass).toBeDefined();
       expect(InterceptorClass).toBeTypeOf("function");
       expect(InterceptorClass.name).toBe("SchmockInterceptor");
@@ -31,31 +37,31 @@ describe("Angular Adapter", () => {
       const mockResponse = {
         status: 200,
         body: { data: "mocked" },
-        headers: {}
+        headers: {},
       };
 
       mockInstance.handle = vi.fn().mockResolvedValue(mockResponse);
 
       const InterceptorClass = createSchmockInterceptor(mockInstance);
       const interceptor = new InterceptorClass();
-      
+
       // Create mock request and handler
       const mockRequest = new HttpRequest("GET", "/api/test");
       const mockNext: HttpHandler = {
-        handle: vi.fn().mockReturnValue(of(new HttpResponse({ body: "real" })))
+        handle: vi.fn().mockReturnValue(of(new HttpResponse({ body: "real" }))),
       };
 
       // Call intercept
       const result$ = interceptor.intercept(mockRequest, mockNext);
-      
+
       // Collect emitted values
       const emittedValues: HttpEvent<any>[] = [];
-      
+
       await new Promise<void>((resolve, reject) => {
         result$.subscribe({
           next: (value) => emittedValues.push(value),
           complete: () => resolve(),
-          error: (err) => reject(err)
+          error: (err) => reject(err),
         });
       });
 
@@ -63,7 +69,7 @@ describe("Angular Adapter", () => {
       expect(mockInstance.handle).toHaveBeenCalledWith("GET", "/api/test", {
         headers: {},
         body: null,
-        query: {}
+        query: {},
       });
 
       // Verify response
@@ -78,20 +84,20 @@ describe("Angular Adapter", () => {
 
       const InterceptorClass = createSchmockInterceptor(mockInstance);
       const interceptor = new InterceptorClass();
-      
+
       const mockRequest = new HttpRequest("GET", "/api/test");
       const realResponse = new HttpResponse({ body: "real backend" });
       const mockNext: HttpHandler = {
-        handle: vi.fn().mockReturnValue(of(realResponse))
+        handle: vi.fn().mockReturnValue(of(realResponse)),
       };
 
       const result$ = interceptor.intercept(mockRequest, mockNext);
       const emittedValues: HttpEvent<any>[] = [];
-      
+
       await new Promise<void>((resolve) => {
         result$.subscribe({
           next: (value) => emittedValues.push(value),
-          complete: () => resolve()
+          complete: () => resolve(),
         });
       });
 
@@ -102,23 +108,25 @@ describe("Angular Adapter", () => {
     it("returns 404 when passthrough is false", async () => {
       mockInstance.handle = vi.fn().mockResolvedValue(null);
 
-      const InterceptorClass = createSchmockInterceptor(mockInstance, { passthrough: false });
+      const InterceptorClass = createSchmockInterceptor(mockInstance, {
+        passthrough: false,
+      });
       const interceptor = new InterceptorClass();
-      
+
       const mockRequest = new HttpRequest("GET", "/api/test");
       const mockNext: HttpHandler = {
-        handle: vi.fn()
+        handle: vi.fn(),
       };
 
       const result$ = interceptor.intercept(mockRequest, mockNext);
       let error: any;
-      
+
       await new Promise<void>((resolve) => {
         result$.subscribe({
           error: (err) => {
             error = err;
             resolve();
-          }
+          },
         });
       });
 
@@ -130,19 +138,25 @@ describe("Angular Adapter", () => {
 
   describe("configuration options", () => {
     it("respects baseUrl option", async () => {
-      mockInstance.handle = vi.fn().mockResolvedValue({ status: 200, body: "ok" });
+      mockInstance.handle = vi
+        .fn()
+        .mockResolvedValue({ status: 200, body: "ok" });
 
-      const InterceptorClass = createSchmockInterceptor(mockInstance, { baseUrl: "/api" });
+      const InterceptorClass = createSchmockInterceptor(mockInstance, {
+        baseUrl: "/api",
+      });
       const interceptor = new InterceptorClass();
-      
+
       // Request to /api should be intercepted
       const apiRequest = new HttpRequest("GET", "/api/test");
       const mockNext: HttpHandler = {
-        handle: vi.fn()
+        handle: vi.fn(),
       };
 
       await new Promise<void>((resolve) => {
-        interceptor.intercept(apiRequest, mockNext).subscribe({ complete: resolve });
+        interceptor
+          .intercept(apiRequest, mockNext)
+          .subscribe({ complete: resolve });
       });
 
       expect(mockInstance.handle).toHaveBeenCalled();
@@ -154,7 +168,9 @@ describe("Angular Adapter", () => {
       mockNext.handle = vi.fn().mockReturnValue(of(realResponse));
 
       await new Promise<void>((resolve) => {
-        interceptor.intercept(otherRequest, mockNext).subscribe({ complete: resolve });
+        interceptor
+          .intercept(otherRequest, mockNext)
+          .subscribe({ complete: resolve });
       });
 
       expect(mockInstance.handle).not.toHaveBeenCalled();
@@ -167,12 +183,14 @@ describe("Angular Adapter", () => {
 
       const errorFormatter = vi.fn((err) => ({
         custom: true,
-        message: err.message
+        message: err.message,
       }));
 
-      const InterceptorClass = createSchmockInterceptor(mockInstance, { errorFormatter });
+      const InterceptorClass = createSchmockInterceptor(mockInstance, {
+        errorFormatter,
+      });
       const interceptor = new InterceptorClass();
-      
+
       const mockRequest = new HttpRequest("GET", "/api/test");
       const mockNext: HttpHandler = { handle: vi.fn() };
 
@@ -182,14 +200,14 @@ describe("Angular Adapter", () => {
           error: (err) => {
             errorResponse = err;
             resolve();
-          }
+          },
         });
       });
 
       expect(errorFormatter).toHaveBeenCalledWith(error, mockRequest);
       expect(errorResponse.error).toEqual({
         custom: true,
-        message: "Test error"
+        message: "Test error",
       });
     });
   });
@@ -201,14 +219,14 @@ describe("Angular Adapter", () => {
       expect(provider).toEqual({
         provide: "HTTP_INTERCEPTORS",
         useClass: expect.any(Function),
-        multi: true
+        multi: true,
       });
     });
 
     it("returns provider with options", () => {
       const provider = provideSchmockInterceptor(mockInstance, {
         baseUrl: "/api",
-        passthrough: false
+        passthrough: false,
       });
 
       expect(provider.provide).toBe("HTTP_INTERCEPTORS");

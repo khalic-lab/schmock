@@ -1,8 +1,8 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
-import type { Request, Response, NextFunction, RequestHandler } from "express";
 import type { MockInstance } from "@schmock/builder";
 import { SchmockError } from "@schmock/builder";
+import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 /**
  * Configuration options for Express adapter
@@ -15,41 +15,47 @@ export interface ExpressAdapterOptions {
    * @returns Custom error response
    */
   errorFormatter?: (error: Error, req: Request) => any;
-  
+
   /**
    * Whether to pass non-Schmock errors to Express error handler
    * @default true
    */
   passErrorsToNext?: boolean;
-  
+
   /**
    * Custom header transformation
    * @param headers - Express headers
    * @returns Transformed headers for Schmock
    */
-  transformHeaders?: (headers: Request['headers']) => Record<string, string>;
-  
+  transformHeaders?: (headers: Request["headers"]) => Record<string, string>;
+
   /**
    * Custom query transformation
    * @param query - Express query
    * @returns Transformed query for Schmock
    */
-  transformQuery?: (query: Request['query']) => Record<string, string>;
-  
+  transformQuery?: (query: Request["query"]) => Record<string, string>;
+
   /**
    * Request interceptor - called before handling request
    * @param req - Express request
    * @param res - Express response
    * @returns Modified request data or void
    */
-  beforeRequest?: (req: Request, res: Response) => {
-    method?: string;
-    path?: string;
-    headers?: Record<string, string>;
-    body?: any;
-    query?: Record<string, string>;
-  } | void | Promise<any>;
-  
+  beforeRequest?: (
+    req: Request,
+    res: Response,
+  ) =>
+    | {
+        method?: string;
+        path?: string;
+        headers?: Record<string, string>;
+        body?: any;
+        query?: Record<string, string>;
+      }
+    | undefined
+    | Promise<any>;
+
   /**
    * Response interceptor - called before sending response
    * @param schmockResponse - Response from Schmock
@@ -60,8 +66,8 @@ export interface ExpressAdapterOptions {
   beforeResponse?: (
     schmockResponse: { status: number; body: any; headers: Record<string, string> },
     req: Request,
-    res: Response
-  ) => { status: number; body: any; headers: Record<string, string> } | void | Promise<{ status: number; body: any; headers: Record<string, string> } | void>;
+    res: Response,
+  ) => { status: number; body: any; headers: Record<string, string> } | undefined | Promise<{ status: number; body: any; headers: Record<string, string> } | undefined>;
 }
 
 /**
@@ -69,7 +75,7 @@ export interface ExpressAdapterOptions {
  */
 function schmockToExpressResponse(
   schmockResponse: { status: number; body: any; headers: Record<string, string> },
-  res: Response
+  res: Response,
 ): void {
   // Set status code
   if (schmockResponse.status) {
@@ -79,7 +85,7 @@ function schmockToExpressResponse(
   // Set headers
   if (schmockResponse.headers) {
     Object.entries(schmockResponse.headers).forEach(([key, value]) => {
-      if (typeof value === 'string') {
+      if (typeof value === "string") {
         res.set(key, value);
       }
     });
@@ -87,7 +93,7 @@ function schmockToExpressResponse(
 
   // Send body
   if (schmockResponse.body !== undefined) {
-    if (typeof schmockResponse.body === 'string') {
+    if (typeof schmockResponse.body === "string") {
       res.send(schmockResponse.body);
     } else {
       res.json(schmockResponse.body);
@@ -100,25 +106,29 @@ function schmockToExpressResponse(
 /**
  * Default header transformer
  */
-function defaultTransformHeaders(headers: Request['headers']): Record<string, string> {
+function defaultTransformHeaders(
+  headers: Request["headers"],
+): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers).map(([key, value]) => [
-      key, 
-      Array.isArray(value) ? value[0] : value || ""
-    ])
+      key,
+      Array.isArray(value) ? value[0] : value || "",
+    ]),
   );
 }
 
 /**
  * Default query transformer
  */
-function defaultTransformQuery(query: Request['query']): Record<string, string> {
+function defaultTransformQuery(
+  query: Request["query"],
+): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(query)) {
-    if (typeof value === 'string') {
+    if (typeof value === "string") {
       result[key] = value;
     } else if (Array.isArray(value)) {
-      result[key] = value[0] ? String(value[0]) : '';
+      result[key] = value[0] ? String(value[0]) : "";
     } else if (value != null) {
       result[key] = String(value);
     }
@@ -131,7 +141,7 @@ function defaultTransformQuery(query: Request['query']): Record<string, string> 
  */
 export function toExpress(
   mock: MockInstance,
-  options: ExpressAdapterOptions = {}
+  options: ExpressAdapterOptions = {},
 ): RequestHandler {
   const {
     errorFormatter,
@@ -139,7 +149,7 @@ export function toExpress(
     transformHeaders = defaultTransformHeaders,
     transformQuery = defaultTransformQuery,
     beforeRequest,
-    beforeResponse
+    beforeResponse,
   } = options;
 
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -150,7 +160,7 @@ export function toExpress(
         path: req.path,
         headers: transformHeaders(req.headers),
         body: req.body,
-        query: transformQuery(req.query)
+        query: transformQuery(req.query),
       };
 
       if (beforeRequest) {
@@ -158,7 +168,7 @@ export function toExpress(
         if (intercepted) {
           requestData = {
             ...requestData,
-            ...intercepted
+            ...intercepted,
           };
         }
       }
@@ -170,10 +180,10 @@ export function toExpress(
         {
           headers: requestData.headers,
           body: requestData.body,
-          query: requestData.query
-        }
+          query: requestData.query,
+        },
       );
-      
+
       if (schmockResponse) {
         // Run response interceptor if provided
         if (beforeResponse) {
@@ -201,8 +211,9 @@ export function toExpress(
       } else {
         // Handle error directly
         res.status(500).json({
-          error: error instanceof Error ? error.message : 'Internal Server Error',
-          code: error instanceof SchmockError ? error.code : 'INTERNAL_ERROR'
+          error:
+            error instanceof Error ? error.message : "Internal Server Error",
+          code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
         });
       }
     }

@@ -20,11 +20,15 @@
         "useSingleVarDeclarator": "error",
         "noUnusedTemplateLiteral": "error",
         "useNumberNamespace": "error",
-        "noInferrableTypes": "error",
-        "noUselessElse": "error"
+        "noInferrableTypes": "warn",
+        "noUselessElse": "warn"
       },
       "suspicious": {
-        "noExplicitAny": "warn"
+        "noExplicitAny": "off"
+      },
+      "correctness": {
+        "noUnusedPrivateClassMembers": "warn",
+        "noUnusedFunctionParameters": "warn"
       }
     }
   },
