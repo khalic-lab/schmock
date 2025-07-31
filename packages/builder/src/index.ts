@@ -45,4 +45,7 @@ export {
   ResponseGenerationError,
   PluginError,
   RouteDefinitionError,
+  SchemaValidationError,
+  SchemaGenerationError,
+  ResourceLimitError,
 } from "./errors";

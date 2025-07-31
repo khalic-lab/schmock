@@ -31,6 +31,7 @@ declare namespace Schmock {
    * - Used by modern frameworks like Hono
    */
   type RouteKey = `${HttpMethod} ${string}`;
+  
   /**
    * Plugin interface for extending Schmock functionality
    */
@@ -42,6 +43,14 @@ declare namespace Schmock {
     /** Control execution order */
     enforce?: "pre" | "post";
 
+
+    /**
+     * Called before request handling
+     * Can modify the request context or reject the request
+     * @param context - Plugin context with request details
+     * @returns Modified context or void
+     */
+    beforeRequest?(context: PluginContext): PluginContext | void | Promise<PluginContext | void>;
 
     /**
      * Called before any data generation
@@ -59,28 +68,20 @@ declare namespace Schmock {
     generate?(context: PluginContext): any | void | Promise<any | void>;
 
     /**
-     * Transform data (from route config or previous plugin)
-     * @param data - Current data
-     * @param context - Plugin context
-     * @returns Transformed data
-     */
-    transform?(data: any, context: PluginContext): any | Promise<any>;
-
-    /**
-     * Called before request handling
-     * Can modify the request context or reject the request
-     * @param context - Plugin context with request details
-     * @returns Modified context or void
-     */
-    beforeRequest?(context: PluginContext): PluginContext | void | Promise<PluginContext | void>;
-
-    /**
      * Transform generated data
      * @param data - Data from generation or previous transform
      * @param context - Plugin context
      * @returns Transformed data
      */
     afterGenerate?(data: any, context: PluginContext): any | Promise<any>;
+
+    /**
+     * Transform data (from route config or previous plugin)
+     * @param data - Current data
+     * @param context - Plugin context
+     * @returns Transformed data
+     */
+    transform?(data: any, context: PluginContext): any | Promise<any>;
 
     /**
      * Called before returning response
