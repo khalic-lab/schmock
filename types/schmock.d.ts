@@ -31,63 +31,7 @@ declare namespace Schmock {
    * - Used by modern frameworks like Hono
    */
   type RouteKey = `${HttpMethod} ${string}`;
-  /**
-   * Main configuration object for Schmock instance
-   */
-  interface Config {
-    /** Route definitions mapped by path pattern */
-    routes: Record<string, Route | any>;
-    /** Enable debug mode for detailed logging */
-    debug?: boolean;
-  }
-
-  /**
-   * Route configuration for a single endpoint
-   */
-  interface Route {
-    /** Static data to return */
-    data?: any;
-    /** JSON Schema for validation and generation */
-    schema?: string | import("json-schema").JSONSchema7;
-    /** Custom handler function */
-    handler?: RequestHandler;
-  }
-
-  /**
-   * Function that handles requests and returns response data
-   */
-  type RequestHandler = (request: Request) => any | Promise<any>;
-
-  /**
-   * Incoming HTTP request representation
-   */
-  interface Request {
-    /** Request path (e.g., "/api/users/123") */
-    path: string;
-    /** HTTP method */
-    method: HttpMethod;
-    /** Request headers */
-    headers: Record<string, string>;
-    /** Request body (for POST, PUT, PATCH) */
-    body?: any;
-    /** Query parameters */
-    query: Record<string, string>;
-    /** Path parameters extracted from route pattern */
-    params: Record<string, string>;
-  }
-
-  /**
-   * HTTP response to be sent back
-   */
-  interface Response {
-    /** HTTP status code */
-    status: number;
-    /** Response body */
-    body: any;
-    /** Response headers */
-    headers: Record<string, string>;
-  }
-
+  
   /**
    * Plugin interface for extending Schmock functionality
    */
@@ -99,11 +43,6 @@ declare namespace Schmock {
     /** Control execution order */
     enforce?: "pre" | "post";
 
-    /**
-     * Called once when plugin is registered
-     * @param core - Schmock instance
-     */
-    setup?(core: Core): void | Promise<void>;
 
     /**
      * Called before request handling
@@ -170,7 +109,7 @@ declare namespace Schmock {
     /** Request path */
     path: string;
     /** Matched route configuration */
-    route: Route;
+    route: any;
     /** HTTP method */
     method: HttpMethod;
     /** Route parameters */
@@ -187,144 +126,6 @@ declare namespace Schmock {
     routeState?: any;
   }
 
-  /**
-   * Context for processing requests (used by standalone/HTTP implementations)
-   */
-  interface ProcessContext {
-    /** HTTP method */
-    method?: string;
-    /** Request headers */
-    headers?: Record<string, string>;
-    /** Request body */
-    body?: any;
-    /** Query parameters */
-    query?: Record<string, string>;
-    /** Path parameters */
-    params?: Record<string, string>;
-  }
-
-  /**
-   * Events emitted during request lifecycle
-   */
-  interface EventMap {
-    /** Emitted when request processing starts */
-    "request:start": { request: Request; route: Route };
-    /** Emitted when request processing ends */
-    "request:end": { request: Request; response: Response };
-    /** Emitted before data generation */
-    "generate:start": PluginContext;
-    /** Emitted after data generation */
-    "generate:end": { context: PluginContext; data: any };
-    /** Emitted when plugin is registered */
-    "plugin:registered": { plugin: Plugin };
-    /** Emitted on errors */
-    error: { error: Error; context?: PluginContext };
-  }
-
-  /**
-   * Schmock instance with HTTP methods (for backward compatibility)
-   */
-  interface Core {
-    /**
-     * Register a plugin (overrides return type for chaining)
-     */
-    use(plugin: Plugin): Core;
-
-    /**
-     * Make a request with any HTTP method
-     * @param method - HTTP method
-     * @param path - Request path
-     * @param options - Additional request options
-     */
-    request(
-      method: Request["method"],
-      path: string,
-      options?: Partial<Omit<Request, "method" | "path">>,
-    ): Promise<Response>;
-
-    /**
-     * Make a GET request
-     * @param path - Request path
-     * @param options - Additional request options
-     */
-    get(
-      path: string,
-      options?: Partial<Omit<Request, "method" | "path">>,
-    ): Promise<Response>;
-
-    /**
-     * Make a POST request
-     * @param path - Request path
-     * @param body - Request body
-     * @param options - Additional request options
-     */
-    post(
-      path: string,
-      body?: any,
-      options?: Partial<Omit<Request, "method" | "path" | "body">>,
-    ): Promise<Response>;
-
-    /**
-     * Make a PUT request
-     * @param path - Request path
-     * @param body - Request body
-     * @param options - Additional request options
-     */
-    put(
-      path: string,
-      body?: any,
-      options?: Partial<Omit<Request, "method" | "path" | "body">>,
-    ): Promise<Response>;
-
-    /**
-     * Make a DELETE request
-     * @param path - Request path
-     * @param options - Additional request options
-     */
-    delete(
-      path: string,
-      options?: Partial<Omit<Request, "method" | "path">>,
-    ): Promise<Response>;
-
-    /**
-     * Make a PATCH request
-     * @param path - Request path
-     * @param body - Request body
-     * @param options - Additional request options
-     */
-    patch(
-      path: string,
-      body?: any,
-      options?: Partial<Omit<Request, "method" | "path" | "body">>,
-    ): Promise<Response>;
-
-    /**
-     * Subscribe to an event
-     * @param event - Event name
-     * @param handler - Event handler
-     */
-    on<K extends keyof EventMap>(
-      event: K,
-      handler: (data: EventMap[K]) => void,
-    ): void;
-
-    /**
-     * Unsubscribe from an event
-     * @param event - Event name
-     * @param handler - Event handler to remove
-     */
-    off<K extends keyof EventMap>(
-      event: K,
-      handler: (data: EventMap[K]) => void,
-    ): void;
-
-    /**
-     * Emit an event
-     * @param event - Event name
-     * @param data - Event data
-     */
-    emit<K extends keyof EventMap>(event: K, data: EventMap[K]): void;
-  }
 
   // ===== Fluent Builder API Types =====
 

@@ -59,9 +59,9 @@ export interface AngularAdapterOptions {
    * @returns Modified response
    */
   transformResponse?: (
-    response: Schmock.Response,
+    response: Schmock.ResponseResult,
     request: HttpRequest<any>,
-  ) => Schmock.Response;
+  ) => Schmock.ResponseResult;
 }
 
 /**

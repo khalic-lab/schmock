@@ -64,17 +64,31 @@ export interface ExpressAdapterOptions {
    * @returns Modified response or void
    */
   beforeResponse?: (
-    schmockResponse: Schmock.Response,
+    schmockResponse: {
+      status: number;
+      body: any;
+      headers: Record<string, string>;
+    },
     req: Request,
     res: Response,
-  ) => Schmock.Response | undefined | Promise<Schmock.Response | undefined>;
+  ) =>
+    | { status: number; body: any; headers: Record<string, string> }
+    | undefined
+    | Promise<
+        | { status: number; body: any; headers: Record<string, string> }
+        | undefined
+      >;
 }
 
 /**
  * Convert Schmock response to Express response
  */
 function schmockToExpressResponse(
-  schmockResponse: Schmock.Response,
+  schmockResponse: {
+    status: number;
+    body: any;
+    headers: Record<string, string>;
+  },
   res: Response,
 ): void {
   // Set status code
