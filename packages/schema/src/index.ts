@@ -170,7 +170,7 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
         if ((propSchema as any).faker) {
           try {
             validateFakerMethod((propSchema as any).faker);
-          } catch (error) {
+          } catch (error: unknown) {
             // Re-throw with proper path context
             if (error instanceof SchemaValidationError) {
               throw new SchemaValidationError(
