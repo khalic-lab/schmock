@@ -1,3 +1,4 @@
+import { RouteParseError } from "./errors";
 import type { HttpMethod } from "./types";
 
 export interface ParsedRoute {
@@ -24,9 +25,9 @@ export function parseRouteKey(routeKey: string): ParsedRoute {
   );
 
   if (!match) {
-    throw new Error(
-      `Invalid route key format: "${routeKey}". ` +
-        `Expected format: "METHOD /path" (e.g., "GET /users")`,
+    throw new RouteParseError(
+      routeKey,
+      'Expected format: "METHOD /path" (e.g., "GET /users")',
     );
   }
 
