@@ -17,12 +17,12 @@
       "name": "@schmock/angular",
       "version": "0.1.0",
       "dependencies": {
-        "@schmock/builder": "workspace:*",
+        "@schmock/core": "workspace:*",
         "rxjs": "^7.8.1",
       },
       "devDependencies": {
         "@angular/common": "^17.0.0",
-        "@angular/compiler": "^17.0.0",
+        "@angular/compiler": "^20.1.4",
         "@angular/core": "^17.0.0",
         "@angular/platform-browser": "^17.0.0",
         "@angular/platform-browser-dynamic": "^17.0.0",
@@ -37,8 +37,8 @@
         "@angular/core": ">=15.0.0",
       },
     },
-    "packages/builder": {
-      "name": "@schmock/builder",
+    "packages/core": {
+      "name": "@schmock/core",
       "version": "0.1.0",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^5.1.2",
@@ -57,7 +57,7 @@
         "vitest": "^3.2.4",
       },
       "peerDependencies": {
-        "@schmock/builder": "^0.1.0",
+        "@schmock/core": "^0.1.0",
         "express": "^4.18.0",
       },
     },
@@ -82,7 +82,7 @@
 
     "@angular/common": ["@angular/common@17.3.12", "", { "dependencies": { "tslib": "^2.3.0" }, "peerDependencies": { "@angular/core": "17.3.12", "rxjs": "^6.5.3 || ^7.4.0" } }, "sha512-vabJzvrx76XXFrm1RJZ6o/CyG32piTB/1sfFfKHdlH1QrmArb8It4gyk9oEjZ1IkAD0HvBWlfWmn+T6Vx3pdUw=="],
 
-    "@angular/compiler": ["@angular/compiler@17.3.12", "", { "dependencies": { "tslib": "^2.3.0" }, "peerDependencies": { "@angular/core": "17.3.12" }, "optionalPeers": ["@angular/core"] }, "sha512-vwI8oOL/gM+wPnptOVeBbMfZYwzRxQsovojZf+Zol9szl0k3SZ3FycWlxxXZGFu3VIEfrP6pXplTmyODS/Lt1w=="],
+    "@angular/compiler": ["@angular/compiler@20.1.4", "", { "dependencies": { "tslib": "^2.3.0" } }, "sha512-gQbchh2ziK9QxZuHgEf7BUMCm/ayu6Zr9hst6itSecinUJgUeeSp3Z4vXjIBNBUKMPB135tWw9RGiVbW8saBmg=="],
 
     "@angular/core": ["@angular/core@17.3.12", "", { "dependencies": { "tslib": "^2.3.0" }, "peerDependencies": { "rxjs": "^6.5.3 || ^7.4.0", "zone.js": "~0.14.0" } }, "sha512-MuFt5yKi161JmauUta4Dh0m8ofwoq6Ino+KoOtkYMBGsSx+A7dSm+DUxxNwdj7+DNyg3LjVGCFgBFnq4g8z06A=="],
 
@@ -246,7 +246,7 @@
 
     "@schmock/angular": ["@schmock/angular@workspace:packages/angular"],
 
-    "@schmock/builder": ["@schmock/builder@workspace:packages/builder"],
+    "@schmock/core": ["@schmock/core@workspace:packages/core"],
 
     "@schmock/express": ["@schmock/express@workspace:packages/express"],
 
@@ -756,7 +756,7 @@
 
     "@asamuzakjp/css-color/lru-cache": ["lru-cache@10.4.3", "", {}, "sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ=="],
 
-    "@schmock/builder/@types/node": ["@types/node@24.1.0", "", { "dependencies": { "undici-types": "~7.8.0" } }, "sha512-ut5FthK5moxFKH2T1CUOC6ctR67rQRvvHdFLCD2Ql6KXmMuCrjsSsRI9UsLCm9M18BMwClv4pn327UvB7eeO1w=="],
+    "@schmock/core/@types/node": ["@types/node@24.1.0", "", { "dependencies": { "undici-types": "~7.8.0" } }, "sha512-ut5FthK5moxFKH2T1CUOC6ctR67rQRvvHdFLCD2Ql6KXmMuCrjsSsRI9UsLCm9M18BMwClv4pn327UvB7eeO1w=="],
 
     "@schmock/schema/@types/node": ["@types/node@24.1.0", "", { "dependencies": { "undici-types": "~7.8.0" } }, "sha512-ut5FthK5moxFKH2T1CUOC6ctR67rQRvvHdFLCD2Ql6KXmMuCrjsSsRI9UsLCm9M18BMwClv4pn327UvB7eeO1w=="],
 
@@ -796,7 +796,7 @@
 
     "strip-ansi/ansi-regex": ["ansi-regex@5.0.1", "", {}, "sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ=="],
 
-    "@schmock/builder/@types/node/undici-types": ["undici-types@7.8.0", "", {}, "sha512-9UJ2xGDvQ43tYyVMpuHlsgApydB8ZKfVYTsLDhXkFL/6gfkp+U8xTGdh8pMJv1SpZna0zxG1DwsKZsreLbXBxw=="],
+    "@schmock/core/@types/node/undici-types": ["undici-types@7.8.0", "", {}, "sha512-9UJ2xGDvQ43tYyVMpuHlsgApydB8ZKfVYTsLDhXkFL/6gfkp+U8xTGdh8pMJv1SpZna0zxG1DwsKZsreLbXBxw=="],
 
     "@schmock/schema/@types/node/undici-types": ["undici-types@7.8.0", "", {}, "sha512-9UJ2xGDvQ43tYyVMpuHlsgApydB8ZKfVYTsLDhXkFL/6gfkp+U8xTGdh8pMJv1SpZna0zxG1DwsKZsreLbXBxw=="],
 
