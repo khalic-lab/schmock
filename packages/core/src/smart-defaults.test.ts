@@ -253,13 +253,13 @@ describe("smart content-type defaults", () => {
       expect(response.headers).toEqual({ "X-Custom": "value" });
     });
 
-    it("tuple with null body gets 204 status override", async () => {
+    it("tuple with null body preserves explicit status", async () => {
       const mock = schmock();
       mock("GET /tuple-null", () => [200, null]);
 
       const response = await mock.handle("GET", "/tuple-null");
 
-      expect(response.status).toBe(204); // 204 overrides 200 for null body
+      expect(response.status).toBe(200); // Tuple format preserves explicit status
       expect(response.body).toBeUndefined();
       expect(response.headers).toEqual({});
     });

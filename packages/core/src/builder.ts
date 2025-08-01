@@ -378,9 +378,12 @@ export class CallableMockInstance {
     }
 
     // Handle null/undefined responses with 204 No Content
+    // But don't auto-convert if tuple format was used (status was explicitly provided)
     if (body === null || body === undefined) {
-      status = status === 200 ? 204 : status; // Only change to 204 if status wasn't explicitly set
-      body = undefined; // Ensure body is undefined for 204
+      if (!tupleFormat) {
+        status = status === 200 ? 204 : status; // Only change to 204 if status wasn't explicitly set via tuple
+      }
+      body = undefined; // Ensure body is undefined for null responses
     }
 
     // Add content-type header from route config if it exists and headers don't already have it
