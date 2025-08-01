@@ -1,27 +1,50 @@
 # Debug Mode
 
-Schmock includes a comprehensive debug mode that provides detailed logging throughout the request processing lifecycle. This is extremely useful for development, troubleshooting, and understanding how your mocks are working.
+Schmock includes a comprehensive debug mode that provides detailed logging throughout the request processing lifecycle. This is extremely useful for development, troubleshooting, and understanding how your mocks and plugin pipelines are working.
 
 ## Enabling Debug Mode
 
-Debug mode can be enabled through the `config()` method when building your Schmock instance:
+Debug mode can be enabled through the global configuration when creating your Schmock instance:
 
 ```typescript
 import { schmock } from '@schmock/core';
 
-const mock = schmock()
-  .config({ debug: true })
-  .get('/api/users', { data: [{ id: 1, name: 'John' }] })
-  .build();
+// Enable debug mode globally
+const mock = schmock({ debug: true });
+
+mock('GET /users', () => [{ id: 1, name: 'John' }], { 
+  contentType: 'application/json' 
+});
 ```
 
 ## Debug Output
 
 When debug mode is enabled, you'll see detailed console output showing:
 
+### Instance Creation
+```
+[2025-01-31T10:15:30.100Z] [SCHMOCK:CONFIG] Debug mode enabled
+[2025-01-31T10:15:30.101Z] [SCHMOCK:INSTANCE] SchmockInstance created {
+  routeCount: 0,
+  pluginCount: 0,
+  debugEnabled: true
+}
+```
+
+### Route Definition
+```
+[2025-01-31T10:15:30.110Z] [SCHMOCK:ROUTE] Route defined: GET /users
+[2025-01-31T10:15:30.111Z] [SCHMOCK:PLUGIN] Registered plugin: auth@1.0.0 {
+  name: 'auth',
+  version: '1.0.0',
+  hasProcess: true,
+  hasOnError: true
+}
+```
+
 ### Request Processing
 ```
-[2025-01-31T10:15:30.123Z] [SCHMOCK:REQUEST] [abc123] GET /api/users {
+[2025-01-31T10:15:30.123Z] [SCHMOCK:REQUEST] [abc123] GET /users {
   headers: { 'user-agent': 'test' },
   query: { limit: '10' },
   bodyType: 'none'
@@ -30,30 +53,22 @@ When debug mode is enabled, you'll see detailed console output showing:
 
 ### Route Matching
 ```
-[2025-01-31T10:15:30.125Z] [SCHMOCK:ROUTE] [abc123] Matched route: GET /api/users
+[2025-01-31T10:15:30.125Z] [SCHMOCK:ROUTE] [abc123] Matched route: /users
 ```
 
-### Plugin Execution
+### Plugin Pipeline Execution
 ```
-[2025-01-31T10:15:30.126Z] [SCHMOCK:HOOKS] Running beforeRequest hooks for 2 plugins
-[2025-01-31T10:15:30.127Z] [SCHMOCK:HOOKS] Executing beforeRequest: auth-plugin
-[2025-01-31T10:15:30.128Z] [SCHMOCK:HOOKS] Plugin auth-plugin modified context
-[2025-01-31T10:15:30.129Z] [SCHMOCK:HOOKS] Executing beforeRequest: logging-plugin
-```
-
-### Data Generation
-```
-[2025-01-31T10:15:30.130Z] [SCHMOCK:HOOKS] Running beforeGenerate hooks for 1 plugins
-[2025-01-31T10:15:30.131Z] [SCHMOCK:HOOKS] Executing beforeGenerate: schema-plugin
-[2025-01-31T10:15:30.135Z] [SCHMOCK:HOOKS] Plugin schema-plugin returned early response
+[2025-01-31T10:15:30.126Z] [SCHMOCK:PIPELINE] Running plugin pipeline for 3 plugins
+[2025-01-31T10:15:30.127Z] [SCHMOCK:PIPELINE] Processing plugin: auth
+[2025-01-31T10:15:30.128Z] [SCHMOCK:PIPELINE] Processing plugin: schema-generator
+[2025-01-31T10:15:30.130Z] [SCHMOCK:PIPELINE] Plugin schema-generator generated response
+[2025-01-31T10:15:30.131Z] [SCHMOCK:PIPELINE] Processing plugin: cors
+[2025-01-31T10:15:30.132Z] [SCHMOCK:PIPELINE] Plugin cors transformed response
 ```
 
 ### Response Processing
 ```
-[2025-01-31T10:15:30.140Z] [SCHMOCK:HOOKS] Running beforeResponse hooks for 1 plugins
-[2025-01-31T10:15:30.141Z] [SCHMOCK:HOOKS] Executing beforeResponse: cors-plugin
-[2025-01-31T10:15:30.142Z] [SCHMOCK:HOOKS] Plugin cors-plugin modified response
-[2025-01-31T10:15:30.143Z] [SCHMOCK:RESPONSE] [abc123] Sending response 200 {
+[2025-01-31T10:15:30.140Z] [SCHMOCK:RESPONSE] [abc123] Sending response 200 {
   status: 200,
   headers: { 'content-type': 'application/json' },
   bodyType: 'object'
@@ -63,11 +78,10 @@ When debug mode is enabled, you'll see detailed console output showing:
 
 ### Error Handling
 ```
-[2025-01-31T10:15:30.150Z] [SCHMOCK:ERROR] [def456] Error processing request: Schema validation failed
-[2025-01-31T10:15:30.151Z] [SCHMOCK:HOOKS] Running onError hooks for 1 plugins
-[2025-01-31T10:15:30.152Z] [SCHMOCK:HOOKS] Executing onError: error-handler
-[2025-01-31T10:15:30.153Z] [SCHMOCK:HOOKS] Plugin error-handler handled error
-[2025-01-31T10:15:30.154Z] [SCHMOCK:ERROR] [def456] Plugin handled error with response 400
+[2025-01-31T10:15:30.150Z] [SCHMOCK:ERROR] [def456] Error processing request: Authentication required
+[2025-01-31T10:15:30.151Z] [SCHMOCK:PIPELINE] Plugin auth failed: Authentication required
+[2025-01-31T10:15:30.152Z] [SCHMOCK:PIPELINE] Plugin auth handled error
+[2025-01-31T10:15:30.153Z] [SCHMOCK:ERROR] [def456] Returning error response 500
 [SCHMOCK] request-def456: 15.234ms
 ```
 
@@ -77,11 +91,10 @@ Debug logs are categorized for easy filtering:
 
 - **`CONFIG`**: Configuration changes and debug mode activation
 - **`PLUGIN`**: Plugin registration and management
-- **`BUILD`**: Instance building and compilation
 - **`INSTANCE`**: Instance creation and initialization
 - **`REQUEST`**: Request processing start and details
-- **`ROUTE`**: Route matching and selection
-- **`HOOKS`**: Plugin lifecycle hook execution
+- **`ROUTE`**: Route matching, selection, and definition
+- **`PIPELINE`**: Plugin pipeline execution and processing
 - **`RESPONSE`**: Successful response generation
 - **`ERROR`**: Error handling and processing
 
@@ -92,6 +105,9 @@ You can filter debug output in your console or logging system by searching for s
 ```bash
 # Filter for only plugin-related logs
 npm start | grep "SCHMOCK:PLUGIN"
+
+# Filter for pipeline execution
+npm start | grep "SCHMOCK:PIPELINE"
 
 # Filter for errors only
 npm start | grep "SCHMOCK:ERROR"
@@ -121,11 +137,9 @@ This helps identify performance bottlenecks in your mock setup or plugin executi
 
 ```typescript
 // Environment-based debug mode
-const mock = schmock()
-  .config({
-    debug: process.env.NODE_ENV === 'development'
-  })
-  .build();
+const mock = schmock({
+  debug: process.env.NODE_ENV === 'development'
+});
 ```
 
 ## Advanced Debug Setup
@@ -146,9 +160,7 @@ console.log = (...args) => {
   originalConsoleLog(...args);
 };
 
-const mock = schmock()
-  .config({ debug: true })
-  .build();
+const mock = schmock({ debug: true });
 
 // Later: analyze collected debug logs
 console.log('Collected debug logs:', debugLogs);
@@ -159,12 +171,10 @@ console.log('Collected debug logs:', debugLogs);
 Enable debug mode based on specific conditions:
 
 ```typescript
-const mock = schmock()
-  .config({
-    debug: process.env.DEBUG_SCHMOCK === 'true' || 
-           process.env.NODE_ENV === 'test'
-  })
-  .build();
+const mock = schmock({
+  debug: process.env.DEBUG_SCHMOCK === 'true' || 
+         process.env.NODE_ENV === 'test'
+});
 ```
 
 ### Debug Mode with Testing
@@ -173,18 +183,16 @@ Debug mode is particularly useful during testing to understand why mocks behave 
 
 ```typescript
 describe('API Integration', () => {
-  let mock: MockInstance;
+  let mock: CallableMockInstance;
 
   beforeEach(() => {
-    mock = schmock()
-      .config({ debug: true })  // Enable for test debugging
-      .get('/api/users', { data: users })
-      .build();
+    mock = schmock({ debug: true });  // Enable for test debugging
+    mock('GET /users', () => users, { contentType: 'application/json' });
   });
 
   it('should return users', async () => {
     // Debug output will show the complete request/response cycle
-    const response = await mock.handle('GET', '/api/users');
+    const response = await mock.handle('GET', '/users');
     expect(response.status).toBe(200);
   });
 });
@@ -198,23 +206,23 @@ Look for plugin registration logs:
 [SCHMOCK:PLUGIN] Registered plugin: my-plugin@1.0.0
 ```
 
-If missing, check your plugin registration.
+If missing, check your `.pipe()` calls.
 
 ### Route Not Matching
 Check route matching logs:
 ```
-[SCHMOCK:ROUTE] [abc123] No route found for GET /api/wrong-path
+[SCHMOCK:ROUTE] [abc123] No route found for GET /wrong-path
 ```
 
-Verify your route patterns.
+Verify your route patterns and ensure you're calling the mock instance correctly.
 
-### Plugin Errors
+### Plugin Pipeline Errors
 Plugin failures are clearly logged:
 ```
-[SCHMOCK:HOOKS] Plugin my-plugin beforeRequest failed: Cannot read property 'id' of undefined
+[SCHMOCK:PIPELINE] Plugin my-plugin failed: Cannot read property 'id' of undefined
 ```
 
-Check your plugin implementation.
+Check your plugin's `process()` method implementation.
 
 ### Performance Issues
 Use timing logs to identify slow operations:
