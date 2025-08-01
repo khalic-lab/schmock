@@ -495,13 +495,30 @@ export class CallableMockInstance {
     method: Schmock.HttpMethod,
     path: string,
   ): CompiledCallableRoute | undefined {
-    // Search routes in reverse order (most recently defined first)
+    // First pass: Look for exact matches (routes without parameters)
     for (let i = this.routes.length - 1; i >= 0; i--) {
       const route = this.routes[i];
-      if (route.method === method && route.pattern.test(path)) {
+      if (
+        route.method === method &&
+        route.params.length === 0 &&
+        route.pattern.test(path)
+      ) {
         return route;
       }
     }
+
+    // Second pass: Look for parameterized routes
+    for (let i = this.routes.length - 1; i >= 0; i--) {
+      const route = this.routes[i];
+      if (
+        route.method === method &&
+        route.params.length > 0 &&
+        route.pattern.test(path)
+      ) {
+        return route;
+      }
+    }
+
     return undefined;
   }
 
