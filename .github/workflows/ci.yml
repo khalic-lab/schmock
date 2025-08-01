@@ -49,6 +49,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
       
+      # Build packages if needed for tests
+      - name: Build packages
+        if: matrix.task == 'test-unit' || matrix.task == 'test-bdd' || matrix.task == 'test-e2e'
+        run: bun run build
+      
       # Run the specific task from matrix
       - name: Run ${{ matrix.task }}
         run: |
@@ -60,7 +65,11 @@ jobs:
               ;;
             typecheck)
               echo "::group::Running type check"
-              bun run typecheck
+              # Run in dependency order: core first, then others
+              bun run --filter @schmock/core build:types
+              bun run --filter @schmock/schema build:types
+              bun run --filter @schmock/express build:types
+              bun run --filter @schmock/angular build:types
               echo "::endgroup::"
               ;;
             test-unit)
