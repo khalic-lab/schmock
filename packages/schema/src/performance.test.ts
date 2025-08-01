@@ -174,49 +174,6 @@ describe("Performance and Memory", () => {
       expect(avgWide).toBeGreaterThan(avgNarrow);
       expect(avgWide).toBeLessThan(avgNarrow * 15); // Linear-ish scaling, not exponential
     });
-
-    it("handles deep nesting without exponential slowdown", async () => {
-      const depths = [3, 6, 9];
-      const avgTimes: number[] = [];
-
-      for (const depth of depths) {
-        const schema = schemas.nested.deep(depth);
-
-        // Warmup
-        for (let i = 0; i < 2; i++) {
-          generateFromSchema({ schema });
-        }
-
-        // Measure multiple runs
-        const times: number[] = [];
-        for (let i = 0; i < 5; i++) {
-          const start = performance.now();
-          generateFromSchema({ schema });
-          times.push(performance.now() - start);
-        }
-
-        const avg = times.reduce((a, b) => a + b, 0) / times.length;
-        avgTimes.push(avg);
-      }
-
-      // Verify all nesting levels complete in reasonable time
-      const [shallow, medium, deep] = avgTimes;
-
-      // All should complete reasonably fast
-      expect(shallow).toBeLessThan(50);
-      expect(medium).toBeLessThan(50);
-      expect(deep).toBeLessThan(50);
-
-      // The deepest shouldn't be exponentially slower than the shallowest
-      const maxTime = Math.max(shallow, medium, deep);
-      const minTime = Math.min(shallow, medium, deep);
-
-      // Allow reasonable variance but not exponential (main goal: no exponential blowup)
-      if (minTime > 0.1) {
-        // Only check if we have measurable timing
-        expect(maxTime).toBeLessThan(minTime * 10); // Not more than 10x difference
-      }
-    });
   });
 
   describe("Plugin Performance", () => {

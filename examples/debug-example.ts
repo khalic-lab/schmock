@@ -1,7 +1,7 @@
 /**
  * Debug Mode Example
  * 
- * This example demonstrates Schmock's debug mode functionality.
+ * This example demonstrates Schmock's debug mode functionality and plugin pipeline.
  * Run with: bun run examples/debug-example.ts
  */
 
@@ -32,7 +32,7 @@ function authPlugin() {
     
     process(context: any, response: any) {
       // Simulate adding user to context
-      context.state.set('user', { id: 1, name: 'Test User' });
+      context.state.user = { id: 1, name: 'Test User' };
       
       // If we have a response, add auth header
       if (response && typeof response === 'object') {
@@ -43,7 +43,7 @@ function authPlugin() {
           context,
           response: [status, body, {
             ...headers,
-            'X-User-ID': context.state.get('user')?.id || 'anonymous'
+            'X-User-ID': context.state.user?.id || 'anonymous'
           }]
         };
       }
@@ -56,34 +56,37 @@ function authPlugin() {
 async function runDebugExample() {
   console.log("=== Schmock Debug Mode Example ===\n");
   
-  // Create mock instance with debug mode enabled
-  const mock = schmock({ debug: true });
+  // Create mock instance with debug mode enabled using callable API
+  const mock = schmock({ debug: true })
+    .pipe(loggingPlugin())
+    .pipe(authPlugin());
   
-  // Add plugins
-  mock.pipe(loggingPlugin());
-  mock.pipe(authPlugin());
-  mock.pipe(schemaPlugin());
+  // Define routes using the callable API with schema plugin
+  mock("GET /api/users", () => [
+    { id: 1, name: "Alice Johnson", email: "alice@example.com" },
+    { id: 2, name: "Bob Smith", email: "bob@example.com" },
+    { id: 3, name: "Carol Brown", email: "carol@example.com" }
+  ]);
   
-  // Define routes
-  mock("GET /api/users", {
-    schema: {
-      type: "array",
-      items: {
+  // Route with schema plugin for generated data
+  mock("GET /api/users/random")
+    .pipe(schemaPlugin({
+      schema: {
         type: "object", 
         properties: {
           id: { type: "number" },
           name: { type: "string", faker: "person.fullName" },
-          email: { type: "string", format: "email" }
+          email: { type: "string", format: "email" },
+          isActive: { type: "boolean" }
         }
       }
-    },
-    count: 3
-  });
+    }));
   
   mock("GET /api/users/:id", (ctx) => ({
     id: parseInt(ctx.params.id),
     name: `User ${ctx.params.id}`,
-    email: `user${ctx.params.id}@example.com`
+    email: `user${ctx.params.id}@example.com`,
+    lastLogin: new Date().toISOString()
   }));
   
   mock("POST /api/error", () => {
@@ -107,32 +110,42 @@ async function runDebugExample() {
     console.error("❌ Error:", error);
   }
 
-  console.log("\n2. Testing parameterized request to /api/users/123:");
+  console.log("\n2. Testing schema-generated user data:");
   console.log("=" .repeat(50));
   
   try {
-    const response2 = await mock.handle("GET", "/api/users/123");
-    console.log("✅ Response:", response2.body);
+    const response2 = await mock.handle("GET", "/api/users/random");
+    console.log("✅ Generated User:", response2.body);
   } catch (error) {
     console.error("❌ Error:", error);
   }
 
-  console.log("\n3. Testing error handling with POST /api/error:");
+  console.log("\n3. Testing parameterized request to /api/users/123:");
   console.log("=" .repeat(50));
   
   try {
-    const response3 = await mock.handle("POST", "/api/error");
-    console.log("✅ Response:", response3);
+    const response3 = await mock.handle("GET", "/api/users/123");
+    console.log("✅ Response:", response3.body);
   } catch (error) {
     console.error("❌ Error:", error);
   }
 
-  console.log("\n4. Testing 404 for non-existent route:");
+  console.log("\n4. Testing error handling with POST /api/error:");
   console.log("=" .repeat(50));
   
   try {
-    const response4 = await mock.handle("GET", "/api/nonexistent");
+    const response4 = await mock.handle("POST", "/api/error");
     console.log("✅ Response:", response4);
+  } catch (error) {
+    console.error("❌ Error:", error);
+  }
+
+  console.log("\n5. Testing 404 for non-existent route:");
+  console.log("=" .repeat(50));
+  
+  try {
+    const response5 = await mock.handle("GET", "/api/nonexistent");
+    console.log("✅ Response:", response5);
   } catch (error) {
     console.error("❌ Error:", error);
   }

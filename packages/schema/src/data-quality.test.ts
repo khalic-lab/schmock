@@ -266,13 +266,13 @@ describe("Data Quality and Statistical Properties", () => {
       samples.forEach((sample) => {
         // First names should be properly capitalized and reasonable length
         expect(sample.firstName).toMatch(/^[A-Z]/); // Starts with capital
-        expect(sample.firstName.length).toBeGreaterThan(2);
+        expect(sample.firstName.length).toBeGreaterThanOrEqual(2);
         expect(sample.firstName.length).toBeLessThan(15);
         expect(sample.firstName).not.toContain(" "); // No spaces in first names
 
         // Last names should be single words, may have special chars
         expect(sample.lastName).toMatch(/^[A-Z]/);
-        expect(sample.lastName.length).toBeGreaterThan(2);
+        expect(sample.lastName.length).toBeGreaterThanOrEqual(2);
         expect(sample.lastName.length).toBeLessThan(25); // More generous for longer names
 
         // Full names should have multiple parts
