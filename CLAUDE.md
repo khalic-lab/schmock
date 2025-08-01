@@ -133,3 +133,6 @@ Schmock is **feature-complete** with a production-ready callable API:
 - **Stability**: API stability guarantee and production-ready documentation
 
 The core implementation is complete with comprehensive test coverage.
+
+## Development Tips
+- Always check your current working directory with `pwd` before running commands
