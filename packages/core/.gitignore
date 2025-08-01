@@ -1,0 +1,9 @@
+# Generated files
+src/**/*.js
+src/**/*.d.ts
+!src/**/*.test.js
+!src/**/*.spec.js
+!src/**/*.steps.js
+
+# Build output
+dist/
