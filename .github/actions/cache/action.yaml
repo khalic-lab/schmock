@@ -24,6 +24,6 @@ runs:
       if: ${{ contains(inputs.scope, 'build') }}
       uses: actions/cache@v4
       with:
-        key: build-v2-${{ hashFiles('packages/**/src/**/*.ts', 'types/**/*.d.ts', 'tsconfig.json', 'packages/**/tsconfig.json') }}
+        key: build-v3-${{ hashFiles('packages/**/src/**/*.ts', 'types/**/*.d.ts', 'tsconfig.json', 'packages/**/tsconfig.json', '.github/workflows/**') }}
         path: |
           ./packages/*/dist/**

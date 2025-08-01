@@ -19,8 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.pull_request.draft == false
     steps:
+      - name: Clean workspace
+        run: |
+          rm -rf ./* || true
+          rm -rf ./.??* || true
+          
       - uses: actions/checkout@v4
         with:
+          clean: true
           fetch-depth: 0
       
       - uses: ./.github/actions/setup-bun
