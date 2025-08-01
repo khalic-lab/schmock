@@ -197,7 +197,7 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
                 context?.suggestion,
               );
             }
-            throw error;
+            throw error as Error;
           }
         }
         validateSchema(
