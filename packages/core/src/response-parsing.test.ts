@@ -83,7 +83,7 @@ describe("response parsing", () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual(["item1", "item2", "item3"]);
-      expect(response.headers).toEqual({});
+      expect(response.headers).toEqual({ "content-type": "application/json" });
     });
   });
 
@@ -96,7 +96,7 @@ describe("response parsing", () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toBe("Simple text response");
-      expect(response.headers).toEqual({});
+      expect(response.headers).toEqual({ "content-type": "application/json" });
     });
 
     it("handles number responses", async () => {
@@ -107,7 +107,7 @@ describe("response parsing", () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toBe(42);
-      expect(response.headers).toEqual({});
+      expect(response.headers).toEqual({ "content-type": "application/json" });
     });
 
     it("handles boolean responses", async () => {
@@ -118,7 +118,7 @@ describe("response parsing", () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toBe(true);
-      expect(response.headers).toEqual({});
+      expect(response.headers).toEqual({ "content-type": "application/json" });
     });
 
     it("handles null responses", async () => {
@@ -127,9 +127,9 @@ describe("response parsing", () => {
 
       const response = await mock.handle("GET", "/null");
 
-      expect(response.status).toBe(200);
-      expect(response.body).toBe(null);
-      expect(response.headers).toEqual({});
+      expect(response.status).toBe(204);
+      expect(response.body).toBeUndefined();
+      expect(response.headers).toEqual({ "content-type": "application/json" });
     });
 
     it("handles undefined responses", async () => {
@@ -138,9 +138,9 @@ describe("response parsing", () => {
 
       const response = await mock.handle("GET", "/undefined");
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(204);
       expect(response.body).toBeUndefined();
-      expect(response.headers).toEqual({});
+      expect(response.headers).toEqual({ "content-type": "application/json" });
     });
 
     it("handles complex object responses", async () => {
@@ -166,7 +166,7 @@ describe("response parsing", () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual(complexObject);
-      expect(response.headers).toEqual({});
+      expect(response.headers).toEqual({ "content-type": "application/json" });
     });
 
     it("handles empty array responses", async () => {
@@ -177,7 +177,7 @@ describe("response parsing", () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual([]);
-      expect(response.headers).toEqual({});
+      expect(response.headers).toEqual({ "content-type": "application/json" });
     });
 
     it("handles empty object responses", async () => {
@@ -188,7 +188,7 @@ describe("response parsing", () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual({});
-      expect(response.headers).toEqual({});
+      expect(response.headers).toEqual({ "content-type": "application/json" });
     });
   });
 

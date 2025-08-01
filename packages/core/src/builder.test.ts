@@ -39,7 +39,7 @@ describe("schmock callable API", () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual([{ id: 1, name: "John" }]);
-      expect(response.headers).toEqual({});
+      expect(response.headers).toEqual({ "content-type": "application/json" });
     });
 
     it("returns 404 for undefined routes", async () => {
@@ -86,7 +86,9 @@ describe("schmock callable API", () => {
       });
 
       expect(response.status).toBe(201);
-      expect(response.headers).toEqual({ Location: "/users/1" });
+      expect(response.headers).toEqual({
+        Location: "/users/1",
+      });
     });
   });
 
