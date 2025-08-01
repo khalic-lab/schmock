@@ -2,7 +2,9 @@
  * Schmock - Schema-driven mock API generator with callable API
  * @packageDocumentation
  */
+
 declare namespace Schmock {
+  type JSONSchema7 = import("json-schema").JSONSchema7;
   /**
    * HTTP methods supported by Schmock
    */
