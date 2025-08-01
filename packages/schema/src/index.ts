@@ -52,7 +52,7 @@ export function schemaPlugin(options: SchemaPluginOptions): Schmock.Plugin {
 
   return {
     name: "schema",
-    version: "0.1.0",
+    version: "0.3.0",
 
     process(context: Schmock.PluginContext, response?: any) {
       // If response already exists, pass it through
