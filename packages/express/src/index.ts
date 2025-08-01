@@ -217,7 +217,7 @@ export function toExpress(
       // Handle errors based on configuration
       if (error instanceof SchmockError && errorFormatter) {
         // Use custom error formatter for Schmock errors
-        const formatted = errorFormatter(error, req);
+        const formatted = errorFormatter(error as SchmockError, req);
         res.status(500).json(formatted);
       } else if (passErrorsToNext) {
         // Pass errors to Express error handler
@@ -227,7 +227,7 @@ export function toExpress(
         res.status(500).json({
           error:
             error instanceof Error ? error.message : "Internal Server Error",
-          code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
+          code: error instanceof SchmockError ? (error as SchmockError).code : "INTERNAL_ERROR",
         });
       }
     }
