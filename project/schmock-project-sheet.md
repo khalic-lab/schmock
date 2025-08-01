@@ -1,4 +1,7 @@
 # Schmock 🎭
+
+!!!IMPORTANT OUT OF DATE; NEEDS UPDATE WITH NEW ARCHITECTURE!!!
+
 > Schema-driven mock API generator with business constraints
 
 ## Project Vision
@@ -236,26 +239,3 @@ npx schmock serve --config schmock.prod.js
 - [ ] Video tutorials
 - [ ] Example projects
 
-## Success Metrics
-- **Time to first mock**: <30 seconds
-- **Bundle size**: Core <10KB, typical setup <150KB
-- **Performance**: Generate 1000 records <100ms
-- **Adoption**: 1000 stars in 3 months
-
-## Marketing Strategy
-1. **Launch**: "Introducing Schmock: Mocking That Just Works"
-2. **Comparisons**: Clear positioning vs MSW, JSON Server, Mirage
-3. **Tutorials**: Framework-specific getting started guides
-4. **Community**: Discord, plugin contests, conference talks
-
-## Technical Decisions
-- **TypeScript first**: Written in TS, amazing DX
-- **ESM only**: Modern tooling, better tree-shaking
-- **Zero dependencies** in core
-- **Semantic versioning** from day one
-
-## Open Questions
-1. Should we support GraphQL from the start or via plugin?
-2. Browser DevTools or standalone Electron app?
-3. Free vs paid plugins model?
-4. OpenAPI import in core or plugin?

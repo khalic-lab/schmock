@@ -1,0 +1,42 @@
+{
+  "name": "@schmock/angular",
+  "version": "0.1.0",
+  "description": "Angular HTTP interceptor adapter for Schmock",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "bun build:lib --watch",
+    "clean": "rm -rf dist",
+    "build": "bun run clean && bun run build:lib && bun run build:types",
+    "build:lib": "bun build src/index.ts --outdir dist --target node --format esm",
+    "build:types": "tsc --emitDeclarationOnly --declaration --outDir dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src",
+    "lint:fix": "biome check --write src"
+  },
+  "dependencies": {
+    "@schmock/core": "workspace:*",
+    "rxjs": "^7.8.1"
+  },
+  "peerDependencies": {
+    "@angular/common": ">=15.0.0",
+    "@angular/core": ">=15.0.0"
+  },
+  "devDependencies": {
+    "@angular/common": "^17.0.0",
+    "@angular/compiler": "^17.0.0",
+    "@angular/core": "^17.0.0",
+    "@angular/platform-browser": "^17.0.0",
+    "@angular/platform-browser-dynamic": "^17.0.0",
+    "@types/node": "^22.10.6",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4",
+    "zone.js": "^0.14.0"
+  }
+}
