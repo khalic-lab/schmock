@@ -7,12 +7,11 @@ export type ResponseResult = Schmock.ResponseResult;
 export type RequestContext = Schmock.RequestContext;
 export type Response = Schmock.Response;
 export type RequestOptions = Schmock.RequestOptions;
-
-// Legacy types for backward compatibility (deprecated)
-export type BuilderConfig = Schmock.BuilderConfig;
-export type ResponseContext<T = unknown> = Schmock.ResponseContext<T>;
-export type ResponseFunction<T = unknown> = Schmock.ResponseFunction<T>;
-export type RouteDefinition<T = unknown> = Schmock.RouteDefinition<T>;
-export type Routes<T = unknown> = Schmock.Routes<T>;
-export type Builder<T = unknown> = Schmock.Builder<T>;
-export type MockInstance<T = unknown> = Schmock.MockInstance<T>;
+export type GlobalConfig = Schmock.GlobalConfig;
+export type RouteConfig = Schmock.RouteConfig;
+export type Generator = Schmock.Generator;
+export type GeneratorFunction = Schmock.GeneratorFunction;
+export type CallableMockInstance = Schmock.CallableMockInstance;
+export type Plugin = Schmock.Plugin;
+export type PluginContext = Schmock.PluginContext;
+export type PluginResult = Schmock.PluginResult;

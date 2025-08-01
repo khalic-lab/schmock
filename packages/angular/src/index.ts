@@ -12,7 +12,7 @@ import {
   HttpResponse,
 } from "@angular/common/http";
 import { Injectable } from "@angular/core";
-import type { MockInstance } from "@schmock/core";
+import type { CallableMockInstance } from "@schmock/core";
 import { Observable } from "rxjs";
 
 /**
@@ -109,7 +109,7 @@ function headersToObject(request: HttpRequest<any>): Record<string, string> {
  * Create an Angular HTTP interceptor from a Schmock instance
  */
 export function createSchmockInterceptor(
-  mock: MockInstance,
+  mock: CallableMockInstance,
   options: AngularAdapterOptions = {},
 ): new () => HttpInterceptor {
   const {
@@ -232,7 +232,7 @@ export function createSchmockInterceptor(
  * Provider configuration for Angular module
  */
 export function provideSchmockInterceptor(
-  mock: MockInstance,
+  mock: CallableMockInstance,
   options?: AngularAdapterOptions,
 ) {
   return {
