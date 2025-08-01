@@ -8,3 +8,12 @@ dist/
 
 # TypeScript build info
 *.tsbuildinfo
+
+# Package tarballs (npm pack output)
+*.tgz
+
+# Prevent generated files in source directories
+packages/*/src/**/*.js
+packages/*/src/**/*.d.ts
+!packages/*/src/**/*.test.js
+!packages/*/src/**/*.spec.js

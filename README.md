@@ -1,19 +1,21 @@
 # Schmock 🎭
 
-> Schema-driven mock API generator with business constraints
+🚧 under development, wait for v1 for usage
+
+> Schema-driven mock API generator with direct callable API and plugin pipeline
 
 ## Overview
 
-Schmock is a powerful mock API generator that allows you to quickly create predictable, schema-driven mock endpoints for frontend development. Unlike traditional mock servers, Schmock is designed with extensibility in mind through its plugin system.
+Schmock is a powerful mock API generator that allows you to quickly create predictable, schema-driven mock endpoints for frontend development. With its direct callable API, you can define mocks with minimal boilerplate and maximum expressiveness.
 
 ## Features
 
 - 🚀 **Quick Setup**: Get a mock API running in under 30 seconds
+- ✨ **Direct API**: Callable instances with zero boilerplate
 - 📋 **Schema-Driven**: Use JSON Schema to define your data structures
-- 🔌 **Plugin System**: Extend functionality with custom plugins
 - 🎯 **Type-Safe**: Full TypeScript support with ambient types
-- 🧪 **BDD/TDD Ready**: Built with testing in mind
-- 🏗️ **Monorepo Structure**: Organized for scalability
+- 🔄 **Stateful Mocks**: Maintain state between requests
+- 🔧 **Plugin Pipeline**: Extensible `.pipe()` architecture
 
 ## Installation
 
@@ -33,100 +35,299 @@ yarn add @schmock/core
 ### Basic Usage
 
 ```typescript
-import { Schmock } from '@schmock/core'
+import { schmock } from '@schmock/core'
 
-// Define your mock API configuration
-const config = {
-  routes: {
-    '/api/users': {
-      data: [
-        { id: 1, name: 'John Doe', email: 'john@example.com' },
-        { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
-      ]
-    },
-    '/api/users/1': {
-      data: { id: 1, name: 'John Doe', email: 'john@example.com' }
-    }
-  }
-}
+// Create a mock API with global configuration
+const mock = schmock({ debug: true, namespace: '/api' })
 
-// Create a Schmock instance
-const schmock = new Schmock(config)
+// Define routes directly - no build() needed!
+mock('GET /users', () => [
+  { id: 1, name: 'John Doe', email: 'john@example.com' },
+  { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
+], { contentType: 'application/json' })
 
-// Make requests
-const response = await schmock.get('/api/users')
+mock('GET /users/:id', ({ params }) => {
+  const users = [
+    { id: 1, name: 'John Doe', email: 'john@example.com' },
+    { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
+  ]
+  return users.find(u => u.id === Number(params.id)) || [404, { error: 'User not found' }]
+}, { contentType: 'application/json' })
+
+// Make requests immediately
+const response = await mock.handle('GET', '/api/users')
 console.log(response.status) // 200
 console.log(response.body) // [{ id: 1, name: 'John Doe', ... }, ...]
+
+// With parameters
+const userResponse = await mock.handle('GET', '/api/users/1')
+console.log(userResponse.body) // { id: 1, name: 'John Doe', ... }
 ```
 
-### Simple String Response
+### Plugin Pipeline with .pipe()
 
 ```typescript
-const schmock = new Schmock({
-  routes: {
-    '/api/status': 'OK',
-    '/api/version': '1.0.0'
-  }
-})
+import { schmock } from '@schmock/core'
+import { schemaPlugin } from '@schmock/schema'
+import { validationPlugin } from '@schmock/validation'
 
-const response = await schmock.get('/api/status')
-console.log(response.body) // 'OK'
+const mock = schmock({ debug: true })
+
+// Chain plugins with .pipe() - clean and expressive
+mock('GET /users', userSchema, { contentType: 'application/json' })
+  .pipe(schemaPlugin())
+  .pipe(validationPlugin())
+  .pipe(loggingPlugin())
+
+mock('POST /users', createUserGenerator, { contentType: 'application/json' })
+  .pipe(validationPlugin())
+  .pipe(persistencePlugin())
 ```
 
-### Handling 404s
+### Stateful Mocks
 
 ```typescript
-const schmock = new Schmock({
-  routes: {
-    '/api/users': { data: [] }
-  }
+// Initialize mock with global state
+const mock = schmock({ 
+  state: { users: [] },
+  debug: true 
 })
 
-const response = await schmock.get('/api/unknown')
-console.log(response.status) // 404
-console.log(response.body) // { error: 'Not Found' }
+mock('GET /users', ({ state }) => state.users, { 
+  contentType: 'application/json' 
+})
+
+mock('POST /users', ({ body, state }) => {
+  const newUser = { 
+    id: Date.now(), 
+    ...body, 
+    createdAt: new Date().toISOString() 
+  }
+  state.users.push(newUser)
+  return [201, newUser]
+}, { contentType: 'application/json' })
+
+mock('DELETE /users/:id', ({ params, state }) => {
+  const index = state.users.findIndex(u => u.id === Number(params.id))
+  if (index === -1) return [404, { error: 'User not found' }]
+  state.users.splice(index, 1)
+  return [204, null]
+}, { contentType: 'application/json' })
+
+// Use immediately
+const created = await mock.handle('POST', '/users', {
+  body: { name: 'Alice', email: 'alice@example.com' }
+})
+console.log(created.status) // 201
+```
+
+### Generator Functions vs Static Data
+
+```typescript
+const mock = schmock()
+
+// Generator function - called on each request
+mock('GET /time', () => ({ 
+  timestamp: new Date().toISOString() 
+}), { contentType: 'application/json' })
+
+// Static JSON data - returned as-is
+mock('GET /config', {
+  version: '1.0.0',
+  features: ['auth', 'api', 'websockets']
+}, { contentType: 'application/json' })
+
+// Schmock automatically detects the difference based on contentType validation
+```
+
+### Custom Status Codes and Headers
+
+```typescript
+const mock = schmock()
+
+mock('POST /upload', ({ body }) => [
+  201,
+  { id: 123, filename: body.name },
+  { 'Location': '/api/files/123' }
+], { contentType: 'application/json' })
+
+mock('GET /protected', ({ headers }) => {
+  if (!headers.authorization) {
+    return [401, { error: 'Unauthorized' }]
+  }
+  return { data: 'secret' }
+}, { contentType: 'application/json' })
 ```
 
 ## Advanced Usage
 
-### With Express/HTTP Server (Coming Soon)
+### Query Parameters and Headers
+
+```typescript
+const mock = schmock()
+
+mock('GET /search', ({ query }) => ({
+  results: [],
+  query: query.q,
+  page: Number(query.page) || 1
+}), { contentType: 'application/json' })
+
+mock('GET /me', ({ headers }) => ({
+  authenticated: !!headers.authorization,
+  user: headers.authorization ? { id: 1, name: 'John' } : null
+}), { contentType: 'application/json' })
+
+// With query parameters
+const search = await mock.handle('GET', '/search', {
+  query: { q: 'typescript', page: '2' }
+})
+console.log(search.body) // { results: [], query: 'typescript', page: 2 }
+
+// With headers
+const me = await mock.handle('GET', '/me', {
+  headers: { authorization: 'Bearer token123' }
+})
+console.log(me.body.authenticated) // true
+```
+
+### Schema-Based Generation
+
+```typescript
+import { schmock } from '@schmock/core'
+import { schemaPlugin } from '@schmock/schema'
+
+const mock = schmock()
+
+// Define a route with JSON Schema instead of a generator
+mock('GET /users', {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      id: { type: 'integer' },
+      name: { type: 'string', faker: 'person.fullName' },
+      email: { type: 'string', format: 'email' }
+    }
+  }
+}, { contentType: 'application/json' })
+  .pipe(schemaPlugin())
+
+// Generates realistic data automatically
+const response = await mock.handle('GET', '/users')
+// [{ id: 1, name: "John Doe", email: "john@example.com" }, ...]
+```
+
+### Complex Plugin Pipelines
+
+```typescript
+import { schmock } from '@schmock/core'
+import { schemaPlugin } from '@schmock/schema'
+import { validationPlugin } from '@schmock/validation'
+import { cachingPlugin } from '@schmock/caching'
+
+const mock = schmock({ 
+  debug: true,
+  namespace: '/api/v1'
+})
+
+// Complex pipeline: validation → schema generation → caching → response
+mock('GET /users', userListSchema, { contentType: 'application/json' })
+  .pipe(validationPlugin({ strict: true }))
+  .pipe(schemaPlugin({ count: 10 }))
+  .pipe(cachingPlugin({ ttl: 60000 }))
+  
+mock('POST /users', createUserHandler, { contentType: 'application/json' })
+  .pipe(validationPlugin({ validateBody: true }))
+  .pipe(persistencePlugin())
+  .pipe(notificationPlugin())
+```
+
+### Express Integration
 
 ```typescript
 import express from 'express'
-import { createSchmockMiddleware } from '@schmock/express'
+import { toExpress } from '@schmock/express'
 
 const app = express()
-const schmock = new Schmock(config)
+const mock = schmock()
 
-app.use('/mock', createSchmockMiddleware(schmock))
-app.listen(3000)
-```
-
-### Schema-Based Generation (Coming Soon)
-
-```typescript
-import { Schmock } from '@schmock/core'
-import { SchemaPlugin } from '@schmock/plugin-schema'
-
-const schmock = new Schmock({
-  routes: {
-    '/api/users': {
-      schema: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            id: { type: 'integer' },
-            name: { type: 'string', faker: 'person.fullName' },
-            email: { type: 'string', format: 'email' }
-          }
-        }
-      }
-    }
-  }
+mock('GET /users', () => [{ id: 1, name: 'John' }], { 
+  contentType: 'application/json' 
 })
 
-schmock.use(new SchemaPlugin())
+// Convert to Express middleware
+app.use('/api', toExpress(mock))
+app.listen(3000)
+// Now responds at http://localhost:3000/api/users
+```
+
+## API Reference
+
+### Factory Function
+
+```typescript
+function schmock(config?: GlobalConfig): CallableMockInstance
+```
+
+**Global Configuration:**
+```typescript
+interface GlobalConfig {
+  debug?: boolean;          // Enable debug logging
+  namespace?: string;       // URL prefix for all routes
+  state?: any;             // Initial shared state
+  delay?: number | [number, number]; // Response delay (ms)
+}
+```
+
+### Route Definition
+
+Define routes by calling the mock instance directly:
+
+```typescript
+const mock = schmock()
+
+// Basic route definition
+mock('GET /users', generatorFunction, routeConfig)
+mock('POST /users', staticData, routeConfig)
+mock('PUT /users/:id', schemaObject, routeConfig)
+mock('DELETE /users/:id', generatorFunction, routeConfig)
+```
+
+**Route Configuration:**
+```typescript
+interface RouteConfig {
+  contentType: string;      // 'application/json', 'text/plain', etc.
+  // Additional route-specific options...
+}
+```
+
+### Response Types
+
+Generator functions can return:
+- **Direct value**: Returns as 200 OK
+- **`[status, body]`**: Custom status code
+- **`[status, body, headers]`**: Custom status, body, and headers
+
+### Context Object
+
+Generator functions receive a context with:
+- `state`: Shared mutable state
+- `params`: Path parameters (e.g., `:id`)
+- `query`: Query string parameters
+- `body`: Request body
+- `headers`: Request headers
+- `method`: HTTP method
+- `path`: Request path
+
+### Plugin Pipeline
+
+Chain plugins using `.pipe()`:
+
+```typescript
+mock('GET /users', generator, config)
+  .pipe(plugin1())
+  .pipe(plugin2())
+  .pipe(plugin3())
 ```
 
 ## Development
@@ -154,12 +355,14 @@ bun run build
 ```
 schmock/
 ├── packages/
-│   ├── core/           # Core Schmock functionality
-│   ├── express/        # Express middleware (planned)
-│   └── plugin-schema/  # Schema plugin (planned)
+│   ├── core/           # Core Schmock functionality with callable API
+│   ├── schema/         # Schema plugin for JSON Schema generation
+│   ├── express/        # Express middleware adapter
+│   └── angular/        # Angular HTTP interceptor adapter
 ├── features/           # BDD feature files
 ├── types/              # Shared TypeScript types
-└── project/            # Documentation and examples
+├── docs/               # API documentation
+└── examples/           # Usage examples
 ```
 
 ## Contributing
@@ -177,15 +380,22 @@ See [CLAUDE.md](./CLAUDE.md) for detailed development guidelines.
 ## Roadmap
 
 - [x] Basic static mocking with GET requests
-- [ ] Support for all HTTP methods (POST, PUT, DELETE, PATCH)
-- [ ] Dynamic route patterns (e.g., `/api/users/:id`)
-- [ ] Schema-based data generation
-- [ ] Plugin system implementation
-- [ ] Express middleware adapter
-- [ ] Request validation
+- [x] Support for all HTTP methods (POST, PUT, DELETE, PATCH)
+- [x] Dynamic route patterns (e.g., `/api/users/:id`)
+- [x] State management between requests
+- [x] Direct callable API with zero boilerplate
+- [x] Custom status codes and headers
+- [x] Plugin pipeline with `.pipe()` chaining
+- [x] Schema-based data generation
+- [x] Express middleware adapter
+- [x] Angular HTTP interceptor adapter
+- [ ] Runtime content-type validation
+- [ ] Request/response validation plugins
 - [ ] Response delays and error simulation
-- [ ] State management between requests
+- [ ] Caching plugin
+- [ ] Persistence plugin
 - [ ] GraphQL support
+- [ ] WebSocket support
 
 ## License
 

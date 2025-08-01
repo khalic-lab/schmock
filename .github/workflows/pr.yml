@@ -1,6 +1,6 @@
 on:
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     types: [opened, synchronize, reopened, ready_for_review]
 
 name: Pull Request
@@ -19,8 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.pull_request.draft == false
     steps:
+      - name: Clean workspace
+        run: |
+          rm -rf ./* || true
+          rm -rf ./.??* || true
+          
       - uses: actions/checkout@v4
         with:
+          clean: true
           fetch-depth: 0
       
       - uses: ./.github/actions/setup-bun
@@ -38,8 +44,10 @@ jobs:
       
       - name: Run BDD tests
         run: bun run test:bdd
-        continue-on-error: true
         id: bdd-tests
+      
+      - name: Run E2E tests
+        run: bun run test:e2e
       
       - name: Comment BDD test status
         uses: actions/github-script@v7

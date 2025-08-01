@@ -9,11 +9,14 @@
     "forceConsistentCasingInFileNames": true,
     "allowSyntheticDefaultImports": true,
     "declaration": true,
-    "emitDeclarationOnly": true,
+    "emitDeclarationOnly": false,
     "composite": true,
     "baseUrl": ".",
     "paths": {
       "@schmock/core": ["packages/core/src"],
+      "@schmock/express": ["packages/express/src"],
+      "@schmock/schema": ["packages/schema/src"],
+      "@schmock/angular": ["packages/angular/src"],
       "@features/*": ["features/*"]
     }
   },

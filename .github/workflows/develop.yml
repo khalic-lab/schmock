@@ -15,7 +15,15 @@ jobs:
   develop-checks:
     runs-on: ubuntu-latest
     steps:
+      - name: Clean workspace
+        run: |
+          rm -rf ./* || true
+          rm -rf ./.??* || true
+          
       - uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 1
       
       - uses: ./.github/actions/setup-bun
       - uses: ./.github/actions/build
@@ -30,6 +38,8 @@ jobs:
       - name: Run unit tests
         run: bun run test:unit
       
-      - name: Run BDD tests (allowed to fail)
-        run: bun run test:bdd || echo "⚠️ BDD tests failing - continue development"
-        continue-on-error: true
+      - name: Run BDD tests
+        run: bun run test:bdd
+      
+      - name: Run E2E tests
+        run: bun run test:e2e

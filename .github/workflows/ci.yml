@@ -2,7 +2,7 @@ on:
   push:
     branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     types: [opened, synchronize, reopened, labeled]
   pull_request_review:
     types: [submitted]
@@ -28,7 +28,8 @@ jobs:
       - run: bun run lint
       - run: bun run typecheck
       - run: bun run test:unit
-      - run: bun run test:bdd || echo "BDD tests expected to fail during development"
+      - run: bun run test:bdd
+      - run: bun run test:e2e
 
   ci-canary-release:
     if: false  # Disabled until ready to publish
