@@ -89,6 +89,8 @@ bun run setup  # Configure Git hooks (linting + tests on commit)
    - Alternative: `bun test` (faster, but skips typecheck)
    - BDD tests may fail during feature development (expected for TDD)
 
+**IMPORTANT: Never add Claude signatures to commit messages**
+
 ## Current Development Status
 
 Schmock is **feature-complete** with a production-ready callable API:
