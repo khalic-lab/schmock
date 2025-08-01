@@ -23,7 +23,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .github/config/release-please-config.json
-          manifest-file: .github/config/.release-please-config.json
+          manifest-file: .github/config/release-please-manifest.json
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
