@@ -332,22 +332,54 @@ mock('GET /users', generator, config)
 
 ## Development
 
-This project uses a monorepo structure with Bun workspaces.
+This project uses a monorepo structure with Bun workspaces and automated Git hooks for quality assurance.
 
-### Setup
+### Initial Setup
 
 ```sh
 # Install dependencies
 bun install
 
-# Run tests
+# Configure Git hooks (recommended for contributors)
+bun run setup
+
+# Build packages
+bun run build
+```
+
+### Testing Commands
+
+```sh
+# Run all tests (262 total: 101 unit + 161 BDD)
 bun test
 
-# Run BDD tests
+# Run comprehensive test suite with typecheck (recommended before commits)
+bun test:all
+
+# Run unit tests only (all packages)
+bun test:unit
+
+# Run BDD tests only
 bun test:bdd
 
-# Build
-bun run build
+# Type checking
+bun run typecheck
+
+# Linting
+bun run lint
+bun run lint:fix  # Auto-fix issues
+```
+
+### Git Hooks (Automated Quality Assurance)
+
+After running `bun run setup`, Git hooks will automatically:
+
+- **Pre-commit**: Run linting and comprehensive tests before allowing commits
+- **Commit-msg**: Enforce conventional commit message format
+
+```sh
+# Bypass hooks if needed (not recommended)
+git commit --no-verify
 ```
 
 ### Project Structure
@@ -367,15 +399,43 @@ schmock/
 
 ## Contributing
 
-We use GitHub Flow for development:
+We use GitHub Flow with automated quality checks:
 
-1. Create a feature branch from `develop`
-2. Make your changes with tests
-3. Create a PR to `develop`
-4. After review, merge to `develop`
-5. Periodically, `develop` is merged to `main`
+### Getting Started
+1. **Clone and setup**:
+   ```sh
+   git clone <repo>
+   cd schmock
+   bun install
+   bun run setup  # Configure Git hooks
+   ```
 
-See [CLAUDE.md](./CLAUDE.md) for detailed development guidelines.
+2. **Create feature branch**:
+   ```sh
+   git checkout develop
+   git pull origin develop
+   git checkout -b feature/your-feature-name
+   ```
+
+3. **Development workflow**:
+   - Make your changes with tests
+   - Git hooks automatically run linting and tests on commit
+   - BDD tests may fail during development (expected for TDD)
+
+4. **Create PR**:
+   - Push feature branch to GitHub
+   - Create PR from feature → develop
+   - CI runs comprehensive checks
+   - All tests must pass for main branch PRs
+
+5. **After review**: Merge to develop, then periodically develop → main
+
+### Quality Standards
+- **Automatic**: Git hooks enforce linting and test standards
+- **Manual override**: Use `git commit --no-verify` only when necessary
+- **Comprehensive testing**: 262 tests (101 unit + 161 BDD) with TypeScript checking
+
+See [CLAUDE.md](./CLAUDE.md) for detailed development guidelines and project architecture.
 
 ## Roadmap
 
