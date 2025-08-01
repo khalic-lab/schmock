@@ -50,13 +50,3 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
-  
-  # E2E tests
-  - package-ecosystem: "bun"
-    directory: "/e2e"
-    schedule:
-      interval: "daily"
-    labels: ["dependencies"]
-    commit-message:
-      prefix: "chore"
-      include: "scope"

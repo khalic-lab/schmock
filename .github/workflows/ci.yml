@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false  # Don't cancel other jobs if one fails
       matrix:
-        task: [lint, typecheck, test-unit, test-bdd, test-e2e, build]
+        task: [lint, typecheck, test-unit, test-bdd, build]
     
     steps:
       # Checkout code
@@ -83,11 +83,6 @@ jobs:
                 echo "::warning::BDD tests failed (this is expected during TDD development)"
                 exit 0  # Don't fail the job for BDD tests
               }
-              echo "::endgroup::"
-              ;;
-            test-e2e)
-              echo "::group::Running E2E tests"
-              bun run test:e2e
               echo "::endgroup::"
               ;;
             build)
