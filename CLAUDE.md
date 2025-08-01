@@ -55,6 +55,12 @@ This project uses GitHub Flow with the following workflow:
 - `bun test:bdd` - Run BDD tests only
 - `act push -W .github/workflows/develop.yml` - Test CI locally
 
+### Claude AI Assistant Commands
+Claude should use quiet variants of commands to minimize output:
+- `bun test:quiet` - Run tests with minimal output (dots only + final summary)
+- `bun lint:quiet` - Run linting with minimal output
+- `bun build:quiet` - Run build with minimal output
+
 ## Development Guidelines
 
 ### Initial Setup
@@ -88,6 +94,10 @@ bun run setup  # Configure Git hooks (linting + tests on commit)
 3. Run `bun test:all` - **Recommended: Full test suite with typecheck**
    - Alternative: `bun test` (faster, but skips typecheck)
    - BDD tests may fail during feature development (expected for TDD)
+
+**For Claude AI Assistant:**
+- Use quiet commands: `bun lint:quiet`, `bun build:quiet`, `bun test:quiet`
+- These provide minimal output while ensuring quality checks pass
 
 **IMPORTANT: Never add Claude signatures to commit messages**
 
