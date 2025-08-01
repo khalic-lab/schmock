@@ -6,5 +6,7 @@ runs:
     - uses: ./.github/actions/cache
       with:
         scope: build
+    - run: bun run clean
+      shell: bash
     - run: bun --bun run build
       shell: bash
