@@ -38,8 +38,10 @@ jobs:
       
       - name: Run BDD tests
         run: bun run test:bdd
-        continue-on-error: true
         id: bdd-tests
+      
+      - name: Run E2E tests
+        run: bun run test:e2e
       
       - name: Comment BDD test status
         uses: actions/github-script@v7

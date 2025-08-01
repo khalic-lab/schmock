@@ -40,22 +40,33 @@ export function schemaPlugin(): Schmock.Plugin {
     name: "schema",
     version: "0.1.0",
 
-    generate(context: Schmock.PluginContext) {
+    process(context: Schmock.PluginContext, response?: any) {
+      // If response already exists, pass it through
+      if (response !== undefined && response !== null) {
+        return { context, response };
+      }
+
       const route = context.route as any;
 
-      // Only handle routes with schema but no response function
-      if (!route.schema || route.response) {
-        return; // Let other plugins or response function handle it
+      // Only handle routes with schema configuration
+      if (!route.schema) {
+        return { context, response }; // Let other plugins or response function handle it
       }
 
       try {
-        return generateFromSchema({
+        const generatedResponse = generateFromSchema({
           schema: route.schema,
           count: route.count,
           overrides: route.overrides,
           params: context.params,
           state: context.state,
+          query: context.query,
         });
+
+        return {
+          context,
+          response: generatedResponse,
+        };
       } catch (error) {
         // Re-throw schema-specific errors as-is
         if (
@@ -72,18 +83,6 @@ export function schemaPlugin(): Schmock.Plugin {
           route.schema,
         );
       }
-    },
-
-    transform(data: any, context: Schmock.PluginContext) {
-      const route = context.route as any;
-
-      // If route has both schema and response function, provide generateFromSchema helper
-      if (route.schema && route.response) {
-        // This is handled by enhancing the context, but we can't modify context here
-        // This will be handled by the builder integration
-      }
-
-      return data;
     },
   };
 }

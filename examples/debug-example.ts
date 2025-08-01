@@ -13,16 +13,13 @@ function loggingPlugin() {
   return {
     name: "logging-plugin",
     version: "1.0.0",
-    enforce: "pre" as const,
     
-    beforeRequest(context: any) {
+    process(context: any, response: any) {
       console.log(`🔍 Logging: Processing ${context.method} ${context.path}`);
-      return context;
-    },
-    
-    afterGenerate(data: any, context: any) {
-      console.log(`🔍 Logging: Generated data for ${context.path}:`, typeof data);
-      return data;
+      if (response) {
+        console.log(`🔍 Logging: Response data for ${context.path}:`, typeof response);
+      }
+      return { context, response };
     }
   };
 }
@@ -33,21 +30,25 @@ function authPlugin() {
     name: "auth-plugin",
     version: "1.0.0",
     
-    beforeRequest(context: any) {
+    process(context: any, response: any) {
       // Simulate adding user to context
       context.state.set('user', { id: 1, name: 'Test User' });
-      return context;
-    },
-    
-    beforeResponse(response: any, context: any) {
-      // Add auth header to response
-      return {
-        ...response,
-        headers: {
-          ...response.headers,
-          'X-User-ID': context.state.get('user')?.id || 'anonymous'
-        }
-      };
+      
+      // If we have a response, add auth header
+      if (response && typeof response === 'object') {
+        const processedResponse = Array.isArray(response) ? response : [200, response, {}];
+        const [status, body, headers = {}] = processedResponse;
+        
+        return {
+          context,
+          response: [status, body, {
+            ...headers,
+            'X-User-ID': context.state.get('user')?.id || 'anonymous'
+          }]
+        };
+      }
+      
+      return { context, response };
     }
   };
 }
@@ -56,38 +57,38 @@ async function runDebugExample() {
   console.log("=== Schmock Debug Mode Example ===\n");
   
   // Create mock instance with debug mode enabled
-  const mock = schmock()
-    .config({ 
-      debug: true  // Enable debug mode
-    })
-    .use(loggingPlugin())
-    .use(authPlugin())
-    .use(schemaPlugin())
-    .routes({
-      "GET /api/users": {
-        schema: {
-          type: "array",
-          items: {
-            type: "object", 
-            properties: {
-              id: { type: "number" },
-              name: { type: "string", faker: "person.fullName" },
-              email: { type: "string", format: "email" }
-            }
-          }
-        },
-        count: 3
-      },
-      "GET /api/users/:id": (ctx) => ({
-        id: parseInt(ctx.params.id),
-        name: `User ${ctx.params.id}`,
-        email: `user${ctx.params.id}@example.com`
-      }),
-      "POST /api/error": () => {
-        throw new Error("Simulated error for testing");
+  const mock = schmock({ debug: true });
+  
+  // Add plugins
+  mock.pipe(loggingPlugin());
+  mock.pipe(authPlugin());
+  mock.pipe(schemaPlugin());
+  
+  // Define routes
+  mock("GET /api/users", {
+    schema: {
+      type: "array",
+      items: {
+        type: "object", 
+        properties: {
+          id: { type: "number" },
+          name: { type: "string", faker: "person.fullName" },
+          email: { type: "string", format: "email" }
+        }
       }
-    })
-    .build();
+    },
+    count: 3
+  });
+  
+  mock("GET /api/users/:id", (ctx) => ({
+    id: parseInt(ctx.params.id),
+    name: `User ${ctx.params.id}`,
+    email: `user${ctx.params.id}@example.com`
+  }));
+  
+  mock("POST /api/error", () => {
+    throw new Error("Simulated error for testing");
+  });
 
   console.log("\n1. Testing successful request to /api/users:");
   console.log("=" .repeat(50));

@@ -4,101 +4,128 @@ Complete API reference for Schmock framework.
 
 ## Core API
 
-### `schmock()`
+### `schmock(config?)`
 
-Creates a new Schmock mock instance.
+Creates a new callable Schmock mock instance.
 
 ```typescript
-function schmock(): MockInstance
+function schmock(config?: GlobalConfig): CallableMockInstance
 ```
 
-**Returns**: `MockInstance` - A new mock instance for defining routes and handling requests.
+**Parameters**:
+- `config?: GlobalConfig` - Optional global configuration
+
+**Global Configuration Interface**:
+```typescript
+interface GlobalConfig {
+  debug?: boolean;                    // Enable debug logging
+  namespace?: string;                 // URL prefix for all routes
+  state?: any;                       // Initial shared state object
+  delay?: number | [number, number]; // Response delay in ms or range
+}
+```
+
+**Returns**: `CallableMockInstance` - A callable instance for defining routes and handling requests.
 
 **Example**:
 ```typescript
 import { schmock } from '@schmock/core';
 
+// Basic usage
 const mock = schmock();
+
+// With configuration
+const mock = schmock({
+  debug: true,
+  namespace: '/api/v1',
+  state: { users: [], posts: [] },
+  delay: [100, 500]
+});
 ```
 
-### `MockInstance`
+### `CallableMockInstance`
 
-The main interface for defining routes and handling requests.
+The main interface for defining routes and handling requests. The instance itself is callable for route definition.
 
-#### Methods
+#### Route Definition (Callable)
 
-##### `.get(path, response)`
-Define a GET route.
+Define routes by calling the mock instance directly:
 
 ```typescript
-get(path: string, response: RouteResponse): MockInstance
+mock(route: string, generator: Generator, config: RouteConfig): CallableMockInstance
 ```
 
 **Parameters**:
-- `path: string` - URL path pattern (supports parameters like `/users/:id`)
-- `response: RouteResponse` - Response definition (function, object, or schema)
+- `route: string` - Route pattern in format `'METHOD /path'` (e.g., `'GET /users/:id'`)
+- `generator: Generator` - Response generator (function, static data, or schema)
+- `config: RouteConfig` - Route-specific configuration
 
-**Example**:
+**Route Configuration Interface**:
 ```typescript
-mock.get('/users/:id', (req) => ({ id: req.params.id, name: 'John' }));
+interface RouteConfig {
+  contentType: string;  // MIME type: 'application/json', 'text/plain', etc.
+  // Additional route-specific options can be added here
+}
 ```
 
-##### `.post(path, response)`
-Define a POST route.
+**Generator Types**:
+- **Function**: `(context: RequestContext) => ResponseResult` - Called on each request
+- **Static Data**: `any` - Returned as-is (detected when not a function)
+- **JSON Schema**: `JSONSchema7` - Used with schema plugin for data generation
 
+**Examples**:
 ```typescript
-post(path: string, response: RouteResponse): MockInstance
+// Generator function
+mock('GET /users', ({ state }) => state.users, { 
+  contentType: 'application/json' 
+})
+
+// Static data
+mock('GET /config', { 
+  version: '1.0.0', 
+  features: ['auth', 'api'] 
+}, { 
+  contentType: 'application/json' 
+})
+
+// JSON Schema (with schema plugin)
+mock('GET /users', {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      id: { type: 'integer' },
+      name: { type: 'string', faker: 'person.fullName' }
+    }
+  }
+}, { contentType: 'application/json' })
 ```
 
-##### `.put(path, response)`
-Define a PUT route.
+#### Plugin Pipeline
+
+Chain plugins using the `.pipe()` method:
 
 ```typescript
-put(path: string, response: RouteResponse): MockInstance
-```
-
-##### `.delete(path, response)`
-Define a DELETE route.
-
-```typescript
-delete(path: string, response: RouteResponse): MockInstance
-```
-
-##### `.patch(path, response)`
-Define a PATCH route.
-
-```typescript
-patch(path: string, response: RouteResponse): MockInstance
-```
-
-##### `.options(path, response)`
-Define an OPTIONS route.
-
-```typescript
-options(path: string, response: RouteResponse): MockInstance
-```
-
-##### `.head(path, response)`
-Define a HEAD route.
-
-```typescript
-head(path: string, response: RouteResponse): MockInstance
-```
-
-##### `.plugin(plugin)`
-Add a plugin to the mock instance.
-
-```typescript
-plugin(plugin: Plugin): MockInstance
+pipe(plugin: Plugin): CallableMockInstance
 ```
 
 **Parameters**:
-- `plugin: Plugin` - Plugin implementation
+- `plugin: Plugin` - Plugin instance to add to the pipeline
+
+**Returns**: `CallableMockInstance` - The same instance for method chaining
 
 **Example**:
 ```typescript
-mock.plugin(schemaPlugin());
+import { schemaPlugin } from '@schmock/schema'
+import { validationPlugin } from '@schmock/validation'
+
+mock('GET /users', userSchema, { contentType: 'application/json' })
+  .pipe(schemaPlugin())
+  .pipe(validationPlugin({ strict: true }))
+  .pipe(cachingPlugin({ ttl: 300000 }))
 ```
+
+#### Request Handling
 
 ##### `.handle(method, path, options?)`
 Handle a request and return a response.
@@ -108,7 +135,7 @@ handle(
   method: HttpMethod, 
   path: string, 
   options?: RequestOptions
-): Promise<Response | null>
+): Promise<Response>
 ```
 
 **Parameters**:
@@ -116,7 +143,7 @@ handle(
 - `path: string` - Request path
 - `options?: RequestOptions` - Request options (headers, body, query)
 
-**Returns**: `Promise<Response | null>` - Response object or null if no route matches
+**Returns**: `Promise<Response>` - Response object with status, body, and headers
 
 **Example**:
 ```typescript
@@ -124,6 +151,10 @@ const response = await mock.handle('GET', '/users/123', {
   headers: { 'Authorization': 'Bearer token' },
   query: { include: 'profile' }
 });
+
+console.log(response.status); // 200
+console.log(response.body);   // { id: 123, name: "John Doe", ... }
+console.log(response.headers); // { "Content-Type": "application/json" }
 ```
 
 ### Types
@@ -133,18 +164,17 @@ const response = await mock.handle('GET', '/users/123', {
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD'
 ```
 
-#### `RouteResponse`
+#### `Generator`
 ```typescript
-type RouteResponse = 
-  | ResponseFunction
-  | ResponseObject  
+type Generator = 
+  | GeneratorFunction
+  | StaticData
   | JSONSchema7
-  | any
 ```
 
-#### `ResponseFunction`
+#### `GeneratorFunction`
 ```typescript
-type ResponseFunction = (context: RequestContext) => ResponseResult | Promise<ResponseResult>
+type GeneratorFunction = (context: RequestContext) => ResponseResult | Promise<ResponseResult>
 ```
 
 #### `RequestContext`
@@ -152,21 +182,21 @@ type ResponseFunction = (context: RequestContext) => ResponseResult | Promise<Re
 interface RequestContext {
   method: HttpMethod;
   path: string;
-  params: Record<string, string>;
-  query: Record<string, string>;
-  headers: Record<string, string>;
-  body: any;
-  state: any;
+  params: Record<string, string>;    // Route parameters (:id, :slug, etc.)
+  query: Record<string, string>;     // Query string parameters
+  headers: Record<string, string>;   // Request headers
+  body?: any;                        // Request body (POST, PUT, PATCH)
+  state: any;                        // Shared mutable state
 }
 ```
 
 #### `ResponseResult`
+Response functions can return any of these formats:
 ```typescript
-interface ResponseResult {
-  status?: number;
-  headers?: Record<string, string>;
-  body?: any;
-}
+type ResponseResult = 
+  | any                                              // Direct value (200 OK)
+  | [number, any]                                    // [status, body]
+  | [number, any, Record<string, string>]            // [status, body, headers]
 ```
 
 #### `RequestOptions`
@@ -178,23 +208,50 @@ interface RequestOptions {
 }
 ```
 
+#### `Response`
+```typescript
+interface Response {
+  status: number;
+  body: any;
+  headers: Record<string, string>;
+}
+```
+
 ## Plugin System
 
 ### `Plugin` Interface
 
+The new plugin system uses a simplified pipeline architecture with a single `process` method:
+
 ```typescript
 interface Plugin {
   name: string;
-  version: string;
-  enforce?: "pre" | "post";
+  version?: string;
   
-  beforeRequest?(context: PluginContext): PluginContext | void | Promise<PluginContext | void>;
-  beforeGenerate?(context: PluginContext): any | void | Promise<any | void>;
-  generate?(context: PluginContext): any | Promise<any>;
-  afterGenerate?(data: any, context: PluginContext): any | Promise<any>;
-  beforeResponse?(response: ResponseResult, context: PluginContext): ResponseResult | void | Promise<ResponseResult | void>;
+  /**
+   * Process the request through this plugin
+   * @param context - Plugin context with request details
+   * @param response - Response from previous plugin (if any)
+   * @returns Updated context and response
+   */
+  process(context: PluginContext, response?: any): PluginResult | Promise<PluginResult>;
+
+  /**
+   * Called when an error occurs during processing
+   * @param error - The error that occurred
+   * @param context - Plugin context
+   * @returns Modified error, response data, or void to continue error propagation
+   */
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
-  transform?(data: any, context: PluginContext): any | Promise<any>;
+}
+```
+
+### `PluginResult`
+
+```typescript
+interface PluginResult {
+  context: PluginContext;  // Updated context (required)
+  response?: any;          // Response data (optional)
 }
 ```
 
@@ -202,72 +259,114 @@ interface Plugin {
 
 ```typescript
 interface PluginContext {
-  method: HttpMethod;
-  path: string;
-  params: Record<string, string>;
-  query: Record<string, string>;
-  headers: Record<string, string>;
-  body: any;
-  route: Route;
-  state: any;
+  path: string;                        // Request path
+  route: any;                          // Matched route configuration
+  method: HttpMethod;                  // HTTP method
+  params: Record<string, string>;      // Route parameters (:id, :slug, etc.)
+  query: Record<string, string>;       // Query string parameters
+  headers: Record<string, string>;     // Request headers
+  body?: any;                          // Request body
+  state: Map<string, any>;             // Shared state between plugins (per request)
+  routeState?: any;                    // Route-specific persistent state
 }
 ```
 
-### Plugin Lifecycle Hooks
+### Plugin Pipeline Execution
 
-#### `beforeRequest(context)`
-Modify request data before processing.
+Plugins are executed in order using `.pipe()`:
 
-**Parameters**: `context: PluginContext`
-**Returns**: `PluginContext | void | Promise<PluginContext | void>`
+1. **First Plugin**: Receives context with no response
+2. **Subsequent Plugins**: Receive context + response from previous plugin
+3. **Response Generation**: First plugin to set response becomes the generator
+4. **Response Transformation**: Later plugins can modify the response
 
-#### `beforeGenerate(context)`
-Execute before data generation.
+### Writing Plugins
 
-**Parameters**: `context: PluginContext`
-**Returns**: `any | void | Promise<any | void>`
+#### Basic Plugin Example
 
-#### `generate(context)`
-Generate response data.
+```typescript
+function loggingPlugin(): Plugin {
+  return {
+    name: 'logging',
+    version: '1.0.0',
+    
+    process(context, response) {
+      console.log(`${context.method} ${context.path}`)
+      
+      // Return context and pass through response
+      return { context, response }
+    }
+  }
+}
+```
 
-**Parameters**: `context: PluginContext`
-**Returns**: `any | Promise<any>`
+#### Response Generator Plugin
 
-#### `afterGenerate(data, context)`
-Post-process generated data.
+```typescript
+function staticDataPlugin(data: any): Plugin {
+  return {
+    name: 'static-data',
+    
+    process(context, response) {
+      // Only generate response if none exists
+      if (!response) {
+        return { context, response: data }
+      }
+      
+      // Pass through existing response
+      return { context, response }
+    }
+  }
+}
+```
 
-**Parameters**: 
-- `data: any` - Generated data
-- `context: PluginContext` - Request context
+#### Response Transformer Plugin
 
-**Returns**: `any | Promise<any>`
+```typescript
+function headerPlugin(headers: Record<string, string>): Plugin {
+  return {
+    name: 'headers',
+    
+    process(context, response) {
+      if (response && Array.isArray(response)) {
+        // Transform [status, body] to [status, body, headers]
+        const [status, body, existingHeaders = {}] = response
+        return {
+          context,
+          response: [status, body, { ...existingHeaders, ...headers }]
+        }
+      }
+      
+      return { context, response }
+    }
+  }
+}
+```
 
-#### `beforeResponse(response, context)`
-Final response transformation.
+#### Error Handling Plugin
 
-**Parameters**:
-- `response: ResponseResult` - Response object
-- `context: PluginContext` - Request context
-
-**Returns**: `ResponseResult | void | Promise<ResponseResult | void>`
-
-#### `onError(error, context)`
-Handle errors during processing.
-
-**Parameters**:
-- `error: Error` - The error that occurred
-- `context: PluginContext` - Request context
-
-**Returns**: `Error | ResponseResult | void | Promise<Error | ResponseResult | void>`
-
-#### `transform(data, context)`
-Legacy transform hook for backward compatibility.
-
-**Parameters**:
-- `data: any` - Data to transform
-- `context: PluginContext` - Request context
-
-**Returns**: `any | Promise<any>`
+```typescript
+function errorHandlerPlugin(): Plugin {
+  return {
+    name: 'error-handler',
+    
+    process(context, response) {
+      return { context, response }
+    },
+    
+    onError(error, context) {
+      console.error(`Error in ${context.method} ${context.path}:`, error)
+      
+      // Return custom error response
+      return {
+        status: 500,
+        body: { error: 'Internal server error', code: 'PLUGIN_ERROR' },
+        headers: { 'Content-Type': 'application/json' }
+      }
+    }
+  }
+}
+```
 
 ## Schema Plugin
 
@@ -283,12 +382,26 @@ function schemaPlugin(): Plugin
 ```typescript
 import { schemaPlugin } from '@schmock/schema';
 
-const mock = schmock().plugin(schemaPlugin());
+const mock = schmock();
+
+// Use JSON Schema as generator with schema plugin
+mock('GET /users', {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      id: { type: 'integer' },
+      name: { type: 'string', faker: 'person.fullName' },
+      email: { type: 'string', format: 'email' }
+    }
+  }
+}, { contentType: 'application/json' })
+  .pipe(schemaPlugin())
 ```
 
 ### `generateFromSchema(options)`
 
-Generate data from a JSON Schema.
+Generate data from a JSON Schema (used internally by schema plugin).
 
 ```typescript
 function generateFromSchema(options: SchemaGenerationContext): any
@@ -304,36 +417,6 @@ interface SchemaGenerationContext {
   state?: any;
   query?: Record<string, string>;
 }
-```
-
-### Schema Route Extensions
-
-Routes can include schema-specific properties:
-
-```typescript
-interface SchemaRouteExtension {
-  schema?: JSONSchema7;
-  count?: number;
-  overrides?: Record<string, any>;
-}
-```
-
-**Example**:
-```typescript
-mock.get('/users', {
-  schema: {
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'number' },
-        name: { type: 'string', faker: 'person.fullName' },
-        email: { type: 'string', format: 'email' }
-      }
-    }
-  },
-  count: 5
-});
 ```
 
 ### Error Types
@@ -367,31 +450,14 @@ Convert a Schmock instance to Express middleware.
 
 ```typescript
 function toExpress(
-  mock: MockInstance, 
+  mock: CallableMockInstance, 
   options?: ExpressAdapterOptions
 ): RequestHandler
 ```
 
 **Parameters**:
-- `mock: MockInstance` - Schmock mock instance
+- `mock: CallableMockInstance` - Schmock mock instance
 - `options?: ExpressAdapterOptions` - Configuration options
-
-### `ExpressAdapterOptions`
-
-```typescript
-interface ExpressAdapterOptions {
-  errorFormatter?: (error: Error, req: Request) => any;
-  passErrorsToNext?: boolean;
-  transformHeaders?: (headers: Request['headers']) => Record<string, string>;
-  transformQuery?: (query: Request['query']) => Record<string, string>;
-  beforeRequest?: (req: Request, res: Response) => RequestTransform | void | Promise<any>;
-  beforeResponse?: (
-    schmockResponse: Response,
-    req: Request,
-    res: Response
-  ) => Response | void | Promise<Response | void>;
-}
-```
 
 **Example**:
 ```typescript
@@ -399,17 +465,14 @@ import express from 'express';
 import { toExpress } from '@schmock/express';
 
 const app = express();
+const mock = schmock();
 
-app.use('/api', toExpress(mock, {
-  errorFormatter: (error, req) => ({
-    error: error.message,
-    path: req.path,
-    timestamp: new Date().toISOString()
-  }),
-  beforeRequest: (req, res) => {
-    console.log(`Processing ${req.method} ${req.path}`);
-  }
-}));
+mock('GET /users', () => [{ id: 1, name: 'John' }], { 
+  contentType: 'application/json' 
+});
+
+app.use('/api', toExpress(mock));
+app.listen(3000); // Responds at http://localhost:3000/api/users
 ```
 
 ## Angular Adapter
@@ -420,46 +483,21 @@ Create an Angular HTTP interceptor class.
 
 ```typescript
 function createSchmockInterceptor(
-  mock: MockInstance,
+  mock: CallableMockInstance,
   options?: AngularAdapterOptions
 ): new () => HttpInterceptor
 ```
 
-### `provideSchmockInterceptor(mock, options?)`
-
-Create a provider configuration for Angular DI.
-
-```typescript
-function provideSchmockInterceptor(
-  mock: MockInstance,
-  options?: AngularAdapterOptions
-): Provider
-```
-
-### `AngularAdapterOptions`
-
-```typescript
-interface AngularAdapterOptions {
-  baseUrl?: string;
-  passthrough?: boolean;
-  errorFormatter?: (error: Error, request: HttpRequest<any>) => any;
-  transformRequest?: (request: HttpRequest<any>) => RequestTransform;
-  transformResponse?: (
-    response: Response,
-    request: HttpRequest<any>
-  ) => Response;
-}
-```
-
 **Example**:
 ```typescript
-// In Angular module or component
 import { createSchmockInterceptor } from '@schmock/angular';
 
-const InterceptorClass = createSchmockInterceptor(mock, {
-  baseUrl: '/api',
-  passthrough: true
+const mock = schmock();
+mock('GET /users', () => [{ id: 1, name: 'John' }], { 
+  contentType: 'application/json' 
 });
+
+const InterceptorClass = createSchmockInterceptor(mock);
 
 // Register as provider
 providers: [
@@ -513,18 +551,20 @@ interface User {
   email: string;
 }
 
-mock.get('/users/:id', (req): User => ({
-  id: parseInt(req.params.id),
+const mock = schmock();
+
+mock('GET /users/:id', ({ params }): User => ({
+  id: parseInt(params.id),
   name: 'John Doe',
   email: 'john@example.com'
-}));
+}), { contentType: 'application/json' });
 ```
 
 ### Error Handling
 ```typescript
 // Always handle potential errors
 try {
-  const response = await mock.handle('GET', '/api/users');
+  const response = await mock.handle('GET', '/users');
   // Process response
 } catch (error) {
   if (error instanceof ResourceLimitError) {
@@ -539,24 +579,52 @@ try {
 
 ### Plugin Development
 ```typescript
-// Create focused, single-purpose plugins
+// Create focused, single-purpose plugins with the new architecture
 function timingPlugin(): Plugin {
   return {
     name: 'timing',
     version: '1.0.0',
-    beforeRequest(context) {
-      context.state.startTime = Date.now();
-    },
-    beforeResponse(response, context) {
-      const duration = Date.now() - context.state.startTime;
-      return {
-        ...response,
-        headers: {
-          ...response.headers,
-          'X-Response-Time': `${duration}ms`
-        }
-      };
+    
+    process(context, response) {
+      // Add timing to context state
+      context.state.set('startTime', Date.now());
+      
+      if (response && Array.isArray(response)) {
+        const duration = Date.now() - (context.state.get('startTime') || 0);
+        const [status, body, headers = {}] = response;
+        
+        return {
+          context,
+          response: [status, body, {
+            ...headers,
+            'X-Response-Time': `${duration}ms`
+          }]
+        };
+      }
+      
+      return { context, response };
     }
   };
 }
+```
+
+### Content Type Validation
+```typescript
+// Use contentType for runtime validation
+const mock = schmock();
+
+// Generator function
+mock('GET /users', () => [...users], { 
+  contentType: 'application/json' 
+});
+
+// Static data  
+mock('GET /config', staticConfig, { 
+  contentType: 'application/json' 
+});
+
+// JSON Schema (with schema plugin)
+mock('GET /generated', userSchema, { 
+  contentType: 'application/json' 
+}).pipe(schemaPlugin());
 ```
