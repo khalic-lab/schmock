@@ -34,8 +34,8 @@ if ! run_check "Linting" "bun run lint"; then
     echo "${RED}💡 Fix linting issues with: bun run lint:fix${NC}"
 fi
 
-# Run comprehensive tests (includes typecheck)
-if ! run_check "Tests & TypeCheck" "bun run test:all"; then
+# Run comprehensive tests (includes typecheck) - quiet mode for pre-commit
+if ! run_check "Tests & TypeCheck" "bun run test:all:quiet"; then
     FAILED=1
     echo "${RED}💡 Debug with: bun run test (faster) or bun run typecheck${NC}"
 fi
