@@ -3,18 +3,10 @@ name: Build
 runs:
   using: "composite"
   steps:
-    # TEMPORARILY DISABLED: Cache is causing stale file issues
-    # - uses: ./.github/actions/cache
-    #   with:
-    #     scope: build
+    - uses: ./.github/actions/cache
+      with:
+        scope: build
     - run: bun run clean
       shell: bash
-    - name: Debug - List all TypeScript files
-      shell: bash
-      run: |
-        echo "=== All .ts files in packages/core/src ==="
-        find packages/core/src -name "*.ts" -type f | sort
-        echo "=== Content of types.ts ==="
-        head -20 packages/core/src/types.ts || echo "File not found"
     - run: bun --bun run build
       shell: bash

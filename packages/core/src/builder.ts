@@ -1,13 +1,10 @@
 import {
   PluginError,
-  ResponseGenerationError,
   RouteDefinitionError,
   RouteNotFoundError,
   SchmockError,
 } from "./errors";
-import type { ParsedRoute } from "./parser";
 import { parseRouteKey } from "./parser";
-import type { HttpMethod } from "./types";
 
 /**
  * Debug logger that respects debug mode configuration
