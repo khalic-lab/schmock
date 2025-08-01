@@ -241,4 +241,30 @@ Look for plugins or operations taking excessive time.
 5. **Monitor Performance**: Use timing information to optimize plugin performance
 6. **Save Debug Logs**: Consider saving debug output for later analysis in complex scenarios
 
+## Development Workflow Integration
+
+Debug mode works seamlessly with Schmock's development tools:
+
+### Automated Testing
+```typescript
+// Debug mode is automatically enabled in BDD tests
+describe('Mock behavior', () => {
+  it('should handle requests correctly', async () => {
+    const mock = schmock({ debug: true }); // Debug output in test logs
+    // ... test implementation
+  });
+});
+```
+
+### Git Hooks Integration
+When using `bun run setup` to configure Git hooks:
+- Pre-commit hooks run all 262 tests (101 unit + 161 BDD)
+- Debug output helps identify issues during automated testing
+- Type checking ensures debug mode configuration is correct
+
+### Quality Assurance
+- **Linting**: Automated linting catches debug configuration issues
+- **Type Safety**: TypeScript ensures proper debug mode usage
+- **Comprehensive Testing**: BDD tests validate debug output functionality
+
 Debug mode is one of Schmock's most powerful features for understanding and troubleshooting your mock implementations. Use it liberally during development to build confidence in your mock behavior.
