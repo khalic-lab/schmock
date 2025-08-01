@@ -81,13 +81,8 @@ import { toExpress } from '@schmock/express';
 const app = express();
 
 // Create mock
-const mock = schmock()
-  .routes({
-    'GET /api/users': {
-      response: () => ({ users: [{ id: 1, name: 'John' }] })
-    }
-  })
-  .build();
+const mock = schmock();
+mock('GET /api/users', () => ({ users: [{ id: 1, name: 'John' }] }));
 
 // Mount to Express
 app.use('/mock', toExpress(mock));

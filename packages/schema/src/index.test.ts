@@ -88,7 +88,7 @@ describe("schema generation", () => {
 
       expect(plugin.name).toBe("schema");
       expect(plugin.version).toBe("0.1.0");
-      expect(plugin.generate).toBeTypeOf("function");
+      expect(plugin.process).toBeTypeOf("function");
     });
   });
 });

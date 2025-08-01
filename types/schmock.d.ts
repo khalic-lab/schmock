@@ -1,8 +1,10 @@
 /**
- * Schmock - Schema-driven mock API generator
+ * Schmock - Schema-driven mock API generator with callable API
  * @packageDocumentation
  */
+
 declare namespace Schmock {
+  type JSONSchema7 = import("json-schema").JSONSchema7;
   /**
    * HTTP methods supported by Schmock
    */
@@ -22,13 +24,6 @@ declare namespace Schmock {
    * 'GET /users'
    * 'POST /users/:id'
    * 'DELETE /api/posts/:postId/comments/:commentId'
-   *
-   * Design rationale:
-   * - Combines method and path in a single, scannable string
-   * - Matches OpenAPI/Swagger documentation format
-   * - Enables copy-paste from API docs
-   * - TypeScript validates format at compile time
-   * - Used by modern frameworks like Hono
    */
   type RouteKey = `${HttpMethod} ${string}`;
   
@@ -40,57 +35,15 @@ declare namespace Schmock {
     name: string;
     /** Plugin version (semver) */
     version?: string;
-    /** Control execution order */
-    enforce?: "pre" | "post";
-
 
     /**
-     * Called before request handling
-     * Can modify the request context or reject the request
+     * Process the request through this plugin
+     * First plugin to set response becomes the generator, others transform
      * @param context - Plugin context with request details
-     * @returns Modified context or void
+     * @param response - Response from previous plugin (if any)
+     * @returns Updated context and response
      */
-    beforeRequest?(context: PluginContext): PluginContext | void | Promise<PluginContext | void>;
-
-    /**
-     * Called before any data generation
-     * Can return data to short-circuit the pipeline
-     * @param context - Plugin context
-     * @returns Data to return immediately, or void to continue
-     */
-    beforeGenerate?(context: PluginContext): any | void | Promise<any | void>;
-
-    /**
-     * Generate data when route has no configured data
-     * @param context - Plugin context
-     * @returns Generated data or void to pass to next plugin
-     */
-    generate?(context: PluginContext): any | void | Promise<any | void>;
-
-    /**
-     * Transform generated data
-     * @param data - Data from generation or previous transform
-     * @param context - Plugin context
-     * @returns Transformed data
-     */
-    afterGenerate?(data: any, context: PluginContext): any | Promise<any>;
-
-    /**
-     * Transform data (from route config or previous plugin)
-     * @param data - Current data
-     * @param context - Plugin context
-     * @returns Transformed data
-     */
-    transform?(data: any, context: PluginContext): any | Promise<any>;
-
-    /**
-     * Called before returning response
-     * Last chance to modify the response data
-     * @param response - Response object
-     * @param context - Plugin context
-     * @returns Modified response or void
-     */
-    beforeResponse?(response: ResponseResult, context: PluginContext): ResponseResult | void | Promise<ResponseResult | void>;
+    process(context: PluginContext, response?: any): PluginResult | Promise<PluginResult>;
 
     /**
      * Called when an error occurs
@@ -100,6 +53,16 @@ declare namespace Schmock {
      * @returns Modified error, response data, or void to continue error propagation
      */
     onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
+  }
+
+  /**
+   * Result returned by plugin process method
+   */
+  interface PluginResult {
+    /** Updated context */
+    context: PluginContext;
+    /** Response data (if generated/modified) */
+    response?: any;
   }
 
   /**
@@ -126,43 +89,72 @@ declare namespace Schmock {
     routeState?: any;
   }
 
-
-  // ===== Fluent Builder API Types =====
+  // ===== Callable API Types =====
 
   /**
-   * Configuration options for builder
+   * Global configuration options for the mock instance
    */
-  interface BuilderConfig {
+  interface GlobalConfig {
     /** Base path prefix for all routes */
     namespace?: string;
     /** Response delay in ms, or [min, max] for random delay */
     delay?: number | [number, number];
     /** Enable debug mode for detailed logging */
     debug?: boolean;
+    /** Initial shared state object */
+    state?: any;
   }
 
   /**
-   * Context passed to response functions
+   * Route-specific configuration options
    */
-  interface ResponseContext<TState = any> {
-    /** Shared mutable state */
-    state: TState;
-    /** Path parameters (e.g., :id) */
-    params: Record<string, string>;
-    /** Query string parameters */
-    query: Record<string, string>;
-    /** Request body (for POST, PUT, PATCH) */
-    body?: any;
-    /** Request headers */
-    headers: Record<string, string>;
+  interface RouteConfig {
+    /** MIME type for content type validation (auto-detected if not provided) */
+    contentType?: string;
+    /** Additional route-specific options */
+    [key: string]: any;
+  }
+
+  /**
+   * Generator types that can be passed to route definitions
+   */
+  type Generator = 
+    | GeneratorFunction
+    | StaticData
+    | JSONSchema7;
+
+  /**
+   * Function that generates responses
+   */
+  type GeneratorFunction = (context: RequestContext) => ResponseResult | Promise<ResponseResult>;
+
+  /**
+   * Static data (non-function) that gets returned as-is
+   */
+  type StaticData = any;
+
+  /**
+   * Context passed to generator functions
+   */
+  interface RequestContext {
     /** HTTP method */
     method: HttpMethod;
     /** Request path */
     path: string;
+    /** Route parameters (e.g., :id) */
+    params: Record<string, string>;
+    /** Query string parameters */
+    query: Record<string, string>;
+    /** Request headers */
+    headers: Record<string, string>;
+    /** Request body (for POST, PUT, PATCH) */
+    body?: any;
+    /** Shared mutable state */
+    state: any;
   }
 
   /**
-   * Response function return types:
+   * Response result types:
    * - Any value: returns as 200 OK
    * - [status, body]: custom status with body
    * - [status, body, headers]: custom status, body, and headers
@@ -173,119 +165,128 @@ declare namespace Schmock {
     | [number, any, Record<string, string>];
 
   /**
-   * Response function that handles requests
+   * Response object returned by handle method
    */
-  type ResponseFunction<TState = any> = (
-    context: ResponseContext<TState>,
-  ) => ResponseResult | Promise<ResponseResult>;
+  interface Response {
+    status: number;
+    body: any;
+    headers: Record<string, string>;
+  }
 
   /**
-   * Route definition for fluent API
+   * Options for handle method
    */
-  interface RouteDefinition<TState = any> {
+  interface RequestOptions {
+    headers?: Record<string, string>;
+    body?: any;
+    query?: Record<string, string>;
+  }
+
+  /**
+   * Main callable mock instance interface
+   */
+  interface CallableMockInstance {
     /**
-     * Function that generates the response
+     * Define a route by calling the instance directly
+     * 
+     * @param route - Route pattern in format 'METHOD /path'
+     * @param generator - Response generator (function, static data, or schema)
+     * @param config - Route-specific configuration
+     * @returns The same instance for method chaining
+     * 
+     * @example
+     * ```typescript
+     * const mock = schmock()
+     * mock('GET /users', () => [...users], { contentType: 'application/json' })
+     * mock('POST /users', userData, { contentType: 'application/json' })
+     * ```
      */
-    response: ResponseFunction<TState>;
+    (route: RouteKey, generator: Generator, config: RouteConfig): CallableMockInstance;
 
     /**
-     * Plugin extensions (validation, middleware, etc.)
+     * Add a plugin to the pipeline
+     * 
+     * @param plugin - Plugin to add to the pipeline
+     * @returns The same instance for method chaining
+     * 
+     * @example
+     * ```typescript
+     * mock('GET /users', generator, config)
+     *   .pipe(authPlugin())
+     *   .pipe(corsPlugin())
+     * ```
      */
+    pipe(plugin: Plugin): CallableMockInstance;
+
+    /**
+     * Handle a request and return a response
+     * 
+     * @param method - HTTP method
+     * @param path - Request path
+     * @param options - Request options (headers, body, query)
+     * @returns Promise resolving to response object
+     * 
+     * @example
+     * ```typescript
+     * const response = await mock.handle('GET', '/users', {
+     *   headers: { 'Authorization': 'Bearer token' }
+     * })
+     * ```
+     */
+    handle(method: HttpMethod, path: string, options?: RequestOptions): Promise<Response>;
+  }
+
+  // ===== Legacy Types (for backward compatibility) =====
+
+  /**
+   * @deprecated Use GlobalConfig instead
+   */
+  interface BuilderConfig extends GlobalConfig {}
+
+  /**
+   * @deprecated Use RequestContext instead
+   */
+  interface ResponseContext<TState = any> extends RequestContext {
+    state: TState;
+  }
+
+  /**
+   * @deprecated Use GeneratorFunction instead
+   */
+  type ResponseFunction<TState = any> = GeneratorFunction;
+
+  /**
+   * @deprecated Use CallableMockInstance instead
+   */
+  interface MockInstance<TState = any> {
+    handle(method: HttpMethod, path: string, options?: RequestOptions): Promise<Response>;
+    on(event: string, handler: (data: any) => void): void;
+    off(event: string, handler: (data: any) => void): void;
+  }
+
+  /**
+   * @deprecated Use new callable API instead
+   */
+  interface RouteDefinition<TState = any> {
+    response?: GeneratorFunction;
     [key: string]: any;
   }
 
   /**
-   * Routes configuration using 'METHOD /path' keys
+   * @deprecated Use new callable API instead
    */
-  type Routes<TState = any> = {
-    [K in RouteKey]?: RouteDefinition<TState>;
-  };
-
-  /**
-   * Fluent builder interface
-   */
-  interface Builder<TState = any> {
-    /**
-     * Configure mock options
-     *
-     * @example
-     * schmock().config({ namespace: '/api/v1', delay: [100, 500] })
-     */
-    config(options: BuilderConfig): Builder<TState>;
-
-    /**
-     * Define routes using 'METHOD /path' keys
-     *
-     * @example
-     * ```typescript
-     * schmock()
-     *   .routes({
-     *     'GET /users': {
-     *       response: ({ state }) => state.users
-     *     },
-     *     'POST /users': {
-     *       response: ({ body, state }) => {
-     *         const user = { id: Date.now(), ...body }
-     *         state.users.push(user)
-     *         return [201, user]
-     *       }
-     *     }
-     *   })
-     * ```
-     */
-    routes(routes: Routes<TState>): Builder<TState>;
-
-    /**
-     * Set initial shared state
-     *
-     * @example
-     * schmock().state({ users: [], posts: [] })
-     */
-    state<T>(initial: T): Builder<T>;
-
-    /**
-     * Register a plugin
-     */
-    use(plugin: Plugin | (() => Plugin)): Builder<TState>;
-
-    /**
-     * Build the mock instance
-     */
-    build(): MockInstance<TState>;
+  interface Routes<TState = any> {
+    [routeKey: string]: RouteDefinition<TState>;
   }
 
   /**
-   * Built mock instance
+   * @deprecated Use new callable API instead
    */
-  interface MockInstance<TState = any> {
-    /**
-     * Handle a request (for testing or adapters)
-     *
-     * @example
-     * const response = await mock.handle('GET', '/users')
-     */
-    handle(
-      method: HttpMethod,
-      path: string,
-      options?: {
-        headers?: Record<string, string>;
-        body?: any;
-        query?: Record<string, string>;
-      },
-    ): Promise<{
-      status: number;
-      body: any;
-      headers: Record<string, string>;
-    }>;
-
-    /**
-     * Subscribe to an event
-     */
-    on(event: string, handler: (data: any) => void): void;
-
-    /**
-     * Unsubscribe from an event
-     */
-    off(event: string, handler: (data: any) => void): void;
+  interface Builder<TState = any> {
+    config(options: BuilderConfig): Builder<TState>;
+    routes(routes: Routes<TState>): Builder<TState>;
+    state<T>(initial: T): Builder<T>;
+    use(plugin: Plugin | (() => Plugin)): Builder<TState>;
+    build(): MockInstance<TState>;
   }
 }
