@@ -162,7 +162,7 @@ export function createSchmockInterceptor(
             body: requestData.body,
             query: requestData.query,
           })
-          .then((schmockResponse) => {
+          .then((schmockResponse: any) => {
             if (!schmockResponse && passthrough) {
               // No matching route, pass to real backend
               next.handle(req).subscribe(observer);
@@ -196,7 +196,7 @@ export function createSchmockInterceptor(
               observer.complete();
             }
           })
-          .catch((error) => {
+          .catch((error: any) => {
             // Handle errors
             let errorBody: any;
 
