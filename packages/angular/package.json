@@ -28,10 +28,10 @@
     "@angular/core": ">=15.0.0"
   },
   "devDependencies": {
-    "@angular/common": "^17.0.0",
+    "@angular/common": "^20.1.4",
     "@angular/compiler": "^20.1.4",
-    "@angular/core": "^17.0.0",
-    "@angular/platform-browser": "^17.0.0",
+    "@angular/core": "^20.1.4",
+    "@angular/platform-browser": "^20.1.4",
     "@angular/platform-browser-dynamic": "^20.1.4",
     "@types/node": "^24.1.0",
     "jsdom": "^26.1.0",
