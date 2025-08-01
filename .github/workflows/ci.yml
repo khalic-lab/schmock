@@ -135,19 +135,13 @@ jobs:
               comment.user.type === 'Bot' && comment.body.includes('## CI Status')
             );
             
-            const checkResults = ${{ toJson(needs.check.outputs) }};
             const failed = ${{ contains(needs.*.result, 'failure') }};
             
             const body = `## CI Status ${failed ? '❌' : '✅'}
             
             | Check | Status |
             |-------|--------|
-            | Lint | ${{ contains(needs.check.result, 'success') ? '✅' : '❌' }} |
-            | Type Check | ${{ contains(needs.check.result, 'success') ? '✅' : '❌' }} |
-            | Unit Tests | ${{ contains(needs.check.result, 'success') ? '✅' : '❌' }} |
-            | BDD Tests | ${{ contains(needs.check.result, 'success') ? '✅' : '⚠️' }} |
-            | E2E Tests | ${{ contains(needs.check.result, 'success') ? '✅' : '❌' }} |
-            | Build | ${{ contains(needs.check.result, 'success') ? '✅' : '❌' }} |
+            | All Checks | ${failed ? '❌ Failed' : '✅ Passed'} |
             
             _Last updated: ${new Date().toISOString()}_`;
             
