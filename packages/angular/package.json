@@ -29,11 +29,11 @@
   },
   "devDependencies": {
     "@angular/common": "^17.0.0",
-    "@angular/compiler": "^17.0.0",
+    "@angular/compiler": "^20.1.4",
     "@angular/core": "^17.0.0",
     "@angular/platform-browser": "^17.0.0",
     "@angular/platform-browser-dynamic": "^17.0.0",
-    "@types/node": "^22.10.6",
+    "@types/node": "^24.1.0",
     "jsdom": "^26.1.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4",
