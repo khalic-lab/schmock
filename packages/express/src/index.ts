@@ -227,7 +227,10 @@ export function toExpress(
         res.status(500).json({
           error:
             error instanceof Error ? error.message : "Internal Server Error",
-          code: error instanceof SchmockError ? (error as SchmockError).code : "INTERNAL_ERROR",
+          code:
+            error instanceof SchmockError
+              ? (error as SchmockError).code
+              : "INTERNAL_ERROR",
         });
       }
     }
