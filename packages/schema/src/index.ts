@@ -35,7 +35,16 @@ interface SchemaGenerationContext {
   query?: Record<string, string>;
 }
 
-export function schemaPlugin(): Schmock.Plugin {
+interface SchemaPluginOptions {
+  schema: JSONSchema7;
+  count?: number;
+  overrides?: Record<string, any>;
+}
+
+export function schemaPlugin(options: SchemaPluginOptions): Schmock.Plugin {
+  // Validate schema immediately when plugin is created
+  validateSchema(options.schema);
+
   return {
     name: "schema",
     version: "0.1.0",
@@ -46,18 +55,11 @@ export function schemaPlugin(): Schmock.Plugin {
         return { context, response };
       }
 
-      const route = context.route as any;
-
-      // Only handle routes with schema configuration
-      if (!route.schema) {
-        return { context, response }; // Let other plugins or response function handle it
-      }
-
       try {
         const generatedResponse = generateFromSchema({
-          schema: route.schema,
-          count: route.count,
-          overrides: route.overrides,
+          schema: options.schema,
+          count: options.count,
+          overrides: options.overrides,
           params: context.params,
           state: context.state,
           query: context.query,
@@ -80,7 +82,7 @@ export function schemaPlugin(): Schmock.Plugin {
         throw new SchemaGenerationError(
           context.path,
           error instanceof Error ? error : new Error(String(error)),
-          route.schema,
+          options.schema,
         );
       }
     },
