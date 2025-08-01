@@ -49,9 +49,10 @@ This project uses GitHub Flow with the following workflow:
 5. Refactor while keeping tests green
 
 ### Test Commands
-- `bun test` - Run all tests
-- `bun test:unit` - Run unit tests only
-- `bun test:bdd` - Run BDD tests only
+- `bun test` - Run all tests (unit + BDD, 262 total tests)
+- `bun test:all` - **Full comprehensive test suite with typecheck** (recommended before commits)
+- `bun test:unit` - Run unit tests only (101 tests across all packages)
+- `bun test:bdd` - Run BDD tests only (161 tests)
 - `act push -W .github/workflows/develop.yml` - Test CI locally
 
 ## Development Guidelines
@@ -71,8 +72,9 @@ This project uses GitHub Flow with the following workflow:
 ### Before Committing
 1. Run `bun lint` - Must pass
 2. Run `bun build` - Must compile
-3. Run `bun test:unit` - Must pass
-4. Run `bun test:bdd` - May fail during feature development
+3. Run `bun test:all` - **Recommended: Full test suite with typecheck**
+   - Alternative: `bun test` (faster, but skips typecheck)
+   - BDD tests may fail during feature development (expected for TDD)
 
 ## Current Development Focus
 
