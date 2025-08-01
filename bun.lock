@@ -21,7 +21,7 @@
         "rxjs": "^7.8.1",
       },
       "devDependencies": {
-        "@angular/common": "^17.0.0",
+        "@angular/common": "^20.1.4",
         "@angular/compiler": "^20.1.4",
         "@angular/core": "^17.0.0",
         "@angular/platform-browser": "^17.0.0",
@@ -80,7 +80,7 @@
 
     "@andrewbranch/untar.js": ["@andrewbranch/untar.js@1.0.3", "", {}, "sha512-Jh15/qVmrLGhkKJBdXlK1+9tY4lZruYjsgkDFj08ZmDiWVBLJcqkok7Z0/R0In+i1rScBpJlSvrTS2Lm41Pbnw=="],
 
-    "@angular/common": ["@angular/common@17.3.12", "", { "dependencies": { "tslib": "^2.3.0" }, "peerDependencies": { "@angular/core": "17.3.12", "rxjs": "^6.5.3 || ^7.4.0" } }, "sha512-vabJzvrx76XXFrm1RJZ6o/CyG32piTB/1sfFfKHdlH1QrmArb8It4gyk9oEjZ1IkAD0HvBWlfWmn+T6Vx3pdUw=="],
+    "@angular/common": ["@angular/common@20.1.4", "", { "dependencies": { "tslib": "^2.3.0" }, "peerDependencies": { "@angular/core": "20.1.4", "rxjs": "^6.5.3 || ^7.4.0" } }, "sha512-AL+HdsY5xL2iM1zZ55ce33U+w2LgPJZQwKvHXJJ/Hpk3rpFNamWtRPmJBeq8Z0dQV1lLTMM+2pUatH6p+5pvEg=="],
 
     "@angular/compiler": ["@angular/compiler@20.1.4", "", { "dependencies": { "tslib": "^2.3.0" } }, "sha512-gQbchh2ziK9QxZuHgEf7BUMCm/ayu6Zr9hst6itSecinUJgUeeSp3Z4vXjIBNBUKMPB135tWw9RGiVbW8saBmg=="],
 
