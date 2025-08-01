@@ -57,6 +57,13 @@ This project uses GitHub Flow with the following workflow:
 
 ## Development Guidelines
 
+### Initial Setup
+After cloning the repository, run:
+```bash
+bun install
+bun run setup  # Configure Git hooks (linting + tests on commit)
+```
+
 ### Code Style
 - TypeScript strict mode enabled
 - Use ambient types in `/types/schmock.d.ts`
@@ -70,8 +77,14 @@ This project uses GitHub Flow with the following workflow:
 - Each package has own build/test scripts
 
 ### Before Committing
+**With Git hooks (automatic):**
+- Pre-commit hook runs `bun run lint` and `bun run test:all` automatically
+- Commit-msg hook enforces conventional commit format
+- Use `git commit --no-verify` to bypass (not recommended)
+
+**Manual checks (if hooks disabled):**
 1. Run `bun lint` - Must pass
-2. Run `bun build` - Must compile
+2. Run `bun build` - Must compile  
 3. Run `bun test:all` - **Recommended: Full test suite with typecheck**
    - Alternative: `bun test` (faster, but skips typecheck)
    - BDD tests may fail during feature development (expected for TDD)

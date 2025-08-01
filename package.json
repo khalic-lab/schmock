@@ -5,6 +5,7 @@
     "packages/*"
   ],
   "scripts": {
+    "setup": "node scripts/setup-hooks.js",
     "clean": "bun run clean:src && bun run clean:dist",
     "clean:src": "node scripts/clean-generated.js",
     "clean:dist": "rm -rf packages/*/dist",

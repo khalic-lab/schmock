@@ -1,0 +1,62 @@
+#!/bin/sh
+# Pre-commit hook: Run linting and tests before allowing commit
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo "${YELLOW}🔍 Running pre-commit checks...${NC}"
+
+# Function to run a command and check its exit code
+run_check() {
+    local name="$1"
+    local command="$2"
+    
+    echo "${YELLOW}⏳ Running $name...${NC}"
+    
+    if eval "$command"; then
+        echo "${GREEN}✅ $name passed${NC}"
+        return 0
+    else
+        echo "${RED}❌ $name failed${NC}"
+        return 1
+    fi
+}
+
+# Track if any checks failed
+FAILED=0
+
+# Run linting (fast, catches style issues)
+if ! run_check "Linting" "bun run lint"; then
+    FAILED=1
+    echo "${RED}💡 Fix linting issues with: bun run lint:fix${NC}"
+fi
+
+# Run comprehensive tests (includes typecheck)
+if ! run_check "Tests & TypeCheck" "bun run test:all"; then
+    FAILED=1
+    echo "${RED}💡 Debug with: bun run test (faster) or bun run typecheck${NC}"
+fi
+
+# Check if any changes need to be staged after linting
+if [ $FAILED -eq 0 ]; then
+    if ! git diff --quiet; then
+        echo "${YELLOW}⚠️  Linting may have fixed some files. Please review and stage any changes.${NC}"
+        echo "${YELLOW}   Run: git add . && git commit${NC}"
+        exit 1
+    fi
+fi
+
+# Final result
+if [ $FAILED -eq 0 ]; then
+    echo "${GREEN}🎉 All pre-commit checks passed! Proceeding with commit.${NC}"
+    exit 0
+else
+    echo ""
+    echo "${RED}🚫 Pre-commit checks failed. Commit aborted.${NC}"
+    echo "${YELLOW}💡 Fix the issues above and try again.${NC}"
+    echo "${YELLOW}   Or use 'git commit --no-verify' to skip these checks (not recommended).${NC}"
+    exit 1
+fi
