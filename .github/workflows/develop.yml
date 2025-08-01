@@ -30,6 +30,8 @@ jobs:
       - name: Run unit tests
         run: bun run test:unit
       
-      - name: Run BDD tests (allowed to fail)
-        run: bun run test:bdd || echo "⚠️ BDD tests failing - continue development"
-        continue-on-error: true
+      - name: Run BDD tests
+        run: bun run test:bdd
+      
+      - name: Run E2E tests
+        run: bun run test:e2e

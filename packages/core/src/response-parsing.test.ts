@@ -4,13 +4,8 @@ import { schmock } from "./index";
 describe("response parsing", () => {
   describe("tuple response formats", () => {
     it("handles status-only tuple [status]", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /status-only": {
-            response: () => [204] as [number],
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /status-only", () => [204] as [number]);
 
       const response = await mock.handle("GET", "/status-only");
 
@@ -20,13 +15,8 @@ describe("response parsing", () => {
     });
 
     it("handles [status, body] tuple", async () => {
-      const mock = schmock()
-        .routes({
-          "POST /create": {
-            response: () => [201, { id: 123, created: true }],
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("POST /create", () => [201, { id: 123, created: true }]);
 
       const response = await mock.handle("POST", "/create");
 
@@ -36,39 +26,33 @@ describe("response parsing", () => {
     });
 
     it("handles [status, body, headers] tuple", async () => {
-      const mock = schmock()
-        .routes({
-          "POST /upload": {
-            response: () => [
-              201,
-              { fileId: "abc123" },
-              { 
-                "Location": "/files/abc123",
-                "Content-Type": "application/json"
-              },
-            ] as [number, any, Record<string, string>],
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock(
+        "POST /upload",
+        () =>
+          [
+            201,
+            { fileId: "abc123" },
+            {
+              Location: "/files/abc123",
+              "Content-Type": "application/json",
+            },
+          ] as [number, any, Record<string, string>],
+      );
 
       const response = await mock.handle("POST", "/upload");
 
       expect(response.status).toBe(201);
       expect(response.body).toEqual({ fileId: "abc123" });
       expect(response.headers).toEqual({
-        "Location": "/files/abc123",
+        Location: "/files/abc123",
         "Content-Type": "application/json",
       });
     });
 
     it("handles empty headers object in tuple", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /test": {
-            response: () => [200, "OK", {}],
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /test", () => [200, "OK", {}]);
 
       const response = await mock.handle("GET", "/test");
 
@@ -78,13 +62,11 @@ describe("response parsing", () => {
     });
 
     it("ignores extra tuple elements beyond [status, body, headers]", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /extra": {
-            response: () => [200, "data", {}, "ignored", "also-ignored"] as any,
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock(
+        "GET /extra",
+        () => [200, "data", {}, "ignored", "also-ignored"] as any,
+      );
 
       const response = await mock.handle("GET", "/extra");
 
@@ -94,13 +76,8 @@ describe("response parsing", () => {
     });
 
     it("treats non-numeric first element as body, not status", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /array-body": {
-            response: () => ["item1", "item2", "item3"],
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /array-body", () => ["item1", "item2", "item3"]);
 
       const response = await mock.handle("GET", "/array-body");
 
@@ -112,13 +89,8 @@ describe("response parsing", () => {
 
   describe("various response types", () => {
     it("handles string responses", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /text": {
-            response: () => "Simple text response",
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /text", () => "Simple text response");
 
       const response = await mock.handle("GET", "/text");
 
@@ -128,13 +100,8 @@ describe("response parsing", () => {
     });
 
     it("handles number responses", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /number": {
-            response: () => 42,
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /number", () => 42);
 
       const response = await mock.handle("GET", "/number");
 
@@ -144,13 +111,8 @@ describe("response parsing", () => {
     });
 
     it("handles boolean responses", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /bool": {
-            response: () => true,
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /bool", () => true);
 
       const response = await mock.handle("GET", "/bool");
 
@@ -160,13 +122,8 @@ describe("response parsing", () => {
     });
 
     it("handles null responses", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /null": {
-            response: () => null,
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /null", () => null);
 
       const response = await mock.handle("GET", "/null");
 
@@ -176,13 +133,8 @@ describe("response parsing", () => {
     });
 
     it("handles undefined responses", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /undefined": {
-            response: () => undefined,
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /undefined", () => undefined);
 
       const response = await mock.handle("GET", "/undefined");
 
@@ -207,13 +159,8 @@ describe("response parsing", () => {
         timestamp: new Date("2023-01-01T00:00:00Z"),
       };
 
-      const mock = schmock()
-        .routes({
-          "GET /complex": {
-            response: () => complexObject,
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /complex", () => complexObject);
 
       const response = await mock.handle("GET", "/complex");
 
@@ -223,13 +170,8 @@ describe("response parsing", () => {
     });
 
     it("handles empty array responses", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /empty-array": {
-            response: () => [],
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /empty-array", () => []);
 
       const response = await mock.handle("GET", "/empty-array");
 
@@ -239,13 +181,8 @@ describe("response parsing", () => {
     });
 
     it("handles empty object responses", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /empty-object": {
-            response: () => ({}),
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /empty-object", () => ({}));
 
       const response = await mock.handle("GET", "/empty-object");
 
@@ -257,16 +194,11 @@ describe("response parsing", () => {
 
   describe("async response functions", () => {
     it("handles async response functions", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /async": {
-            response: async () => {
-              await new Promise(resolve => setTimeout(resolve, 1));
-              return { async: true };
-            },
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /async", async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        return { async: true };
+      });
 
       const response = await mock.handle("GET", "/async");
 
@@ -275,16 +207,11 @@ describe("response parsing", () => {
     });
 
     it("handles async tuple responses", async () => {
-      const mock = schmock()
-        .routes({
-          "POST /async-create": {
-            response: async () => {
-              await new Promise(resolve => setTimeout(resolve, 1));
-              return [201, { created: true }, { "X-Async": "true" }];
-            },
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("POST /async-create", async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        return [201, { created: true }, { "X-Async": "true" }];
+      });
 
       const response = await mock.handle("POST", "/async-create");
 
@@ -296,17 +223,12 @@ describe("response parsing", () => {
 
   describe("edge cases", () => {
     it("handles response with circular references gracefully", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /circular": {
-            response: () => {
-              const obj: any = { name: "test" };
-              obj.self = obj; // Create circular reference
-              return obj;
-            },
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /circular", () => {
+        const obj: any = { name: "test" };
+        obj.self = obj; // Create circular reference
+        return obj;
+      });
 
       const response = await mock.handle("GET", "/circular");
 
@@ -316,16 +238,11 @@ describe("response parsing", () => {
     });
 
     it("preserves functions in response objects", async () => {
-      const mock = schmock()
-        .routes({
-          "GET /with-functions": {
-            response: () => ({
-              data: "test",
-              fn: () => "function result",
-            }),
-          },
-        })
-        .build();
+      const mock = schmock();
+      mock("GET /with-functions", () => ({
+        data: "test",
+        fn: () => "function result",
+      }));
 
       const response = await mock.handle("GET", "/with-functions");
 

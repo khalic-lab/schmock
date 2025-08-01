@@ -90,19 +90,10 @@ import { toExpress } from '@schmock/express';
 const app = express();
 app.use(express.json());
 
-const mock = schmock()
-  .routes({
-    'GET /api/users': {
-      response: () => ({ users: [] })
-    },
-    'POST /api/users': {
-      response: () => ({ id: 1, created: true })
-    },
-    'PUT /api/users/:id': {
-      response: (ctx) => ({ id: ctx.params.id, updated: true })
-    }
-  })
-  .build();
+const mock = schmock();
+mock('GET /api/users', () => ({ users: [] }));
+mock('POST /api/users', () => ({ id: 1, created: true }));
+mock('PUT /api/users/:id', (ctx) => ({ id: ctx.params.id, updated: true }));
 
 app.use('/mock', toExpress(mock));
 
