@@ -1,8 +1,59 @@
 version: 2
 enable-beta-ecosystems: true
 updates:
+  # Root workspace
   - package-ecosystem: "bun"
     directory: "/"
+    schedule:
+      interval: "daily"
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+  
+  # Core package
+  - package-ecosystem: "bun"
+    directory: "/packages/core"
+    schedule:
+      interval: "daily"
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+  
+  # Schema package
+  - package-ecosystem: "bun"
+    directory: "/packages/schema"
+    schedule:
+      interval: "daily"
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+  
+  # Express package
+  - package-ecosystem: "bun"
+    directory: "/packages/express"
+    schedule:
+      interval: "daily"
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+  
+  # Angular package
+  - package-ecosystem: "bun"
+    directory: "/packages/angular"
+    schedule:
+      interval: "daily"
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+  
+  # E2E tests
+  - package-ecosystem: "bun"
+    directory: "/e2e"
     schedule:
       interval: "daily"
     labels: ["dependencies"]

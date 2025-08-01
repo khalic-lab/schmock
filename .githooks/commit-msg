@@ -1,0 +1,25 @@
+#!/bin/sh
+# Conventional Commit validation hook
+# Format: type(scope): description
+# Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
+
+commit_regex='^(feat|fix|docs|style|refactor|perf|test|chore|ci|build|revert)(\(.+\))?: .{1,50}'
+merge_regex='^Merge (branch|pull request)'
+
+error_msg="Commit message format error!
+
+Your commit message should follow the Conventional Commits specification:
+  type(scope): description
+
+Valid types: feat, fix, docs, style, refactor, perf, test, chore, ci, build, revert
+
+Examples:
+  feat: add user authentication
+  fix(api): resolve timeout issue
+  docs: update README with examples
+  chore: bump dependencies"
+
+if ! grep -qE "$commit_regex" "$1" && ! grep -qE "$merge_regex" "$1"; then
+    echo "$error_msg" >&2
+    exit 1
+fi
