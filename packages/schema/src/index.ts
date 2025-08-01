@@ -1,6 +1,6 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
-import { faker } from "@faker-js/faker";
+import { en, Faker } from "@faker-js/faker";
 import {
   ResourceLimitError,
   SchemaGenerationError,
@@ -9,8 +9,13 @@ import {
 import type { JSONSchema7 } from "json-schema";
 import jsf from "json-schema-faker";
 
-// Configure json-schema-faker with faker.js
-jsf.extend("faker", () => faker);
+// Create isolated faker instances for each generation to avoid race conditions
+function createFakerInstance() {
+  return new Faker({ locale: [en] });
+}
+
+// Configure json-schema-faker with a function that creates fresh faker instances
+jsf.extend("faker", () => createFakerInstance());
 
 // Configure json-schema-faker options
 jsf.option({
@@ -534,18 +539,76 @@ function applyOverrides(
 ): any {
   if (!overrides) return data;
 
-  const result = { ...data };
+  const result = JSON.parse(JSON.stringify(data)); // Deep clone
 
   for (const [key, value] of Object.entries(overrides)) {
-    if (typeof value === "string" && value.includes("{{")) {
-      // Template processing
-      result[key] = processTemplate(value, { params, state, query });
+    // Handle nested paths like "data.id" or "pagination.page"
+    if (key.includes(".")) {
+      setNestedProperty(result, key, value, { params, state, query });
     } else {
-      result[key] = value;
+      // Handle flat keys and nested objects
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        !Array.isArray(value)
+      ) {
+        // Recursively apply nested overrides
+        if (result[key] && typeof result[key] === "object") {
+          result[key] = applyOverrides(
+            result[key],
+            value,
+            params,
+            state,
+            query,
+          );
+        } else {
+          result[key] = applyOverrides({}, value, params, state, query);
+        }
+      } else if (typeof value === "string" && value.includes("{{")) {
+        // Template processing
+        result[key] = processTemplate(value, { params, state, query });
+      } else {
+        result[key] = value;
+      }
     }
   }
 
   return result;
+}
+
+function setNestedProperty(
+  obj: any,
+  path: string,
+  value: any,
+  context: {
+    params?: Record<string, string>;
+    state?: any;
+    query?: Record<string, string>;
+  },
+): void {
+  const parts = path.split(".");
+  let current = obj;
+
+  // Navigate to the parent of the target property
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (
+      !(part in current) ||
+      typeof current[part] !== "object" ||
+      current[part] === null
+    ) {
+      current[part] = {};
+    }
+    current = current[part];
+  }
+
+  // Set the final property
+  const finalKey = parts[parts.length - 1];
+  if (typeof value === "string" && value.includes("{{")) {
+    current[finalKey] = processTemplate(value, context);
+  } else {
+    current[finalKey] = value;
+  }
 }
 
 function processTemplate(
@@ -556,7 +619,26 @@ function processTemplate(
     query?: Record<string, string>;
   },
 ): any {
-  // Simple template processing for {{ params.id }}, {{ state.user.id }}, etc.
+  // Check if the template is just a single template expression
+  const singleTemplateMatch = template.match(/^\{\{\s*([^}]+)\s*\}\}$/);
+  if (singleTemplateMatch) {
+    // For single templates, return the actual value without string conversion
+    const expression = singleTemplateMatch[1];
+    const parts = expression.trim().split(".");
+    let result: any = context;
+
+    for (const part of parts) {
+      if (result && typeof result === "object") {
+        result = result[part];
+      } else {
+        return template; // Return original if can't resolve
+      }
+    }
+
+    return result !== undefined ? result : template;
+  }
+
+  // For templates mixed with other text, do string replacement
   const processed = template.replace(
     /\{\{\s*([^}]+)\s*\}\}/g,
     (match, expression) => {
@@ -576,8 +658,13 @@ function processTemplate(
   );
 
   // Try to convert to number if it's a numeric string
-  if (/^\d+$/.test(processed)) {
-    return Number.parseInt(processed, 10);
+  if (typeof processed === "string") {
+    if (/^\d+$/.test(processed)) {
+      return Number.parseInt(processed, 10);
+    }
+    if (/^\d+\.\d+$/.test(processed)) {
+      return Number.parseFloat(processed);
+    }
   }
 
   return processed;
@@ -693,7 +780,7 @@ function enhanceFieldSchema(
     (enhanced as any).faker = "person.fullName";
   }
   // Phone fields
-  else if (lowerFieldName.includes("phone")) {
+  else if (lowerFieldName.includes("phone") || lowerFieldName === "mobile") {
     (enhanced as any).faker = "phone.number";
   }
   // Address fields
@@ -714,7 +801,9 @@ function enhanceFieldSchema(
   // Date fields
   else if (
     lowerFieldName.includes("createdat") ||
-    lowerFieldName.includes("created_at")
+    lowerFieldName.includes("created_at") ||
+    lowerFieldName.includes("updatedat") ||
+    lowerFieldName.includes("updated_at")
   ) {
     enhanced.format = "date-time";
     (enhanced as any).faker = "date.recent";
