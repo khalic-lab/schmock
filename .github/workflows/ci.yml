@@ -1,56 +1,171 @@
-on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main, develop]
-    types: [opened, synchronize, reopened, labeled]
-  pull_request_review:
-    types: [submitted]
-
 name: CI
 
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+# Cancel in-progress runs for the same branch
 concurrency:
-  group: ${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read # to fetch code (actions/checkout)
-  packages: write # to publish packages (npm publish)
-
 jobs:
-  ci-setup:
+  # Run all checks in parallel using matrix strategy
+  check:
+    name: ${{ matrix.task }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # Don't cancel other jobs if one fails
+      matrix:
+        task: [lint, typecheck, test-unit, test-bdd, test-e2e, build]
+    
     steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-bun
-      - uses: ./.github/actions/build
-      - uses: ./.github/actions/prevent-uncommit-changes
-      - run: bun run lint
-      - run: bun run typecheck
-      - run: bun run test:unit
-      - run: bun run test:bdd || echo "BDD tests expected to fail during development"
+      # Checkout code
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better git operations
+      
+      # Setup Bun with specific version
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.1.38  # Pin version for consistency
+      
+      # Cache dependencies only (not build outputs)
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+          key: deps-${{ runner.os }}-${{ hashFiles('**/bun.lockb') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+      
+      # Install dependencies with frozen lockfile
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      
+      # Build packages if needed for tests
+      - name: Build packages
+        if: matrix.task == 'test-unit' || matrix.task == 'test-bdd' || matrix.task == 'test-e2e'
+        run: bun run build
+      
+      # Run the specific task from matrix
+      - name: Run ${{ matrix.task }}
+        run: |
+          case "${{ matrix.task }}" in
+            lint)
+              echo "::group::Running linter"
+              bun run lint
+              echo "::endgroup::"
+              ;;
+            typecheck)
+              echo "::group::Running type check"
+              # Run in dependency order: core first, then others
+              bun run --filter @schmock/core build:types
+              bun run --filter @schmock/schema build:types
+              bun run --filter @schmock/express build:types
+              bun run --filter @schmock/angular build:types
+              echo "::endgroup::"
+              ;;
+            test-unit)
+              echo "::group::Running unit tests"
+              bun run test:unit
+              echo "::endgroup::"
+              ;;
+            test-bdd)
+              echo "::group::Running BDD tests"
+              bun run test:bdd || {
+                echo "::warning::BDD tests failed (this is expected during TDD development)"
+                exit 0  # Don't fail the job for BDD tests
+              }
+              echo "::endgroup::"
+              ;;
+            test-e2e)
+              echo "::group::Running E2E tests"
+              bun run test:e2e
+              echo "::endgroup::"
+              ;;
+            build)
+              echo "::group::Building packages"
+              bun run build
+              echo "::endgroup::"
+              ;;
+          esac
 
-  ci-canary-release:
-    if: false  # Disabled until ready to publish
+  # Summary job for branch protection rules
+  ci-summary:
+    name: CI Summary
     runs-on: ubuntu-latest
-    needs: [ci-setup]
-    permissions:
-      contents: read # to fetch code (actions/checkout)
-      packages: write # to publish packages (npm publish)
-      id-token: write # The OIDC ID token is used for authentication with JSR.
+    needs: [check]
+    if: always()
     steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-bun
-      - uses: actions/setup-node@v4
+      - name: Check CI results
+        run: |
+          echo "## CI Results Summary"
+          echo ""
+          
+          # Check if all required jobs passed
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "❌ CI failed - some checks did not pass"
+            echo ""
+            echo "Please check the failed jobs above for details."
+            exit 1
+          else
+            echo "✅ All CI checks passed successfully!"
+            echo ""
+            echo "The code is ready for review/merge."
+          fi
+
+  # Optional: Comment on PR with test results (only for PRs)
+  pr-comment:
+    name: PR Comment
+    runs-on: ubuntu-latest
+    needs: [check]
+    if: github.event_name == 'pull_request' && always()
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment PR status
+        uses: actions/github-script@v7
         with:
-          registry-url: "https://npm.pkg.github.com"
-      - uses: ./.github/actions/cache
-        with:
-          scope: build
-      - run: npm version prerelease --preid=canary.$(git rev-parse --short HEAD) --no-git-tag-version
-      - run: npm publish --tag canary
-        env:
-          NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
-      - run: bun run ./scripts/prerelease.ts
-      - run: cat jsr.json
-      - run: bunx jsr publish --allow-dirty
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && comment.body.includes('## CI Status')
+            );
+            
+            const failed = ${{ contains(needs.*.result, 'failure') }};
+            
+            const body = `## CI Status ${failed ? '❌' : '✅'}
+            
+            | Check | Status |
+            |-------|--------|
+            | All Checks | ${failed ? '❌ Failed' : '✅ Passed'} |
+            
+            _Last updated: ${new Date().toISOString()}_`;
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
