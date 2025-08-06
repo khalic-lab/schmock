@@ -15,14 +15,14 @@
     },
     "packages/angular": {
       "name": "@schmock/angular",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "dependencies": {
         "@schmock/core": "workspace:*",
         "rxjs": "^7.8.1",
       },
       "devDependencies": {
         "@angular/common": "^20.1.4",
-        "@angular/compiler": "^20.1.4",
+        "@angular/compiler": "^20.1.6",
         "@angular/core": "^20.1.4",
         "@angular/platform-browser": "^20.1.4",
         "@angular/platform-browser-dynamic": "^20.1.4",
@@ -39,7 +39,7 @@
     },
     "packages/core": {
       "name": "@schmock/core",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^5.1.2",
         "@types/node": "^24.1.0",
@@ -49,7 +49,7 @@
     },
     "packages/express": {
       "name": "@schmock/express",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "devDependencies": {
         "@types/express": "^5.0.3",
         "express": "^5.1.0",
@@ -63,7 +63,7 @@
     },
     "packages/schema": {
       "name": "@schmock/schema",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "dependencies": {
         "@faker-js/faker": "^9.9.0",
         "json-schema-faker": "^0.5.6",
@@ -82,7 +82,7 @@
 
     "@angular/common": ["@angular/common@20.1.4", "", { "dependencies": { "tslib": "^2.3.0" }, "peerDependencies": { "@angular/core": "20.1.4", "rxjs": "^6.5.3 || ^7.4.0" } }, "sha512-AL+HdsY5xL2iM1zZ55ce33U+w2LgPJZQwKvHXJJ/Hpk3rpFNamWtRPmJBeq8Z0dQV1lLTMM+2pUatH6p+5pvEg=="],
 
-    "@angular/compiler": ["@angular/compiler@20.1.4", "", { "dependencies": { "tslib": "^2.3.0" } }, "sha512-gQbchh2ziK9QxZuHgEf7BUMCm/ayu6Zr9hst6itSecinUJgUeeSp3Z4vXjIBNBUKMPB135tWw9RGiVbW8saBmg=="],
+    "@angular/compiler": ["@angular/compiler@20.1.6", "", { "dependencies": { "tslib": "^2.3.0" } }, "sha512-PASAnrY3dHl3mOlYP7n49a1djbw+CGeBwkzhSVhDTrkg9hyx6GMDCNdNr1xZFWFjgS7vB3K8nIk8o9k+bXpH0g=="],
 
     "@angular/core": ["@angular/core@20.1.4", "", { "dependencies": { "tslib": "^2.3.0" }, "peerDependencies": { "@angular/compiler": "20.1.4", "rxjs": "^6.5.3 || ^7.4.0", "zone.js": "~0.15.0" }, "optionalPeers": ["@angular/compiler", "zone.js"] }, "sha512-aWDux64a9usuVU2SnF0epqjXAj8JO8jViUzZAJAuFKSCtkeNzqP+Z6DjkqsCKrNvGP7xkX1XhhepUygxgh7/6A=="],
 
