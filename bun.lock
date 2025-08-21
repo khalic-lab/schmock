@@ -25,7 +25,7 @@
         "@angular/compiler": "^20.2.0",
         "@angular/core": "^20.2.1",
         "@angular/platform-browser": "^20.2.0",
-        "@angular/platform-browser-dynamic": "^20.1.4",
+        "@angular/platform-browser-dynamic": "^20.2.1",
         "@types/node": "^24.2.1",
         "jsdom": "^26.1.0",
         "typescript": "^5.9.2",
@@ -70,7 +70,7 @@
       },
       "devDependencies": {
         "@types/json-schema": "^7.0.15",
-        "@types/node": "^24.2.1",
+        "@types/node": "^24.3.0",
         "vitest": "^3.2.4",
       },
     },
@@ -82,15 +82,13 @@
 
     "@angular/common": ["@angular/common@20.1.4", "", { "dependencies": { "tslib": "^2.3.0" }, "peerDependencies": { "@angular/core": "20.1.4", "rxjs": "^6.5.3 || ^7.4.0" } }, "sha512-AL+HdsY5xL2iM1zZ55ce33U+w2LgPJZQwKvHXJJ/Hpk3rpFNamWtRPmJBeq8Z0dQV1lLTMM+2pUatH6p+5pvEg=="],
 
-
     "@angular/compiler": ["@angular/compiler@20.2.1", "", { "dependencies": { "tslib": "^2.3.0" } }, "sha512-ghVt1E8xmwjMwqyGRwXYJkr7fz40VEreUSX1q+gEzbGTftVrK1foxPT8jcueIn0ztArDf7+zSMtu314FiJZyYA=="],
-
 
     "@angular/core": ["@angular/core@20.2.1", "", { "dependencies": { "tslib": "^2.3.0" }, "peerDependencies": { "@angular/compiler": "20.2.1", "rxjs": "^6.5.3 || ^7.4.0", "zone.js": "~0.15.0" }, "optionalPeers": ["@angular/compiler", "zone.js"] }, "sha512-/hl3AkmdQ62P9ttmfULEDg9GIz7BkzhGv9bSH2ssiU3Y4ax6eM8uQXEbMxBA8OUKOvg1Q4POcNHIiJQgO5t28Q=="],
 
     "@angular/platform-browser": ["@angular/platform-browser@20.2.0", "", { "dependencies": { "tslib": "^2.3.0" }, "peerDependencies": { "@angular/animations": "20.2.0", "@angular/common": "20.2.0", "@angular/core": "20.2.0" }, "optionalPeers": ["@angular/animations"] }, "sha512-0CyDeXLQixXAWRBq4vfwALo0a0/igtUH1bFkHBUy4u6Nku7S8K7GG/HDN0CGlpep9Xz9o0ghF1zfZHfmEQxlmg=="],
 
-    "@angular/platform-browser-dynamic": ["@angular/platform-browser-dynamic@20.1.4", "", { "dependencies": { "tslib": "^2.3.0" }, "peerDependencies": { "@angular/common": "20.1.4", "@angular/compiler": "20.1.4", "@angular/core": "20.1.4", "@angular/platform-browser": "20.1.4" } }, "sha512-bH4CjZ2O2oqRaKd36Xe/EhZDHx769pPf9oR4oITsZJ10bIhkWcaG9pgaW+W1PGc+nMevVpJ7XfG9m9n6+3bEfw=="],
+    "@angular/platform-browser-dynamic": ["@angular/platform-browser-dynamic@20.2.1", "", { "dependencies": { "tslib": "^2.3.0" }, "peerDependencies": { "@angular/common": "20.2.1", "@angular/compiler": "20.2.1", "@angular/core": "20.2.1", "@angular/platform-browser": "20.2.1" } }, "sha512-bzBeDnRZFzlA5w5q5GskuKhLgAeJ3pU0B3Ch7V2fhfaAZDOTEczBFvL7I1pcXhDg8Y/8aoz4/OwqnilKLO3FUg=="],
 
     "@arethetypeswrong/cli": ["@arethetypeswrong/cli@0.18.2", "", { "dependencies": { "@arethetypeswrong/core": "0.18.2", "chalk": "^4.1.2", "cli-table3": "^0.6.3", "commander": "^10.0.1", "marked": "^9.1.2", "marked-terminal": "^7.1.0", "semver": "^7.5.4" }, "bin": { "attw": "dist/index.js" } }, "sha512-PcFM20JNlevEDKBg4Re29Rtv2xvjvQZzg7ENnrWFSS0PHgdP2njibVFw+dRUhNkPgNfac9iUqO0ohAXqQL4hbw=="],
 
@@ -752,13 +750,9 @@
 
     "zone.js": ["zone.js@0.15.1", "", {}, "sha512-XE96n56IQpJM7NAoXswY3XRLcWFW83xe0BiAOeMD7K5k5xecOeul3Qcpx6GqEeeHNkW5DWL5zOyTbEfB4eti8w=="],
 
-    "@angular/platform-browser-dynamic/@angular/compiler": ["@angular/compiler@20.1.4", "", { "dependencies": { "tslib": "^2.3.0" } }, "sha512-gQbchh2ziK9QxZuHgEf7BUMCm/ayu6Zr9hst6itSecinUJgUeeSp3Z4vXjIBNBUKMPB135tWw9RGiVbW8saBmg=="],
-
     "@arethetypeswrong/core/typescript": ["typescript@5.6.1-rc", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-E3b2+1zEFu84jB0YQi9BORDjz9+jGbwwy1Zi3G0LUNw7a7cePUrHMRNy8aPh53nXpkFGVHSxIZo5vKTfYaFiBQ=="],
 
     "@asamuzakjp/css-color/lru-cache": ["lru-cache@10.4.3", "", {}, "sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ=="],
-
-    "@schmock/schema/@types/node": ["@types/node@24.2.1", "", { "dependencies": { "undici-types": "~7.10.0" } }, "sha512-DRh5K+ka5eJic8CjH7td8QpYEV6Zo10gfRkjHCO3weqZHWDtAaSTFtl4+VMqOJ4N5jcuhZ9/l+yy8rVgw7BQeQ=="],
 
     "@types/body-parser/@types/node": ["@types/node@24.1.0", "", { "dependencies": { "undici-types": "~7.8.0" } }, "sha512-ut5FthK5moxFKH2T1CUOC6ctR67rQRvvHdFLCD2Ql6KXmMuCrjsSsRI9UsLCm9M18BMwClv4pn327UvB7eeO1w=="],
 
