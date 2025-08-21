@@ -31,8 +31,11 @@
     "@angular/common": "^20.2.1",
     "@angular/compiler": "^20.2.0",
     "@angular/core": "^20.2.1",
-    "@angular/platform-browser": "^20.2.0",
+
+    "@angular/platform-browser": "^20.2.1",
+
     "@angular/platform-browser-dynamic": "^20.2.1",
+
     "@types/node": "^24.2.1",
     "jsdom": "^26.1.0",
     "typescript": "^5.9.2",
