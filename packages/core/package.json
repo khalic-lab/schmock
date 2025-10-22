@@ -32,7 +32,7 @@
   "license": "MIT",
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^5.2.1",
-    "@types/node": "^24.3.0",
+    "@types/node": "^24.9.1",
     "@vitest/ui": "^4.0.1",
     "vitest": "^4.0.1"
   }
