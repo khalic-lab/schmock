@@ -34,6 +34,9 @@ jsf.option({
 // Resource limits for safety
 const MAX_ARRAY_SIZE = 10000;
 const MAX_NESTING_DEPTH = 10; // Reasonable limit for schema nesting
+const DEFAULT_ARRAY_COUNT = 3; // Default items to generate when not specified
+const DEEP_NESTING_THRESHOLD = 3; // Depth at which to check for memory risks
+const LARGE_ARRAY_THRESHOLD = 100; // Array size considered "large"
 
 interface SchemaGenerationContext {
   schema: JSONSchema7;
@@ -407,12 +410,15 @@ function checkForDeepNestingWithArrays(
       : schemaType === "array";
 
     if (isArray) {
-      const maxItems = schema.maxItems || 3; // Default array size if not specified
+      const maxItems = schema.maxItems || DEFAULT_ARRAY_COUNT;
       // Be more aggressive about deep nesting detection
-      if (currentDepth >= 3 && maxItems >= 100) {
+      if (
+        currentDepth >= DEEP_NESTING_THRESHOLD &&
+        maxItems >= LARGE_ARRAY_THRESHOLD
+      ) {
         throw new ResourceLimitError(
           "deep_nesting_memory_risk",
-          300, // Conservative limit: depth 3 * 100 items
+          DEEP_NESTING_THRESHOLD * LARGE_ARRAY_THRESHOLD,
           currentDepth * maxItems,
         );
       }
@@ -466,13 +472,17 @@ function checkArraySizeLimits(schema: JSONSchema7, path: string): void {
 
     // Check for combination of deep nesting and large arrays
     const depth = calculateNestingDepth(schema);
-    const estimatedSize = schema.maxItems || schema.minItems || 3; // Default array size
+    const estimatedSize =
+      schema.maxItems || schema.minItems || DEFAULT_ARRAY_COUNT;
 
-    // If we have deep nesting (>3) and large arrays (>100), it could cause memory issues
-    if (depth > 3 && estimatedSize > 100) {
+    // If we have deep nesting and large arrays, it could cause memory issues
+    if (
+      depth > DEEP_NESTING_THRESHOLD &&
+      estimatedSize > LARGE_ARRAY_THRESHOLD
+    ) {
       throw new ResourceLimitError(
         "memory_estimation",
-        300, // Conservative limit for depth * array size
+        DEEP_NESTING_THRESHOLD * LARGE_ARRAY_THRESHOLD,
         depth * estimatedSize,
       );
     }
@@ -530,14 +540,14 @@ function determineArrayCount(
   }
 
   if (schema.minItems !== undefined) {
-    return Math.max(schema.minItems, 3);
+    return Math.max(schema.minItems, DEFAULT_ARRAY_COUNT);
   }
 
   if (schema.maxItems !== undefined) {
-    return Math.min(schema.maxItems, 3);
+    return Math.min(schema.maxItems, DEFAULT_ARRAY_COUNT);
   }
 
-  return 3; // Default count
+  return DEFAULT_ARRAY_COUNT;
 }
 
 /**
