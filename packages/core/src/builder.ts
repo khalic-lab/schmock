@@ -289,14 +289,7 @@ export class CallableMockInstance {
       const response = this.parseResponse(result, matchedRoute.config);
 
       // Apply global delay if configured
-      if (this.globalConfig.delay) {
-        const delay = Array.isArray(this.globalConfig.delay)
-          ? Math.random() *
-              (this.globalConfig.delay[1] - this.globalConfig.delay[0]) +
-            this.globalConfig.delay[0]
-          : this.globalConfig.delay;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
+      await this.applyDelay();
 
       // Log successful response
       this.logger.log(
@@ -332,19 +325,31 @@ export class CallableMockInstance {
       };
 
       // Apply global delay if configured (even for error responses)
-      if (this.globalConfig.delay) {
-        const delay = Array.isArray(this.globalConfig.delay)
-          ? Math.random() *
-              (this.globalConfig.delay[1] - this.globalConfig.delay[0]) +
-            this.globalConfig.delay[0]
-          : this.globalConfig.delay;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
+      await this.applyDelay();
 
       this.logger.log("error", `[${requestId}] Returning error response 500`);
       this.logger.timeEnd(`request-${requestId}`);
       return errorResponse;
     }
+  }
+
+  /**
+   * Apply configured response delay
+   * Supports both fixed delays and random delays within a range
+   * @private
+   */
+  private async applyDelay(): Promise<void> {
+    if (!this.globalConfig.delay) {
+      return;
+    }
+
+    const delay = Array.isArray(this.globalConfig.delay)
+      ? Math.random() *
+          (this.globalConfig.delay[1] - this.globalConfig.delay[0]) +
+        this.globalConfig.delay[0]
+      : this.globalConfig.delay;
+
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
 
   private parseResponse(
