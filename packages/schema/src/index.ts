@@ -267,15 +267,6 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
     checkForDeepNestingWithArrays(schema, path);
   }
 
-  // Special check for the specific deep nesting pattern in tests
-  if (path === "$" && schema.type === "object" && schema.properties?.level1) {
-    // This is likely the deep nesting test case
-    const hasDeepNesting = checkForSpecificDeepNestingPattern(schema);
-    if (hasDeepNesting) {
-      throw new ResourceLimitError("deep_nesting_detected", 5, 6);
-    }
-  }
-
   // Check for potentially dangerous array sizes in schema definition
   checkArraySizeLimits(schema, path);
 
@@ -362,36 +353,6 @@ function calculateNestingDepth(schema: JSONSchema7, depth = 0): number {
   }
 
   return maxDepth;
-}
-
-function checkForSpecificDeepNestingPattern(schema: JSONSchema7): boolean {
-  // Check for the specific pattern: level1 -> level2 -> level3 -> level4 -> level5 with large array
-  try {
-    const level1 = schema.properties?.level1 as JSONSchema7;
-    if (!level1?.properties?.level2) return false;
-
-    const level2 = level1.properties.level2 as JSONSchema7;
-    if (!level2?.properties?.level3) return false;
-
-    const level3 = level2.properties.level3 as JSONSchema7;
-    if (!level3?.properties?.level4) return false;
-
-    const level4 = level3.properties.level4 as JSONSchema7;
-    if (!level4?.properties?.level5) return false;
-
-    const level5 = level4.properties.level5 as JSONSchema7;
-    if (
-      level5?.type === "array" &&
-      level5?.maxItems &&
-      level5.maxItems >= 1000
-    ) {
-      return true;
-    }
-  } catch {
-    // If any step fails, this isn't the pattern we're looking for
-  }
-
-  return false;
 }
 
 function checkForDeepNestingWithArrays(
