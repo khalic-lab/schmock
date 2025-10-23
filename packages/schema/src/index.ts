@@ -290,22 +290,24 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
 
 function hasCircularReference(
   schema: JSONSchema7,
-  visited = new Set(),
+  currentPath = new Set(),
 ): boolean {
-  if (visited.has(schema)) {
+  // Check if this schema is currently being traversed (cycle detected)
+  if (currentPath.has(schema)) {
     return true;
   }
-
-  visited.add(schema);
 
   if (schema.$ref === "#") {
     return true;
   }
 
+  // Add to current path for this traversal branch
+  currentPath.add(schema);
+
   if (schema.type === "object" && schema.properties) {
     for (const prop of Object.values(schema.properties)) {
       if (typeof prop === "object" && prop !== null) {
-        if (hasCircularReference(prop as JSONSchema7, new Set(visited))) {
+        if (hasCircularReference(prop as JSONSchema7, currentPath)) {
           return true;
         }
       }
@@ -316,12 +318,15 @@ function hasCircularReference(
     const items = Array.isArray(schema.items) ? schema.items : [schema.items];
     for (const item of items) {
       if (typeof item === "object" && item !== null) {
-        if (hasCircularReference(item as JSONSchema7, new Set(visited))) {
+        if (hasCircularReference(item as JSONSchema7, currentPath)) {
           return true;
         }
       }
     }
   }
+
+  // Remove from current path after checking all children (backtrack)
+  currentPath.delete(schema);
 
   return false;
 }
