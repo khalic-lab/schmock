@@ -352,6 +352,14 @@ export class CallableMockInstance {
     await new Promise((resolve) => setTimeout(resolve, delay));
   }
 
+  /**
+   * Parse and normalize response result into Response object
+   * Handles tuple format [status, body, headers], direct values, and response objects
+   * @param result - Raw result from generator or plugin
+   * @param routeConfig - Route configuration for content-type defaults
+   * @returns Normalized Response object with status, body, and headers
+   * @private
+   */
   private parseResponse(
     result: any,
     routeConfig: Schmock.RouteConfig,
@@ -413,6 +421,17 @@ export class CallableMockInstance {
     };
   }
 
+  /**
+   * Run all registered plugins in sequence
+   * First plugin to set response becomes generator, subsequent plugins transform
+   * Handles plugin errors via onError hooks
+   * @param context - Plugin context with request details
+   * @param initialResponse - Initial response from route generator
+   * @param _routeConfig - Route config (unused but kept for signature)
+   * @param _requestId - Request ID (unused but kept for signature)
+   * @returns Updated context and final response after all plugins
+   * @private
+   */
   private async runPluginPipeline(
     context: Schmock.PluginContext,
     initialResponse?: any,
@@ -497,7 +516,13 @@ export class CallableMockInstance {
   }
 
   /**
-   * Find a route that matches the given method and path.
+   * Find a route that matches the given method and path
+   * Uses two-pass matching: exact routes first, then parameterized routes
+   * Searches in reverse order to prefer most recently defined routes
+   * @param method - HTTP method to match
+   * @param path - Request path to match
+   * @returns Matched compiled route or undefined if no match
+   * @private
    */
   private findRoute(
     method: Schmock.HttpMethod,
@@ -531,7 +556,12 @@ export class CallableMockInstance {
   }
 
   /**
-   * Extract parameter values from the path based on the route pattern.
+   * Extract parameter values from path based on route pattern
+   * Maps capture groups from regex match to parameter names
+   * @param route - Compiled route with pattern and param names
+   * @param path - Request path to extract values from
+   * @returns Object mapping parameter names to extracted values
+   * @private
    */
   private extractParams(
     route: CompiledCallableRoute,
