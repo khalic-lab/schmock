@@ -9,7 +9,11 @@ import {
 import type { JSONSchema7 } from "json-schema";
 import jsf from "json-schema-faker";
 
-// Create isolated faker instances for each generation to avoid race conditions
+/**
+ * Create isolated faker instance to avoid race conditions
+ * Each generation gets its own faker instance to ensure thread-safety
+ * @returns Fresh Faker instance with English locale
+ */
 function createFakerInstance() {
   return new Faker({ locale: [en] });
 }
@@ -140,6 +144,15 @@ export function generateFromSchema(options: SchemaGenerationContext): any {
   return generated;
 }
 
+/**
+ * Validate JSON Schema structure and enforce resource limits
+ * Checks for malformed schemas, circular references, excessive nesting,
+ * and dangerous patterns that could cause memory issues
+ * @param schema - JSON Schema to validate
+ * @param path - Current path in schema tree (for error messages)
+ * @throws {SchemaValidationError} When schema structure is invalid
+ * @throws {ResourceLimitError} When schema exceeds safety limits
+ */
 function validateSchema(schema: JSONSchema7, path = "$"): void {
   if (!schema || typeof schema !== "object") {
     throw new SchemaValidationError(
@@ -279,6 +292,16 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
   }
 }
 
+/**
+ * Detect circular references in JSON Schema using path-based traversal
+ * Uses backtracking to distinguish between cycles and legitimate schema reuse
+ * @param schema - Schema to check for cycles
+ * @param currentPath - Set of schemas currently in traversal path
+ * @returns true if circular reference detected, false otherwise
+ * @example
+ * // Detects: schema A -> B -> A (cycle)
+ * // Allows: schema A -> B, A -> C (reuse of A)
+ */
 function hasCircularReference(
   schema: JSONSchema7,
   currentPath = new Set(),
@@ -322,6 +345,13 @@ function hasCircularReference(
   return false;
 }
 
+/**
+ * Calculate maximum nesting depth of a JSON Schema
+ * Recursively traverses object properties and array items
+ * @param schema - Schema to measure
+ * @param depth - Current depth (internal recursion parameter)
+ * @returns Maximum nesting depth found
+ */
 function calculateNestingDepth(schema: JSONSchema7, depth = 0): number {
   if (depth > MAX_NESTING_DEPTH) {
     return depth;
@@ -355,6 +385,13 @@ function calculateNestingDepth(schema: JSONSchema7, depth = 0): number {
   return maxDepth;
 }
 
+/**
+ * Check for dangerous patterns of deep nesting combined with large arrays
+ * Prevents memory issues from schemas like: depth 3+ with 100+ item arrays
+ * @param schema - Schema to check
+ * @param _path - Path in schema (unused but kept for signature consistency)
+ * @throws {ResourceLimitError} When dangerous nesting pattern detected
+ */
 function checkForDeepNestingWithArrays(
   schema: JSONSchema7,
   _path: string,
@@ -466,6 +503,13 @@ function checkArraySizeLimits(schema: JSONSchema7, path: string): void {
   }
 }
 
+/**
+ * Determine number of items to generate for array schema
+ * Prefers explicit count, then schema minItems/maxItems, with sane defaults
+ * @param schema - Array schema with optional minItems/maxItems
+ * @param explicitCount - Explicit count override from plugin options
+ * @returns Number of array items to generate
+ */
 function determineArrayCount(
   schema: JSONSchema7,
   explicitCount?: number,
@@ -496,6 +540,16 @@ function determineArrayCount(
   return 3; // Default count
 }
 
+/**
+ * Apply overrides to generated data with support for templates
+ * Supports nested paths (dot notation), templates with {{params.id}}, and state access
+ * @param data - Generated data to apply overrides to
+ * @param overrides - Override values (can use templates)
+ * @param params - Route parameters for template expansion
+ * @param state - Plugin state for template expansion
+ * @param query - Query parameters for template expansion
+ * @returns Data with overrides applied
+ */
 function applyOverrides(
   data: any,
   overrides?: Record<string, any>,
@@ -636,6 +690,12 @@ function processTemplate(
   return processed;
 }
 
+/**
+ * Validate that faker method string references a valid Faker.js API
+ * Checks format (namespace.method) and validates against known namespaces
+ * @param fakerMethod - Faker method string (e.g., "person.fullName")
+ * @throws {SchemaValidationError} When faker method format or namespace is invalid
+ */
 function validateFakerMethod(fakerMethod: string): void {
   // List of known faker namespaces and common methods
   const validFakerNamespaces = [
