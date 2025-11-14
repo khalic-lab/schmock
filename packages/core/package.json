@@ -33,7 +33,7 @@
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^5.2.1",
     "@types/node": "^24.9.1",
-    "@vitest/ui": "^4.0.4",
+    "@vitest/ui": "^4.0.9",
     "vitest": "^4.0.3"
   }
 }
