@@ -6,7 +6,7 @@
     "declaration": true,
     "declarationMap": true,
     "composite": true,
-    "emitDeclarationOnly": false,
+    "emitDeclarationOnly": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true
   },
