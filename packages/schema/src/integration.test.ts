@@ -1,3 +1,4 @@
+import { schmock } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import { generateFromSchema, schemaPlugin } from "./index";
@@ -588,8 +589,6 @@ describe("Schema Generator Integration Tests", () => {
     it("resolves state overrides when using schmock.handle() with global state", async () => {
       // This test verifies that state-driven template overrides work correctly
       // when the schema plugin is used through schmock.handle() with global state
-      const { schmock } = await import("@schmock/core");
-
       const userState = {
         currentUser: {
           id: "user-123",
