@@ -765,7 +765,7 @@ describe("Schema Generator", () => {
       });
 
       expect(plugin).toHaveProperty("name", "schema");
-      expect(plugin).toHaveProperty("version", "0.3.0");
+      expect(plugin).toHaveProperty("version", "1.0.0");
       expect(plugin).toHaveProperty("process");
       expect(typeof plugin.process).toBe("function");
     });
