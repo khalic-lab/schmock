@@ -63,14 +63,18 @@ export {
 } from "./errors";
 // Re-export types
 export type {
-  Builder,
-  BuilderConfig,
+  CallableMockInstance,
+  Generator,
+  GeneratorFunction,
+  GlobalConfig,
   HttpMethod,
-  MockInstance,
-  ResponseContext,
-  ResponseFunction,
+  Plugin,
+  PluginContext,
+  PluginResult,
+  RequestContext,
+  RequestOptions,
+  Response,
   ResponseResult,
-  RouteDefinition,
+  RouteConfig,
   RouteKey,
-  Routes,
 } from "./types";

@@ -81,9 +81,16 @@ export class CallableMockInstance {
       if (typeof generator === "function") {
         // Default to JSON for function generators
         config.contentType = "application/json";
-      } else if (typeof generator === "string") {
-        // Default to plain text for strings
+      } else if (
+        typeof generator === "string" ||
+        typeof generator === "number" ||
+        typeof generator === "boolean"
+      ) {
+        // Default to plain text for primitives
         config.contentType = "text/plain";
+      } else if (Buffer.isBuffer(generator)) {
+        // Default to octet-stream for buffers
+        config.contentType = "application/octet-stream";
       } else {
         // Default to JSON for objects/arrays
         config.contentType = "application/json";
@@ -160,21 +167,45 @@ export class CallableMockInstance {
       // Apply namespace if configured
       let requestPath = path;
       if (this.globalConfig.namespace) {
-        if (!path.startsWith(this.globalConfig.namespace)) {
-          this.logger.log(
-            "route",
-            `[${requestId}] Path doesn't match namespace ${this.globalConfig.namespace}`,
-          );
-          const error = new RouteNotFoundError(method, path);
-          const response = {
-            status: 404,
-            body: { error: error.message, code: error.code },
-            headers: {},
-          };
-          this.logger.timeEnd(`request-${requestId}`);
-          return response;
+        // Normalize namespace to handle edge cases
+        const namespace = this.globalConfig.namespace;
+        if (namespace === "/") {
+          // Root namespace means no transformation needed
+          requestPath = path;
+        } else {
+          // Handle namespace without leading slash by normalizing both namespace and path
+          const normalizedNamespace = namespace.startsWith("/")
+            ? namespace
+            : `/${namespace}`;
+          const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+
+          // Remove trailing slash from namespace unless it's root
+          const finalNamespace =
+            normalizedNamespace.endsWith("/") && normalizedNamespace !== "/"
+              ? normalizedNamespace.slice(0, -1)
+              : normalizedNamespace;
+
+          if (!normalizedPath.startsWith(finalNamespace)) {
+            this.logger.log(
+              "route",
+              `[${requestId}] Path doesn't match namespace ${namespace}`,
+            );
+            const error = new RouteNotFoundError(method, path);
+            const response = {
+              status: 404,
+              body: { error: error.message, code: error.code },
+              headers: {},
+            };
+            this.logger.timeEnd(`request-${requestId}`);
+            return response;
+          }
+
+          // Remove namespace prefix, ensuring we always start with /
+          requestPath = normalizedPath.substring(finalNamespace.length);
+          if (!requestPath.startsWith("/")) {
+            requestPath = `/${requestPath}`;
+          }
         }
-        requestPath = path.substring(this.globalConfig.namespace.length);
       }
 
       // Find matching route
@@ -241,6 +272,8 @@ export class CallableMockInstance {
         const pipelineResult = await this.runPluginPipeline(
           pluginContext,
           result,
+          matchedRoute.config,
+          requestId,
         );
         pluginContext = pipelineResult.context;
         result = pipelineResult.response;
@@ -253,17 +286,10 @@ export class CallableMockInstance {
       }
 
       // Parse and prepare response
-      const response = this.parseResponse(result);
+      const response = this.parseResponse(result, matchedRoute.config);
 
       // Apply global delay if configured
-      if (this.globalConfig.delay) {
-        const delay = Array.isArray(this.globalConfig.delay)
-          ? Math.random() *
-              (this.globalConfig.delay[1] - this.globalConfig.delay[0]) +
-            this.globalConfig.delay[0]
-          : this.globalConfig.delay;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
+      await this.applyDelay();
 
       // Log successful response
       this.logger.log(
@@ -298,36 +324,119 @@ export class CallableMockInstance {
         headers: {},
       };
 
+      // Apply global delay if configured (even for error responses)
+      await this.applyDelay();
+
       this.logger.log("error", `[${requestId}] Returning error response 500`);
       this.logger.timeEnd(`request-${requestId}`);
       return errorResponse;
     }
   }
 
-  private parseResponse(result: any): Schmock.Response {
-    if (Array.isArray(result)) {
-      // Check if it's a tuple response [status, body, headers?]
-      if (typeof result[0] === "number") {
-        const [status, body, headers] = result;
-        return {
-          status,
-          body,
-          headers: headers || {},
-        };
+  /**
+   * Apply configured response delay
+   * Supports both fixed delays and random delays within a range
+   * @private
+   */
+  private async applyDelay(): Promise<void> {
+    if (!this.globalConfig.delay) {
+      return;
+    }
+
+    const delay = Array.isArray(this.globalConfig.delay)
+      ? Math.random() *
+          (this.globalConfig.delay[1] - this.globalConfig.delay[0]) +
+        this.globalConfig.delay[0]
+      : this.globalConfig.delay;
+
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+
+  /**
+   * Parse and normalize response result into Response object
+   * Handles tuple format [status, body, headers], direct values, and response objects
+   * @param result - Raw result from generator or plugin
+   * @param routeConfig - Route configuration for content-type defaults
+   * @returns Normalized Response object with status, body, and headers
+   * @private
+   */
+  private parseResponse(
+    result: any,
+    routeConfig: Schmock.RouteConfig,
+  ): Schmock.Response {
+    let status = 200;
+    let body = result;
+    let headers: Record<string, string> = {};
+
+    let tupleFormat = false;
+
+    // Handle already-formed response objects (from plugin error recovery)
+    if (
+      result &&
+      typeof result === "object" &&
+      "status" in result &&
+      "body" in result
+    ) {
+      return {
+        status: result.status,
+        body: result.body,
+        headers: result.headers || {},
+      };
+    }
+
+    // Handle tuple response format [status, body, headers?]
+    if (Array.isArray(result) && typeof result[0] === "number") {
+      [status, body, headers = {}] = result;
+      tupleFormat = true;
+    }
+
+    // Handle null/undefined responses with 204 No Content
+    // But don't auto-convert if tuple format was used (status was explicitly provided)
+    if (body === null || body === undefined) {
+      if (!tupleFormat) {
+        status = status === 200 ? 204 : status; // Only change to 204 if status wasn't explicitly set via tuple
+      }
+      body = undefined; // Ensure body is undefined for null responses
+    }
+
+    // Add content-type header from route config if it exists and headers don't already have it
+    // But only if this isn't a tuple response (where headers are explicitly controlled)
+    if (!headers["content-type"] && routeConfig.contentType && !tupleFormat) {
+      headers["content-type"] = routeConfig.contentType;
+
+      // Handle special conversion cases when contentType is explicitly set
+      if (routeConfig.contentType === "text/plain" && body !== undefined) {
+        if (typeof body === "object" && !Buffer.isBuffer(body)) {
+          body = JSON.stringify(body);
+        } else if (typeof body !== "string") {
+          body = String(body);
+        }
       }
     }
 
-    // Default response with 200 status
     return {
-      status: 200,
-      body: result,
-      headers: {},
+      status,
+      body,
+      headers,
     };
   }
 
+  /**
+   * Run all registered plugins in sequence
+   * First plugin to set response becomes generator, subsequent plugins transform
+   * Handles plugin errors via onError hooks
+   * @param context - Plugin context with request details
+   * @param initialResponse - Initial response from route generator
+   * @param _routeConfig - Route config (unused but kept for signature)
+   * @param _requestId - Request ID (unused but kept for signature)
+   * @returns Updated context and final response after all plugins
+   * @private
+   */
   private async runPluginPipeline(
     context: Schmock.PluginContext,
     initialResponse?: any,
+    _routeConfig?: Schmock.RouteConfig,
+    _requestId?: string,
   ): Promise<{ context: Schmock.PluginContext; response?: any }> {
     let currentContext = context;
     let response: any = initialResponse;
@@ -350,7 +459,10 @@ export class CallableMockInstance {
         currentContext = result.context;
 
         // First plugin to set response becomes the generator
-        if (result.response !== undefined && response === undefined) {
+        if (
+          result.response !== undefined &&
+          (response === undefined || response === null)
+        ) {
           this.logger.log(
             "pipeline",
             `Plugin ${plugin.name} generated response`,
@@ -381,8 +493,9 @@ export class CallableMockInstance {
                 "pipeline",
                 `Plugin ${plugin.name} handled error`,
               );
-              // If error handler returns response, use it
+              // If error handler returns response, use it and stop pipeline
               if (typeof errorResult === "object" && errorResult.status) {
+                // Return the error response as the current response, stop pipeline
                 response = errorResult;
                 break;
               }
@@ -403,19 +516,52 @@ export class CallableMockInstance {
   }
 
   /**
-   * Find a route that matches the given method and path.
+   * Find a route that matches the given method and path
+   * Uses two-pass matching: exact routes first, then parameterized routes
+   * Searches in reverse order to prefer most recently defined routes
+   * @param method - HTTP method to match
+   * @param path - Request path to match
+   * @returns Matched compiled route or undefined if no match
+   * @private
    */
   private findRoute(
     method: Schmock.HttpMethod,
     path: string,
   ): CompiledCallableRoute | undefined {
-    return this.routes.find(
-      (route) => route.method === method && route.pattern.test(path),
-    );
+    // First pass: Look for exact matches (routes without parameters)
+    for (let i = this.routes.length - 1; i >= 0; i--) {
+      const route = this.routes[i];
+      if (
+        route.method === method &&
+        route.params.length === 0 &&
+        route.pattern.test(path)
+      ) {
+        return route;
+      }
+    }
+
+    // Second pass: Look for parameterized routes
+    for (let i = this.routes.length - 1; i >= 0; i--) {
+      const route = this.routes[i];
+      if (
+        route.method === method &&
+        route.params.length > 0 &&
+        route.pattern.test(path)
+      ) {
+        return route;
+      }
+    }
+
+    return undefined;
   }
 
   /**
-   * Extract parameter values from the path based on the route pattern.
+   * Extract parameter values from path based on route pattern
+   * Maps capture groups from regex match to parameter names
+   * @param route - Compiled route with pattern and param names
+   * @param path - Request path to extract values from
+   * @returns Object mapping parameter names to extracted values
+   * @private
    */
   private extractParams(
     route: CompiledCallableRoute,

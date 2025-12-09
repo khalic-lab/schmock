@@ -1,6 +1,6 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
-import type { MockInstance } from "@schmock/core";
+import type { CallableMockInstance } from "@schmock/core";
 import { SchmockError } from "@schmock/core";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
@@ -154,7 +154,7 @@ function defaultTransformQuery(
  * Convert a Schmock mock instance to Express middleware
  */
 export function toExpress(
-  mock: MockInstance,
+  mock: CallableMockInstance,
   options: ExpressAdapterOptions = {},
 ): RequestHandler {
   const {

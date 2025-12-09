@@ -1,6 +1,6 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
-import { faker } from "@faker-js/faker";
+import { en, Faker } from "@faker-js/faker";
 import {
   ResourceLimitError,
   SchemaGenerationError,
@@ -9,8 +9,17 @@ import {
 import type { JSONSchema7 } from "json-schema";
 import jsf from "json-schema-faker";
 
-// Configure json-schema-faker with faker.js
-jsf.extend("faker", () => faker);
+/**
+ * Create isolated faker instance to avoid race conditions
+ * Each generation gets its own faker instance to ensure thread-safety
+ * @returns Fresh Faker instance with English locale
+ */
+function createFakerInstance() {
+  return new Faker({ locale: [en] });
+}
+
+// Configure json-schema-faker with a function that creates fresh faker instances
+jsf.extend("faker", () => createFakerInstance());
 
 // Configure json-schema-faker options
 jsf.option({
@@ -25,6 +34,9 @@ jsf.option({
 // Resource limits for safety
 const MAX_ARRAY_SIZE = 10000;
 const MAX_NESTING_DEPTH = 10; // Reasonable limit for schema nesting
+const DEFAULT_ARRAY_COUNT = 3; // Default items to generate when not specified
+const DEEP_NESTING_THRESHOLD = 3; // Depth at which to check for memory risks
+const LARGE_ARRAY_THRESHOLD = 100; // Array size considered "large"
 
 interface SchemaGenerationContext {
   schema: JSONSchema7;
@@ -35,10 +47,19 @@ interface SchemaGenerationContext {
   query?: Record<string, string>;
 }
 
-export function schemaPlugin(): Schmock.Plugin {
+interface SchemaPluginOptions {
+  schema: JSONSchema7;
+  count?: number;
+  overrides?: Record<string, any>;
+}
+
+export function schemaPlugin(options: SchemaPluginOptions): Schmock.Plugin {
+  // Validate schema immediately when plugin is created
+  validateSchema(options.schema);
+
   return {
     name: "schema",
-    version: "0.1.0",
+    version: "1.0.0",
 
     process(context: Schmock.PluginContext, response?: any) {
       // If response already exists, pass it through
@@ -46,20 +67,13 @@ export function schemaPlugin(): Schmock.Plugin {
         return { context, response };
       }
 
-      const route = context.route as any;
-
-      // Only handle routes with schema configuration
-      if (!route.schema) {
-        return { context, response }; // Let other plugins or response function handle it
-      }
-
       try {
         const generatedResponse = generateFromSchema({
-          schema: route.schema,
-          count: route.count,
-          overrides: route.overrides,
+          schema: options.schema,
+          count: options.count,
+          overrides: options.overrides,
           params: context.params,
-          state: context.state,
+          state: context.routeState,
           query: context.query,
         });
 
@@ -80,7 +94,7 @@ export function schemaPlugin(): Schmock.Plugin {
         throw new SchemaGenerationError(
           context.path,
           error instanceof Error ? error : new Error(String(error)),
-          route.schema,
+          options.schema,
         );
       }
     },
@@ -133,6 +147,15 @@ export function generateFromSchema(options: SchemaGenerationContext): any {
   return generated;
 }
 
+/**
+ * Validate JSON Schema structure and enforce resource limits
+ * Checks for malformed schemas, circular references, excessive nesting,
+ * and dangerous patterns that could cause memory issues
+ * @param schema - JSON Schema to validate
+ * @param path - Current path in schema tree (for error messages)
+ * @throws {SchemaValidationError} When schema structure is invalid
+ * @throws {ResourceLimitError} When schema exceeds safety limits
+ */
 function validateSchema(schema: JSONSchema7, path = "$"): void {
   if (!schema || typeof schema !== "object") {
     throw new SchemaValidationError(
@@ -260,15 +283,6 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
     checkForDeepNestingWithArrays(schema, path);
   }
 
-  // Special check for the specific deep nesting pattern in tests
-  if (path === "$" && schema.type === "object" && schema.properties?.level1) {
-    // This is likely the deep nesting test case
-    const hasDeepNesting = checkForSpecificDeepNestingPattern(schema);
-    if (hasDeepNesting) {
-      throw new ResourceLimitError("deep_nesting_detected", 5, 6);
-    }
-  }
-
   // Check for potentially dangerous array sizes in schema definition
   checkArraySizeLimits(schema, path);
 
@@ -281,24 +295,36 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
   }
 }
 
+/**
+ * Detect circular references in JSON Schema using path-based traversal
+ * Uses backtracking to distinguish between cycles and legitimate schema reuse
+ * @param schema - Schema to check for cycles
+ * @param currentPath - Set of schemas currently in traversal path
+ * @returns true if circular reference detected, false otherwise
+ * @example
+ * // Detects: schema A -> B -> A (cycle)
+ * // Allows: schema A -> B, A -> C (reuse of A)
+ */
 function hasCircularReference(
   schema: JSONSchema7,
-  visited = new Set(),
+  currentPath = new Set(),
 ): boolean {
-  if (visited.has(schema)) {
+  // Check if this schema is currently being traversed (cycle detected)
+  if (currentPath.has(schema)) {
     return true;
   }
-
-  visited.add(schema);
 
   if (schema.$ref === "#") {
     return true;
   }
 
+  // Add to current path for this traversal branch
+  currentPath.add(schema);
+
   if (schema.type === "object" && schema.properties) {
     for (const prop of Object.values(schema.properties)) {
       if (typeof prop === "object" && prop !== null) {
-        if (hasCircularReference(prop as JSONSchema7, new Set(visited))) {
+        if (hasCircularReference(prop as JSONSchema7, currentPath)) {
           return true;
         }
       }
@@ -309,16 +335,26 @@ function hasCircularReference(
     const items = Array.isArray(schema.items) ? schema.items : [schema.items];
     for (const item of items) {
       if (typeof item === "object" && item !== null) {
-        if (hasCircularReference(item as JSONSchema7, new Set(visited))) {
+        if (hasCircularReference(item as JSONSchema7, currentPath)) {
           return true;
         }
       }
     }
   }
 
+  // Remove from current path after checking all children (backtrack)
+  currentPath.delete(schema);
+
   return false;
 }
 
+/**
+ * Calculate maximum nesting depth of a JSON Schema
+ * Recursively traverses object properties and array items
+ * @param schema - Schema to measure
+ * @param depth - Current depth (internal recursion parameter)
+ * @returns Maximum nesting depth found
+ */
 function calculateNestingDepth(schema: JSONSchema7, depth = 0): number {
   if (depth > MAX_NESTING_DEPTH) {
     return depth;
@@ -352,36 +388,13 @@ function calculateNestingDepth(schema: JSONSchema7, depth = 0): number {
   return maxDepth;
 }
 
-function checkForSpecificDeepNestingPattern(schema: JSONSchema7): boolean {
-  // Check for the specific pattern: level1 -> level2 -> level3 -> level4 -> level5 with large array
-  try {
-    const level1 = schema.properties?.level1 as JSONSchema7;
-    if (!level1?.properties?.level2) return false;
-
-    const level2 = level1.properties.level2 as JSONSchema7;
-    if (!level2?.properties?.level3) return false;
-
-    const level3 = level2.properties.level3 as JSONSchema7;
-    if (!level3?.properties?.level4) return false;
-
-    const level4 = level3.properties.level4 as JSONSchema7;
-    if (!level4?.properties?.level5) return false;
-
-    const level5 = level4.properties.level5 as JSONSchema7;
-    if (
-      level5?.type === "array" &&
-      level5?.maxItems &&
-      level5.maxItems >= 1000
-    ) {
-      return true;
-    }
-  } catch {
-    // If any step fails, this isn't the pattern we're looking for
-  }
-
-  return false;
-}
-
+/**
+ * Check for dangerous patterns of deep nesting combined with large arrays
+ * Prevents memory issues from schemas like: depth 3+ with 100+ item arrays
+ * @param schema - Schema to check
+ * @param _path - Path in schema (unused but kept for signature consistency)
+ * @throws {ResourceLimitError} When dangerous nesting pattern detected
+ */
 function checkForDeepNestingWithArrays(
   schema: JSONSchema7,
   _path: string,
@@ -397,12 +410,15 @@ function checkForDeepNestingWithArrays(
       : schemaType === "array";
 
     if (isArray) {
-      const maxItems = schema.maxItems || 3; // Default array size if not specified
+      const maxItems = schema.maxItems || DEFAULT_ARRAY_COUNT;
       // Be more aggressive about deep nesting detection
-      if (currentDepth >= 3 && maxItems >= 100) {
+      if (
+        currentDepth >= DEEP_NESTING_THRESHOLD &&
+        maxItems >= LARGE_ARRAY_THRESHOLD
+      ) {
         throw new ResourceLimitError(
           "deep_nesting_memory_risk",
-          300, // Conservative limit: depth 3 * 100 items
+          DEEP_NESTING_THRESHOLD * LARGE_ARRAY_THRESHOLD,
           currentDepth * maxItems,
         );
       }
@@ -456,13 +472,17 @@ function checkArraySizeLimits(schema: JSONSchema7, path: string): void {
 
     // Check for combination of deep nesting and large arrays
     const depth = calculateNestingDepth(schema);
-    const estimatedSize = schema.maxItems || schema.minItems || 3; // Default array size
+    const estimatedSize =
+      schema.maxItems || schema.minItems || DEFAULT_ARRAY_COUNT;
 
-    // If we have deep nesting (>3) and large arrays (>100), it could cause memory issues
-    if (depth > 3 && estimatedSize > 100) {
+    // If we have deep nesting and large arrays, it could cause memory issues
+    if (
+      depth > DEEP_NESTING_THRESHOLD &&
+      estimatedSize > LARGE_ARRAY_THRESHOLD
+    ) {
       throw new ResourceLimitError(
         "memory_estimation",
-        300, // Conservative limit for depth * array size
+        DEEP_NESTING_THRESHOLD * LARGE_ARRAY_THRESHOLD,
         depth * estimatedSize,
       );
     }
@@ -493,6 +513,13 @@ function checkArraySizeLimits(schema: JSONSchema7, path: string): void {
   }
 }
 
+/**
+ * Determine number of items to generate for array schema
+ * Prefers explicit count, then schema minItems/maxItems, with sane defaults
+ * @param schema - Array schema with optional minItems/maxItems
+ * @param explicitCount - Explicit count override from plugin options
+ * @returns Number of array items to generate
+ */
 function determineArrayCount(
   schema: JSONSchema7,
   explicitCount?: number,
@@ -513,16 +540,26 @@ function determineArrayCount(
   }
 
   if (schema.minItems !== undefined) {
-    return Math.max(schema.minItems, 3);
+    return Math.max(schema.minItems, DEFAULT_ARRAY_COUNT);
   }
 
   if (schema.maxItems !== undefined) {
-    return Math.min(schema.maxItems, 3);
+    return Math.min(schema.maxItems, DEFAULT_ARRAY_COUNT);
   }
 
-  return 3; // Default count
+  return DEFAULT_ARRAY_COUNT;
 }
 
+/**
+ * Apply overrides to generated data with support for templates
+ * Supports nested paths (dot notation), templates with {{params.id}}, and state access
+ * @param data - Generated data to apply overrides to
+ * @param overrides - Override values (can use templates)
+ * @param params - Route parameters for template expansion
+ * @param state - Plugin state for template expansion
+ * @param query - Query parameters for template expansion
+ * @returns Data with overrides applied
+ */
 function applyOverrides(
   data: any,
   overrides?: Record<string, any>,
@@ -532,18 +569,76 @@ function applyOverrides(
 ): any {
   if (!overrides) return data;
 
-  const result = { ...data };
+  const result = JSON.parse(JSON.stringify(data)); // Deep clone
 
   for (const [key, value] of Object.entries(overrides)) {
-    if (typeof value === "string" && value.includes("{{")) {
-      // Template processing
-      result[key] = processTemplate(value, { params, state, query });
+    // Handle nested paths like "data.id" or "pagination.page"
+    if (key.includes(".")) {
+      setNestedProperty(result, key, value, { params, state, query });
     } else {
-      result[key] = value;
+      // Handle flat keys and nested objects
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        !Array.isArray(value)
+      ) {
+        // Recursively apply nested overrides
+        if (result[key] && typeof result[key] === "object") {
+          result[key] = applyOverrides(
+            result[key],
+            value,
+            params,
+            state,
+            query,
+          );
+        } else {
+          result[key] = applyOverrides({}, value, params, state, query);
+        }
+      } else if (typeof value === "string" && value.includes("{{")) {
+        // Template processing
+        result[key] = processTemplate(value, { params, state, query });
+      } else {
+        result[key] = value;
+      }
     }
   }
 
   return result;
+}
+
+function setNestedProperty(
+  obj: any,
+  path: string,
+  value: any,
+  context: {
+    params?: Record<string, string>;
+    state?: any;
+    query?: Record<string, string>;
+  },
+): void {
+  const parts = path.split(".");
+  let current = obj;
+
+  // Navigate to the parent of the target property
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (
+      !(part in current) ||
+      typeof current[part] !== "object" ||
+      current[part] === null
+    ) {
+      current[part] = {};
+    }
+    current = current[part];
+  }
+
+  // Set the final property
+  const finalKey = parts[parts.length - 1];
+  if (typeof value === "string" && value.includes("{{")) {
+    current[finalKey] = processTemplate(value, context);
+  } else {
+    current[finalKey] = value;
+  }
 }
 
 function processTemplate(
@@ -554,7 +649,26 @@ function processTemplate(
     query?: Record<string, string>;
   },
 ): any {
-  // Simple template processing for {{ params.id }}, {{ state.user.id }}, etc.
+  // Check if the template is just a single template expression
+  const singleTemplateMatch = template.match(/^\{\{\s*([^}]+)\s*\}\}$/);
+  if (singleTemplateMatch) {
+    // For single templates, return the actual value without string conversion
+    const expression = singleTemplateMatch[1];
+    const parts = expression.trim().split(".");
+    let result: any = context;
+
+    for (const part of parts) {
+      if (result && typeof result === "object") {
+        result = result[part];
+      } else {
+        return template; // Return original if can't resolve
+      }
+    }
+
+    return result !== undefined ? result : template;
+  }
+
+  // For templates mixed with other text, do string replacement
   const processed = template.replace(
     /\{\{\s*([^}]+)\s*\}\}/g,
     (match, expression) => {
@@ -574,13 +688,24 @@ function processTemplate(
   );
 
   // Try to convert to number if it's a numeric string
-  if (/^\d+$/.test(processed)) {
-    return Number.parseInt(processed, 10);
+  if (typeof processed === "string") {
+    if (/^\d+$/.test(processed)) {
+      return Number.parseInt(processed, 10);
+    }
+    if (/^\d+\.\d+$/.test(processed)) {
+      return Number.parseFloat(processed);
+    }
   }
 
   return processed;
 }
 
+/**
+ * Validate that faker method string references a valid Faker.js API
+ * Checks format (namespace.method) and validates against known namespaces
+ * @param fakerMethod - Faker method string (e.g., "person.fullName")
+ * @throws {SchemaValidationError} When faker method format or namespace is invalid
+ */
 function validateFakerMethod(fakerMethod: string): void {
   // List of known faker namespaces and common methods
   const validFakerNamespaces = [
@@ -691,7 +816,7 @@ function enhanceFieldSchema(
     (enhanced as any).faker = "person.fullName";
   }
   // Phone fields
-  else if (lowerFieldName.includes("phone")) {
+  else if (lowerFieldName.includes("phone") || lowerFieldName === "mobile") {
     (enhanced as any).faker = "phone.number";
   }
   // Address fields
@@ -712,7 +837,9 @@ function enhanceFieldSchema(
   // Date fields
   else if (
     lowerFieldName.includes("createdat") ||
-    lowerFieldName.includes("created_at")
+    lowerFieldName.includes("created_at") ||
+    lowerFieldName.includes("updatedat") ||
+    lowerFieldName.includes("updated_at")
   ) {
     enhanced.format = "date-time";
     (enhanced as any).faker = "date.recent";

@@ -8,20 +8,19 @@ import {
   HttpRequest,
   HttpResponse,
 } from "@angular/common/http";
-import type { MockInstance } from "@schmock/core";
+import type { CallableMockInstance } from "@schmock/core";
 import { of } from "rxjs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSchmockInterceptor, provideSchmockInterceptor } from "./index";
 
 describe("Angular Adapter", () => {
-  let mockInstance: MockInstance;
+  let mockInstance: CallableMockInstance;
 
   beforeEach(() => {
     mockInstance = {
       handle: vi.fn(),
-      on: vi.fn(),
-      off: vi.fn(),
-    };
+      pipe: vi.fn(),
+    } as any; // Use any to avoid complex mock setup for callable interface
   });
 
   describe("createSchmockInterceptor", () => {
