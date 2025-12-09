@@ -1,4 +1,12 @@
-import { CallableMockInstance } from "./builder";
+import { CallableMockInstance as CallableMockInstanceImpl } from "./builder";
+import type {
+  CallableMockInstance,
+  Generator,
+  GlobalConfig,
+  Plugin,
+  RouteConfig,
+  RouteKey,
+} from "./types";
 
 /**
  * Create a new Schmock mock instance with callable API.
@@ -23,30 +31,28 @@ import { CallableMockInstance } from "./builder";
  * @param config Optional global configuration
  * @returns A callable mock instance
  */
-export function schmock(
-  config?: Schmock.GlobalConfig,
-): Schmock.CallableMockInstance {
+export function schmock(config?: GlobalConfig): CallableMockInstance {
   // Always use new callable API
-  const instance = new CallableMockInstance(config || {});
+  const instance = new CallableMockInstanceImpl(config || {});
 
   // Create a callable function that wraps the instance
   const callableInstance = ((
-    route: Schmock.RouteKey,
-    generator: Schmock.Generator,
-    config: Schmock.RouteConfig = {},
+    route: RouteKey,
+    generator: Generator,
+    routeConfig: RouteConfig = {},
   ) => {
-    instance.defineRoute(route, generator, config);
+    instance.defineRoute(route, generator, routeConfig);
     return callableInstance; // Return the callable function for chaining
   }) as any;
 
   // Manually bind all instance methods to the callable function with proper return values
-  callableInstance.pipe = (plugin: Schmock.Plugin) => {
+  callableInstance.pipe = (plugin: Plugin) => {
     instance.pipe(plugin);
     return callableInstance; // Return callable function for chaining
   };
   callableInstance.handle = instance.handle.bind(instance);
 
-  return callableInstance as Schmock.CallableMockInstance;
+  return callableInstance as CallableMockInstance;
 }
 
 // Re-export errors
@@ -61,6 +67,7 @@ export {
   SchemaValidationError,
   SchmockError,
 } from "./errors";
+
 // Re-export types
 export type {
   CallableMockInstance,

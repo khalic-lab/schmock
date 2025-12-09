@@ -5,6 +5,19 @@ import {
   SchmockError,
 } from "./errors";
 import { parseRouteKey } from "./parser";
+import type {
+  Generator,
+  GeneratorFunction,
+  GlobalConfig,
+  HttpMethod,
+  Plugin,
+  PluginContext,
+  RequestContext,
+  RequestOptions,
+  Response,
+  RouteConfig,
+  RouteKey,
+} from "./types";
 
 /**
  * Debug logger that respects debug mode configuration
@@ -42,10 +55,10 @@ class DebugLogger {
 interface CompiledCallableRoute {
   pattern: RegExp;
   params: string[];
-  method: Schmock.HttpMethod;
+  method: HttpMethod;
   path: string;
-  generator: Schmock.Generator;
-  config: Schmock.RouteConfig;
+  generator: Generator;
+  config: RouteConfig;
 }
 
 /**
@@ -55,10 +68,10 @@ interface CompiledCallableRoute {
  */
 export class CallableMockInstance {
   private routes: CompiledCallableRoute[] = [];
-  private plugins: Schmock.Plugin[] = [];
+  private plugins: Plugin[] = [];
   private logger: DebugLogger;
 
-  constructor(private globalConfig: Schmock.GlobalConfig = {}) {
+  constructor(private globalConfig: GlobalConfig = {}) {
     this.logger = new DebugLogger(globalConfig.debug || false);
     if (globalConfig.debug) {
       this.logger.log("config", "Debug mode enabled");
@@ -72,9 +85,9 @@ export class CallableMockInstance {
 
   // Method for defining routes (called when instance is invoked)
   defineRoute(
-    route: Schmock.RouteKey,
-    generator: Schmock.Generator,
-    config: Schmock.RouteConfig,
+    route: RouteKey,
+    generator: Generator,
+    config: RouteConfig,
   ): this {
     // Auto-detect contentType if not provided
     if (!config.contentType) {
@@ -135,7 +148,7 @@ export class CallableMockInstance {
     return this;
   }
 
-  pipe(plugin: Schmock.Plugin): this {
+  pipe(plugin: Plugin): this {
     this.plugins.push(plugin);
     this.logger.log(
       "plugin",
@@ -151,10 +164,10 @@ export class CallableMockInstance {
   }
 
   async handle(
-    method: Schmock.HttpMethod,
+    method: HttpMethod,
     path: string,
-    options?: Schmock.RequestOptions,
-  ): Promise<Schmock.Response> {
+    options?: RequestOptions,
+  ): Promise<Response> {
     const requestId = Math.random().toString(36).substring(7);
     this.logger.log("request", `[${requestId}] ${method} ${path}`, {
       headers: options?.headers,
@@ -235,7 +248,7 @@ export class CallableMockInstance {
       const params = this.extractParams(matchedRoute, requestPath);
 
       // Generate initial response from route handler
-      const context: Schmock.RequestContext = {
+      const context: RequestContext = {
         method,
         path: requestPath,
         params,
@@ -247,15 +260,13 @@ export class CallableMockInstance {
 
       let result: any;
       if (typeof matchedRoute.generator === "function") {
-        result = await (matchedRoute.generator as Schmock.GeneratorFunction)(
-          context,
-        );
+        result = await (matchedRoute.generator as GeneratorFunction)(context);
       } else {
         result = matchedRoute.generator;
       }
 
       // Build plugin context
-      let pluginContext: Schmock.PluginContext = {
+      let pluginContext: PluginContext = {
         path: requestPath,
         route: matchedRoute.config,
         method,
@@ -360,10 +371,7 @@ export class CallableMockInstance {
    * @returns Normalized Response object with status, body, and headers
    * @private
    */
-  private parseResponse(
-    result: any,
-    routeConfig: Schmock.RouteConfig,
-  ): Schmock.Response {
+  private parseResponse(result: any, routeConfig: RouteConfig): Response {
     let status = 200;
     let body = result;
     let headers: Record<string, string> = {};
@@ -433,11 +441,11 @@ export class CallableMockInstance {
    * @private
    */
   private async runPluginPipeline(
-    context: Schmock.PluginContext,
+    context: PluginContext,
     initialResponse?: any,
-    _routeConfig?: Schmock.RouteConfig,
+    _routeConfig?: RouteConfig,
     _requestId?: string,
-  ): Promise<{ context: Schmock.PluginContext; response?: any }> {
+  ): Promise<{ context: PluginContext; response?: any }> {
     let currentContext = context;
     let response: any = initialResponse;
 
@@ -525,7 +533,7 @@ export class CallableMockInstance {
    * @private
    */
   private findRoute(
-    method: Schmock.HttpMethod,
+    method: HttpMethod,
     path: string,
   ): CompiledCallableRoute | undefined {
     // First pass: Look for exact matches (routes without parameters)

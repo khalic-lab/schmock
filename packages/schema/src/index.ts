@@ -1,6 +1,5 @@
-/// <reference path="../../../types/schmock.d.ts" />
-
 import { en, Faker } from "@faker-js/faker";
+import type { Plugin, PluginContext } from "@schmock/core";
 import {
   ResourceLimitError,
   SchemaGenerationError,
@@ -53,7 +52,7 @@ interface SchemaPluginOptions {
   overrides?: Record<string, any>;
 }
 
-export function schemaPlugin(options: SchemaPluginOptions): Schmock.Plugin {
+export function schemaPlugin(options: SchemaPluginOptions): Plugin {
   // Validate schema immediately when plugin is created
   validateSchema(options.schema);
 
@@ -61,7 +60,7 @@ export function schemaPlugin(options: SchemaPluginOptions): Schmock.Plugin {
     name: "schema",
     version: "1.0.0",
 
-    process(context: Schmock.PluginContext, response?: any) {
+    process(context: PluginContext, response?: any) {
       // If response already exists, pass it through
       if (response !== undefined && response !== null) {
         return { context, response };

@@ -1,5 +1,3 @@
-/// <reference path="../../../types/schmock.d.ts" />
-
 import type {
   HttpEvent,
   HttpHandler,
@@ -12,8 +10,33 @@ import {
   HttpResponse,
 } from "@angular/common/http";
 import { Injectable } from "@angular/core";
-import type { CallableMockInstance } from "@schmock/core";
+import type {
+  CallableMockInstance,
+  HttpMethod,
+  ResponseResult,
+} from "@schmock/core";
 import { Observable } from "rxjs";
+
+const HTTP_METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "DELETE",
+  "PATCH",
+  "HEAD",
+  "OPTIONS",
+] as const;
+
+function isHttpMethod(method: string): method is HttpMethod {
+  return HTTP_METHODS.includes(method as HttpMethod);
+}
+
+function toHttpMethod(method: string): HttpMethod {
+  if (isHttpMethod(method)) {
+    return method;
+  }
+  return "GET";
+}
 
 /**
  * Configuration options for Angular adapter
@@ -59,9 +82,9 @@ export interface AngularAdapterOptions {
    * @returns Modified response
    */
   transformResponse?: (
-    response: Schmock.ResponseResult,
+    response: ResponseResult,
     request: HttpRequest<any>,
-  ) => Schmock.ResponseResult;
+  ) => ResponseResult;
 }
 
 /**
@@ -136,7 +159,7 @@ export function createSchmockInterceptor(
       const query = extractQueryParams(req.url);
 
       let requestData = {
-        method: req.method as Schmock.HttpMethod,
+        method: toHttpMethod(req.method),
         path,
         headers: headersToObject(req),
         body: req.body,
@@ -149,8 +172,7 @@ export function createSchmockInterceptor(
         requestData = {
           ...requestData,
           ...transformed,
-          method: (transformed.method ||
-            requestData.method) as Schmock.HttpMethod,
+          method: toHttpMethod(transformed.method ?? req.method),
         };
       }
 
@@ -196,19 +218,23 @@ export function createSchmockInterceptor(
               observer.complete();
             }
           })
-          .catch((error: any) => {
+          .catch((error: unknown) => {
             // Handle errors
-            let errorBody: any;
+            let errorBody: unknown;
 
             if (errorFormatter) {
-              errorBody = errorFormatter(error, req);
+              errorBody = errorFormatter(
+                error instanceof Error ? error : new Error(String(error)),
+                req,
+              );
             } else {
+              const errorWithCode = error as { code?: string };
               errorBody = {
                 error:
                   error instanceof Error
                     ? error.message
                     : "Internal Server Error",
-                code: (error as any).code || "INTERNAL_ERROR",
+                code: errorWithCode.code ?? "INTERNAL_ERROR",
               };
             }
 

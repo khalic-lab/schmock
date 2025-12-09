@@ -1,6 +1,20 @@
 import { RouteParseError } from "./errors";
 import type { HttpMethod } from "./types";
 
+const HTTP_METHODS: readonly HttpMethod[] = [
+  "GET",
+  "POST",
+  "PUT",
+  "DELETE",
+  "PATCH",
+  "HEAD",
+  "OPTIONS",
+];
+
+function isHttpMethod(method: string): method is HttpMethod {
+  return HTTP_METHODS.includes(method as HttpMethod);
+}
+
 export interface ParsedRoute {
   method: HttpMethod;
   path: string;
@@ -52,8 +66,13 @@ export function parseRouteKey(routeKey: string): ParsedRoute {
 
   const pattern = new RegExp(`^${regexPath}$`);
 
+  // The regex guarantees method is valid, but we use the type guard for type safety
+  if (!isHttpMethod(method)) {
+    throw new RouteParseError(routeKey, `Invalid HTTP method: ${method}`);
+  }
+
   return {
-    method: method as HttpMethod,
+    method,
     path,
     pattern,
     params,

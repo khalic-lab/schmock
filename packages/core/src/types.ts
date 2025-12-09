@@ -1,17 +1,247 @@
-/// <reference path="../../../types/schmock.d.ts" />
+import type { JSONSchema7 } from "json-schema";
 
-// Re-export types for internal use
-export type HttpMethod = Schmock.HttpMethod;
-export type RouteKey = Schmock.RouteKey;
-export type ResponseResult = Schmock.ResponseResult;
-export type RequestContext = Schmock.RequestContext;
-export type Response = Schmock.Response;
-export type RequestOptions = Schmock.RequestOptions;
-export type GlobalConfig = Schmock.GlobalConfig;
-export type RouteConfig = Schmock.RouteConfig;
-export type Generator = Schmock.Generator;
-export type GeneratorFunction = Schmock.GeneratorFunction;
-export type CallableMockInstance = Schmock.CallableMockInstance;
-export type Plugin = Schmock.Plugin;
-export type PluginContext = Schmock.PluginContext;
-export type PluginResult = Schmock.PluginResult;
+/**
+ * HTTP methods supported by Schmock
+ */
+export type HttpMethod =
+  | "GET"
+  | "POST"
+  | "PUT"
+  | "DELETE"
+  | "PATCH"
+  | "HEAD"
+  | "OPTIONS";
+
+/**
+ * Route key format: 'METHOD /path'
+ *
+ * @example
+ * 'GET /users'
+ * 'POST /users/:id'
+ * 'DELETE /api/posts/:postId/comments/:commentId'
+ */
+export type RouteKey = `${HttpMethod} ${string}`;
+
+/**
+ * Plugin interface for extending Schmock functionality
+ */
+export interface Plugin {
+  /** Unique plugin identifier */
+  name: string;
+  /** Plugin version (semver) */
+  version?: string;
+
+  /**
+   * Process the request through this plugin
+   * First plugin to set response becomes the generator, others transform
+   * @param context - Plugin context with request details
+   * @param response - Response from previous plugin (if any)
+   * @returns Updated context and response
+   */
+  process(
+    context: PluginContext,
+    response?: any,
+  ): PluginResult | Promise<PluginResult>;
+
+  /**
+   * Called when an error occurs
+   * Can handle, transform, or suppress errors
+   * @param error - The error that occurred
+   * @param context - Plugin context
+   * @returns Modified error, response data, or void to continue error propagation
+   */
+  onError?(
+    error: Error,
+    context: PluginContext,
+  ):
+    | Error
+    | ResponseResult
+    | undefined
+    | Promise<Error | ResponseResult | undefined>;
+}
+
+/**
+ * Result returned by plugin process method
+ */
+export interface PluginResult {
+  /** Updated context */
+  context: PluginContext;
+  /** Response data (if generated/modified) */
+  response?: any;
+}
+
+/**
+ * Context passed through plugin pipeline
+ */
+export interface PluginContext {
+  /** Request path */
+  path: string;
+  /** Matched route configuration */
+  route: any;
+  /** HTTP method */
+  method: HttpMethod;
+  /** Route parameters */
+  params: Record<string, string>;
+  /** Query parameters */
+  query: Record<string, string>;
+  /** Request headers */
+  headers: Record<string, string>;
+  /** Request body */
+  body?: any;
+  /** Shared state between plugins for this request */
+  state: Map<string, any>;
+  /** Route-specific state */
+  routeState?: any;
+}
+
+/**
+ * Global configuration options for the mock instance
+ */
+export interface GlobalConfig {
+  /** Base path prefix for all routes */
+  namespace?: string;
+  /** Response delay in ms, or [min, max] for random delay */
+  delay?: number | [number, number];
+  /** Enable debug mode for detailed logging */
+  debug?: boolean;
+  /** Initial shared state object */
+  state?: any;
+}
+
+/**
+ * Route-specific configuration options
+ */
+export interface RouteConfig {
+  /** MIME type for content type validation (auto-detected if not provided) */
+  contentType?: string;
+  /** Additional route-specific options */
+  [key: string]: any;
+}
+
+/**
+ * Generator types that can be passed to route definitions
+ */
+export type Generator = GeneratorFunction | StaticData | JSONSchema7;
+
+/**
+ * Function that generates responses
+ */
+export type GeneratorFunction = (
+  context: RequestContext,
+) => ResponseResult | Promise<ResponseResult>;
+
+/**
+ * Static data (non-function) that gets returned as-is
+ */
+export type StaticData = any;
+
+/**
+ * Context passed to generator functions
+ */
+export interface RequestContext {
+  /** HTTP method */
+  method: HttpMethod;
+  /** Request path */
+  path: string;
+  /** Route parameters (e.g., :id) */
+  params: Record<string, string>;
+  /** Query string parameters */
+  query: Record<string, string>;
+  /** Request headers */
+  headers: Record<string, string>;
+  /** Request body (for POST, PUT, PATCH) */
+  body?: any;
+  /** Shared mutable state */
+  state: any;
+}
+
+/**
+ * Response result types:
+ * - Any value: returns as 200 OK
+ * - [status, body]: custom status with body
+ * - [status, body, headers]: custom status, body, and headers
+ */
+export type ResponseResult =
+  | any
+  | [number, any]
+  | [number, any, Record<string, string>];
+
+/**
+ * Response object returned by handle method
+ */
+export interface Response {
+  status: number;
+  body: any;
+  headers: Record<string, string>;
+}
+
+/**
+ * Options for handle method
+ */
+export interface RequestOptions {
+  headers?: Record<string, string>;
+  body?: any;
+  query?: Record<string, string>;
+}
+
+/**
+ * Main callable mock instance interface
+ */
+export interface CallableMockInstance {
+  /**
+   * Define a route by calling the instance directly
+   *
+   * @param route - Route pattern in format 'METHOD /path'
+   * @param generator - Response generator (function, static data, or schema)
+   * @param config - Route-specific configuration
+   * @returns The same instance for method chaining
+   *
+   * @example
+   * ```typescript
+   * const mock = schmock()
+   * mock('GET /users', () => [...users], { contentType: 'application/json' })
+   * mock('POST /users', userData, { contentType: 'application/json' })
+   * ```
+   */
+  (
+    route: RouteKey,
+    generator: Generator,
+    config?: RouteConfig,
+  ): CallableMockInstance;
+
+  /**
+   * Add a plugin to the pipeline
+   *
+   * @param plugin - Plugin to add to the pipeline
+   * @returns The same instance for method chaining
+   *
+   * @example
+   * ```typescript
+   * mock('GET /users', generator, config)
+   *   .pipe(authPlugin())
+   *   .pipe(corsPlugin())
+   * ```
+   */
+  pipe(plugin: Plugin): CallableMockInstance;
+
+  /**
+   * Handle a request and return a response
+   *
+   * @param method - HTTP method
+   * @param path - Request path
+   * @param options - Request options (headers, body, query)
+   * @returns Promise resolving to response object
+   *
+   * @example
+   * ```typescript
+   * const response = await mock.handle('GET', '/users', {
+   *   headers: { 'Authorization': 'Bearer token' }
+   * })
+   * ```
+   */
+  handle(
+    method: HttpMethod,
+    path: string,
+    options?: RequestOptions,
+  ): Promise<Response>;
+}
