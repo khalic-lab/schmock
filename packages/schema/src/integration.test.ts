@@ -129,7 +129,8 @@ describe("Schema Generator Integration Tests", () => {
         path: "/api/orders/123",
         params: { orderId: "123", customerId: "customer-456" },
         query: {},
-        state: { timestamp: "2024-01-01T10:00:00Z" },
+        state: new Map(),
+        routeState: { timestamp: "2024-01-01T10:00:00Z" },
         headers: {},
         body: null,
         route: {},
@@ -294,7 +295,8 @@ describe("Schema Generator Integration Tests", () => {
       const results = Array.from({ length: 5 }, (_, i) => {
         const context = {
           ...baseContext,
-          state: {
+          state: new Map(),
+          routeState: {
             requestCount: i + 1,
             sessionId: "session-123",
           },
@@ -464,7 +466,8 @@ describe("Schema Generator Integration Tests", () => {
         path: "/test",
         params: { value1: "success" },
         query: { value4: "works" },
-        state: {},
+        state: new Map(),
+        routeState: {},
         headers: {},
         body: null,
         route: {},
@@ -524,7 +527,8 @@ describe("Schema Generator Integration Tests", () => {
         path: "/api/items",
         params: {},
         query: { page: "2", limit: "20" },
-        state: { hasNext: true, hasPrev: true },
+        state: new Map(),
+        routeState: { hasNext: true, hasPrev: true },
         headers: {},
         body: null,
         route: {},
@@ -577,6 +581,53 @@ describe("Schema Generator Integration Tests", () => {
         validators.appearsToBeFromCategory([v2Result.data.id], "uuid"),
       ).toBe(true);
       expect(v2Result.data).toHaveProperty("metadata");
+    });
+  });
+
+  describe("Schmock Handle Integration", () => {
+    it("resolves state overrides when using schmock.handle() with global state", async () => {
+      // This test verifies that state-driven template overrides work correctly
+      // when the schema plugin is used through schmock.handle() with global state
+      const { schmock } = await import("@schmock/core");
+
+      const userState = {
+        currentUser: {
+          id: "user-123",
+          name: "Test User",
+        },
+        settings: {
+          theme: "dark",
+        },
+      };
+
+      const mock = schmock({ state: userState });
+
+      const responseSchema: JSONSchema7 = {
+        type: "object",
+        properties: {
+          userId: { type: "string" },
+          userName: { type: "string" },
+          theme: { type: "string" },
+          timestamp: { type: "string" },
+        },
+      };
+
+      mock("GET /profile", null).pipe(
+        schemaPlugin({
+          schema: responseSchema,
+          overrides: {
+            userId: "{{state.currentUser.id}}",
+            userName: "{{state.currentUser.name}}",
+            theme: "{{state.settings.theme}}",
+          },
+        }),
+      );
+
+      const response = await mock.handle("GET", "/profile");
+
+      expect(response.body.userId).toBe("user-123");
+      expect(response.body.userName).toBe("Test User");
+      expect(response.body.theme).toBe("dark");
     });
   });
 });

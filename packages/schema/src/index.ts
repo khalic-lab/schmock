@@ -73,7 +73,7 @@ export function schemaPlugin(options: SchemaPluginOptions): Schmock.Plugin {
           count: options.count,
           overrides: options.overrides,
           params: context.params,
-          state: context.state,
+          state: context.routeState,
           query: context.query,
         });
 
