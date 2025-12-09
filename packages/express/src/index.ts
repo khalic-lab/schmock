@@ -1,8 +1,27 @@
-/// <reference path="../../../types/schmock.d.ts" />
-
-import type { CallableMockInstance } from "@schmock/core";
+import type { CallableMockInstance, HttpMethod } from "@schmock/core";
 import { SchmockError } from "@schmock/core";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
+
+const HTTP_METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "DELETE",
+  "PATCH",
+  "HEAD",
+  "OPTIONS",
+] as const;
+
+function isHttpMethod(method: string): method is HttpMethod {
+  return HTTP_METHODS.includes(method as HttpMethod);
+}
+
+function toHttpMethod(method: string): HttpMethod {
+  if (isHttpMethod(method)) {
+    return method;
+  }
+  return "GET";
+}
 
 /**
  * Configuration options for Express adapter
@@ -170,7 +189,7 @@ export function toExpress(
     try {
       // Run request interceptor if provided
       let requestData = {
-        method: req.method as Schmock.HttpMethod,
+        method: toHttpMethod(req.method),
         path: req.path,
         headers: transformHeaders(req.headers),
         body: req.body,
@@ -217,7 +236,7 @@ export function toExpress(
       // Handle errors based on configuration
       if (error instanceof SchmockError && errorFormatter) {
         // Use custom error formatter for Schmock errors
-        const formatted = errorFormatter(error as SchmockError, req);
+        const formatted = errorFormatter(error, req);
         res.status(500).json(formatted);
       } else if (passErrorsToNext) {
         // Pass errors to Express error handler
@@ -227,10 +246,7 @@ export function toExpress(
         res.status(500).json({
           error:
             error instanceof Error ? error.message : "Internal Server Error",
-          code:
-            error instanceof SchmockError
-              ? (error as SchmockError).code
-              : "INTERNAL_ERROR",
+          code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
         });
       }
     }
