@@ -1,5 +1,6 @@
 {
   "release-type": "node",
+  "bootstrap-sha": "d8d249d42cfb74d58aaf08882374512b8d4113a5",
   "packages": {
     ".": {
       "package-name": "schmock",

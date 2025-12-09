@@ -657,8 +657,13 @@ Example `package.json`:
   },
   "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
+    "setup": "bun run setup-hooks || npm run setup-hooks || echo 'Run setup manually'",
     "build": "tsc",
-    "test": "vitest"
+    "test": "vitest",
+    "test:all": "npm run typecheck && npm test",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write src/"
   }
 }
 ```
@@ -701,4 +706,68 @@ mock('GET /protected', protectedHandler, { contentType: 'application/json' })
 ## License
 
 MIT
+```
+
+---
+
+## Plugin Development Best Practices
+
+### Development Workflow
+
+Follow Schmock's quality standards when developing plugins:
+
+#### Setup
+```sh
+# Clone Schmock for plugin development  
+git clone <schmock-repo>
+cd schmock
+bun install
+bun run setup  # Configure Git hooks
+
+# Create plugin in separate directory
+mkdir my-schmock-plugin
+cd my-schmock-plugin
+npm init
+# ... plugin development
+```
+
+#### Quality Assurance
+- **Automated Testing**: Use Vitest with comprehensive test coverage (follow Schmock's 262 tests example)
+- **Type Safety**: Develop in TypeScript with strict mode enabled
+- **Linting**: Use Biome for consistent code style with auto-fixing
+- **Git Hooks**: Configure pre-commit hooks for automated quality checks
+
+#### Testing Against Schmock Core
+```typescript
+// Test your plugin with the actual Schmock implementation
+import { schmock } from '@schmock/core';
+import { myPlugin } from './src/my-plugin';
+
+describe('MyPlugin Integration', () => {
+  it('works with Schmock pipeline', async () => {
+    const mock = schmock();
+    
+    mock('GET /test', () => ({ data: 'test' }), { 
+      contentType: 'application/json' 
+    }).pipe(myPlugin());
+    
+    const response = await mock.handle('GET', '/test');
+    // Assert plugin behavior with comprehensive test coverage
+  });
+});
+```
+
+### Recommended Package Scripts
+```json
+{
+  "scripts": {
+    "setup": "bun run setup-hooks || npm run setup-hooks || echo 'Configure Git hooks manually'",
+    "build": "tsc",
+    "test": "vitest",
+    "test:all": "npm run typecheck && npm test",  
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write src/"
+  }
+}
 ```

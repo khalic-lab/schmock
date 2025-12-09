@@ -49,12 +49,26 @@ This project uses GitHub Flow with the following workflow:
 5. Refactor while keeping tests green
 
 ### Test Commands
-- `bun test` - Run all tests
-- `bun test:unit` - Run unit tests only
+- `bun test` - Run all tests (unit + BDD across all packages)
+- `bun test:all` - **Full comprehensive test suite with typecheck** (recommended before commits)
+- `bun test:unit` - Run unit tests only (all packages)
 - `bun test:bdd` - Run BDD tests only
 - `act push -W .github/workflows/develop.yml` - Test CI locally
 
+### Claude AI Assistant Commands
+Claude should use quiet variants of commands to minimize output:
+- `bun test:quiet` - Run tests with minimal output (dots only + final summary)
+- `bun lint:quiet` - Run linting with minimal output
+- `bun build:quiet` - Run build with minimal output
+
 ## Development Guidelines
+
+### Initial Setup
+After cloning the repository, run:
+```bash
+bun install
+bun run setup  # Configure Git hooks (linting + tests on commit)
+```
 
 ### Code Style
 - TypeScript strict mode enabled
@@ -69,17 +83,56 @@ This project uses GitHub Flow with the following workflow:
 - Each package has own build/test scripts
 
 ### Before Committing
+**With Git hooks (automatic):**
+- Pre-commit hook runs `bun run lint` and `bun run test:all` automatically
+- Commit-msg hook enforces conventional commit format
+- Use `git commit --no-verify` to bypass (not recommended)
+
+**Manual checks (if hooks disabled):**
 1. Run `bun lint` - Must pass
-2. Run `bun build` - Must compile
-3. Run `bun test:unit` - Must pass
-4. Run `bun test:bdd` - May fail during feature development
+2. Run `bun build` - Must compile  
+3. Run `bun test:all` - **Recommended: Full test suite with typecheck**
+   - Alternative: `bun test` (faster, but skips typecheck)
+   - BDD tests may fail during feature development (expected for TDD)
 
-## Current Development Focus
+**For Claude AI Assistant:**
+- Use quiet commands: `bun lint:quiet`, `bun build:quiet`, `bun test:quiet`
+- These provide minimal output while ensuring quality checks pass
 
-Working on Schmock core implementation:
-1. Basic route matching
-2. Request/response handling
-3. Plugin system architecture
-4. Event system for plugins
+**IMPORTANT: Never add Claude signatures to commit messages**
 
-See failing BDD tests for implementation requirements.
+## Current Development Status
+
+Schmock is **feature-complete** with a production-ready callable API:
+
+### ✅ Completed Core Features
+- **Callable API**: Direct mock instance creation with zero boilerplate
+- **Plugin Pipeline**: Extensible `.pipe()` architecture for advanced features  
+- **All HTTP Methods**: GET, POST, PUT, DELETE, PATCH with parameters
+- **Stateful Mocks**: Shared state management between requests
+- **Framework Adapters**: Express middleware and Angular HTTP interceptor
+- **Schema Integration**: JSON Schema-based data generation
+- **Type Safety**: Full TypeScript support with ambient types
+
+### ✅ Quality Assurance Infrastructure  
+- **Comprehensive Testing**: Unit tests and BDD tests across all packages
+- **Automated Git Hooks**: Pre-commit linting and testing (use `bun run setup`)
+- **CI/CD Pipeline**: GitHub Actions with matrix strategy for parallel execution
+- **Type Safety**: Strict TypeScript compilation across all packages
+- **Documentation**: Complete API docs, guides, and development workflows
+
+### 🔄 Current Focus Areas
+- **Performance Optimization**: Bundle size analysis and runtime efficiency
+- **Plugin Ecosystem**: Additional official plugins (validation, caching, persistence)
+- **Developer Experience**: Enhanced error messages and debugging tools
+- **Production Readiness**: Edge case handling and stability improvements
+
+### 📋 Future Direction
+- **Performance Focus**: Bundle analysis and runtime optimization
+- **Plugin Ecosystem**: Additional official plugins for common use cases
+- **Stability**: API stability guarantee and production-ready documentation
+
+The core implementation is complete with comprehensive test coverage.
+
+## Development Tips
+- Always check your current working directory with `pwd` before running commands
