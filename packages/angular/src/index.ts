@@ -39,6 +39,23 @@ function toHttpMethod(method: string): HttpMethod {
 }
 
 /**
+ * Get HTTP status text for a status code
+ */
+function getStatusText(status: number): string {
+  const statusTexts: Record<number, string> = {
+    200: "OK",
+    201: "Created",
+    204: "No Content",
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    500: "Internal Server Error",
+  };
+  return statusTexts[status] || "Unknown";
+}
+
+/**
  * Configuration options for Angular adapter
  */
 export interface AngularAdapterOptions {
@@ -242,17 +259,32 @@ export function createSchmockInterceptor(
                 response = transformResponse(response, req);
               }
 
-              // Convert Schmock response to Angular HttpResponse
-              const httpResponse = new HttpResponse({
-                body: response.body,
-                status: response.status || 200,
-                statusText: "OK",
-                url: req.url,
-                headers: new HttpHeaders(response.headers || {}),
-              });
+              const status = response.status || 200;
 
-              observer.next(httpResponse);
-              observer.complete();
+              // Auto-convert error status codes (>= 400) to HttpErrorResponse
+              if (status >= 400) {
+                observer.error(
+                  new HttpErrorResponse({
+                    error: response.body,
+                    status,
+                    statusText: getStatusText(status),
+                    url: req.url,
+                    headers: new HttpHeaders(response.headers || {}),
+                  }),
+                );
+              } else {
+                // Convert Schmock response to Angular HttpResponse
+                const httpResponse = new HttpResponse({
+                  body: response.body,
+                  status,
+                  statusText: getStatusText(status),
+                  url: req.url,
+                  headers: new HttpHeaders(response.headers || {}),
+                });
+
+                observer.next(httpResponse);
+                observer.complete();
+              }
             }
           })
           .catch((error: unknown) => {
@@ -302,5 +334,129 @@ export function provideSchmockInterceptor(
     provide: "HTTP_INTERCEPTORS",
     useClass: createSchmockInterceptor(mock, options),
     multi: true,
+  };
+}
+
+// ============================================================================
+// Response Helpers
+// ============================================================================
+
+/**
+ * Helper to create a 404 Not Found response
+ * @example mock('GET /api/users/999', notFound('User not found'))
+ */
+export function notFound(
+  message: string | object = "Not Found",
+): [number, object] {
+  const body = typeof message === "string" ? { message } : message;
+  return [404, body];
+}
+
+/**
+ * Helper to create a 400 Bad Request response
+ * @example mock('POST /api/users', badRequest('Invalid email format'))
+ */
+export function badRequest(
+  message: string | object = "Bad Request",
+): [number, object] {
+  const body = typeof message === "string" ? { message } : message;
+  return [400, body];
+}
+
+/**
+ * Helper to create a 401 Unauthorized response
+ * @example mock('GET /api/protected', unauthorized('Token expired'))
+ */
+export function unauthorized(
+  message: string | object = "Unauthorized",
+): [number, object] {
+  const body = typeof message === "string" ? { message } : message;
+  return [401, body];
+}
+
+/**
+ * Helper to create a 403 Forbidden response
+ * @example mock('GET /api/admin', forbidden('Admin access required'))
+ */
+export function forbidden(
+  message: string | object = "Forbidden",
+): [number, object] {
+  const body = typeof message === "string" ? { message } : message;
+  return [403, body];
+}
+
+/**
+ * Helper to create a 500 Internal Server Error response
+ * @example mock('GET /api/broken', serverError('Database connection failed'))
+ */
+export function serverError(
+  message: string | object = "Internal Server Error",
+): [number, object] {
+  const body = typeof message === "string" ? { message } : message;
+  return [500, body];
+}
+
+/**
+ * Helper to create a 201 Created response
+ * @example mock('POST /api/users', created({ id: 1, name: 'John' }))
+ */
+export function created(body: object): [number, object] {
+  return [201, body];
+}
+
+/**
+ * Helper to create a 204 No Content response
+ * @example mock('DELETE /api/users/1', noContent())
+ */
+export function noContent(): [number, null] {
+  return [204, null];
+}
+
+/**
+ * Pagination options
+ */
+export interface PaginateOptions {
+  page?: number;
+  pageSize?: number;
+}
+
+/**
+ * Paginated response structure
+ */
+export interface PaginatedResponse<T> {
+  data: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+/**
+ * Helper to create a paginated response
+ * @example
+ * const items = [{ id: 1 }, { id: 2 }, { id: 3 }]
+ * mock('GET /api/items', ({ query }) => paginate(items, {
+ *   page: parseInt(query.page || '1'),
+ *   pageSize: parseInt(query.pageSize || '10')
+ * }))
+ */
+export function paginate<T>(
+  items: T[],
+  options: PaginateOptions = {},
+): PaginatedResponse<T> {
+  const page = options.page || 1;
+  const pageSize = options.pageSize || 10;
+  const total = items.length;
+  const totalPages = Math.ceil(total / pageSize);
+  const start = (page - 1) * pageSize;
+  const end = start + pageSize;
+  const data = items.slice(start, end);
+
+  return {
+    data,
+    page,
+    pageSize,
+    total,
+    totalPages,
   };
 }
