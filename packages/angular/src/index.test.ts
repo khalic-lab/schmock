@@ -211,6 +211,98 @@ describe("Angular Adapter", () => {
     });
   });
 
+  describe("URL handling", () => {
+    it("extracts pathname from full URLs", async () => {
+      mockInstance.handle = vi
+        .fn()
+        .mockResolvedValue({ status: 200, body: "ok" });
+
+      const InterceptorClass = createSchmockInterceptor(mockInstance);
+      const interceptor = new InterceptorClass();
+
+      // Full URL with protocol and host
+      const fullUrlRequest = new HttpRequest(
+        "GET",
+        "http://localhost:4200/api/users",
+      );
+      const mockNext: HttpHandler = { handle: vi.fn() };
+
+      await new Promise<void>((resolve) => {
+        interceptor
+          .intercept(fullUrlRequest, mockNext)
+          .subscribe({ complete: resolve });
+      });
+
+      // Should extract just the pathname
+      expect(mockInstance.handle).toHaveBeenCalledWith(
+        "GET",
+        "/api/users",
+        expect.any(Object),
+      );
+    });
+
+    it("extracts query params from Angular HttpParams", async () => {
+      mockInstance.handle = vi
+        .fn()
+        .mockResolvedValue({ status: 200, body: "ok" });
+
+      const InterceptorClass = createSchmockInterceptor(mockInstance);
+      const interceptor = new InterceptorClass();
+
+      // Request with HttpParams
+      const requestWithParams = new HttpRequest("GET", "/api/users", {
+        params: new (await import("@angular/common/http")).HttpParams()
+          .set("page", "1")
+          .set("limit", "10"),
+      });
+      const mockNext: HttpHandler = { handle: vi.fn() };
+
+      await new Promise<void>((resolve) => {
+        interceptor
+          .intercept(requestWithParams, mockNext)
+          .subscribe({ complete: resolve });
+      });
+
+      expect(mockInstance.handle).toHaveBeenCalledWith(
+        "GET",
+        "/api/users",
+        expect.objectContaining({
+          query: { page: "1", limit: "10" },
+        }),
+      );
+    });
+
+    it("extracts query params from URL string", async () => {
+      mockInstance.handle = vi
+        .fn()
+        .mockResolvedValue({ status: 200, body: "ok" });
+
+      const InterceptorClass = createSchmockInterceptor(mockInstance);
+      const interceptor = new InterceptorClass();
+
+      // Request with query params in URL
+      const requestWithQuery = new HttpRequest(
+        "GET",
+        "/api/users?search=john&active=true",
+      );
+      const mockNext: HttpHandler = { handle: vi.fn() };
+
+      await new Promise<void>((resolve) => {
+        interceptor
+          .intercept(requestWithQuery, mockNext)
+          .subscribe({ complete: resolve });
+      });
+
+      expect(mockInstance.handle).toHaveBeenCalledWith(
+        "GET",
+        "/api/users",
+        expect.objectContaining({
+          query: { search: "john", active: "true" },
+        }),
+      );
+    });
+  });
+
   describe("provideSchmockInterceptor", () => {
     it("returns provider configuration", () => {
       const provider = provideSchmockInterceptor(mockInstance);

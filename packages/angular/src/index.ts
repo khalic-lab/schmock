@@ -88,28 +88,63 @@ export interface AngularAdapterOptions {
 }
 
 /**
- * Extract query parameters from URL
+ * Extract query parameters from Angular HttpRequest
+ * Uses Angular's built-in params which are already parsed
  */
-function extractQueryParams(url: string): Record<string, string> {
-  const queryStart = url.indexOf("?");
-  if (queryStart === -1) return {};
-
-  const params = new URLSearchParams(url.slice(queryStart + 1));
+function extractQueryParams(request: HttpRequest<any>): Record<string, string> {
   const result: Record<string, string> = {};
 
-  params.forEach((value, key) => {
-    result[key] = value;
+  // Use Angular's HttpParams which are already parsed
+  request.params.keys().forEach((key) => {
+    const value = request.params.get(key);
+    if (value !== null) {
+      result[key] = value;
+    }
   });
+
+  // Also check URL for query params (fallback for params in URL string)
+  const url = request.url;
+  const queryStart = url.indexOf("?");
+  if (queryStart !== -1) {
+    const urlParams = new URLSearchParams(url.slice(queryStart + 1));
+    urlParams.forEach((value, key) => {
+      // Don't overwrite params from Angular's HttpParams
+      if (!(key in result)) {
+        result[key] = value;
+      }
+    });
+  }
 
   return result;
 }
 
 /**
- * Extract path without query parameters
+ * Extract pathname from URL (handles full URLs and relative paths)
+ * - "http://localhost:4200/api/users" → "/api/users"
+ * - "/api/users?foo=bar" → "/api/users"
+ * - "api/users" → "/api/users"
  */
-function extractPath(url: string): string {
+function extractPathname(url: string): string {
+  // Remove query string first
   const queryStart = url.indexOf("?");
-  return queryStart === -1 ? url : url.slice(0, queryStart);
+  const urlWithoutQuery = queryStart === -1 ? url : url.slice(0, queryStart);
+
+  // Check if it's a full URL with protocol
+  if (urlWithoutQuery.includes("://")) {
+    try {
+      const parsed = new URL(urlWithoutQuery);
+      return parsed.pathname;
+    } catch {
+      // If URL parsing fails, fall through to simple extraction
+    }
+  }
+
+  // Handle relative paths - ensure it starts with /
+  if (!urlWithoutQuery.startsWith("/")) {
+    return `/${urlWithoutQuery}`;
+  }
+
+  return urlWithoutQuery;
 }
 
 /**
@@ -149,14 +184,16 @@ export function createSchmockInterceptor(
       req: HttpRequest<any>,
       next: HttpHandler,
     ): Observable<HttpEvent<any>> {
+      // Extract pathname from URL (handles full URLs like http://localhost:4200/api/users)
+      const path = extractPathname(req.url);
+
       // Check if we should intercept this request
-      if (baseUrl && !req.url.startsWith(baseUrl)) {
+      if (baseUrl && !path.startsWith(baseUrl)) {
         return next.handle(req);
       }
 
-      // Extract request data
-      const path = extractPath(req.url);
-      const query = extractQueryParams(req.url);
+      // Extract request data using Angular's built-in params
+      const query = extractQueryParams(req);
 
       let requestData = {
         method: toHttpMethod(req.method),
