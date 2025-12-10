@@ -1,4 +1,4 @@
-import { CallableMockInstance as CallableMockInstanceImpl } from "./builder";
+import { CallableMockInstance as CallableMockInstanceImpl } from "./builder.js";
 import type {
   CallableMockInstance,
   Generator,
@@ -6,7 +6,7 @@ import type {
   Plugin,
   RouteConfig,
   RouteKey,
-} from "./types";
+} from "./types.js";
 
 /**
  * Create a new Schmock mock instance with callable API.
@@ -66,7 +66,7 @@ export {
   SchemaGenerationError,
   SchemaValidationError,
   SchmockError,
-} from "./errors";
+} from "./errors.js";
 
 // Re-export types
 export type {
@@ -84,4 +84,4 @@ export type {
   ResponseResult,
   RouteConfig,
   RouteKey,
-} from "./types";
+} from "./types.js";

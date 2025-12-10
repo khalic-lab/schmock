@@ -20,7 +20,8 @@
     "lint": "bun run --filter '*' lint",
     "lint:fix": "bun run --filter '*' lint:fix",
     "typecheck:quiet": "bun run --filter @schmock/core build:types > /dev/null && bun run --filter @schmock/schema build:types > /dev/null && bun run --filter @schmock/express build:types > /dev/null && bun run --filter @schmock/angular build:types > /dev/null",
-    "typecheck": "bun run --filter @schmock/core build:types && bun run --filter @schmock/schema build:types && bun run --filter @schmock/express build:types && bun run --filter @schmock/angular build:types"
+    "typecheck": "bun run --filter @schmock/core build:types && bun run --filter @schmock/schema build:types && bun run --filter @schmock/express build:types && bun run --filter @schmock/angular build:types",
+    "check:publish": "bun run --filter '*' check:publish"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.2",
