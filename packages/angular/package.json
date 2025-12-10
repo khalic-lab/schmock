@@ -2,9 +2,15 @@
   "name": "@schmock/angular",
   "version": "1.0.4",
   "description": "Angular HTTP interceptor adapter for Schmock",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "files": [
     "dist"
   ],
@@ -17,7 +23,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check src",
-    "lint:fix": "biome check --write src"
+    "lint:fix": "biome check --write src",
+    "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
   "peerDependencies": {
     "@angular/common": ">=15.0.0",

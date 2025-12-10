@@ -1,4 +1,16 @@
-import type { JSONSchema7 } from "json-schema";
+/**
+ * JSON Schema type (simplified for core package)
+ * Full schema support available via @schmock/schema
+ */
+export interface JSONSchema {
+  type?: string | string[];
+  properties?: Record<string, JSONSchema>;
+  items?: JSONSchema | JSONSchema[];
+  required?: string[];
+  enum?: any[];
+  const?: any;
+  [key: string]: any;
+}
 
 /**
  * HTTP methods supported by Schmock
@@ -121,7 +133,7 @@ export interface RouteConfig {
 /**
  * Generator types that can be passed to route definitions
  */
-export type Generator = GeneratorFunction | StaticData | JSONSchema7;
+export type Generator = GeneratorFunction | StaticData | JSONSchema;
 
 /**
  * Function that generates responses

@@ -3,8 +3,8 @@ import {
   RouteDefinitionError,
   RouteNotFoundError,
   SchmockError,
-} from "./errors";
-import { parseRouteKey } from "./parser";
+} from "./errors.js";
+import { parseRouteKey } from "./parser.js";
 import type {
   Generator,
   GeneratorFunction,
@@ -17,7 +17,7 @@ import type {
   Response,
   RouteConfig,
   RouteKey,
-} from "./types";
+} from "./types.js";
 
 /**
  * Debug logger that respects debug mode configuration

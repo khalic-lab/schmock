@@ -1,5 +1,5 @@
-import { RouteParseError } from "./errors";
-import type { HttpMethod } from "./types";
+import { RouteParseError } from "./errors.js";
+import type { HttpMethod } from "./types.js";
 
 const HTTP_METHODS: readonly HttpMethod[] = [
   "GET",

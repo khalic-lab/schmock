@@ -24,7 +24,8 @@
     "test": "vitest",
     "test:watch": "vitest --watch",
     "lint": "biome check src/*.ts",
-    "lint:fix": "biome check --write --unsafe src/*.ts"
+    "lint:fix": "biome check --write --unsafe src/*.ts",
+    "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
   "license": "MIT",
   "dependencies": {
