@@ -1,6 +1,6 @@
 {
   "name": "@schmock/angular",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Angular HTTP interceptor adapter for Schmock",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,32 +12,29 @@
     "dev": "bun build:lib --watch",
     "clean": "rm -rf dist",
     "build": "bun run clean && bun run build:lib && bun run build:types",
-    "build:lib": "bun build src/index.ts --outdir dist --target node --format esm",
+    "build:lib": "bun build src/index.ts --outdir dist --target node --format esm --external @angular/common --external @angular/core --external @schmock/core --external rxjs",
     "build:types": "rm -f tsconfig.tsbuildinfo && tsc --build",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check src",
     "lint:fix": "biome check --write src"
   },
-  "dependencies": {
-    "@schmock/core": "^1.0.0",
-    "rxjs": "^7.8.1"
-  },
   "peerDependencies": {
     "@angular/common": ">=15.0.0",
-    "@angular/core": ">=15.0.0"
+    "@angular/core": ">=15.0.0",
+    "@schmock/core": "^1.0.0",
+    "rxjs": "^7.0.0"
   },
   "devDependencies": {
     "@angular/common": "^21.0.3",
     "@angular/compiler": "^20.3.9",
     "@angular/core": "^21.0.3",
-
     "@angular/platform-browser": "^20.3.9",
-
     "@angular/platform-browser-dynamic": "^20.3.7",
-
+    "@schmock/core": "^1.0.0",
     "@types/node": "^24.9.2",
     "jsdom": "^27.0.1",
+    "rxjs": "^7.8.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.5",
     "zone.js": "^0.15.1"
