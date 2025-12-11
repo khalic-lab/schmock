@@ -251,14 +251,80 @@ import { toExpress } from '@schmock/express'
 const app = express()
 const mock = schmock()
 
-mock('GET /users', () => [{ id: 1, name: 'John' }], { 
-  contentType: 'application/json' 
+mock('GET /users', () => [{ id: 1, name: 'John' }], {
+  contentType: 'application/json'
 })
 
 // Convert to Express middleware
 app.use('/api', toExpress(mock))
 app.listen(3000)
 // Now responds at http://localhost:3000/api/users
+```
+
+### Angular Integration
+
+**Supports Angular 15-21** with automatic error handling and response helpers.
+
+```typescript
+import { ApplicationConfig } from '@angular/core';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { schmock } from '@schmock/core';
+import { createSchmockInterceptor } from '@schmock/angular';
+
+// Create your mock instance
+const mock = schmock();
+
+// Define routes with automatic error conversion
+mock('GET /api/users/:id', ({ params }) => {
+  if (params.id === '999') {
+    return [404, { message: 'User not found' }];  // Auto-converts to HttpErrorResponse
+  }
+  return { id: params.id, name: 'John Doe' };
+});
+
+// Use the interceptor in your app config
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideHttpClient(
+      withInterceptors([createSchmockInterceptor(mock)])
+    )
+  ]
+};
+
+// Your HTTP calls work as normal
+this.http.get('/api/users/1').subscribe({
+  next: (user) => console.log(user),
+  error: (err: HttpErrorResponse) => console.error(err)  // 404s handled automatically
+});
+```
+
+**Response Helpers:**
+
+```typescript
+import {
+  notFound, badRequest, unauthorized, forbidden, serverError,
+  created, noContent, paginate
+} from '@schmock/angular';
+
+// Error responses (auto-convert to HttpErrorResponse)
+mock('GET /api/users/:id', notFound('User not found'));
+mock('POST /api/users', badRequest('Invalid email'));
+mock('GET /api/protected', unauthorized('Token expired'));
+mock('GET /api/admin', forbidden('Admin access required'));
+mock('GET /api/error', serverError('Database connection failed'));
+
+// Success responses
+mock('POST /api/users', created({ id: 1, name: 'John' }));
+mock('DELETE /api/users/:id', noContent());
+
+// Pagination helper
+const items = [{ id: 1 }, { id: 2 }, { id: 3 }];
+mock('GET /api/items', ({ query }) =>
+  paginate(items, {
+    page: parseInt(query.page || '1'),
+    pageSize: parseInt(query.pageSize || '10')
+  })
+);
 ```
 
 ## API Reference
