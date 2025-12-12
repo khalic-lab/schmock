@@ -41,7 +41,7 @@
     "@angular/platform-browser": "^21.0.3",
     "@angular/platform-browser-dynamic": "^21.0.3",
     "@schmock/core": "^1.0.0",
-    "@types/node": "^24.9.2",
+    "@types/node": "^25.0.0",
     "jsdom": "^27.0.1",
     "rxjs": "^7.8.1",
     "typescript": "^5.9.3",
