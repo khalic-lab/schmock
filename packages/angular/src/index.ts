@@ -239,10 +239,15 @@ export function createSchmockInterceptor(
             query: requestData.query,
           })
           .then((schmockResponse: any) => {
-            if (!schmockResponse && passthrough) {
+            // Check if this is a 404 ROUTE_NOT_FOUND error from Schmock core
+            const isRouteNotFound =
+              schmockResponse?.status === 404 &&
+              schmockResponse?.body?.code === "ROUTE_NOT_FOUND";
+
+            if (isRouteNotFound && passthrough) {
               // No matching route, pass to real backend
               next.handle(req).subscribe(observer);
-            } else if (!schmockResponse) {
+            } else if (isRouteNotFound && !passthrough) {
               // No matching route and passthrough disabled
               observer.error(
                 new HttpErrorResponse({
@@ -263,9 +268,25 @@ export function createSchmockInterceptor(
 
               // Auto-convert error status codes (>= 400) to HttpErrorResponse
               if (status >= 400) {
+                let errorBody = response.body;
+
+                // Check if this is a 500 error from a handler that threw an exception
+                // and if errorFormatter is configured
+                if (
+                  status === 500 &&
+                  errorFormatter &&
+                  response.body?.error &&
+                  response.body?.code
+                ) {
+                  // This is an error from Schmock core (handler threw an error)
+                  // Apply the custom errorFormatter
+                  const error = new Error(response.body.error);
+                  errorBody = errorFormatter(error, req);
+                }
+
                 observer.error(
                   new HttpErrorResponse({
-                    error: response.body,
+                    error: errorBody,
                     status,
                     statusText: getStatusText(status),
                     url: req.url,
