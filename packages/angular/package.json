@@ -28,7 +28,7 @@
     "@angular/core": ">=15.0.0"
   },
   "devDependencies": {
-    "@angular/common": "^21.0.3",
+    "@angular/common": "^21.0.5",
     "@angular/compiler": "^21.0.5",
     "@angular/core": "^21.0.3",
 
