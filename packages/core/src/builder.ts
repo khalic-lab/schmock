@@ -525,8 +525,8 @@ export class CallableMockInstance {
 
   /**
    * Find a route that matches the given method and path
-   * Uses two-pass matching: exact routes first, then parameterized routes
-   * Searches in reverse order to prefer most recently defined routes
+   * Uses two-pass matching: static routes first, then parameterized routes
+   * Matches routes in registration order (first registered wins)
    * @param method - HTTP method to match
    * @param path - Request path to match
    * @returns Matched compiled route or undefined if no match
@@ -536,9 +536,8 @@ export class CallableMockInstance {
     method: HttpMethod,
     path: string,
   ): CompiledCallableRoute | undefined {
-    // First pass: Look for exact matches (routes without parameters)
-    for (let i = this.routes.length - 1; i >= 0; i--) {
-      const route = this.routes[i];
+    // First pass: Look for static routes (routes without parameters)
+    for (const route of this.routes) {
       if (
         route.method === method &&
         route.params.length === 0 &&
@@ -549,8 +548,7 @@ export class CallableMockInstance {
     }
 
     // Second pass: Look for parameterized routes
-    for (let i = this.routes.length - 1; i >= 0; i--) {
-      const route = this.routes[i];
+    for (const route of this.routes) {
       if (
         route.method === method &&
         route.params.length > 0 &&
