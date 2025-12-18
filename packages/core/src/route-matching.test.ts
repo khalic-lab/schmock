@@ -128,7 +128,7 @@ describe("route matching", () => {
   });
 
   describe("route precedence and conflicts", () => {
-    it("matches most recently defined route when patterns overlap", async () => {
+    it("prioritizes static routes over parameterized routes", async () => {
       const mock = schmock();
       mock("GET /users/:id", "parameterized");
       mock("GET /users/special", "static");
@@ -136,7 +136,7 @@ describe("route matching", () => {
       const paramResponse = await mock.handle("GET", "/users/123");
       const staticResponse = await mock.handle("GET", "/users/special");
 
-      // The static route should be matched since it was defined later
+      // Static routes should always be checked before parameterized routes
       expect(paramResponse.body).toBe("parameterized");
       expect(staticResponse.body).toBe("static");
     });
@@ -153,18 +153,61 @@ describe("route matching", () => {
       expect(v1Response.body).toBe("v1-specific");
     });
 
-    it("matches first matching route in definition order", async () => {
+    it("matches routes in registration order (first registered wins)", async () => {
       const mock = schmock();
       mock("GET /:type/items", "first");
       mock("GET /shop/:category", "second");
 
       const response = await mock.handle("GET", "/shop/items");
 
-      // Both routes match, but with reverse order search, the second route should win
-      // /:type/items matches with type="shop"
-      // /shop/:category matches with category="items"
-      // Since we search in reverse, /shop/:category (more specific) should match
-      expect(response.body).toBe("second");
+      // Both routes match, but the first registered route should win
+      // This matches the behavior of Express, Hono, Fastify, etc.
+      expect(response.body).toBe("first");
+    });
+
+    it("matches specific routes before wildcard when registered in natural order", async () => {
+      // Bug report reproduction: natural order (specific before wildcard)
+      const mock = schmock();
+      mock("GET /api/items/special", () => ({ type: "special" }));
+      mock("GET /api/items/:id", () => ({ type: "generic" }));
+
+      const specialResult = await mock.handle("GET", "/api/items/special");
+      const genericResult = await mock.handle("GET", "/api/items/123");
+
+      // Static route should match for /api/items/special
+      expect(specialResult.body).toEqual({ type: "special" });
+      // Parameterized route should match for /api/items/123
+      expect(genericResult.body).toEqual({ type: "generic" });
+    });
+
+    it("matches multiple specific routes before wildcard", async () => {
+      // Bug report scenario with multiple specific routes
+      const mock = schmock();
+      mock("GET /api/vulns/aggregated", "aggregated");
+      mock("GET /api/vulns/count", "count");
+      mock("GET /api/vulns/familyList", "familyList");
+      mock("GET /api/vulns/:vulnId", "byId");
+
+      const aggregatedRes = await mock.handle("GET", "/api/vulns/aggregated");
+      const countRes = await mock.handle("GET", "/api/vulns/count");
+      const familyListRes = await mock.handle("GET", "/api/vulns/familyList");
+      const byIdRes = await mock.handle("GET", "/api/vulns/CVE-2024-1234");
+
+      expect(aggregatedRes.body).toBe("aggregated");
+      expect(countRes.body).toBe("count");
+      expect(familyListRes.body).toBe("familyList");
+      expect(byIdRes.body).toBe("byId");
+    });
+
+    it("matches overlapping parameterized routes in registration order", async () => {
+      const mock = schmock();
+      mock("GET /api/:org/users/:id", "first-pattern");
+      mock("GET /api/:version/users/:userId", "second-pattern");
+
+      const response = await mock.handle("GET", "/api/acme/users/123");
+
+      // When both routes are parameterized and match, first registered wins
+      expect(response.body).toBe("first-pattern");
     });
   });
 
