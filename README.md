@@ -431,7 +431,7 @@ We use GitHub Flow with automated quality checks:
 ### Quality Standards
 - **Automatic**: Git hooks enforce linting and test standards
 - **Manual override**: Use `git commit --no-verify` only when necessary
-- **Comprehensive testing**: 262 tests (101 unit + 161 BDD) with TypeScript checking
+- **Comprehensive testing**: BDD for consistent DX, unit and integration
 
 See [CLAUDE.md](./CLAUDE.md) for detailed development guidelines and project architecture.
 
