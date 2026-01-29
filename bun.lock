@@ -42,7 +42,7 @@
       "name": "@schmock/core",
       "version": "1.0.0",
       "devDependencies": {
-        "@amiceli/vitest-cucumber": "^6.1.0",
+        "@amiceli/vitest-cucumber": "^6.2.0",
         "@types/node": "^25.0.0",
         "@vitest/ui": "^4.0.16",
         "vitest": "^4.0.15",
@@ -79,7 +79,7 @@
   "packages": {
     "@acemir/cssom": ["@acemir/cssom@0.9.29", "", {}, "sha512-G90x0VW+9nW4dFajtjCoT+NM0scAfH9Mb08IcjgFHYbfiL/lU04dTF9JuVOi3/OH+DJCQdcIseSXkdCB9Ky6JA=="],
 
-    "@amiceli/vitest-cucumber": ["@amiceli/vitest-cucumber@6.1.0", "", { "dependencies": { "callsites": "^4.2.0", "minimist": "^1.2.8", "parsecurrency": "^1.1.1", "ts-morph": "^26.0.0" }, "peerDependencies": { "vitest": "^4.0.4" }, "bin": { "vitest-cucumber": "dist/cli-generate.js" } }, "sha512-3GE3F8tHBkvf04PbVfH5hopNNwPjlV8ebf7NAfxPaKG31IZTWKl0VvYt0qHNepahdR7MVB6dOpW+e/RTP08FZg=="],
+    "@amiceli/vitest-cucumber": ["@amiceli/vitest-cucumber@6.2.0", "", { "dependencies": { "callsites": "^4.2.0", "minimist": "^1.2.8", "parsecurrency": "^1.1.1", "ts-morph": "^26.0.0" }, "peerDependencies": { "vitest": "^4.0.4" }, "bin": { "vitest-cucumber": "dist/cli-generate.js" } }, "sha512-tI6845JfzQOVV8gNau4yu5hXW0iipY78cCM5zQvRrcSV8yYrckJT+OECpyXWTEJZuZiDbT4D6TR1IFtM122dlw=="],
 
     "@andrewbranch/untar.js": ["@andrewbranch/untar.js@1.0.3", "", {}, "sha512-Jh15/qVmrLGhkKJBdXlK1+9tY4lZruYjsgkDFj08ZmDiWVBLJcqkok7Z0/R0In+i1rScBpJlSvrTS2Lm41Pbnw=="],
 
