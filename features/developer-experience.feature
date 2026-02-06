@@ -232,6 +232,19 @@ Feature: Developer Experience
     And the lowercase method typo should throw RouteParseError
     And the missing space typo should throw RouteParseError
 
+  Scenario: Registering duplicate routes first route wins
+    Given I create a mock with duplicate routes:
+      """
+      const mock = schmock()
+      mock('GET /items', [{ id: 1 }])
+      mock('GET /items', [{ id: 2 }])
+      """
+    When I request "GET /items"
+    Then the first route response should win:
+      """
+      [{ "id": 1 }]
+      """
+
   Scenario: Plugin returning unexpected structure
     Given I create a mock with malformed plugin:
       """

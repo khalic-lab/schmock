@@ -56,13 +56,18 @@ declare namespace Schmock {
   }
 
   /**
+   * Alias for response body type
+   */
+  type ResponseBody = unknown;
+
+  /**
    * Result returned by plugin process method
    */
   interface PluginResult {
     /** Updated context */
     context: PluginContext;
     /** Response data (if generated/modified) */
-    response?: any;
+    response?: unknown;
   }
 
   /**
@@ -72,7 +77,7 @@ declare namespace Schmock {
     /** Request path */
     path: string;
     /** Matched route configuration */
-    route: any;
+    route: RouteConfig;
     /** HTTP method */
     method: HttpMethod;
     /** Route parameters */
@@ -82,11 +87,11 @@ declare namespace Schmock {
     /** Request headers */
     headers: Record<string, string>;
     /** Request body */
-    body?: any;
+    body?: unknown;
     /** Shared state between plugins for this request */
-    state: Map<string, any>;
+    state: Map<string, unknown>;
     /** Route-specific state */
-    routeState?: any;
+    routeState?: Record<string, unknown>;
   }
 
   // ===== Callable API Types =====
@@ -102,7 +107,7 @@ declare namespace Schmock {
     /** Enable debug mode for detailed logging */
     debug?: boolean;
     /** Initial shared state object */
-    state?: any;
+    state?: Record<string, unknown>;
   }
 
   /**
@@ -131,7 +136,7 @@ declare namespace Schmock {
   /**
    * Static data (non-function) that gets returned as-is
    */
-  type StaticData = any;
+  type StaticData = string | number | boolean | null | undefined | Record<string, unknown> | unknown[];
 
   /**
    * Context passed to generator functions
@@ -148,9 +153,9 @@ declare namespace Schmock {
     /** Request headers */
     headers: Record<string, string>;
     /** Request body (for POST, PUT, PATCH) */
-    body?: any;
+    body?: unknown;
     /** Shared mutable state */
-    state: any;
+    state: Record<string, unknown>;
   }
 
   /**
@@ -160,16 +165,16 @@ declare namespace Schmock {
    * - [status, body, headers]: custom status, body, and headers
    */
   type ResponseResult =
-    | any
-    | [number, any]
-    | [number, any, Record<string, string>];
+    | ResponseBody
+    | [number, unknown]
+    | [number, unknown, Record<string, string>];
 
   /**
    * Response object returned by handle method
    */
   interface Response {
     status: number;
-    body: any;
+    body: unknown;
     headers: Record<string, string>;
   }
 
@@ -201,7 +206,7 @@ declare namespace Schmock {
      * mock('POST /users', userData, { contentType: 'application/json' })
      * ```
      */
-    (route: RouteKey, generator: Generator, config: RouteConfig): CallableMockInstance;
+    (route: RouteKey, generator: Generator, config?: RouteConfig): CallableMockInstance;
 
     /**
      * Add a plugin to the pipeline

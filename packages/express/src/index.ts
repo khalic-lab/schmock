@@ -1,7 +1,7 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
 import type { CallableMockInstance } from "@schmock/core";
-import { SchmockError } from "@schmock/core";
+import { ROUTE_NOT_FOUND_CODE, SchmockError } from "@schmock/core";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 /**
@@ -198,21 +198,28 @@ export function toExpress(
         },
       );
 
-      if (schmockResponse) {
-        // Run response interceptor if provided
-        if (beforeResponse) {
-          const intercepted = await beforeResponse(schmockResponse, req, res);
-          if (intercepted) {
-            schmockResponse = intercepted;
-          }
-        }
-
-        // Convert and send Schmock response
-        schmockToExpressResponse(schmockResponse, res);
-      } else {
-        // No matching route, pass to next middleware
+      // Detect ROUTE_NOT_FOUND responses and pass to next middleware
+      if (
+        schmockResponse.status === 404 &&
+        schmockResponse.body &&
+        typeof schmockResponse.body === "object" &&
+        (schmockResponse.body as Record<string, unknown>).code ===
+          ROUTE_NOT_FOUND_CODE
+      ) {
         next();
+        return;
       }
+
+      // Run response interceptor if provided
+      if (beforeResponse) {
+        const intercepted = await beforeResponse(schmockResponse, req, res);
+        if (intercepted) {
+          schmockResponse = intercepted;
+        }
+      }
+
+      // Convert and send Schmock response
+      schmockToExpressResponse(schmockResponse, res);
     } catch (error) {
       // Handle errors based on configuration
       if (error instanceof SchmockError && errorFormatter) {

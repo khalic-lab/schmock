@@ -49,6 +49,13 @@ export function schmock(
   return callableInstance as Schmock.CallableMockInstance;
 }
 
+// Re-export constants and utilities
+export {
+  HTTP_METHODS,
+  isHttpMethod,
+  ROUTE_NOT_FOUND_CODE,
+  toHttpMethod,
+} from "./constants";
 // Re-export errors
 export {
   PluginError,
@@ -74,7 +81,9 @@ export type {
   RequestContext,
   RequestOptions,
   Response,
+  ResponseBody,
   ResponseResult,
   RouteConfig,
   RouteKey,
+  StaticData,
 } from "./types";

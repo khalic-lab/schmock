@@ -2,9 +2,25 @@
   "release-type": "node",
   "bootstrap-sha": "d8d249d42cfb74d58aaf08882374512b8d4113a5",
   "packages": {
-    ".": {
-      "package-name": "schmock",
-      "include-component-in-tag": false
+    "packages/core": {
+      "package-name": "@schmock/core",
+      "include-component-in-tag": true,
+      "component": "core"
+    },
+    "packages/schema": {
+      "package-name": "@schmock/schema",
+      "include-component-in-tag": true,
+      "component": "schema"
+    },
+    "packages/express": {
+      "package-name": "@schmock/express",
+      "include-component-in-tag": true,
+      "component": "express"
+    },
+    "packages/angular": {
+      "package-name": "@schmock/angular",
+      "include-component-in-tag": true,
+      "component": "angular"
     }
   },
   "skip-github-release": false,

@@ -115,6 +115,17 @@ export class CallableMockInstance {
     // Parse the route key to create pattern and extract parameters
     const parsed = parseRouteKey(route);
 
+    // Check for duplicate routes
+    const existing = this.routes.find(
+      (r) => r.method === parsed.method && r.path === parsed.path,
+    );
+    if (existing) {
+      this.logger.log(
+        "warning",
+        `Duplicate route: ${route} — first registration wins`,
+      );
+    }
+
     // Compile the route
     const compiledRoute: CompiledCallableRoute = {
       pattern: parsed.pattern,
@@ -155,7 +166,7 @@ export class CallableMockInstance {
     path: string,
     options?: Schmock.RequestOptions,
   ): Promise<Schmock.Response> {
-    const requestId = Math.random().toString(36).substring(7);
+    const requestId = Math.random().toString(36).substring(2, 10) || "00000000";
     this.logger.log("request", `[${requestId}] ${method} ${path}`, {
       headers: options?.headers,
       query: options?.query,
@@ -494,7 +505,11 @@ export class CallableMockInstance {
                 `Plugin ${plugin.name} handled error`,
               );
               // If error handler returns response, use it and stop pipeline
-              if (typeof errorResult === "object" && errorResult.status) {
+              if (
+                typeof errorResult === "object" &&
+                errorResult !== null &&
+                "status" in errorResult
+              ) {
                 // Return the error response as the current response, stop pipeline
                 response = errorResult;
                 break;
