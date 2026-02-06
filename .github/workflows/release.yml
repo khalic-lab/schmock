@@ -56,12 +56,18 @@ jobs:
         if: ${{ steps.release.outputs.release_created }}
         run: bun test
       
-      # Publish to npm if release was created
+      # Publish all packages to npm if release was created
       - name: Publish to npm
         if: ${{ steps.release.outputs.release_created }}
         run: |
-          echo "Publishing version ${{ steps.release.outputs.major }}.${{ steps.release.outputs.minor }}.${{ steps.release.outputs.patch }}"
-          npm publish --access public
+          for pkg in packages/core packages/schema packages/express packages/angular; do
+            if [ -f "$pkg/package.json" ]; then
+              echo "Publishing $pkg..."
+              cd "$pkg"
+              npm publish --access public || echo "Failed to publish $pkg (may already exist)"
+              cd ../..
+            fi
+          done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       

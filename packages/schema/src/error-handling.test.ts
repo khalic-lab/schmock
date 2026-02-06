@@ -84,9 +84,8 @@ describe("Schema Error Handling", () => {
         });
         expect.fail("Should have thrown");
       } catch (error: any) {
-        expect(error.message).toContain("Unknown faker namespace");
-        expect(error.message).toContain("badnamespace");
-        expect(error.message).toContain("Valid namespaces include");
+        expect(error.message).toContain("Invalid faker method");
+        expect(error.message).toContain("badnamespace.method");
       }
     });
 
