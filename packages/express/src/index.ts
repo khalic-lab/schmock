@@ -1,27 +1,8 @@
+/// <reference path="../../../types/schmock.d.ts" />
+
 import type { CallableMockInstance, HttpMethod } from "@schmock/core";
-import { SchmockError } from "@schmock/core";
+import { ROUTE_NOT_FOUND_CODE, SchmockError } from "@schmock/core";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
-
-const HTTP_METHODS = [
-  "GET",
-  "POST",
-  "PUT",
-  "DELETE",
-  "PATCH",
-  "HEAD",
-  "OPTIONS",
-] as const;
-
-function isHttpMethod(method: string): method is HttpMethod {
-  return HTTP_METHODS.includes(method as HttpMethod);
-}
-
-function toHttpMethod(method: string): HttpMethod {
-  if (isHttpMethod(method)) {
-    return method;
-  }
-  return "GET";
-}
 
 /**
  * Configuration options for Express adapter
@@ -189,7 +170,7 @@ export function toExpress(
     try {
       // Run request interceptor if provided
       let requestData = {
-        method: toHttpMethod(req.method),
+        method: req.method as HttpMethod,
         path: req.path,
         headers: transformHeaders(req.headers),
         body: req.body,
@@ -217,21 +198,28 @@ export function toExpress(
         },
       );
 
-      if (schmockResponse) {
-        // Run response interceptor if provided
-        if (beforeResponse) {
-          const intercepted = await beforeResponse(schmockResponse, req, res);
-          if (intercepted) {
-            schmockResponse = intercepted;
-          }
-        }
-
-        // Convert and send Schmock response
-        schmockToExpressResponse(schmockResponse, res);
-      } else {
-        // No matching route, pass to next middleware
+      // Detect ROUTE_NOT_FOUND responses and pass to next middleware
+      if (
+        schmockResponse.status === 404 &&
+        schmockResponse.body &&
+        typeof schmockResponse.body === "object" &&
+        (schmockResponse.body as Record<string, unknown>).code ===
+          ROUTE_NOT_FOUND_CODE
+      ) {
         next();
+        return;
       }
+
+      // Run response interceptor if provided
+      if (beforeResponse) {
+        const intercepted = await beforeResponse(schmockResponse, req, res);
+        if (intercepted) {
+          schmockResponse = intercepted;
+        }
+      }
+
+      // Convert and send Schmock response
+      schmockToExpressResponse(schmockResponse, res);
     } catch (error) {
       // Handle errors based on configuration
       if (error instanceof SchmockError && errorFormatter) {

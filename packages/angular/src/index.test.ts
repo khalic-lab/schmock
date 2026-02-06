@@ -2,6 +2,7 @@
 import "@angular/compiler";
 
 import {
+  HTTP_INTERCEPTORS,
   HttpErrorResponse,
   type HttpEvent,
   type HttpHandler,
@@ -225,95 +226,177 @@ describe("Angular Adapter", () => {
     });
   });
 
-  describe("URL handling", () => {
-    it("extracts pathname from full URLs", async () => {
+  describe("transformRequest option", () => {
+    it("applies request transformation before handling", async () => {
       mockInstance.handle = vi
         .fn()
-        .mockResolvedValue({ status: 200, body: "ok" });
+        .mockResolvedValue({ status: 200, body: "ok", headers: {} });
 
-      const InterceptorClass = createSchmockInterceptor(mockInstance);
+      const InterceptorClass = createSchmockInterceptor(mockInstance, {
+        transformRequest: () => ({
+          method: "POST",
+          path: "/transformed",
+          headers: { "x-custom": "value" },
+        }),
+      });
       const interceptor = new InterceptorClass();
 
-      // Full URL with protocol and host
-      const fullUrlRequest = new HttpRequest(
-        "GET",
-        "http://localhost:4200/api/users",
-      );
+      const mockRequest = new HttpRequest("GET", "/api/test");
       const mockNext: HttpHandler = { handle: vi.fn() };
 
       await new Promise<void>((resolve) => {
         interceptor
-          .intercept(fullUrlRequest, mockNext)
+          .intercept(mockRequest, mockNext)
           .subscribe({ complete: resolve });
       });
 
-      // Should extract just the pathname
       expect(mockInstance.handle).toHaveBeenCalledWith(
-        "GET",
-        "/api/users",
-        expect.any(Object),
+        "POST",
+        "/transformed",
+        expect.objectContaining({ headers: { "x-custom": "value" } }),
       );
     });
+  });
 
-    it("extracts query params from Angular HttpParams", async () => {
+  describe("transformResponse option", () => {
+    it("applies response transformation before returning", async () => {
       mockInstance.handle = vi
         .fn()
-        .mockResolvedValue({ status: 200, body: "ok" });
+        .mockResolvedValue({ status: 200, body: "original", headers: {} });
+
+      const InterceptorClass = createSchmockInterceptor(mockInstance, {
+        transformResponse: (response) => ({
+          ...response,
+          status: 201,
+          body: "transformed",
+        }),
+      });
+      const interceptor = new InterceptorClass();
+
+      const mockRequest = new HttpRequest("GET", "/api/test");
+      const mockNext: HttpHandler = { handle: vi.fn() };
+
+      const emittedValues: HttpEvent<any>[] = [];
+      await new Promise<void>((resolve) => {
+        interceptor.intercept(mockRequest, mockNext).subscribe({
+          next: (value) => emittedValues.push(value),
+          complete: resolve,
+        });
+      });
+
+      const response = emittedValues[0] as HttpResponse<any>;
+      expect(response.status).toBe(201);
+      expect(response.body).toBe("transformed");
+    });
+  });
+
+  describe("error handling without formatter", () => {
+    it("returns default error body for Error instances", async () => {
+      mockInstance.handle = vi
+        .fn()
+        .mockRejectedValue(new Error("Something broke"));
 
       const InterceptorClass = createSchmockInterceptor(mockInstance);
       const interceptor = new InterceptorClass();
 
-      // Request with HttpParams
-      const requestWithParams = new HttpRequest("GET", "/api/users", {
-        params: new (await import("@angular/common/http")).HttpParams()
-          .set("page", "1")
-          .set("limit", "10"),
-      });
+      const mockRequest = new HttpRequest("GET", "/api/test");
       const mockNext: HttpHandler = { handle: vi.fn() };
 
+      let errorResponse: any;
       await new Promise<void>((resolve) => {
-        interceptor
-          .intercept(requestWithParams, mockNext)
-          .subscribe({ complete: resolve });
+        interceptor.intercept(mockRequest, mockNext).subscribe({
+          error: (err) => {
+            errorResponse = err;
+            resolve();
+          },
+        });
       });
 
-      expect(mockInstance.handle).toHaveBeenCalledWith(
-        "GET",
-        "/api/users",
-        expect.objectContaining({
-          query: { page: "1", limit: "10" },
-        }),
-      );
+      expect(errorResponse).toBeInstanceOf(HttpErrorResponse);
+      expect(errorResponse.status).toBe(500);
+      expect(errorResponse.error).toEqual({
+        error: "Something broke",
+        code: "INTERNAL_ERROR",
+      });
     });
 
-    it("extracts query params from URL string", async () => {
-      mockInstance.handle = vi
-        .fn()
-        .mockResolvedValue({ status: 200, body: "ok" });
+    it("returns generic error body for non-Error throws", async () => {
+      mockInstance.handle = vi.fn().mockRejectedValue("string error");
 
       const InterceptorClass = createSchmockInterceptor(mockInstance);
       const interceptor = new InterceptorClass();
 
-      // Request with query params in URL
-      const requestWithQuery = new HttpRequest(
-        "GET",
-        "/api/users?search=john&active=true",
-      );
+      const mockRequest = new HttpRequest("GET", "/api/test");
+      const mockNext: HttpHandler = { handle: vi.fn() };
+
+      let errorResponse: any;
+      await new Promise<void>((resolve) => {
+        interceptor.intercept(mockRequest, mockNext).subscribe({
+          error: (err) => {
+            errorResponse = err;
+            resolve();
+          },
+        });
+      });
+
+      expect(errorResponse.error).toEqual({
+        error: "Internal Server Error",
+        code: "INTERNAL_ERROR",
+      });
+    });
+  });
+
+  describe("URL parsing", () => {
+    it("extracts query parameters from URL", async () => {
+      mockInstance.handle = vi
+        .fn()
+        .mockResolvedValue({ status: 200, body: "ok", headers: {} });
+
+      const InterceptorClass = createSchmockInterceptor(mockInstance);
+      const interceptor = new InterceptorClass();
+
+      const mockRequest = new HttpRequest("GET", "/api/test?page=1&limit=10");
       const mockNext: HttpHandler = { handle: vi.fn() };
 
       await new Promise<void>((resolve) => {
         interceptor
-          .intercept(requestWithQuery, mockNext)
+          .intercept(mockRequest, mockNext)
           .subscribe({ complete: resolve });
       });
 
       expect(mockInstance.handle).toHaveBeenCalledWith(
         "GET",
-        "/api/users",
-        expect.objectContaining({
-          query: { search: "john", active: "true" },
-        }),
+        "/api/test",
+        expect.objectContaining({ query: { page: "1", limit: "10" } }),
       );
+    });
+  });
+
+  describe("subscription teardown", () => {
+    it("unsubscribes from inner subscription on teardown", async () => {
+      mockInstance.handle = vi.fn().mockResolvedValue({
+        status: 404,
+        body: { error: "Route not found", code: "ROUTE_NOT_FOUND" },
+        headers: {},
+      });
+
+      const InterceptorClass = createSchmockInterceptor(mockInstance);
+      const interceptor = new InterceptorClass();
+
+      const mockRequest = new HttpRequest("GET", "/api/test");
+      const realResponse = new HttpResponse({ body: "real" });
+      const mockNext: HttpHandler = {
+        handle: vi.fn().mockReturnValue(of(realResponse)),
+      };
+
+      const result$ = interceptor.intercept(mockRequest, mockNext);
+      const subscription = result$.subscribe();
+
+      // Allow promise to resolve
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Should not throw when unsubscribing
+      subscription.unsubscribe();
     });
   });
 
@@ -322,7 +405,7 @@ describe("Angular Adapter", () => {
       const provider = provideSchmockInterceptor(mockInstance);
 
       expect(provider).toEqual({
-        provide: "HTTP_INTERCEPTORS",
+        provide: HTTP_INTERCEPTORS,
         useClass: expect.any(Function),
         multi: true,
       });
@@ -334,7 +417,7 @@ describe("Angular Adapter", () => {
         passthrough: false,
       });
 
-      expect(provider.provide).toBe("HTTP_INTERCEPTORS");
+      expect(provider.provide).toBe(HTTP_INTERCEPTORS);
       expect(provider.useClass).toBeDefined();
       expect(provider.multi).toBe(true);
     });

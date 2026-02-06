@@ -413,6 +413,24 @@ describeFeature(feature, ({ Scenario }) => {
     });
   });
 
+  Scenario("Registering duplicate routes first route wins", ({ Given, When, Then }) => {
+    Given("I create a mock with duplicate routes:", (_, docString: string) => {
+      mock = schmock();
+      mock('GET /items', [{ id: 1 }]);
+      mock('GET /items', [{ id: 2 }]);
+    });
+
+    When("I request {string}", async (_, request: string) => {
+      const [method, path] = request.split(" ");
+      response = await mock.handle(method as any, path);
+    });
+
+    Then("the first route response should win:", (_, docString: string) => {
+      const expected = JSON.parse(docString);
+      expect(response.body).toEqual(expected);
+    });
+  });
+
   Scenario("Plugin returning unexpected structure", ({ Given, When, Then, And }) => {
     Given("I create a mock with malformed plugin:", (_, docString: string) => {
       mock = schmock();

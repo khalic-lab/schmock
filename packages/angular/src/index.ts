@@ -5,6 +5,7 @@ import type {
   HttpRequest,
 } from "@angular/common/http";
 import {
+  HTTP_INTERCEPTORS,
   HttpErrorResponse,
   HttpHeaders,
   HttpResponse,
@@ -15,6 +16,7 @@ import type {
   HttpMethod,
   ResponseResult,
 } from "@schmock/core";
+import { ROUTE_NOT_FOUND_CODE } from "@schmock/core";
 import { Observable } from "rxjs";
 
 const HTTP_METHODS = [
@@ -99,9 +101,13 @@ export interface AngularAdapterOptions {
    * @returns Modified response
    */
   transformResponse?: (
-    response: ResponseResult,
+    response: {
+      status: number;
+      body: unknown;
+      headers: Record<string, string>;
+    },
     request: HttpRequest<any>,
-  ) => ResponseResult;
+  ) => { status: number; body: unknown; headers: Record<string, string> };
 }
 
 /**
@@ -172,7 +178,7 @@ function headersToObject(request: HttpRequest<any>): Record<string, string> {
 
   request.headers.keys().forEach((key) => {
     const value = request.headers.get(key);
-    if (value) {
+    if (value !== null) {
       headers[key] = value;
     }
   });
@@ -232,22 +238,27 @@ export function createSchmockInterceptor(
 
       // Handle with Schmock
       return new Observable<HttpEvent<any>>((observer) => {
+        let innerSub: { unsubscribe(): void } | undefined;
+
         mock
           .handle(requestData.method, requestData.path, {
             headers: requestData.headers,
             body: requestData.body,
             query: requestData.query,
           })
-          .then((schmockResponse: any) => {
-            // Check if this is a 404 ROUTE_NOT_FOUND error from Schmock core
+          .then((schmockResponse) => {
+            // Detect ROUTE_NOT_FOUND responses
             const isRouteNotFound =
-              schmockResponse?.status === 404 &&
-              schmockResponse?.body?.code === "ROUTE_NOT_FOUND";
+              schmockResponse.status === 404 &&
+              schmockResponse.body &&
+              typeof schmockResponse.body === "object" &&
+              (schmockResponse.body as Record<string, unknown>).code ===
+                ROUTE_NOT_FOUND_CODE;
 
             if (isRouteNotFound && passthrough) {
               // No matching route, pass to real backend
-              next.handle(req).subscribe(observer);
-            } else if (isRouteNotFound && !passthrough) {
+              innerSub = next.handle(req).subscribe(observer);
+            } else if (isRouteNotFound) {
               // No matching route and passthrough disabled
               observer.error(
                 new HttpErrorResponse({
@@ -272,15 +283,18 @@ export function createSchmockInterceptor(
 
                 // Check if this is a 500 error from a handler that threw an exception
                 // and if errorFormatter is configured
+                const body = response.body as
+                  | Record<string, unknown>
+                  | undefined;
                 if (
                   status === 500 &&
                   errorFormatter &&
-                  response.body?.error &&
-                  response.body?.code
+                  body?.error &&
+                  body?.code
                 ) {
                   // This is an error from Schmock core (handler threw an error)
                   // Apply the custom errorFormatter
-                  const error = new Error(response.body.error);
+                  const error = new Error(body.error as string);
                   errorBody = errorFormatter(error, req);
                 }
 
@@ -337,6 +351,10 @@ export function createSchmockInterceptor(
               }),
             );
           });
+
+        return () => {
+          innerSub?.unsubscribe();
+        };
       });
     }
   }
@@ -352,7 +370,7 @@ export function provideSchmockInterceptor(
   options?: AngularAdapterOptions,
 ) {
   return {
-    provide: "HTTP_INTERCEPTORS",
+    provide: HTTP_INTERCEPTORS,
     useClass: createSchmockInterceptor(mock, options),
     multi: true,
   };

@@ -1,12 +1,10 @@
 # Schmock 🎭
 
-🚧 under development, wait for v1 for usage
-
 > Schema-driven mock API generator with direct callable API and plugin pipeline
 
 ## Overview
 
-Schmock is a powerful mock API generator that allows you to quickly create predictable, schema-driven mock endpoints for frontend development. With its direct callable API, you can define mocks with minimal boilerplate and maximum expressiveness.
+Schmock is a mock API generator that allows you to quickly create predictable, schema-driven mock endpoints for frontend development. With its direct callable API, you can define mocks with minimal boilerplate and maximum expressiveness. 
 
 ## Features
 
@@ -499,9 +497,14 @@ We use GitHub Flow with automated quality checks:
 ### Quality Standards
 - **Automatic**: Git hooks enforce linting and test standards
 - **Manual override**: Use `git commit --no-verify` only when necessary
-- **Comprehensive testing**: 262 tests (101 unit + 161 BDD) with TypeScript checking
+- **Comprehensive testing**: BDD for consistent DX, unit and integration
 
 See [CLAUDE.md](./CLAUDE.md) for detailed development guidelines and project architecture.
+
+
+## Trivia
+
+This is a project developped to test LLM agents capabilities using BDD as framework and decided to release the result. It's used for development on a daily basis by me
 
 ## Roadmap
 
