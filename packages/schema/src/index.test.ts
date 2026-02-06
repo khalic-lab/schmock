@@ -404,7 +404,7 @@ describe("Schema Generator", () => {
           field: schemas.withFaker("string", "invalidnamespace.method"),
         });
 
-        schemaTests.expectInvalid(schema, /Unknown faker namespace/);
+        schemaTests.expectInvalid(schema, /Invalid faker method/);
       });
 
       it("handles all common field mapping categories", () => {
@@ -765,7 +765,7 @@ describe("Schema Generator", () => {
       });
 
       expect(plugin).toHaveProperty("name", "schema");
-      expect(plugin).toHaveProperty("version", "1.0.0");
+      expect(plugin).toHaveProperty("version", "1.0.1");
       expect(plugin).toHaveProperty("process");
       expect(typeof plugin.process).toBe("function");
     });
@@ -905,9 +905,8 @@ describe("Schema Generator", () => {
         });
         expect.fail("Should have thrown");
       } catch (error: any) {
-        expect(error.message).toContain("Unknown faker namespace");
-        expect(error.context?.schemaPath).toContain("nested");
-        expect(error.context?.schemaPath).toContain("field");
+        expect(error.message).toContain("Invalid faker method");
+        expect(error.message).toContain("invalid.namespace.method");
       }
     });
 

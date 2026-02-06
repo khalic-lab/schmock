@@ -20,11 +20,13 @@
     "build:types": "tsc -p tsconfig.json",
     "test": "vitest",
     "test:watch": "vitest --watch",
+    "test:bdd": "vitest run --config vitest.config.bdd.ts",
     "lint": "biome check src/",
     "lint:fix": "biome check --write --unsafe src/"
   },
   "dependencies": {},
   "devDependencies": {
+    "@amiceli/vitest-cucumber": "^6.2.0",
     "@types/express": "^5.0.6",
     "express": "^5.2.1",
     "typescript": "^5.9.3",
@@ -32,7 +34,7 @@
   },
   "peerDependencies": {
     "@schmock/core": "^1.0.0",
-    "express": "^4.18.0"
+    "express": "^4.18.0 || ^5.0.0"
   },
   "keywords": [
     "mock",
