@@ -311,7 +311,7 @@ describe("route matching", () => {
       mock("GET /items/:id", ({ params }) => ({
         id: params.id,
         type: typeof params.id,
-        parsed: Number.parseInt(params.id),
+        parsed: Number.parseInt(params.id, 10),
       }));
 
       const response = await mock.handle("GET", "/items/12345");

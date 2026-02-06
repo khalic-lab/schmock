@@ -7,6 +7,7 @@ import type {
   HttpRequest,
 } from "@angular/common/http";
 import {
+  HTTP_INTERCEPTORS,
   HttpErrorResponse,
   HttpHeaders,
   HttpResponse,
@@ -59,9 +60,9 @@ export interface AngularAdapterOptions {
    * @returns Modified response
    */
   transformResponse?: (
-    response: Schmock.ResponseResult,
+    response: Schmock.Response,
     request: HttpRequest<any>,
-  ) => Schmock.ResponseResult;
+  ) => Schmock.Response;
 }
 
 /**
@@ -97,7 +98,7 @@ function headersToObject(request: HttpRequest<any>): Record<string, string> {
 
   request.headers.keys().forEach((key) => {
     const value = request.headers.get(key);
-    if (value) {
+    if (value !== null) {
       headers[key] = value;
     }
   });
@@ -156,16 +157,18 @@ export function createSchmockInterceptor(
 
       // Handle with Schmock
       return new Observable<HttpEvent<any>>((observer) => {
+        let innerSub: { unsubscribe(): void } | undefined;
+
         mock
           .handle(requestData.method, requestData.path, {
             headers: requestData.headers,
             body: requestData.body,
             query: requestData.query,
           })
-          .then((schmockResponse: any) => {
+          .then((schmockResponse) => {
             if (!schmockResponse && passthrough) {
               // No matching route, pass to real backend
-              next.handle(req).subscribe(observer);
+              innerSub = next.handle(req).subscribe(observer);
             } else if (!schmockResponse) {
               // No matching route and passthrough disabled
               observer.error(
@@ -221,6 +224,10 @@ export function createSchmockInterceptor(
               }),
             );
           });
+
+        return () => {
+          innerSub?.unsubscribe();
+        };
       });
     }
   }
@@ -236,7 +243,7 @@ export function provideSchmockInterceptor(
   options?: AngularAdapterOptions,
 ) {
   return {
-    provide: "HTTP_INTERCEPTORS",
+    provide: HTTP_INTERCEPTORS,
     useClass: createSchmockInterceptor(mock, options),
     multi: true,
   };

@@ -18,18 +18,23 @@ function createFakerInstance() {
   return new Faker({ locale: [en] });
 }
 
-// Configure json-schema-faker with a function that creates fresh faker instances
-jsf.extend("faker", () => createFakerInstance());
+let jsfConfigured = false;
 
-// Configure json-schema-faker options
-jsf.option({
-  requiredOnly: false,
-  alwaysFakeOptionals: true,
-  useDefaultValue: true,
-  ignoreMissingRefs: true,
-  failOnInvalidTypes: false,
-  failOnInvalidFormat: false,
-});
+function getJsf() {
+  if (!jsfConfigured) {
+    jsf.extend("faker", () => createFakerInstance());
+    jsf.option({
+      requiredOnly: false,
+      alwaysFakeOptionals: true,
+      useDefaultValue: true,
+      ignoreMissingRefs: true,
+      failOnInvalidTypes: false,
+      failOnInvalidFormat: false,
+    });
+    jsfConfigured = true;
+  }
+  return jsf;
+}
 
 // Resource limits for safety
 const MAX_ARRAY_SIZE = 10000;
@@ -59,7 +64,7 @@ export function schemaPlugin(options: SchemaPluginOptions): Schmock.Plugin {
 
   return {
     name: "schema",
-    version: "1.0.0",
+    version: "1.0.1",
 
     process(context: Schmock.PluginContext, response?: any) {
       // If response already exists, pass it through
@@ -131,7 +136,7 @@ export function generateFromSchema(options: SchemaGenerationContext): any {
 
     generated = [];
     for (let i = 0; i < itemCount; i++) {
-      let item = jsf.generate(
+      let item = getJsf().generate(
         enhanceSchemaWithSmartMapping(itemSchema as JSONSchema7),
       );
       item = applyOverrides(item, overrides, params, state, query);
@@ -140,7 +145,7 @@ export function generateFromSchema(options: SchemaGenerationContext): any {
   } else {
     // Handle object schemas
     const enhancedSchema = enhanceSchemaWithSmartMapping(schema);
-    generated = jsf.generate(enhancedSchema);
+    generated = getJsf().generate(enhancedSchema);
     generated = applyOverrides(generated, overrides, params, state, query);
   }
 
@@ -687,16 +692,6 @@ function processTemplate(
     },
   );
 
-  // Try to convert to number if it's a numeric string
-  if (typeof processed === "string") {
-    if (/^\d+$/.test(processed)) {
-      return Number.parseInt(processed, 10);
-    }
-    if (/^\d+\.\d+$/.test(processed)) {
-      return Number.parseFloat(processed);
-    }
-  }
-
   return processed;
 }
 
@@ -707,31 +702,6 @@ function processTemplate(
  * @throws {SchemaValidationError} When faker method format or namespace is invalid
  */
 function validateFakerMethod(fakerMethod: string): void {
-  // List of known faker namespaces and common methods
-  const validFakerNamespaces = [
-    "person",
-    "internet",
-    "phone",
-    "location",
-    "string",
-    "date",
-    "company",
-    "commerce",
-    "color",
-    "database",
-    "finance",
-    "git",
-    "hacker",
-    "helpers",
-    "image",
-    "lorem",
-    "music",
-    "number",
-    "science",
-    "vehicle",
-    "word",
-  ];
-
   // Check if faker method follows valid format (namespace.method)
   const parts = fakerMethod.split(".");
   if (parts.length < 2) {
@@ -742,20 +712,24 @@ function validateFakerMethod(fakerMethod: string): void {
     );
   }
 
-  const [namespace] = parts;
-  if (!validFakerNamespaces.includes(namespace)) {
-    throw new SchemaValidationError(
-      "$.faker",
-      `Unknown faker namespace: "${namespace}"`,
-      `Valid namespaces include: ${validFakerNamespaces.slice(0, 5).join(", ")}, etc.`,
-    );
+  // Validate by resolving the method path on a real faker instance
+  const faker = createFakerInstance();
+  let current: any = faker;
+  for (const part of parts) {
+    if (current && typeof current === "object" && part in current) {
+      current = current[part];
+    } else {
+      throw new SchemaValidationError(
+        "$.faker",
+        `Invalid faker method: "${fakerMethod}"`,
+        "Check faker.js documentation for valid methods",
+      );
+    }
   }
-
-  // Check for obviously invalid method names
-  if (fakerMethod.includes("nonexistent") || fakerMethod.includes("invalid")) {
+  if (typeof current !== "function") {
     throw new SchemaValidationError(
       "$.faker",
-      `Invalid faker method: "${fakerMethod}"`,
+      `Invalid faker method: "${fakerMethod}" is not a function`,
       "Check faker.js documentation for valid methods",
     );
   }

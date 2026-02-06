@@ -185,6 +185,21 @@ Feature: Error Handling
     And the content-type should be "application/json"
     And the response body should be valid JSON
 
+  Scenario: Plugin onError returns response with status 0
+    Given I create a mock with status-zero error handler:
+      """
+      const mock = schmock()
+      const plugin = {
+        name: 'zero-status',
+        process: () => { throw new Error('fail') },
+        onError: () => ({ status: 0, body: 'zero status', headers: {} })
+      }
+      mock('GET /zero', 'original').pipe(plugin)
+      """
+    When I request "GET /zero"
+    Then I should receive status 0
+    And I should receive text "zero status"
+
   Scenario: Plugin null/undefined return handling
     Given I create a mock with null-returning plugin:
       """

@@ -361,6 +361,31 @@ describeFeature(feature, ({ Scenario }) => {
     });
   });
 
+  Scenario("Plugin onError returns response with status 0", ({ Given, When, Then, And }) => {
+    Given("I create a mock with status-zero error handler:", (_, docString: string) => {
+      mock = schmock();
+      const plugin = {
+        name: 'zero-status',
+        process: () => { throw new Error('fail'); },
+        onError: () => ({ status: 0, body: 'zero status', headers: {} })
+      };
+      mock('GET /zero', 'original').pipe(plugin);
+    });
+
+    When("I request {string}", async (_, request: string) => {
+      const [method, path] = request.split(" ");
+      response = await mock.handle(method as any, path);
+    });
+
+    Then("I should receive status {int}", (_, status: number) => {
+      expect(response.status).toBe(status);
+    });
+
+    And("I should receive text {string}", (_, expectedText: string) => {
+      expect(response.body).toBe(expectedText);
+    });
+  });
+
   Scenario("Plugin null/undefined return handling", ({ Given, When, Then, And }) => {
     Given("I create a mock with null-returning plugin:", (_, docString: string) => {
       mock = schmock();
