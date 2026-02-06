@@ -52,7 +52,7 @@ export interface Plugin {
    */
   process(
     context: PluginContext,
-    response?: any,
+    response?: unknown,
   ): PluginResult | Promise<PluginResult>;
 
   /**
@@ -79,7 +79,7 @@ export interface PluginResult {
   /** Updated context */
   context: PluginContext;
   /** Response data (if generated/modified) */
-  response?: any;
+  response?: unknown;
 }
 
 /**
@@ -89,7 +89,7 @@ export interface PluginContext {
   /** Request path */
   path: string;
   /** Matched route configuration */
-  route: any;
+  route: RouteConfig;
   /** HTTP method */
   method: HttpMethod;
   /** Route parameters */
@@ -99,11 +99,11 @@ export interface PluginContext {
   /** Request headers */
   headers: Record<string, string>;
   /** Request body */
-  body?: any;
+  body?: unknown;
   /** Shared state between plugins for this request */
-  state: Map<string, any>;
+  state: Map<string, unknown>;
   /** Route-specific state */
-  routeState?: any;
+  routeState?: Record<string, unknown>;
 }
 
 /**
@@ -117,7 +117,7 @@ export interface GlobalConfig {
   /** Enable debug mode for detailed logging */
   debug?: boolean;
   /** Initial shared state object */
-  state?: any;
+  state?: Record<string, unknown>;
 }
 
 /**
@@ -143,9 +143,21 @@ export type GeneratorFunction = (
 ) => ResponseResult | Promise<ResponseResult>;
 
 /**
+ * Response body type alias
+ */
+export type ResponseBody = unknown;
+
+/**
  * Static data (non-function) that gets returned as-is
  */
-export type StaticData = any;
+export type StaticData =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | Record<string, unknown>
+  | unknown[];
 
 /**
  * Context passed to generator functions
@@ -162,9 +174,9 @@ export interface RequestContext {
   /** Request headers */
   headers: Record<string, string>;
   /** Request body (for POST, PUT, PATCH) */
-  body?: any;
+  body?: unknown;
   /** Shared mutable state */
-  state: any;
+  state: Record<string, unknown>;
 }
 
 /**
@@ -174,16 +186,16 @@ export interface RequestContext {
  * - [status, body, headers]: custom status, body, and headers
  */
 export type ResponseResult =
-  | any
-  | [number, any]
-  | [number, any, Record<string, string>];
+  | ResponseBody
+  | [number, ResponseBody]
+  | [number, ResponseBody, Record<string, string>];
 
 /**
  * Response object returned by handle method
  */
 export interface Response {
   status: number;
-  body: any;
+  body: unknown;
   headers: Record<string, string>;
 }
 
@@ -192,7 +204,7 @@ export interface Response {
  */
 export interface RequestOptions {
   headers?: Record<string, string>;
-  body?: any;
+  body?: unknown;
   query?: Record<string, string>;
 }
 

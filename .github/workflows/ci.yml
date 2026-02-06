@@ -79,10 +79,14 @@ jobs:
               ;;
             test-bdd)
               echo "::group::Running BDD tests"
-              bun run test:bdd || {
-                echo "::warning::BDD tests failed (this is expected during TDD development)"
-                exit 0  # Don't fail the job for BDD tests
-              }
+              if [[ "${{ github.base_ref }}" == "main" ]]; then
+                bun run test:bdd
+              else
+                bun run test:bdd || {
+                  echo "::warning::BDD tests failed (this is expected during TDD development)"
+                  exit 0  # Don't fail the job for BDD tests on non-main PRs
+                }
+              fi
               echo "::endgroup::"
               ;;
             build)
