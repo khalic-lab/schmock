@@ -59,6 +59,7 @@ interface CompiledCallableRoute {
  */
 export class CallableMockInstance {
   private routes: CompiledCallableRoute[] = [];
+  private staticRoutes = new Map<string, CompiledCallableRoute>();
   private plugins: Schmock.Plugin[] = [];
   private logger: DebugLogger;
   private requestHistory: Schmock.RequestRecord[] = [];
@@ -142,6 +143,20 @@ export class CallableMockInstance {
     };
 
     this.routes.push(compiledRoute);
+
+    // Store static routes (no params) in Map for O(1) lookup
+    // Only store the first registration — "first registration wins" semantics
+    if (parsed.params.length === 0) {
+      const normalizedPath =
+        parsed.path.endsWith("/") && parsed.path !== "/"
+          ? parsed.path.slice(0, -1)
+          : parsed.path;
+      const key = `${parsed.method} ${normalizedPath}`;
+      if (!this.staticRoutes.has(key)) {
+        this.staticRoutes.set(key, compiledRoute);
+      }
+    }
+
     this.logger.log("route", `Route defined: ${route}`, {
       contentType: config.contentType,
       generatorType: typeof generator,
@@ -212,6 +227,7 @@ export class CallableMockInstance {
 
   reset(): void {
     this.routes = [];
+    this.staticRoutes.clear();
     this.plugins = [];
     this.requestHistory = [];
     if (this.globalConfig.state) {
@@ -625,18 +641,15 @@ export class CallableMockInstance {
     method: Schmock.HttpMethod,
     path: string,
   ): CompiledCallableRoute | undefined {
-    // First pass: Look for static routes (routes without parameters)
-    for (const route of this.routes) {
-      if (
-        route.method === method &&
-        route.params.length === 0 &&
-        route.pattern.test(path)
-      ) {
-        return route;
-      }
+    // O(1) lookup for static routes
+    const normalizedPath =
+      path.endsWith("/") && path !== "/" ? path.slice(0, -1) : path;
+    const staticMatch = this.staticRoutes.get(`${method} ${normalizedPath}`);
+    if (staticMatch) {
+      return staticMatch;
     }
 
-    // Second pass: Look for parameterized routes
+    // Fall through to parameterized route scan
     for (const route of this.routes) {
       if (
         route.method === method &&
