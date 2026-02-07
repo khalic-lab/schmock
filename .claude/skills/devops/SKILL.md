@@ -4,7 +4,6 @@ description: >
   Release management for Schmock packages. Version bumping, npm publishing,
   and GitHub release creation.
 argument-hint: "bump patch|minor|major | publish [package]"
-disable-model-invocation: true
 allowed-tools:
   - Bash(bun .claude/skills/devops/scripts/bump.ts *)
   - Bash(bash .claude/skills/devops/scripts/publish.sh *)
@@ -24,7 +23,7 @@ End-to-end release flow:
 
 ## Version Management
 
-4 packages with independent versions, tracked in two places:
+7 packages with independent versions, tracked in two places:
 
 - `packages/*/package.json` — each package's own version
 - `.release-please-manifest.json` — central manifest for release-please
