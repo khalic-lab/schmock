@@ -1,6 +1,6 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { schmock } from "../index";
+import { evalMockSetup } from "./eval-mock";
 import type { MockInstance } from "../types";
 
 const feature = await loadFeature("../../features/fluent-api.feature");
@@ -13,12 +13,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Simple route with generator function", ({ Given, When, Then }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      // Create callable mock instance
-      mock = schmock({});
-      
-      // Parse and execute the route definition from docString
-      // This scenario defines: GET /users with a generator function
-      mock('GET /users', () => [{ id: 1, name: 'John' }], {});
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -38,14 +33,7 @@ describeFeature(feature, ({ Scenario }) => {
       responses = [];
 
       Given("I create a mock with:", (_, docString: string) => {
-        // Create mock with global state
-        mock = schmock({ state: { count: 0 } });
-        
-        // Define counter route that uses global state
-        mock('GET /counter', ({ state }) => {
-          state.count++;
-          return { value: state.count };
-        }, {});
+        mock = evalMockSetup(docString);
       });
 
       When("I request {string} twice", async (_, request: string) => {
@@ -67,9 +55,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Route with parameters", ({ Given, When, Then }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      // Create mock with parameter route
-      mock = schmock({});
-      mock('GET /users/:id', ({ params }) => ({ userId: params.id }), {});
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -85,9 +71,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Response with custom status code", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      // Create mock with custom status response
-      mock = schmock({});
-      mock('POST /users', ({ body }) => [201, { id: 1, ...body }], {});
+      mock = evalMockSetup(docString);
     });
 
     When(
@@ -111,9 +95,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("404 for undefined routes", ({ Given, When, Then }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      // Create mock with only one route, so other routes return 404
-      mock = schmock({});
-      mock('GET /users', () => [], {});
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -128,12 +110,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Query parameters", ({ Given, When, Then }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      // Create mock that handles query parameters
-      mock = schmock({});
-      mock('GET /search', ({ query }) => ({ 
-        results: [], 
-        query: query.q 
-      }), {});
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -160,11 +137,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Request headers access", ({ Given, When, Then }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      // Create mock that accesses request headers
-      mock = schmock({});
-      mock('GET /auth', ({ headers }) => ({ 
-        authenticated: headers.authorization === 'Bearer token123' 
-      }), {});
+      mock = evalMockSetup(docString);
     });
 
     When(
@@ -184,9 +157,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Global configuration with namespace", ({ Given, When, Then }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      // Create mock with namespace configuration
-      mock = schmock({ namespace: '/api/v1' });
-      mock('GET /users', () => [], {});
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -202,9 +173,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Static data response", ({ Given, When, Then }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      // Create mock with static data response
-      mock = schmock({});
-      mock('GET /config', { version: '1.0.0', features: ['auth'] }, {});
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -220,17 +189,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Plugin pipeline with pipe chaining", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      // Create mock with plugin pipeline
-      mock = schmock({});
-      mock('GET /users', () => [{ id: 1, name: 'John' }], {})
-        .pipe({
-          name: "logging",
-          process: (ctx, response) => ({ context: ctx, response })
-        })
-        .pipe({
-          name: "cors",
-          process: (ctx, response) => ({ context: ctx, response })
-        });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {

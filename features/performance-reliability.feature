@@ -6,33 +6,27 @@ Feature: Performance and Reliability E2E
   Scenario: High-volume concurrent requests
     Given I create a mock for load testing:
       """
-      schmock()
-        .routes({
-          'GET /api/health': {
-            response: () => ({ status: 'healthy', timestamp: Date.now() })
-          },
-          'GET /api/data/:id': {
-            response: ({ params }) => ({
-              id: params.id,
-              data: Array.from({ length: 50 }, (_, i) => ({ 
-                index: i, 
-                value: Math.random() 
-              })),
-              generated_at: new Date().toISOString()
-            })
-          },
-          'POST /api/process': {
-            response: ({ body }) => {
-              // Simulate processing time
-              const items = Array.isArray(body) ? body : [body];
-              return {
-                processed: items.length,
-                results: items.map(item => ({ ...item, processed: true })),
-                batch_id: Math.random().toString(36)
-              };
-            }
-          }
-        })
+      const mock = schmock()
+      mock('GET /api/health', () => ({
+        status: 'healthy',
+        timestamp: Date.now()
+      }))
+      mock('GET /api/data/:id', ({ params }) => ({
+        id: params.id,
+        data: Array.from({ length: 50 }, (_, i) => ({
+          index: i,
+          value: Math.random()
+        })),
+        generated_at: new Date().toISOString()
+      }))
+      mock('POST /api/process', ({ body }) => {
+        const items = Array.isArray(body) ? body : [body]
+        return {
+          processed: items.length,
+          results: items.map(item => ({ ...item, processed: true })),
+          batch_id: Math.random().toString(36)
+        }
+      })
       """
     When I send 100 concurrent "GET /api/health" requests
     Then all concurrent requests should complete successfully
@@ -48,45 +42,37 @@ Feature: Performance and Reliability E2E
   Scenario: Memory usage under sustained load
     Given I create a mock with potential memory concerns:
       """
-      schmock()
-        .routes({
-          'POST /api/large-data': {
-            response: ({ body }) => {
-              // Create large response data
-              const largeArray = Array.from({ length: 1000 }, (_, i) => ({
-                id: i,
-                data: 'x'.repeat(100), // 100 chars per item
-                timestamp: Date.now(),
-                random: Math.random()
-              }));
-              
-              return {
-                items: largeArray,
-                count: largeArray.length,
-                size: 'large',
-                request_data: body
-              };
-            }
-          },
-          'GET /api/accumulate/:count': {
-            response: ({ params }) => {
-              const count = parseInt(params.count) || 100;
-              const accumulated = [];
-              
-              for (let i = 0; i < count; i++) {
-                accumulated.push({
-                  iteration: i,
-                  data: `item-${i}`,
-                  nested: {
-                    level1: { level2: { level3: `deep-${i}` } }
-                  }
-                });
-              }
-              
-              return { accumulated, total: count };
-            }
-          }
-        })
+      const mock = schmock()
+      mock('POST /api/large-data', ({ body }) => {
+        const largeArray = Array.from({ length: 1000 }, (_, i) => ({
+          id: i,
+          data: 'x'.repeat(100),
+          timestamp: Date.now(),
+          payload: body
+        }))
+        return {
+          results: largeArray,
+          items: largeArray,
+          total_size: largeArray.length,
+          size: 'large',
+          memory_usage: process.memoryUsage ? process.memoryUsage() : null
+        }
+      })
+      mock('GET /api/accumulate/:count', ({ params }) => {
+        const count = parseInt(params.count)
+        const items = Array.from({ length: count }, (_, i) => ({
+          id: i,
+          value: Math.random(),
+          timestamp: Date.now()
+        }))
+        return {
+          items: items,
+          accumulated: items,
+          total: items.length,
+          count: items.length,
+          memory_usage: process.memoryUsage ? process.memoryUsage() : null
+        }
+      })
       """
     When I send 20 requests to "POST /api/large-data" with 100KB payloads
     Then all requests should complete without memory errors
@@ -98,57 +84,34 @@ Feature: Performance and Reliability E2E
   Scenario: Error resilience and recovery
     Given I create a mock with intermittent failures:
       """
-      schmock()
-        .state({ requestCount: 0, errorRate: 0.2 })
-        .routes({
-          'GET /api/flaky': {
-            response: ({ state }) => {
-              state.requestCount++;
-              
-              // Simulate intermittent failures
-              if (Math.random() < state.errorRate) {
-                const errorTypes = [
-                  [500, { error: 'Internal server error', code: 'INTERNAL' }],
-                  [503, { error: 'Service unavailable', code: 'UNAVAILABLE' }],
-                  [429, { error: 'Rate limit exceeded', code: 'RATE_LIMIT' }]
-                ];
-                
-                const errorType = errorTypes[Math.floor(Math.random() * errorTypes.length)];
-                return errorType;
-              }
-              
-              return {
-                success: true,
-                request_number: state.requestCount,
-                timestamp: Date.now()
-              };
-            }
-          },
-          'POST /api/validate-strict': {
-            response: ({ body, headers }) => {
-              if (!headers['content-type']) {
-                return [400, { error: 'Content-Type header required' }];
-              }
-              
-              if (!body) {
-                return [400, { error: 'Request body required' }];
-              }
-              
-              if (typeof body !== 'object') {
-                return [400, { error: 'Body must be JSON object' }];
-              }
-              
-              if (!body.required_field) {
-                return [422, { 
-                  error: 'Validation failed',
-                  missing: ['required_field']
-                }];
-              }
-              
-              return { validated: true, data: body };
-            }
-          }
-        })
+      const mock = schmock()
+      let requestCount = 0
+      mock('POST /api/unreliable', ({ body }) => {
+        requestCount++
+        if (requestCount % 5 === 0) {
+          return [500, { error: 'Simulated server error', request_id: requestCount }]
+        }
+        return [200, { success: true, data: body, request_id: requestCount }]
+      })
+      mock('GET /api/flaky', () => {
+        requestCount++
+        if (requestCount % 5 === 0) {
+          return [500, { error: 'Flaky service error', request_id: requestCount }]
+        }
+        return [200, { success: true, request_id: requestCount }]
+      })
+      mock('POST /api/validate-strict', ({ body }) => {
+        if (!body || typeof body !== 'object') {
+          return [400, { error: 'Request body is required and must be an object', code: 'INVALID_BODY' }]
+        }
+        if (!body.name || typeof body.name !== 'string') {
+          return [422, { error: 'Name field is required and must be a string', code: 'INVALID_NAME' }]
+        }
+        if (!body.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
+          return [422, { error: 'Valid email address is required', code: 'INVALID_EMAIL' }]
+        }
+        return [200, { message: 'Validation successful', data: body }]
+      })
       """
     When I send 50 requests to "GET /api/flaky"
     Then some requests should succeed and some should fail
@@ -161,19 +124,37 @@ Feature: Performance and Reliability E2E
   Scenario: Route matching performance with complex patterns
     Given I create a mock with many route patterns:
       """
-      schmock()
-        .routes({
-          'GET /api/users': { response: () => ({ type: 'users-list' }) },
-          'GET /api/users/:id': { response: ({ params }) => ({ type: 'user', id: params.id }) },
-          'GET /api/users/:id/posts': { response: ({ params }) => ({ type: 'user-posts', userId: params.id }) },
-          'GET /api/users/:id/posts/:postId': { response: ({ params }) => ({ type: 'user-post', userId: params.id, postId: params.postId }) },
-          'GET /api/users/:id/posts/:postId/comments': { response: ({ params }) => ({ type: 'post-comments', userId: params.id, postId: params.postId }) },
-          'GET /api/posts': { response: () => ({ type: 'posts-list' }) },
-          'GET /api/posts/:id': { response: ({ params }) => ({ type: 'post', id: params.id }) },
-          'GET /api/posts/:id/comments/:commentId': { response: ({ params }) => ({ type: 'comment', postId: params.id, commentId: params.commentId }) },
-          'GET /static/:category/:file': { response: ({ params }) => ({ type: 'static', category: params.category, file: params.file }) },
-          'GET /api/:version/users/:id': { response: ({ params }) => ({ type: 'versioned-user', version: params.version, id: params.id }) }
-        })
+      const mock = schmock()
+      mock('GET /api/users', () => ({ type: 'users-list' }))
+      mock('GET /api/users/:id', ({ params }) => ({ type: 'user', id: params.id }))
+      mock('GET /api/users/:userId/posts', ({ params }) => ({ type: 'user-posts', userId: params.userId }))
+      mock('GET /api/users/:userId/posts/:postId', ({ params }) => ({
+        type: 'user-post',
+        userId: params.userId,
+        postId: params.postId
+      }))
+      mock('GET /api/users/:userId/posts/:postId/comments', ({ params }) => ({
+        type: 'post-comments',
+        userId: params.userId,
+        postId: params.postId
+      }))
+      mock('GET /api/posts', () => ({ type: 'posts-list' }))
+      mock('GET /api/posts/:postId', ({ params }) => ({ type: 'post', postId: params.postId }))
+      mock('GET /api/posts/:postId/comments/:commentId', ({ params }) => ({
+        type: 'comment',
+        postId: params.postId,
+        commentId: params.commentId
+      }))
+      mock('GET /static/:category/:file', ({ params }) => ({
+        type: 'static',
+        category: params.category,
+        file: params.file
+      }))
+      mock('GET /api/v2/users/:userId', ({ params }) => ({
+        type: 'versioned-user',
+        userId: params.userId,
+        version: 'v2'
+      }))
       """
     When I send requests to all route patterns simultaneously
     Then each request should match the correct route pattern
@@ -182,4 +163,3 @@ Feature: Performance and Reliability E2E
     When I send requests to non-matching paths
     Then they should consistently return 404 responses
     And the 404 responses should be fast
-

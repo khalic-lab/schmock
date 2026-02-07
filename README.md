@@ -1,464 +1,127 @@
-# Schmock 🎭
+# Schmock
 
-> Schema-driven mock API generator with direct callable API and plugin pipeline
+TypeScript HTTP mocking library. Callable API, plugin pipeline, framework adapters.
 
-## Overview
-
-Schmock is a mock API generator that allows you to quickly create predictable, schema-driven mock endpoints for frontend development. With its direct callable API, you can define mocks with minimal boilerplate and maximum expressiveness. 
-
-## Features
-
-- 🚀 **Quick Setup**: Get a mock API running in under 30 seconds
-- ✨ **Direct API**: Callable instances with zero boilerplate
-- 📋 **Schema-Driven**: Use JSON Schema to define your data structures
-- 🎯 **Type-Safe**: Full TypeScript support with ambient types
-- 🔄 **Stateful Mocks**: Maintain state between requests
-- 🔧 **Plugin Pipeline**: Extensible `.pipe()` architecture
-
-## Installation
+## Install
 
 ```sh
-# Using bun (recommended)
 bun add @schmock/core
-
-# Using npm
-npm install @schmock/core
-
-# Using yarn
-yarn add @schmock/core
 ```
 
-## Quick Start
+Optional packages:
 
-### Basic Usage
+```sh
+bun add @schmock/schema    # JSON Schema data generation
+bun add @schmock/express   # Express middleware adapter
+bun add @schmock/angular   # Angular HTTP interceptor
+```
+
+## Usage
 
 ```typescript
 import { schmock } from '@schmock/core'
 
-// Create a mock API with global configuration
-const mock = schmock({ debug: true, namespace: '/api' })
+const mock = schmock({ namespace: '/api' })
 
-// Define routes directly - no build() needed!
-mock('GET /users', () => [
-  { id: 1, name: 'John Doe', email: 'john@example.com' },
-  { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
-], { contentType: 'application/json' })
+// Static data
+mock('GET /config', { version: '1.0.0' }, { contentType: 'application/json' })
 
+// Generator function — receives params, query, headers, body, state
 mock('GET /users/:id', ({ params }) => {
-  const users = [
-    { id: 1, name: 'John Doe', email: 'john@example.com' },
-    { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
-  ]
-  return users.find(u => u.id === Number(params.id)) || [404, { error: 'User not found' }]
+  return { id: params.id, name: 'John' }
 }, { contentType: 'application/json' })
 
-// Make requests immediately
-const response = await mock.handle('GET', '/api/users')
-console.log(response.status) // 200
-console.log(response.body) // [{ id: 1, name: 'John Doe', ... }, ...]
-
-// With parameters
-const userResponse = await mock.handle('GET', '/api/users/1')
-console.log(userResponse.body) // { id: 1, name: 'John Doe', ... }
-```
-
-### Plugin Pipeline with .pipe()
-
-```typescript
-import { schmock } from '@schmock/core'
-import { schemaPlugin } from '@schmock/schema'
-import { validationPlugin } from '@schmock/validation'
-
-const mock = schmock({ debug: true })
-
-// Chain plugins with .pipe() - clean and expressive
-mock('GET /users', userSchema, { contentType: 'application/json' })
-  .pipe(schemaPlugin())
-  .pipe(validationPlugin())
-  .pipe(loggingPlugin())
-
-mock('POST /users', createUserGenerator, { contentType: 'application/json' })
-  .pipe(validationPlugin())
-  .pipe(persistencePlugin())
-```
-
-### Stateful Mocks
-
-```typescript
-// Initialize mock with global state
-const mock = schmock({ 
-  state: { users: [] },
-  debug: true 
+// Custom status codes via tuple return
+mock('POST /users', ({ body }) => [201, { id: 1, ...body }], {
+  contentType: 'application/json'
 })
 
-mock('GET /users', ({ state }) => state.users, { 
-  contentType: 'application/json' 
-})
+const response = await mock.handle('GET', '/api/users/42')
+// { status: 200, body: { id: "42", name: "John" }, headers: { ... } }
+```
+
+### Stateful mocks
+
+```typescript
+const mock = schmock({ state: { users: [] } })
 
 mock('POST /users', ({ body, state }) => {
-  const newUser = { 
-    id: Date.now(), 
-    ...body, 
-    createdAt: new Date().toISOString() 
-  }
-  state.users.push(newUser)
-  return [201, newUser]
+  state.users.push({ id: Date.now(), ...body })
+  return [201, state.users.at(-1)]
 }, { contentType: 'application/json' })
 
-mock('DELETE /users/:id', ({ params, state }) => {
-  const index = state.users.findIndex(u => u.id === Number(params.id))
-  if (index === -1) return [404, { error: 'User not found' }]
-  state.users.splice(index, 1)
-  return [204, null]
-}, { contentType: 'application/json' })
-
-// Use immediately
-const created = await mock.handle('POST', '/users', {
-  body: { name: 'Alice', email: 'alice@example.com' }
+mock('GET /users', ({ state }) => state.users, {
+  contentType: 'application/json'
 })
-console.log(created.status) // 201
 ```
 
-### Generator Functions vs Static Data
+### Plugin pipeline
 
 ```typescript
-const mock = schmock()
-
-// Generator function - called on each request
-mock('GET /time', () => ({ 
-  timestamp: new Date().toISOString() 
-}), { contentType: 'application/json' })
-
-// Static JSON data - returned as-is
-mock('GET /config', {
-  version: '1.0.0',
-  features: ['auth', 'api', 'websockets']
-}, { contentType: 'application/json' })
-
-// Schmock automatically detects the difference based on contentType validation
-```
-
-### Custom Status Codes and Headers
-
-```typescript
-const mock = schmock()
-
-mock('POST /upload', ({ body }) => [
-  201,
-  { id: 123, filename: body.name },
-  { 'Location': '/api/files/123' }
-], { contentType: 'application/json' })
-
-mock('GET /protected', ({ headers }) => {
-  if (!headers.authorization) {
-    return [401, { error: 'Unauthorized' }]
-  }
-  return { data: 'secret' }
-}, { contentType: 'application/json' })
-```
-
-## Advanced Usage
-
-### Query Parameters and Headers
-
-```typescript
-const mock = schmock()
-
-mock('GET /search', ({ query }) => ({
-  results: [],
-  query: query.q,
-  page: Number(query.page) || 1
-}), { contentType: 'application/json' })
-
-mock('GET /me', ({ headers }) => ({
-  authenticated: !!headers.authorization,
-  user: headers.authorization ? { id: 1, name: 'John' } : null
-}), { contentType: 'application/json' })
-
-// With query parameters
-const search = await mock.handle('GET', '/search', {
-  query: { q: 'typescript', page: '2' }
-})
-console.log(search.body) // { results: [], query: 'typescript', page: 2 }
-
-// With headers
-const me = await mock.handle('GET', '/me', {
-  headers: { authorization: 'Bearer token123' }
-})
-console.log(me.body.authenticated) // true
-```
-
-### Schema-Based Generation
-
-```typescript
-import { schmock } from '@schmock/core'
 import { schemaPlugin } from '@schmock/schema'
 
-const mock = schmock()
-
-// Define a route with JSON Schema instead of a generator
-mock('GET /users', {
-  type: 'array',
-  items: {
-    type: 'object',
-    properties: {
-      id: { type: 'integer' },
-      name: { type: 'string', faker: 'person.fullName' },
-      email: { type: 'string', format: 'email' }
-    }
-  }
-}, { contentType: 'application/json' })
-  .pipe(schemaPlugin())
-
-// Generates realistic data automatically
-const response = await mock.handle('GET', '/users')
-// [{ id: 1, name: "John Doe", email: "john@example.com" }, ...]
+mock('GET /users', null, { contentType: 'application/json' })
+  .pipe(schemaPlugin({
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer' },
+          name: { type: 'string', faker: 'person.fullName' },
+          email: { type: 'string', format: 'email' }
+        }
+      }
+    },
+    count: 5
+  }))
 ```
 
-### Complex Plugin Pipelines
+### Framework adapters
 
+**Express:**
 ```typescript
-import { schmock } from '@schmock/core'
-import { schemaPlugin } from '@schmock/schema'
-import { validationPlugin } from '@schmock/validation'
-import { cachingPlugin } from '@schmock/caching'
-
-const mock = schmock({ 
-  debug: true,
-  namespace: '/api/v1'
-})
-
-// Complex pipeline: validation → schema generation → caching → response
-mock('GET /users', userListSchema, { contentType: 'application/json' })
-  .pipe(validationPlugin({ strict: true }))
-  .pipe(schemaPlugin({ count: 10 }))
-  .pipe(cachingPlugin({ ttl: 60000 }))
-  
-mock('POST /users', createUserHandler, { contentType: 'application/json' })
-  .pipe(validationPlugin({ validateBody: true }))
-  .pipe(persistencePlugin())
-  .pipe(notificationPlugin())
-```
-
-### Express Integration
-
-```typescript
-import express from 'express'
 import { toExpress } from '@schmock/express'
-
-const app = express()
-const mock = schmock()
-
-mock('GET /users', () => [{ id: 1, name: 'John' }], { 
-  contentType: 'application/json' 
-})
-
-// Convert to Express middleware
 app.use('/api', toExpress(mock))
-app.listen(3000)
-// Now responds at http://localhost:3000/api/users
 ```
 
-## API Reference
-
-### Factory Function
-
+**Angular:**
 ```typescript
-function schmock(config?: GlobalConfig): CallableMockInstance
+import { provideSchmockInterceptor } from '@schmock/angular'
+providers: [provideSchmockInterceptor(mock, { baseUrl: '/api' })]
 ```
 
-**Global Configuration:**
-```typescript
-interface GlobalConfig {
-  debug?: boolean;          // Enable debug logging
-  namespace?: string;       // URL prefix for all routes
-  state?: any;             // Initial shared state
-  delay?: number | [number, number]; // Response delay (ms)
-}
-```
+## Packages
 
-### Route Definition
+| Package | Description |
+|---------|-------------|
+| `@schmock/core` | Mock builder, route handling, plugin pipeline |
+| `@schmock/schema` | JSON Schema data generation via faker |
+| `@schmock/express` | Express middleware adapter |
+| `@schmock/angular` | Angular HTTP interceptor adapter |
 
-Define routes by calling the mock instance directly:
+## Documentation
 
-```typescript
-const mock = schmock()
-
-// Basic route definition
-mock('GET /users', generatorFunction, routeConfig)
-mock('POST /users', staticData, routeConfig)
-mock('PUT /users/:id', schemaObject, routeConfig)
-mock('DELETE /users/:id', generatorFunction, routeConfig)
-```
-
-**Route Configuration:**
-```typescript
-interface RouteConfig {
-  contentType: string;      // 'application/json', 'text/plain', etc.
-  // Additional route-specific options...
-}
-```
-
-### Response Types
-
-Generator functions can return:
-- **Direct value**: Returns as 200 OK
-- **`[status, body]`**: Custom status code
-- **`[status, body, headers]`**: Custom status, body, and headers
-
-### Context Object
-
-Generator functions receive a context with:
-- `state`: Shared mutable state
-- `params`: Path parameters (e.g., `:id`)
-- `query`: Query string parameters
-- `body`: Request body
-- `headers`: Request headers
-- `method`: HTTP method
-- `path`: Request path
-
-### Plugin Pipeline
-
-Chain plugins using `.pipe()`:
-
-```typescript
-mock('GET /users', generator, config)
-  .pipe(plugin1())
-  .pipe(plugin2())
-  .pipe(plugin3())
-```
+- [API Reference](docs/api.md)
+- [Plugin Development](docs/plugin-development.md)
+- [Debug Mode](docs/debug-mode.md)
+- [Coding Standards](docs/coding-standards.md)
 
 ## Development
 
-This project uses a monorepo structure with Bun workspaces and automated Git hooks for quality assurance.
-
-### Initial Setup
-
 ```sh
-# Install dependencies
 bun install
-
-# Configure Git hooks (recommended for contributors)
-bun run setup
-
-# Build packages
-bun run build
+bun run setup    # Git hooks (lint + tests on commit)
+bun test:all     # Typecheck + unit + BDD
+bun test:bdd     # BDD only
+bun lint         # Lint
 ```
 
-### Testing Commands
-
-```sh
-# Run all tests (262 total: 101 unit + 161 BDD)
-bun test
-
-# Run comprehensive test suite with typecheck (recommended before commits)
-bun test:all
-
-# Run unit tests only (all packages)
-bun test:unit
-
-# Run BDD tests only
-bun test:bdd
-
-# Type checking
-bun run typecheck
-
-# Linting
-bun run lint
-bun run lint:fix  # Auto-fix issues
-```
-
-### Git Hooks (Automated Quality Assurance)
-
-After running `bun run setup`, Git hooks will automatically:
-
-- **Pre-commit**: Run linting and comprehensive tests before allowing commits
-- **Commit-msg**: Enforce conventional commit message format
-
-```sh
-# Bypass hooks if needed (not recommended)
-git commit --no-verify
-```
-
-### Project Structure
-
-```
-schmock/
-├── packages/
-│   ├── core/           # Core Schmock functionality with callable API
-│   ├── schema/         # Schema plugin for JSON Schema generation
-│   ├── express/        # Express middleware adapter
-│   └── angular/        # Angular HTTP interceptor adapter
-├── features/           # BDD feature files
-├── types/              # Shared TypeScript types
-├── docs/               # API documentation
-└── examples/           # Usage examples
-```
-
-## Contributing
-
-We use GitHub Flow with automated quality checks:
-
-### Getting Started
-1. **Clone and setup**:
-   ```sh
-   git clone <repo>
-   cd schmock
-   bun install
-   bun run setup  # Configure Git hooks
-   ```
-
-2. **Create feature branch**:
-   ```sh
-   git checkout develop
-   git pull origin develop
-   git checkout -b feature/your-feature-name
-   ```
-
-3. **Development workflow**:
-   - Make your changes with tests
-   - Git hooks automatically run linting and tests on commit
-   - BDD tests may fail during development (expected for TDD)
-
-4. **Create PR**:
-   - Push feature branch to GitHub
-   - Create PR from feature → develop
-   - CI runs comprehensive checks
-   - All tests must pass for main branch PRs
-
-5. **After review**: Merge to develop, then periodically develop → main
-
-### Quality Standards
-- **Automatic**: Git hooks enforce linting and test standards
-- **Manual override**: Use `git commit --no-verify` only when necessary
-- **Comprehensive testing**: BDD for consistent DX, unit and integration
-
-See [CLAUDE.md](./CLAUDE.md) for detailed development guidelines and project architecture.
-
+Branches: `feature/*` -> `develop` -> `main`. See [CLAUDE.md](./CLAUDE.md) for full workflow.
 
 ## Trivia
 
-This is a project developped to test LLM agents capabilities using BDD as framework and decided to release the result. It's used for development on a daily basis by me
-
-## Roadmap
-
-- [x] Basic static mocking with GET requests
-- [x] Support for all HTTP methods (POST, PUT, DELETE, PATCH)
-- [x] Dynamic route patterns (e.g., `/api/users/:id`)
-- [x] State management between requests
-- [x] Direct callable API with zero boilerplate
-- [x] Custom status codes and headers
-- [x] Plugin pipeline with `.pipe()` chaining
-- [x] Schema-based data generation
-- [x] Express middleware adapter
-- [x] Angular HTTP interceptor adapter
-- [ ] Runtime content-type validation
-- [ ] Request/response validation plugins
-- [ ] Response delays and error simulation
-- [ ] Caching plugin
-- [ ] Persistence plugin
-- [ ] GraphQL support
-- [ ] WebSocket support
+This project was built to test LLM agent capabilities using BDD as a development framework. The result turned out useful so it got released. Used daily.
 
 ## License
 

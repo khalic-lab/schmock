@@ -1,6 +1,6 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { schmock } from "../index";
+import { evalMockSetup } from "./eval-mock";
 import type { CallableMockInstance } from "../types";
 
 const feature = await loadFeature("../../features/http-methods.feature");
@@ -13,13 +13,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("GET method with query parameters", ({ Given, When, Then }) => {
     Given("I create a mock with GET endpoint:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /search', ({ query }) => ({
-        results: [],
-        query: query.q,
-        page: parseInt(query.page || '1'),
-        limit: parseInt(query.limit || '10')
-      }));
+      mock = evalMockSetup(docString);
     });
 
     When("I make a GET request to {string}", async (_, path: string) => {
@@ -42,12 +36,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("POST method with JSON body", ({ Given, When, Then, And }) => {
     Given("I create a mock with POST endpoint:", (_, docString: string) => {
-      mock = schmock();
-      mock('POST /users', ({ body }) => [201, {
-        id: 123,
-        ...body,
-        createdAt: '2023-01-01T00:00:00Z'
-      }]);
+      mock = evalMockSetup(docString);
     });
 
     When("I make a POST request to {string} with JSON body:", async (_, path: string, docString: string) => {
@@ -67,12 +56,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("PUT method for resource updates", ({ Given, When, Then }) => {
     Given("I create a mock with PUT endpoint:", (_, docString: string) => {
-      mock = schmock();
-      mock('PUT /users/:id', ({ params, body }) => ({
-        id: parseInt(params.id),
-        ...body,
-        updatedAt: '2023-01-01T00:00:00Z'
-      }));
+      mock = evalMockSetup(docString);
     });
 
     When("I make a PUT request to {string} with JSON body:", async (_, path: string, docString: string) => {
@@ -88,8 +72,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("DELETE method with confirmation", ({ Given, When, Then, And }) => {
     Given("I create a mock with DELETE endpoint:", (_, docString: string) => {
-      mock = schmock();
-      mock('DELETE /users/:id', ({ params }) => [204, null]);
+      mock = evalMockSetup(docString);
     });
 
     When("I make a DELETE request to {string}", async (_, path: string) => {
@@ -107,13 +90,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("PATCH method for partial updates", ({ Given, When, Then }) => {
     Given("I create a mock with PATCH endpoint:", (_, docString: string) => {
-      mock = schmock();
-      mock('PATCH /users/:id', ({ params, body }) => ({
-        id: parseInt(params.id),
-        email: 'existing@example.com',
-        ...body,
-        updatedAt: '2023-01-01T00:00:00Z'
-      }));
+      mock = evalMockSetup(docString);
     });
 
     When("I make a PATCH request to {string} with JSON body:", async (_, path: string, docString: string) => {
@@ -129,12 +106,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("HEAD method returns headers only", ({ Given, When, Then, And }) => {
     Given("I create a mock with HEAD endpoint:", (_, docString: string) => {
-      mock = schmock();
-      mock('HEAD /users/:id', ({ params }) => [200, null, {
-        'Content-Type': 'application/json',
-        'Last-Modified': 'Wed, 01 Jan 2023 00:00:00 GMT',
-        'Content-Length': '156'
-      }]);
+      mock = evalMockSetup(docString);
     });
 
     When("I make a HEAD request to {string}", async (_, path: string) => {
@@ -158,12 +130,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("OPTIONS method for CORS preflight", ({ Given, When, Then, And }) => {
     Given("I create a mock with OPTIONS endpoint:", (_, docString: string) => {
-      mock = schmock();
-      mock('OPTIONS /api/users', () => [200, null, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-      }]);
+      mock = evalMockSetup(docString);
     });
 
     When("I make an OPTIONS request to {string}", async (_, path: string) => {
@@ -185,11 +152,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Multiple methods on same path", ({ Given, When, Then, And }) => {
     Given("I create a mock with multiple methods on same path:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /resource', { action: 'read' });
-      mock('POST /resource', { action: 'create' });
-      mock('PUT /resource', { action: 'update' });
-      mock('DELETE /resource', { action: 'delete' });
+      mock = evalMockSetup(docString);
     });
 
     When("I test all methods on {string}", async (_, path: string) => {
@@ -223,11 +186,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Method-specific content types", ({ Given, When, Then, And }) => {
     Given("I create a mock with method-specific content types:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /data.json', { data: 'json' });
-      mock('GET /data.xml', '<data>xml</data>', { contentType: 'application/xml' });
-      mock('GET /data.txt', 'plain text data');
-      mock('POST /upload', 'File uploaded successfully', { contentType: 'text/plain' });
+      mock = evalMockSetup(docString);
     });
 
     When("I test method-specific content types", async () => {
@@ -259,7 +218,7 @@ describeFeature(feature, ({ Scenario }) => {
     error = null;
 
     Given("I create a mock with lowercase method:", (_, docString: string) => {
-      mock = schmock();
+      mock = evalMockSetup(docString);
     });
 
     When("I attempt to create a mock with lowercase method", () => {
@@ -282,7 +241,7 @@ describeFeature(feature, ({ Scenario }) => {
     error = null;
 
     Given("I create a mock with custom method:", (_, docString: string) => {
-      mock = schmock();
+      mock = evalMockSetup(docString);
     });
 
     When("I attempt to create a mock with unsupported method", () => {
@@ -303,11 +262,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Method with special characters in path", ({ Given, When, Then }) => {
     Given("I create a mock with special characters:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /api/v1/users/:id/posts/:post-id', ({ params }) => ({
-        userId: params.id,
-        postId: params['post-id']
-      }));
+      mock = evalMockSetup(docString);
     });
 
     When("I make a GET request to {string}", async (_, path: string) => {
@@ -322,13 +277,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Method with request headers validation", ({ Given, When, Then, And }) => {
     Given("I create a mock with header validation:", (_, docString: string) => {
-      mock = schmock();
-      mock('POST /secure', ({ headers, body }) => {
-        if (headers.authorization !== 'Bearer valid-token') {
-          return [401, { error: 'Unauthorized' }];
-        }
-        return [200, { message: 'Success', data: body }];
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I make a POST request with valid headers", async () => {
@@ -362,20 +311,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Method chaining with plugins", ({ Given, When, Then, And }) => {
     Given("I create a mock with method-specific plugins:", (_, docString: string) => {
-      mock = schmock();
-      const loggerPlugin = {
-        name: 'method-logger',
-        process: (ctx: any, response: any) => ({
-          context: ctx,
-          response: {
-            ...response,
-            method: ctx.method,
-            logged: true
-          }
-        })
-      };
-      mock('GET /logged', { data: 'get' }).pipe(loggerPlugin);
-      mock('POST /logged', { data: 'post' }).pipe(loggerPlugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I test method chaining with plugins", async () => {

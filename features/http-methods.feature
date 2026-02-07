@@ -165,7 +165,6 @@ Feature: HTTP Methods Support
     Given I create a mock with lowercase method:
       """
       const mock = schmock()
-      mock('get /test', { method: 'get' })
       """
     When I attempt to create a mock with lowercase method
     Then it should throw RouteParseError for invalid method case
@@ -174,7 +173,6 @@ Feature: HTTP Methods Support
     Given I create a mock with custom method:
       """
       const mock = schmock()
-      mock('CUSTOM /endpoint', { custom: true })
       """
     When I attempt to create a mock with unsupported method
     Then it should throw RouteParseError for unsupported method

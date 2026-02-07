@@ -56,9 +56,9 @@ describeFeature(feature, ({ Scenario }) => {
     ({ Given, When, Then, And }) => {
       Given(
         "I create an Express middleware from a Schmock mock with:",
-        (_, _docString: string) => {
+        (_, docString: string) => {
           mock = schmock();
-          mock("GET /users", [{ id: 1, name: "John" }]);
+          new Function("mock", docString)(mock);
           middleware = toExpress(mock);
         },
       );
@@ -94,9 +94,9 @@ describeFeature(feature, ({ Scenario }) => {
     ({ Given, When, Then }) => {
       Given(
         "I create an Express middleware from a Schmock mock with:",
-        (_, _docString: string) => {
+        (_, docString: string) => {
           mock = schmock();
-          mock("GET /users", [{ id: 1 }]);
+          new Function("mock", docString)(mock);
           middleware = toExpress(mock);
         },
       );
@@ -120,9 +120,9 @@ describeFeature(feature, ({ Scenario }) => {
     ({ Given, When, Then }) => {
       Given(
         "I create an Express middleware from a Schmock mock with:",
-        (_, _docString: string) => {
+        (_, docString: string) => {
           mock = schmock();
-          mock("GET /users", [{ id: 1 }]);
+          new Function("mock", docString)(mock);
           middleware = toExpress(mock);
         },
       );
@@ -146,9 +146,9 @@ describeFeature(feature, ({ Scenario }) => {
     ({ Given, When, Then, And }) => {
       Given(
         "I create an Express middleware from a Schmock mock with:",
-        (_, _docString: string) => {
+        (_, docString: string) => {
           mock = schmock();
-          mock("GET /error", () => [500, { error: "Server Error" }]);
+          new Function("mock", docString)(mock);
           middleware = toExpress(mock);
         },
       );
@@ -179,11 +179,9 @@ describeFeature(feature, ({ Scenario }) => {
     ({ Given, When, Then, And }) => {
       Given(
         "I create an Express middleware from a Schmock mock with:",
-        (_, _docString: string) => {
+        (_, docString: string) => {
           mock = schmock();
-          mock("GET /fail", () => {
-            throw new Error("Generator exploded");
-          });
+          new Function("mock", docString)(mock);
           middleware = toExpress(mock);
         },
       );
@@ -214,13 +212,9 @@ describeFeature(feature, ({ Scenario }) => {
     ({ Given, When, Then, And }) => {
       Given(
         "I create an Express middleware from a Schmock mock with:",
-        (_, _docString: string) => {
+        (_, docString: string) => {
           mock = schmock();
-          mock("GET /custom", () => [
-            200,
-            { ok: true },
-            { "x-custom": "value" },
-          ]);
+          new Function("mock", docString)(mock);
           middleware = toExpress(mock);
         },
       );

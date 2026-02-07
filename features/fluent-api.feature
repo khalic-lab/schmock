@@ -134,8 +134,8 @@ Feature: Callable API
       """
       const mock = schmock({})
       mock('GET /users', () => [{ id: 1, name: 'John' }], { contentType: 'application/json' })
-        .pipe(loggingPlugin())
-        .pipe(corsPlugin())
+        .pipe({ name: 'logging', process: (ctx, response) => ({ context: ctx, response }) })
+        .pipe({ name: 'cors', process: (ctx, response) => ({ context: ctx, response }) })
       """
     When I request "GET /users"
     Then I should receive:

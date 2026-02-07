@@ -1,6 +1,6 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { schmock } from "../index";
+import { evalMockSetup } from "./eval-mock";
 import type { CallableMockInstance } from "../types";
 
 const feature = await loadFeature("../../features/async-support.feature");
@@ -14,11 +14,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Async generator function returns Promise", ({ Given, When, Then, And }) => {
     Given("I create a mock with async generator:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /async-data', async () => {
-        await new Promise(resolve => setTimeout(resolve, 10));
-        return { message: 'async response' };
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -38,14 +34,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Async generator with context access", ({ Given, When, Then, And }) => {
     Given("I create a mock with async context generator:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /async-user/:id', async ({ params }) => {
-        await new Promise(resolve => setTimeout(resolve, 5));
-        return { 
-          userId: params.id, 
-          fetchedAt: new Date().toISOString()
-        };
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -64,15 +53,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Multiple async generators in different routes", ({ Given, When, Then, And }) => {
     Given("I create a mock with multiple async routes:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /async-posts', async () => {
-        await new Promise(resolve => setTimeout(resolve, 5));
-        return [{ id: 1, title: 'First Post' }];
-      });
-      mock('GET /async-comments', async () => {
-        await new Promise(resolve => setTimeout(resolve, 8));
-        return [{ id: 1, comment: 'Great post!' }];
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I make concurrent requests to {string} and {string}", async (_, path1: string, path2: string) => {
@@ -99,22 +80,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Async plugin processing", ({ Given, When, Then, And }) => {
     Given("I create a mock with async plugin:", (_, docString: string) => {
-      mock = schmock();
-      const asyncPlugin = {
-        name: 'async-processor',
-        process: async (ctx: any, response: any) => {
-          await new Promise(resolve => setTimeout(resolve, 5));
-          return {
-            context: ctx,
-            response: {
-              data: response,
-              processedAsync: true,
-              timestamp: new Date().toISOString()
-            }
-          };
-        }
-      };
-      mock('GET /processed', { original: 'data' }).pipe(asyncPlugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -138,27 +104,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Mixed sync and async plugin pipeline", ({ Given, When, Then, And }) => {
     Given("I create a mock with mixed plugin pipeline:", (_, docString: string) => {
-      mock = schmock();
-      const syncPlugin = {
-        name: 'sync-step',
-        process: (ctx: any, response: any) => ({
-          context: ctx,
-          response: { ...response, syncStep: true }
-        })
-      };
-      const asyncPlugin = {
-        name: 'async-step',
-        process: async (ctx: any, response: any) => {
-          await new Promise(resolve => setTimeout(resolve, 5));
-          return {
-            context: ctx,
-            response: { ...response, asyncStep: true }
-          };
-        }
-      };
-      mock('GET /mixed', { base: 'data' })
-        .pipe(syncPlugin)
-        .pipe(asyncPlugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -183,11 +129,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Async generator with Promise rejection", ({ Given, When, Then, And }) => {
     Given("I create a mock with failing async generator:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /async-fail', async () => {
-        await new Promise(resolve => setTimeout(resolve, 5));
-        throw new Error('Async operation failed');
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -206,23 +148,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Async plugin error recovery", ({ Given, When, Then, And }) => {
     Given("I create a mock with async error recovery:", (_, docString: string) => {
-      mock = schmock();
-      const asyncErrorPlugin = {
-        name: 'async-error-handler',
-        process: async () => {
-          await new Promise(resolve => setTimeout(resolve, 5));
-          throw new Error('Async plugin failed');
-        },
-        onError: async (error: Error, ctx: any) => {
-          await new Promise(resolve => setTimeout(resolve, 3));
-          return {
-            status: 200,
-            body: { recovered: true, originalError: error.message },
-            headers: {}
-          };
-        }
-      };
-      mock('GET /async-recovery', 'original').pipe(asyncErrorPlugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -246,11 +172,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Async generator with delay configuration", ({ Given, When, Then, And }) => {
     Given("I create a mock with async generator and delay:", (_, docString: string) => {
-      mock = schmock({ delay: 20 });
-      mock('GET /delayed-async', async () => {
-        await new Promise(resolve => setTimeout(resolve, 10));
-        return { delayed: true, async: true };
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string} and measure time", async (_, request: string) => {
@@ -273,15 +195,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Async generator with state management", ({ Given, When, Then, And }) => {
     Given("I create a mock with async stateful generator:", (_, docString: string) => {
-      mock = schmock({ state: { asyncCounter: 0 } });
-      mock('GET /async-counter', async ({ state }) => {
-        await new Promise(resolve => setTimeout(resolve, 5));
-        state.asyncCounter = (state.asyncCounter || 0) + 1;
-        return { 
-          count: state.asyncCounter,
-          processedAsync: true
-        };
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string} twice", async (_, request: string) => {
@@ -308,18 +222,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Promise-based plugin response generation", ({ Given, When, Then }) => {
     Given("I create a mock with Promise-generating plugin:", (_, docString: string) => {
-      mock = schmock();
-      const promisePlugin = {
-        name: 'promise-generator',
-        process: async (ctx: any, response: any) => {
-          if (!response) {
-            const data = await Promise.resolve({ generated: 'by promise' });
-            return { context: ctx, response: data };
-          }
-          return { context: ctx, response };
-        }
-      };
-      mock('GET /promise-gen', null).pipe(promisePlugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -335,21 +238,13 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Concurrent async requests isolation", ({ Given, When, Then, And }) => {
     Given("I create a mock with async state isolation:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /isolated/:id', async ({ params }) => {
-        const delay = parseInt(params.id) * 5;
-        await new Promise(resolve => setTimeout(resolve, delay));
-        return { 
-          id: params.id,
-          processedAt: Date.now()
-        };
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I make concurrent requests to {string}, {string}, and {string}", async (_, path1: string, path2: string, path3: string) => {
       const promises = [
         mock.handle('GET', path1),
-        mock.handle('GET', path2), 
+        mock.handle('GET', path2),
         mock.handle('GET', path3)
       ];
       responses = await Promise.all(promises);
@@ -381,33 +276,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Async plugin pipeline with context state", ({ Given, When, Then, And }) => {
     Given("I create a mock with async stateful plugins:", (_, docString: string) => {
-      mock = schmock();
-      const plugin1 = {
-        name: 'async-step-1',
-        process: async (ctx: any, response: any) => {
-          await new Promise(resolve => setTimeout(resolve, 5));
-          ctx.state.set('step1', 'completed');
-          return { context: ctx, response };
-        }
-      };
-      const plugin2 = {
-        name: 'async-step-2',
-        process: async (ctx: any, response: any) => {
-          await new Promise(resolve => setTimeout(resolve, 3));
-          const step1Status = ctx.state.get('step1');
-          return {
-            context: ctx,
-            response: {
-              ...response,
-              step1: step1Status,
-              step2: 'completed'
-            }
-          };
-        }
-      };
-      mock('GET /async-pipeline', { base: 'data' })
-        .pipe(plugin1)
-        .pipe(plugin2);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
