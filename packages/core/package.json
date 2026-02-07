@@ -18,7 +18,8 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "rm -rf dist tsconfig.tsbuildinfo && tsc --build",
+    "build": "bun build:lib && bun build:types",
+    "build:lib": "bun build --minify --outdir=dist src/index.ts",
     "build:types": "rm -f tsconfig.tsbuildinfo && tsc --build",
     "pretest": "rm -f src/*.js src/*.d.ts || true",
     "test": "vitest",

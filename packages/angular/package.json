@@ -18,7 +18,7 @@
     "dev": "bun build:lib --watch",
     "clean": "rm -rf dist",
     "build": "bun run clean && bun run build:lib && bun run build:types",
-    "build:lib": "bun build src/index.ts --outdir dist --target node --format esm --external @angular/common --external @angular/core --external @schmock/core --external rxjs",
+    "build:lib": "bun build --minify src/index.ts --outdir dist --target node --format esm --external @angular/common --external @angular/core --external @schmock/core --external rxjs",
     "build:types": "rm -f tsconfig.tsbuildinfo && tsc --build",
     "test": "vitest run",
     "test:watch": "vitest",
