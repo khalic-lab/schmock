@@ -1,0 +1,27 @@
+import { describe, expect, it } from "vitest";
+import { {{PLUGIN_CAMEL}}Plugin } from "./{{PLUGIN_NAME}}";
+
+describe("{{PLUGIN_CAMEL}}Plugin", () => {
+  it("should have correct name", () => {
+    const plugin = {{PLUGIN_CAMEL}}Plugin();
+    expect(plugin.name).toBe("{{PLUGIN_NAME}}");
+  });
+
+  it("should pass through existing responses", () => {
+    const plugin = {{PLUGIN_CAMEL}}Plugin();
+    const context = {
+      path: "/test",
+      route: {},
+      method: "GET" as const,
+      params: {},
+      query: {},
+      headers: {},
+      state: new Map(),
+    };
+    const existingResponse = { data: "existing" };
+    const result = plugin.process(context as any, existingResponse);
+    expect(result.response).toEqual(existingResponse);
+  });
+
+  // TODO: Add tests for plugin-specific behavior
+});

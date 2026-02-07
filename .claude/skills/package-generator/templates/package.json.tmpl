@@ -1,0 +1,46 @@
+{
+  "name": "@schmock/{{PACKAGE_NAME}}",
+  "version": "1.0.0",
+  "description": "{{DESCRIPTION}}",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "bun build:lib && bun build:types",
+    "build:lib": "bun build --minify --outdir=dist src/index.ts",
+    "build:types": "tsc -p tsconfig.json",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "test:bdd": "vitest run --config vitest.config.bdd.ts",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write --unsafe src/",
+    "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@amiceli/vitest-cucumber": "^6.2.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.15"
+  },
+  "peerDependencies": {
+    "@schmock/core": "^1.0.0"
+  },
+  "keywords": [
+    "mock",
+    "api",
+    "{{PACKAGE_NAME}}",
+    "testing",
+    "development"
+  ],
+  "author": "Khalic Lab",
+  "license": "MIT"
+}
