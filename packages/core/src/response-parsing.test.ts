@@ -3,15 +3,14 @@ import { schmock } from "./index";
 
 describe("response parsing", () => {
   describe("tuple response formats", () => {
-    it("handles status-only tuple [status]", async () => {
+    it("treats single-element array [status] as data, not tuple", async () => {
       const mock = schmock();
       mock("GET /status-only", () => [204] as [number]);
 
       const response = await mock.handle("GET", "/status-only");
 
-      expect(response.status).toBe(204);
-      expect(response.body).toBeUndefined();
-      expect(response.headers).toEqual({});
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([204]);
     });
 
     it("handles [status, body] tuple", async () => {
@@ -61,7 +60,7 @@ describe("response parsing", () => {
       expect(response.headers).toEqual({});
     });
 
-    it("ignores extra tuple elements beyond [status, body, headers]", async () => {
+    it("treats arrays with more than 3 elements as data, not tuple", async () => {
       const mock = schmock();
       mock(
         "GET /extra",
@@ -71,8 +70,13 @@ describe("response parsing", () => {
       const response = await mock.handle("GET", "/extra");
 
       expect(response.status).toBe(200);
-      expect(response.body).toBe("data");
-      expect(response.headers).toEqual({});
+      expect(response.body).toEqual([
+        200,
+        "data",
+        {},
+        "ignored",
+        "also-ignored",
+      ]);
     });
 
     it("treats non-numeric first element as body, not status", async () => {

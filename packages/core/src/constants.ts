@@ -23,3 +23,19 @@ export function toHttpMethod(method: string): HttpMethod {
   }
   return upper;
 }
+
+/**
+ * Check if a value is a status tuple: [status, body] or [status, body, headers]
+ * Guards against misinterpreting numeric arrays like [1, 2, 3] as tuples.
+ */
+export function isStatusTuple(
+  value: unknown,
+): value is [number, unknown] | [number, unknown, Record<string, string>] {
+  return (
+    Array.isArray(value) &&
+    (value.length === 2 || value.length === 3) &&
+    typeof value[0] === "number" &&
+    value[0] >= 100 &&
+    value[0] <= 599
+  );
+}

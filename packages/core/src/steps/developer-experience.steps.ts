@@ -342,7 +342,7 @@ describeFeature(feature, ({ Scenario }) => {
   Scenario("Response tuple format edge cases", ({ Given, When, Then, And }) => {
     Given("I create a mock with three tuple response routes", () => {
       mock = schmock();
-      mock("GET /created", [201]);
+      mock("GET /created", [201, null]);
       mock("GET /with-headers", [200, { data: true }, { "x-custom": "header" }]);
       mock("GET /empty-with-status", [204, null]);
     });
