@@ -4,12 +4,9 @@ import { generateFromSchema } from "@schmock/schema";
 import type { JSONSchema7 } from "json-schema";
 import type { CrudResource } from "./crud-detector.js";
 import type { ParsedPath } from "./parser.js";
+import { isRecord } from "./utils.js";
 
 const COLLECTION_STATE_PREFIX = "openapi:collections:";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function toTuple(status: number, body: unknown): [number, unknown] {
   return [status, body];
@@ -159,9 +156,11 @@ export function createStaticGenerator(
     if (responseSchema) {
       try {
         return generateFromSchema({ schema: responseSchema });
-      } catch {
-        // Complex schemas (deep anyOf, circular refs) may fail generation.
-        // Fall back to an empty object rather than crashing.
+      } catch (error) {
+        console.warn(
+          `[@schmock/openapi] Schema generation failed for ${parsedPath.method} ${parsedPath.path}:`,
+          error instanceof Error ? error.message : error,
+        );
         return {};
       }
     }

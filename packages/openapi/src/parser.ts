@@ -5,6 +5,7 @@ import { toHttpMethod } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import type { OpenAPI } from "openapi-types";
 import { normalizeSchema } from "./normalizer.js";
+import { isRecord } from "./utils.js";
 
 export interface ParsedSpec {
   title: string;
@@ -40,10 +41,6 @@ const HTTP_METHOD_KEYS = new Set([
   "head",
   "options",
 ]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function isOpenApiDocument(value: unknown): value is OpenAPI.Document {
   return isRecord(value) && ("swagger" in value || "openapi" in value);

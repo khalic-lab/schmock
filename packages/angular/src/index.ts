@@ -16,26 +16,13 @@ import type {
   HttpMethod,
   ResponseResult,
 } from "@schmock/core";
-import { ROUTE_NOT_FOUND_CODE } from "@schmock/core";
+import { isHttpMethod, ROUTE_NOT_FOUND_CODE } from "@schmock/core";
 import { Observable } from "rxjs";
 
-const HTTP_METHODS = [
-  "GET",
-  "POST",
-  "PUT",
-  "DELETE",
-  "PATCH",
-  "HEAD",
-  "OPTIONS",
-] as const;
-
-function isHttpMethod(method: string): method is HttpMethod {
-  return (HTTP_METHODS as readonly string[]).includes(method);
-}
-
 function toHttpMethod(method: string): HttpMethod {
-  if (isHttpMethod(method)) {
-    return method;
+  const upper = method.toUpperCase();
+  if (isHttpMethod(upper)) {
+    return upper;
   }
   return "GET";
 }

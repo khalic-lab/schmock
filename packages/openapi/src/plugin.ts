@@ -13,12 +13,9 @@ import {
 import { parseSpec } from "./parser.js";
 import type { SeedConfig, SeedSource } from "./seed.js";
 import { loadSeed } from "./seed.js";
+import { isRecord } from "./utils.js";
 
 export type { SeedConfig, SeedSource };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 export interface OpenApiOptions {
   /** File path or inline spec object */
@@ -60,7 +57,7 @@ export async function openapi(
 
   return {
     name: "@schmock/openapi",
-    version: "1.0.0",
+    version: "1.1.1",
 
     install(instance: Schmock.CallableMockInstance) {
       // Seed initial state — we need state to be initialized before registering routes

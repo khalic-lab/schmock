@@ -2,14 +2,7 @@
 
 import type { JSONSchema7 } from "json-schema";
 import type { ParsedPath } from "./parser.js";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function toJsonSchema(node: Record<string, unknown>): JSONSchema7 {
-  return Object.assign<JSONSchema7, Record<string, unknown>>({}, node);
-}
+import { isRecord, toJsonSchema } from "./utils.js";
 
 export type CrudOperation = "list" | "create" | "read" | "update" | "delete";
 
