@@ -1,6 +1,6 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { schmock } from "../index";
+import { evalMockSetup } from "./eval-mock";
 import type { MockInstance } from "../types";
 
 const feature = await loadFeature("../../features/performance-reliability.feature");
@@ -15,32 +15,7 @@ describeFeature(feature, ({ Scenario }) => {
     responsesTimes = [];
 
     Given("I create a mock for load testing:", (_, docString: string) => {
-      // Create mock with new callable API for load testing
-      mock = schmock();
-      
-      mock('GET /api/health', () => ({ 
-        status: 'healthy', 
-        timestamp: Date.now() 
-      }));
-      
-      mock('GET /api/data/:id', ({ params }) => ({
-        id: params.id,
-        data: Array.from({ length: 50 }, (_, i) => ({ 
-          index: i, 
-          value: Math.random() 
-        })),
-        generated_at: new Date().toISOString()
-      }));
-      
-      mock('POST /api/process', ({ body }) => {
-        // Simulate processing time
-        const items = Array.isArray(body) ? body : [body];
-        return {
-          processed: items.length,
-          results: items.map(item => ({ ...item, processed: true })),
-          batch_id: Math.random().toString(36)
-        };
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I send {int} concurrent {string} requests", async (_, count: number, request: string) => {
@@ -80,7 +55,7 @@ describeFeature(feature, ({ Scenario }) => {
 
     When("I send {int} concurrent requests to different {string} endpoints", async (_, count: number, pathPattern: string) => {
       responses = [];
-      
+
       const promises = Array.from({ length: count }, async (_, i) => {
         const path = pathPattern.replace(":id", `id${i}`);
         return await mock.handle("GET", path);
@@ -131,49 +106,13 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Memory usage under sustained load", ({ Given, When, Then, And }) => {
     Given("I create a mock with potential memory concerns:", (_, docString: string) => {
-      // Create mock with routes that handle large data
-      mock = schmock();
-      
-      mock('POST /api/large-data', ({ body }) => {
-        // Create large response data
-        const largeArray = Array.from({ length: 1000 }, (_, i) => ({
-          id: i,
-          data: 'x'.repeat(100), // 100 chars per item
-          timestamp: Date.now(),
-          payload: body
-        }));
-        
-        return {
-          results: largeArray,
-          items: largeArray,
-          total_size: largeArray.length,
-          size: 'large',
-          memory_usage: process.memoryUsage ? process.memoryUsage() : null
-        };
-      });
-      
-      mock('GET /api/accumulate/:count', ({ params }) => {
-        const count = parseInt(params.count);
-        const items = Array.from({ length: count }, (_, i) => ({
-          id: i,
-          value: Math.random(),
-          timestamp: Date.now()
-        }));
-        
-        return {
-          items: items,
-          accumulated: items,
-          total: items.length,
-          count: items.length,
-          memory_usage: process.memoryUsage ? process.memoryUsage() : null
-        };
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I send {int} requests to {string} with {int}KB payloads", async (_, count: number, request: string, payloadSize: number) => {
       const [method, path] = request.split(" ");
       responses = [];
-      
+
       const largePayload = { data: 'x'.repeat(payloadSize * 1024) };
 
       for (let i = 0; i < count; i++) {
@@ -198,7 +137,7 @@ describeFeature(feature, ({ Scenario }) => {
     When("I request {string} multiple times", async (_, request: string) => {
       const [method, path] = request.split(" ");
       responses = [];
-      
+
       for (let i = 0; i < 5; i++) {
         const response = await mock.handle(method as any, path);
         responses.push(response);
@@ -222,48 +161,7 @@ describeFeature(feature, ({ Scenario }) => {
     responses = [];
 
     Given("I create a mock with intermittent failures:", (_, docString: string) => {
-      // Create mock with intermittent failure simulation
-      mock = schmock();
-      
-      let requestCount = 0;
-      
-      mock('POST /api/unreliable', ({ body }) => {
-        requestCount++;
-        
-        // Simulate 20% failure rate
-        if (requestCount % 5 === 0) {
-          return [500, { error: 'Simulated server error', request_id: requestCount }];
-        }
-        
-        return [200, { success: true, data: body, request_id: requestCount }];
-      });
-      
-      mock('GET /api/flaky', () => {
-        requestCount++;
-        
-        // Simulate 20% failure rate (1 in 5 requests fail)
-        if (requestCount % 5 === 0) {
-          return [500, { error: 'Flaky service error', request_id: requestCount }];
-        }
-        
-        return [200, { success: true, request_id: requestCount }];
-      });
-      
-      mock('POST /api/validate-strict', ({ body }) => {
-        if (!body || typeof body !== 'object') {
-          return [400, { error: 'Request body is required and must be an object', code: 'INVALID_BODY' }];
-        }
-        
-        if (!body.name || typeof body.name !== 'string') {
-          return [422, { error: 'Name field is required and must be a string', code: 'INVALID_NAME' }];
-        }
-        
-        if (!body.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
-          return [422, { error: 'Valid email address is required', code: 'INVALID_EMAIL' }];
-        }
-        
-        return [200, { message: 'Validation successful', data: body }];
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I send {int} requests to {string}", async (_, count: number, request: string) => {
@@ -279,7 +177,7 @@ describeFeature(feature, ({ Scenario }) => {
     Then("some requests should succeed and some should fail", () => {
       const successCount = responses.filter(r => r.status === 200).length;
       const errorCount = responses.filter(r => r.status >= 400).length;
-      
+
       expect(successCount).toBeGreaterThan(0);
       expect(errorCount).toBeGreaterThan(0);
       expect(successCount + errorCount).toBe(responses.length);
@@ -288,7 +186,7 @@ describeFeature(feature, ({ Scenario }) => {
     And("the success rate should be approximately {int}%", (_, expectedRate: number) => {
       const successCount = responses.filter(r => r.status === 200).length;
       const actualRate = (successCount / responses.length) * 100;
-      
+
       // Allow for some variance due to randomness
       expect(actualRate).toBeGreaterThan(expectedRate - 10);
       expect(actualRate).toBeLessThan(expectedRate + 10);
@@ -297,14 +195,14 @@ describeFeature(feature, ({ Scenario }) => {
     And("error responses should have appropriate status codes", () => {
       const errorResponses = responses.filter(r => r.status >= 400);
       const validErrorCodes = [429, 500, 503];
-      
+
       for (const response of errorResponses) {
         expect(validErrorCodes).toContain(response.status);
       }
     });
 
     When("I send requests to {string} with various invalid inputs", async (_, request: string) => {
-      const [method, path] = request.split(" ");  
+      const [method, path] = request.split(" ");
       responses = [];
 
       // Test various invalid scenarios
@@ -332,7 +230,7 @@ describeFeature(feature, ({ Scenario }) => {
 
     And("the error codes should correctly identify the validation issue", () => {
       expect(responses[0].status).toBe(400); // No content-type
-      expect(responses[1].status).toBe(400); // No body  
+      expect(responses[1].status).toBe(400); // No body
       expect(responses[2].status).toBe(400); // Invalid body type
       expect(responses[3].status).toBe(422); // Missing required field
     });
@@ -342,46 +240,13 @@ describeFeature(feature, ({ Scenario }) => {
     responses = [];
 
     Given("I create a mock with many route patterns:", (_, docString: string) => {
-      // Create mock with many different route patterns for performance testing
-      mock = schmock();
-      
-      // Routes that match the test expectations
-      mock('GET /api/users', () => ({ type: 'users-list' }));
-      mock('GET /api/users/:id', ({ params }) => ({ type: 'user', id: params.id }));
-      mock('GET /api/users/:userId/posts', ({ params }) => ({ type: 'user-posts', userId: params.userId }));
-      mock('GET /api/users/:userId/posts/:postId', ({ params }) => ({ 
-        type: 'user-post', 
-        userId: params.userId, 
-        postId: params.postId 
-      }));
-      mock('GET /api/users/:userId/posts/:postId/comments', ({ params }) => ({ 
-        type: 'post-comments', 
-        userId: params.userId, 
-        postId: params.postId 
-      }));
-      mock('GET /api/posts', () => ({ type: 'posts-list' }));
-      mock('GET /api/posts/:postId', ({ params }) => ({ type: 'post', postId: params.postId }));
-      mock('GET /api/posts/:postId/comments/:commentId', ({ params }) => ({ 
-        type: 'comment', 
-        postId: params.postId, 
-        commentId: params.commentId 
-      }));
-      mock('GET /static/:category/:file', ({ params }) => ({ 
-        type: 'static', 
-        category: params.category, 
-        file: params.file 
-      }));
-      mock('GET /api/v2/users/:userId', ({ params }) => ({ 
-        type: 'versioned-user', 
-        userId: params.userId, 
-        version: 'v2' 
-      }));
+      mock = evalMockSetup(docString);
     });
 
     When("I send requests to all route patterns simultaneously", async () => {
       const testPaths = [
         "GET /api/users",
-        "GET /api/users/123", 
+        "GET /api/users/123",
         "GET /api/users/123/posts",
         "GET /api/users/123/posts/456",
         "GET /api/users/123/posts/456/comments",

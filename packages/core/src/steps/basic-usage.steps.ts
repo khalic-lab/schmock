@@ -1,7 +1,7 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { schmock } from "../index";
 import type { CallableMockInstance } from "../types";
+import { evalMockSetup } from "./eval-mock";
 
 const feature = await loadFeature("../../features/basic-usage.feature");
 
@@ -11,8 +11,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Simplest possible mock - plain text", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /', 'Hello World');
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -31,8 +30,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Return JSON without specifying contentType", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /users', [{ id: 1, name: 'John' }]);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -52,8 +50,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Return object without contentType", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /user', { id: 1, name: 'John' });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -73,7 +70,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Empty mock instance", ({ Given, When, Then }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -88,8 +85,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Null response", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /null', null);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -108,8 +104,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Undefined response", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /undefined', undefined);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -128,8 +123,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Empty string response", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /empty', '');
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -148,8 +142,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Number response", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /count', 42);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -168,8 +161,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Boolean response", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /active', true);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -188,8 +180,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Function returning string", ({ Given, When, Then }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /dynamic', () => 'Dynamic response');
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -204,8 +195,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Function returning object", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /dynamic-json', () => ({ timestamp: Date.now() }));
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -228,10 +218,7 @@ describeFeature(feature, ({ Scenario }) => {
     let contactResponse: any;
 
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /', 'Home');
-      mock('GET /about', 'About Us');
-      mock('GET /contact', { email: 'test@example.com' });
+      mock = evalMockSetup(docString);
     });
 
     When("I make three requests to different routes", async () => {
@@ -256,8 +243,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Override contentType detection", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /data', { foo: 'bar' }, { contentType: 'text/plain' });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -276,8 +262,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("HTML response", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /page', '<h1>Hello</h1>', { contentType: 'text/html' });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -296,8 +281,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Binary/buffer response detection", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /binary', Buffer.from('binary data'));
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {

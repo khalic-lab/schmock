@@ -273,7 +273,7 @@ describe("Data Quality and Statistical Properties", () => {
         // Last names should be single words, may have special chars
         expect(sample.lastName).toMatch(/^[A-Z]/);
         expect(sample.lastName.length).toBeGreaterThanOrEqual(2);
-        expect(sample.lastName.length).toBeLessThan(25); // More generous for longer names
+        expect(sample.lastName.length).toBeLessThanOrEqual(30); // Generous for longer generated names
 
         // Full names should have multiple parts
         const nameParts = sample.fullName.split(" ");

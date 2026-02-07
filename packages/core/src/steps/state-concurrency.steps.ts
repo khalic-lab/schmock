@@ -1,6 +1,7 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
 import { schmock } from "../index";
+import { evalMockSetup } from "./eval-mock";
 import type { CallableMockInstance } from "../types";
 
 const feature = await loadFeature("../../features/state-concurrency.feature");
@@ -13,16 +14,11 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Concurrent state updates with race conditions", ({ Given, When, Then, And }) => {
     Given("I create a mock with shared counter state:", (_, docString: string) => {
-      mock = schmock({ state: { counter: 0 } });
-      mock('POST /increment', ({ state }) => {
-        const current = state.counter;
-        state.counter = current + 1;
-        return { counter: state.counter, previous: current };
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I make 5 concurrent increment requests", async () => {
-      const promises = Array.from({ length: 5 }, () => 
+      const promises = Array.from({ length: 5 }, () =>
         mock.handle('POST', '/increment')
       );
       responses = await Promise.all(promises);
@@ -46,11 +42,11 @@ describeFeature(feature, ({ Scenario }) => {
     And("each response should show sequential progression", () => {
       const previousValues = responses.map(r => r.body.previous);
       const counterValues = responses.map(r => r.body.counter);
-      
+
       // All previous values should be unique (no duplicates due to race conditions)
       const uniquePrevious = new Set(previousValues);
       expect(uniquePrevious.size).toBe(5);
-      
+
       // Counter values should be previous + 1
       responses.forEach(response => {
         expect(response.body.counter).toBe(response.body.previous + 1);
@@ -60,28 +56,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Concurrent access to different state properties", ({ Given, When, Then, And }) => {
     Given("I create a mock with multiple state properties:", (_, docString: string) => {
-      mock = schmock({ 
-        state: { 
-          users: 0, 
-          posts: 0, 
-          comments: 0 
-        } 
-      });
-      
-      mock('POST /users', ({ state }) => {
-        state.users++;
-        return { type: 'user', count: state.users };
-      });
-      
-      mock('POST /posts', ({ state }) => {
-        state.posts++;
-        return { type: 'post', count: state.posts };
-      });
-      
-      mock('POST /comments', ({ state }) => {
-        state.comments++;
-        return { type: 'comment', count: state.comments };
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I make concurrent requests to different endpoints", async () => {
@@ -101,7 +76,7 @@ describeFeature(feature, ({ Scenario }) => {
       const userResponses = responses.filter(r => r.body.type === 'user');
       const postResponses = responses.filter(r => r.body.type === 'post');
       const commentResponses = responses.filter(r => r.body.type === 'comment');
-      
+
       expect(userResponses).toHaveLength(3);
       expect(postResponses).toHaveLength(2);
       expect(commentResponses).toHaveLength(2);
@@ -111,7 +86,7 @@ describeFeature(feature, ({ Scenario }) => {
       const userCounts = responses.filter(r => r.body.type === 'user').map(r => r.body.count);
       const postCounts = responses.filter(r => r.body.type === 'post').map(r => r.body.count);
       const commentCounts = responses.filter(r => r.body.type === 'comment').map(r => r.body.count);
-      
+
       expect(Math.max(...userCounts)).toBe(3);
       expect(Math.max(...postCounts)).toBe(2);
       expect(Math.max(...commentCounts)).toBe(2);
@@ -120,21 +95,10 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("State isolation between different mock instances", ({ Given, When, Then, And }) => {
     Given("I create two separate mock instances with state:", (_, docString: string) => {
-      mock1 = schmock({ state: { value: 10 } });
-      mock2 = schmock({ state: { value: 20 } });
-      
-      mock1('GET /value', ({ state }) => ({ instance: 1, value: state.value }));
-      mock2('GET /value', ({ state }) => ({ instance: 2, value: state.value }));
-      
-      mock1('POST /update', ({ state, body }) => {
-        state.value = body.newValue;
-        return { instance: 1, updated: state.value };
-      });
-      
-      mock2('POST /update', ({ state, body }) => {
-        state.value = body.newValue;
-        return { instance: 2, updated: state.value };
-      });
+      const fn = new Function('schmock', docString + '\nreturn { mock1, mock2 };');
+      const result = fn(schmock);
+      mock1 = result.mock1;
+      mock2 = result.mock2;
     });
 
     When("I update state in both mock instances concurrently", async () => {
@@ -150,7 +114,7 @@ describeFeature(feature, ({ Scenario }) => {
     Then("each mock instance should maintain its own isolated state", () => {
       const instance1Responses = responses.filter(r => r.body.instance === 1);
       const instance2Responses = responses.filter(r => r.body.instance === 2);
-      
+
       expect(instance1Responses).toHaveLength(2);
       expect(instance2Responses).toHaveLength(2);
     });
@@ -158,7 +122,7 @@ describeFeature(feature, ({ Scenario }) => {
     And("changes in one instance should not affect the other", () => {
       const instance1Get = responses.find(r => r.body.instance === 1 && r.body.value !== undefined);
       const instance2Get = responses.find(r => r.body.instance === 2 && r.body.value !== undefined);
-      
+
       expect(instance1Get?.body.value).toBe(100);
       expect(instance2Get?.body.value).toBe(200);
     });
@@ -166,36 +130,11 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Concurrent plugin state modifications", ({ Given, When, Then, And }) => {
     Given("I create a mock with stateful plugins:", (_, docString: string) => {
-      mock = schmock({ state: { requestCount: 0, pluginData: {} } });
-      
-      const plugin1 = {
-        name: 'counter-plugin',
-        process: (ctx: any, response: any) => {
-          ctx.state.requestCount++;
-          ctx.state.pluginData.plugin1 = (ctx.state.pluginData.plugin1 || 0) + 1;
-          return {
-            context: ctx,
-            response: { ...response, plugin1Count: ctx.state.pluginData.plugin1 }
-          };
-        }
-      };
-      
-      const plugin2 = {
-        name: 'tracker-plugin', 
-        process: (ctx: any, response: any) => {
-          ctx.state.pluginData.plugin2 = (ctx.state.pluginData.plugin2 || 0) + 1;
-          return {
-            context: ctx,
-            response: { ...response, plugin2Count: ctx.state.pluginData.plugin2 }
-          };
-        }
-      };
-      
-      mock('GET /data', { base: 'data' }).pipe(plugin1).pipe(plugin2);
+      mock = evalMockSetup(docString);
     });
 
     When("I make concurrent requests through the plugin pipeline", async () => {
-      const promises = Array.from({ length: 4 }, () => 
+      const promises = Array.from({ length: 4 }, () =>
         mock.handle('GET', '/data')
       );
       responses = await Promise.all(promises);
@@ -231,37 +170,7 @@ describeFeature(feature, ({ Scenario }) => {
     let sessionIds: string[] = [];
 
     Given("I create a mock with persistent session state:", (_, docString: string) => {
-      mock = schmock({ 
-        state: { 
-          sessions: {},
-          activeUsers: 0
-        } 
-      });
-      
-      mock('POST /login', ({ state, body }) => {
-        const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(7);
-        state.sessions[sessionId] = { 
-          user: body.username, 
-          loginTime: new Date().toISOString() 
-        };
-        state.activeUsers++;
-        return { sessionId, message: 'Logged in', activeUsers: state.activeUsers };
-      });
-      
-      mock('GET /sessions/:sessionId', ({ state, params }) => {
-        const session = state.sessions[params.sessionId];
-        return session ? { session, totalSessions: Object.keys(state.sessions).length } 
-                       : [404, { error: 'Session not found' }];
-      });
-      
-      mock('DELETE /sessions/:sessionId', ({ state, params }) => {
-        if (state.sessions[params.sessionId]) {
-          delete state.sessions[params.sessionId];
-          state.activeUsers--;
-          return { message: 'Logged out', activeUsers: state.activeUsers };
-        }
-        return [404, { error: 'Session not found' }];
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I simulate concurrent user login and logout operations", async () => {
@@ -271,10 +180,10 @@ describeFeature(feature, ({ Scenario }) => {
         mock.handle('POST', '/login', { body: { username: 'user2' } }),
         mock.handle('POST', '/login', { body: { username: 'user3' } })
       ];
-      
+
       const loginResponses = await Promise.all(loginPromises);
       sessionIds = loginResponses.map(r => r.body.sessionId);
-      
+
       // Then make concurrent operations
       const promises = [
         mock.handle('GET', `/sessions/${sessionIds[0]}`),
@@ -282,14 +191,14 @@ describeFeature(feature, ({ Scenario }) => {
         mock.handle('DELETE', `/sessions/${sessionIds[0]}`),
         mock.handle('POST', '/login', { body: { username: 'user4' } })
       ];
-      
+
       responses = [...loginResponses, ...await Promise.all(promises)];
     });
 
     Then("session state should be maintained correctly across requests", () => {
       const sessionGets = responses.filter(r => r.body.session);
       expect(sessionGets.length).toBeGreaterThan(0);
-      
+
       sessionGets.forEach(response => {
         expect(response.body.session).toHaveProperty('user');
         expect(response.body.session).toHaveProperty('loginTime');
@@ -299,10 +208,10 @@ describeFeature(feature, ({ Scenario }) => {
     And("active user count should remain consistent", () => {
       const loginResponses = responses.filter(r => r.body.message === 'Logged in');
       const logoutResponses = responses.filter(r => r.body.message === 'Logged out');
-      
+
       expect(loginResponses).toHaveLength(4); // 3 initial + 1 concurrent
       expect(logoutResponses).toHaveLength(1);
-      
+
       // Due to concurrent execution, the exact count might vary
       const finalActiveUsers = logoutResponses[0]?.body.activeUsers;
       expect(finalActiveUsers).toBeGreaterThan(0);
@@ -318,27 +227,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Large state object concurrent modifications", ({ Given, When, Then, And }) => {
     Given("I create a mock with large state object:", (_, docString: string) => {
-      mock = schmock({ 
-        state: { 
-          data: Array.from({ length: 1000 }, (_, i) => ({ id: i, value: 0 }))
-        } 
-      });
-      
-      mock('PATCH /data/:id', ({ state, params, body }) => {
-        const id = parseInt(params.id);
-        const item = state.data.find(d => d.id === id);
-        if (item) {
-          item.value = body.value;
-          return { id, updated: item.value, total: state.data.length };
-        }
-        return [404, { error: 'Item not found' }];
-      });
-      
-      mock('GET /data/stats', ({ state }) => {
-        const total = state.data.reduce((sum, item) => sum + item.value, 0);
-        const average = total / state.data.length;
-        return { total, average, items: state.data.length };
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I make concurrent updates to different parts of large state", async () => {
@@ -349,14 +238,14 @@ describeFeature(feature, ({ Scenario }) => {
         mock.handle('PATCH', '/data/999', { body: { value: 40 } }),
         mock.handle('GET', '/data/stats')
       ];
-      
+
       responses = await Promise.all(updatePromises);
     });
 
     Then("all updates should be applied correctly", () => {
       const updateResponses = responses.filter(r => r.body.updated !== undefined);
       expect(updateResponses).toHaveLength(4);
-      
+
       updateResponses.forEach((response, index) => {
         const expectedValues = [10, 20, 30, 40];
         expect(response.body.updated).toBe(expectedValues[index]);
@@ -366,7 +255,7 @@ describeFeature(feature, ({ Scenario }) => {
     And("statistics should reflect the correct aggregated values", () => {
       const statsResponse = responses.find(r => r.body && r.body.total !== undefined);
       expect(statsResponse).toBeDefined();
-      
+
       // Due to concurrent execution, the stats might be calculated before all updates complete
       // Just verify the structure and that the total makes sense
       if (statsResponse?.body.total !== undefined) {
@@ -398,44 +287,11 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("State cleanup and memory management", ({ Given, When, Then, And }) => {
     Given("I create a mock with temporary state management:", (_, docString: string) => {
-      mock = schmock({ 
-        state: { 
-          cache: {},
-          cacheSize: 0,
-          maxCacheSize: 5
-        } 
-      });
-      
-      mock('POST /cache/:key', ({ state, params, body }) => {
-        // Simple LRU-like cache with size limit
-        if (state.cacheSize >= state.maxCacheSize) {
-          const oldestKey = Object.keys(state.cache)[0];
-          delete state.cache[oldestKey];
-          state.cacheSize--;
-        }
-        
-        state.cache[params.key] = {
-          value: body.value,
-          timestamp: Date.now()
-        };
-        state.cacheSize++;
-        
-        return { 
-          key: params.key, 
-          cached: true, 
-          cacheSize: state.cacheSize 
-        };
-      });
-      
-      mock('GET /cache/:key', ({ state, params }) => {
-        const item = state.cache[params.key];
-        return item ? { key: params.key, ...item } 
-                    : [404, { error: 'Not found in cache' }];
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I add items to cache beyond the size limit concurrently", async () => {
-      const promises = Array.from({ length: 8 }, (_, i) => 
+      const promises = Array.from({ length: 8 }, (_, i) =>
         mock.handle('POST', `/cache/item${i}`, { body: { value: `value${i}` } })
       );
       responses = await Promise.all(promises);
@@ -463,39 +319,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Nested state object concurrent access", ({ Given, When, Then, And }) => {
     Given("I create a mock with deeply nested state:", (_, docString: string) => {
-      mock = schmock({ 
-        state: { 
-          users: {
-            profiles: {},
-            preferences: {},
-            activity: {}
-          }
-        } 
-      });
-      
-      mock('PUT /users/:id/profile', ({ state, params, body }) => {
-        if (!state.users.profiles[params.id]) {
-          state.users.profiles[params.id] = {};
-        }
-        Object.assign(state.users.profiles[params.id], body);
-        return { userId: params.id, profile: state.users.profiles[params.id] };
-      });
-      
-      mock('PUT /users/:id/preferences', ({ state, params, body }) => {
-        state.users.preferences[params.id] = { ...body, updatedAt: Date.now() };
-        return { userId: params.id, preferences: state.users.preferences[params.id] };
-      });
-      
-      mock('POST /users/:id/activity', ({ state, params, body }) => {
-        if (!state.users.activity[params.id]) {
-          state.users.activity[params.id] = [];
-        }
-        state.users.activity[params.id].push({ ...body, timestamp: Date.now() });
-        return { 
-          userId: params.id, 
-          activityCount: state.users.activity[params.id].length 
-        };
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I make concurrent updates to different nested state sections", async () => {
@@ -507,7 +331,7 @@ describeFeature(feature, ({ Scenario }) => {
         mock.handle('POST', '/users/2/activity', { body: { action: 'view_page' } }),
         mock.handle('POST', '/users/1/activity', { body: { action: 'logout' } })
       ];
-      
+
       responses = await Promise.all(promises);
     });
 
@@ -515,7 +339,7 @@ describeFeature(feature, ({ Scenario }) => {
       const profileUpdates = responses.filter(r => r.body.profile);
       const preferenceUpdates = responses.filter(r => r.body.preferences);
       const activityUpdates = responses.filter(r => r.body.activityCount);
-      
+
       expect(profileUpdates).toHaveLength(2);
       expect(preferenceUpdates).toHaveLength(1);
       expect(activityUpdates).toHaveLength(3);
@@ -524,7 +348,7 @@ describeFeature(feature, ({ Scenario }) => {
     And("no cross-contamination should occur between user data", () => {
       const user1Updates = responses.filter(r => r.body.userId === '1');
       const user2Updates = responses.filter(r => r.body.userId === '2');
-      
+
       expect(user1Updates).toHaveLength(4); // profile, preferences, 2 activities
       expect(user2Updates).toHaveLength(2); // profile, activity
     });
@@ -534,7 +358,7 @@ describeFeature(feature, ({ Scenario }) => {
         expect(response.body.userId).toBeDefined();
         expect(['1', '2']).toContain(response.body.userId);
       });
-      
+
       const activityUpdates = responses.filter(r => r.body.activityCount);
       const user1Activities = activityUpdates.filter(r => r.body.userId === '1');
       expect(user1Activities.length).toBe(2);
@@ -544,46 +368,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("State rollback on plugin errors", ({ Given, When, Then, And }) => {
     Given("I create a mock with error-prone stateful plugin:", (_, docString: string) => {
-      mock = schmock({ state: { transactions: [], balance: 100 } });
-      
-      const transactionPlugin = {
-        name: 'transaction-plugin',
-        process: (ctx: any, response: any) => {
-          const amount = ctx.body.amount;
-          const currentBalance = ctx.state.balance;
-          
-          // Simulate transaction processing
-          if (amount > currentBalance) {
-            throw new Error('Insufficient funds');
-          }
-          
-          ctx.state.balance -= amount;
-          ctx.state.transactions.push({
-            amount,
-            balanceAfter: ctx.state.balance,
-            timestamp: Date.now()
-          });
-          
-          return {
-            context: ctx,
-            response: {
-              success: true,
-              newBalance: ctx.state.balance,
-              transactionCount: ctx.state.transactions.length
-            }
-          };
-        },
-        onError: (error: Error, ctx: any) => {
-          // Don't modify state on error - let it rollback naturally
-          return {
-            status: 400,
-            body: { error: error.message, balance: ctx.state.balance },
-            headers: {}
-          };
-        }
-      };
-      
-      mock('POST /transaction', { initialBalance: 100 }).pipe(transactionPlugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I make concurrent transactions including some that should fail", async () => {
@@ -594,13 +379,13 @@ describeFeature(feature, ({ Scenario }) => {
         mock.handle('POST', '/transaction', { body: { amount: 25 } }), // Should succeed
         mock.handle('POST', '/transaction', { body: { amount: 100 } }) // May succeed or fail depending on order
       ];
-      
+
       responses = await Promise.all(promises);
     });
 
     Then("successful transactions should update state correctly", () => {
       const successfulTransactions = responses.filter(r => r.status === 200 && r.body.success);
-      
+
       // Some transactions might succeed or fail depending on concurrency
       successfulTransactions.forEach(response => {
         expect(response.body.success).toBe(true);
@@ -611,7 +396,7 @@ describeFeature(feature, ({ Scenario }) => {
 
     And("failed transactions should not modify state", () => {
       const failedTransactions = responses.filter(r => r.status >= 400);
-      
+
       failedTransactions.forEach(response => {
         expect(response.status).toBeGreaterThanOrEqual(400);
         expect(response.body).toBeDefined();

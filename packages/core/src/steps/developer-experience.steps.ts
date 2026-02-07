@@ -1,6 +1,6 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { schmock } from "../index";
+import { evalMockSetup } from "./eval-mock";
 import type { CallableMockInstance } from "../types";
 
 const feature = await loadFeature("../../features/developer-experience.feature");
@@ -13,8 +13,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Forgetting to provide response data", ({ Given, When, Then, And }) => {
     Given("I create a mock without response data:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /empty');
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -33,8 +32,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Using wrong parameter name in route", ({ Given, When, Then }) => {
     Given("I create a mock with parameter route:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /users/:userId', ({ params }) => ({ id: params.id }));
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -49,8 +47,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Correct parameter usage", ({ Given, When, Then }) => {
     Given("I create a mock with proper parameter usage:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /users/:userId', ({ params }) => ({ id: params.userId }));
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -66,11 +63,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Mixing content types without explicit configuration", ({ Given, When, Then, And }) => {
     Given("I create a mock with mixed content types:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /json', { data: 'json' });
-      mock('GET /text', 'plain text');
-      mock('GET /number', 42);
-      mock('GET /boolean', true);
+      mock = evalMockSetup(docString);
     });
 
     When("I test all mixed content type routes", async () => {
@@ -100,8 +93,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Expecting JSON but getting string conversion", ({ Given, When, Then, And }) => {
     Given("I create a mock with number response:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /price', 19.99);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -120,8 +112,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Forgetting await with async generators", ({ Given, When, Then, And }) => {
     Given("I create a mock with async generator:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /data', async () => ({ async: true }));
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -141,11 +132,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("State confusion between global and local state", ({ Given, When, Then, And }) => {
     Given("I create a mock with state confusion:", (_, docString: string) => {
-      mock = schmock({ state: { global: 1 } });
-      mock('GET /counter', ({ state }) => {
-        state.local = (state.local || 0) + 1;
-        return { global: state.global, local: state.local };
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string} twice", async (_, request: string) => {
@@ -168,12 +155,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Query parameter edge cases", ({ Given, When, Then }) => {
     Given("I create a mock handling query parameters:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /search', ({ query }) => ({ 
-        term: query.q,
-        page: query.page,
-        empty: query.empty
-      }));
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -199,12 +181,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Headers case sensitivity", ({ Given, When, Then }) => {
     Given("I create a mock checking headers:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /auth', ({ headers }) => ({ 
-        auth: headers.authorization,
-        authUpper: headers.Authorization,
-        contentType: headers['content-type']
-      }));
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string} with headers:", async (_, request: string, docString: string) => {
@@ -224,9 +201,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Route precedence with similar paths", ({ Given, When, Then, And }) => {
     Given("I create a mock with similar routes:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /users/profile', { type: 'profile' });
-      mock('GET /users/:id', ({ params }) => ({ type: 'user', id: params.id }));
+      mock = evalMockSetup(docString);
     });
 
     When("I test both route precedence scenarios", async () => {
@@ -248,24 +223,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Plugin order affecting results", ({ Given, When, Then }) => {
     Given("I create a mock with order-dependent plugins:", (_, docString: string) => {
-      mock = schmock();
-      const plugin1 = {
-        name: 'first',
-        process: (ctx: any, response: any) => ({
-          context: ctx,
-          response: { ...response, step: 1 }
-        })
-      };
-      const plugin2 = {
-        name: 'second', 
-        process: (ctx: any, response: any) => ({
-          context: ctx,
-          response: { ...response, step: 2 }
-        })
-      };
-      mock('GET /order', { original: true })
-        .pipe(plugin1)
-        .pipe(plugin2);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -281,8 +239,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Namespace confusion with absolute paths", ({ Given, When, Then, And }) => {
     Given("I create a mock with namespace:", (_, docString: string) => {
-      mock = schmock({ namespace: '/api/v1' });
-      mock('GET /users', []);
+      mock = evalMockSetup(docString);
     });
 
     When("I test both namespace scenarios", async () => {
@@ -303,20 +260,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Plugin expecting different context structure", ({ Given, When, Then }) => {
     Given("I create a mock with context-dependent plugin:", (_, docString: string) => {
-      mock = schmock();
-      const plugin = {
-        name: 'context-reader',
-        process: (ctx: any, response: any) => ({
-          context: ctx,
-          response: {
-            method: ctx.method,
-            path: ctx.path,
-            hasBody: !!ctx.body,
-            hasQuery: !!ctx.query && Object.keys(ctx.query).length > 0
-          }
-        })
-      };
-      mock('POST /analyze', null).pipe(plugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string} with body:", async (_, request: string, docString: string) => {
@@ -343,10 +287,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Response tuple format edge cases", ({ Given, When, Then, And }) => {
     Given("I create a mock with tuple responses:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /created', [201]);
-      mock('GET /with-headers', [200, { data: true }, { 'x-custom': 'header' }]);
-      mock('GET /empty-with-status', [204, null]);
+      mock = evalMockSetup(docString);
     });
 
     When("I test all tuple response formats", async () => {
@@ -377,7 +318,7 @@ describeFeature(feature, ({ Scenario }) => {
     let errors: Error[] = [];
 
     Given("I attempt to create mocks with typo methods:", (_, docString: string) => {
-      mock = schmock();
+      mock = evalMockSetup(docString);
     });
 
     When("I test all common method typos", () => {
@@ -415,9 +356,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Registering duplicate routes first route wins", ({ Given, When, Then }) => {
     Given("I create a mock with duplicate routes:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /items', [{ id: 1 }]);
-      mock('GET /items', [{ id: 2 }]);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -433,12 +372,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Plugin returning unexpected structure", ({ Given, When, Then, And }) => {
     Given("I create a mock with malformed plugin:", (_, docString: string) => {
-      mock = schmock();
-      const badPlugin = {
-        name: 'bad-structure',
-        process: () => ({ wrong: 'structure' })
-      };
-      mock('GET /bad', 'original').pipe(badPlugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {

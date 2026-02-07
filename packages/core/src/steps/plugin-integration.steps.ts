@@ -1,6 +1,6 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { schmock } from "../index";
+import { evalMockSetup } from "./eval-mock";
 import type { MockInstance } from "../types";
 
 const feature = await loadFeature("../../features/plugin-integration.feature");
@@ -13,41 +13,13 @@ describeFeature(feature, ({ Scenario }) => {
     requestResponses = [];
 
     Given("I create a mock with stateful plugin:", (_, docString: string) => {
-      // Create mock with stateful plugin that persists state across requests
-      mock = schmock({});
-      
-      // We need persistent state per route, so let's use a closure
-      let routeState = { request_count: 0 };
-      
-      mock('GET /counter', null, {})
-        .pipe({
-          name: "counter-plugin",
-          process: (ctx, response) => {
-            // Update shared route state
-            routeState.request_count = (routeState.request_count || 0) + 1;
-            
-            // Generate response if none exists
-            if (!response) {
-              return {
-                context: ctx,
-                response: {
-                  request_number: routeState.request_count,
-                  path: ctx.path,
-                  processed_at: new Date().toISOString()
-                }
-              };
-            }
-            
-            // Pass through existing response
-            return { context: ctx, response };
-          }
-        });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string} three times", async (_, request: string) => {
       const [method, path] = request.split(" ");
       requestResponses = [];
-      
+
       for (let i = 0; i < 3; i++) {
         const response = await mock.handle(method as any, path);
         requestResponses.push(response);
@@ -56,7 +28,7 @@ describeFeature(feature, ({ Scenario }) => {
 
     Then("each response should have incrementing {string} values", (_, property: string) => {
       expect(requestResponses).toHaveLength(3);
-      
+
       for (let i = 0; i < requestResponses.length; i++) {
         expect(requestResponses[i].body[property]).toBe(i + 1);
       }
@@ -80,37 +52,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Multiple plugins in pipeline", ({ Given, When, Then }) => {
     Given("I create a mock with multiple plugins:", (_, docString: string) => {
-      // Create mock with multiple plugins in pipeline
-      mock = schmock({});
-      mock('GET /users', () => [{ id: 1, name: 'John' }], {})
-        .pipe({
-          name: "auth-plugin",
-          process: (ctx, response) => {
-            if (!ctx.headers.authorization) {
-              throw new Error("Missing authorization");
-            }
-            ctx.state.set('user', { id: 1, name: 'Admin' });
-            return { context: ctx, response };
-          }
-        })
-        .pipe({
-          name: "wrapper-plugin", 
-          process: (ctx, response) => {
-            if (response) {
-              return {
-                context: ctx,
-                response: {
-                  data: response,
-                  meta: {
-                    user: ctx.state.get('user'),
-                    timestamp: "2025-01-31T10:15:30.123Z" // Fixed timestamp for test consistency
-                  }
-                }
-              };
-            }
-            return { context: ctx, response };
-          }
-        });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string} with headers:", async (_, request: string, docString: string) => {
@@ -127,22 +69,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Plugin error handling", ({ Given, When, Then, And }) => {
     Given("I create a mock with error handling plugin:", (_, docString: string) => {
-      // Create mock with error handling plugin
-      mock = schmock({});
-      mock('GET /protected', () => ({ secret: 'data' }), {})
-        .pipe({
-          name: "auth-plugin",
-          process: (ctx, response) => {
-            if (!ctx.headers.authorization) {
-              // Return error response directly instead of throwing
-              return {
-                context: ctx,
-                response: [401, { error: "Unauthorized", code: "AUTH_REQUIRED" }]
-              };
-            }
-            return { context: ctx, response };
-          }
-        });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string} without authorization", async (_, request: string) => {
@@ -162,47 +89,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Pipeline order and response transformation", ({ Given, When, Then }) => {
     Given("I create a mock with ordered plugins:", (_, docString: string) => {
-      // Create mock with ordered plugins that transform response
-      mock = schmock({});
-      mock('GET /data', () => ({ value: 42 }), {})
-        .pipe({
-          name: "step-1",
-          process: (ctx, response) => {
-            ctx.state.set('step1', 'processed');
-            // Transform the response by adding step1 property
-            if (response) {
-              return {
-                context: ctx,
-                response: { ...response, step1: 'processed' }
-              };
-            }
-            return { context: ctx, response };
-          }
-        })
-        .pipe({
-          name: "step-2", 
-          process: (ctx, response) => {
-            if (response) {
-              return {
-                context: ctx,
-                response: { ...response, step2: 'processed' }
-              };
-            }
-            return { context: ctx, response };
-          }
-        })
-        .pipe({
-          name: "step-3",
-          process: (ctx, response) => {
-            if (response) {
-              return {
-                context: ctx,
-                response: { ...response, step3: 'processed' }
-              };
-            }
-            return { context: ctx, response };
-          }
-        });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -218,43 +105,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Schema plugin in pipeline", ({ Given, When, Then, And }) => {
     Given("I create a mock with schema plugin:", (_, docString: string) => {
-      // Create mock with schema plugin that generates data
-      mock = schmock({});
-      mock('GET /users', (ctx) => {
-        // Schema-based generator function
-        const schema = {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'integer' },
-              name: { type: 'string', faker: 'person.fullName' },
-              email: { type: 'string', format: 'email' }
-            }
-          }
-        };
-        // Generate mock data from schema (simplified)
-        return [
-          { id: 1, name: "John Doe", email: "john@example.com" },
-          { id: 2, name: "Jane Smith", email: "jane@example.com" }
-        ];
-      }, {})
-        .pipe({
-          name: "add-metadata",
-          process: (ctx, response) => {
-            if (response && Array.isArray(response)) {
-              return {
-                context: ctx,
-                response: {
-                  users: response,
-                  count: response.length,
-                  generated_at: new Date().toISOString()
-                }
-              };
-            }
-            return { context: ctx, response };
-          }
-        });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {

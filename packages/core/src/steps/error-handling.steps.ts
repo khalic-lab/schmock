@@ -1,7 +1,7 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { schmock } from "../index";
 import type { CallableMockInstance } from "../types";
+import { evalMockSetup } from "./eval-mock";
 
 const feature = await loadFeature("../../features/error-handling.feature");
 
@@ -12,8 +12,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Route not found returns 404", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /users', [{ id: 1, name: 'John' }]);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -36,8 +35,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Wrong HTTP method returns 404", ({ Given, When, Then, And }) => {
     Given("I create a mock with:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /api/data', { success: true });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -58,8 +56,7 @@ describeFeature(feature, ({ Scenario }) => {
     Given("I attempt to create a mock with invalid route:", (_, docString: string) => {
       error = null;
       try {
-        mock = schmock();
-        mock('INVALID_METHOD /path', 'response');
+        mock = evalMockSetup(docString);
       } catch (e) {
         error = e as Error;
       }
@@ -79,8 +76,7 @@ describeFeature(feature, ({ Scenario }) => {
     Given("I attempt to create a mock with empty path:", (_, docString: string) => {
       error = null;
       try {
-        mock = schmock();
-        mock('GET ', 'response');
+        mock = evalMockSetup(docString);
       } catch (e) {
         error = e as Error;
       }
@@ -98,12 +94,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Plugin throws error returns 500 with PluginError", ({ Given, When, Then, And }) => {
     Given("I create a mock with failing plugin:", (_, docString: string) => {
-      mock = schmock();
-      const failingPlugin = {
-        name: 'failing-plugin',
-        process: () => { throw new Error('Plugin failed'); }
-      };
-      mock('GET /test', 'original').pipe(failingPlugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -126,13 +117,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Plugin onError hook recovers from failure", ({ Given, When, Then, And }) => {
     Given("I create a mock with recoverable plugin:", (_, docString: string) => {
-      mock = schmock();
-      const recoverablePlugin = {
-        name: 'recoverable',
-        process: () => { throw new Error('Initial failure'); },
-        onError: () => ({ status: 200, body: 'recovered', headers: {} })
-      };
-      mock('GET /test', 'original').pipe(recoverablePlugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -151,12 +136,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Plugin returns invalid result structure", ({ Given, When, Then, And }) => {
     Given("I create a mock with invalid plugin:", (_, docString: string) => {
-      mock = schmock();
-      const invalidPlugin = {
-        name: 'invalid',
-        process: () => ({ wrongStructure: true })
-      };
-      mock('GET /test', 'original').pipe(invalidPlugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -175,8 +155,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Function generator throws error returns 500", ({ Given, When, Then, And }) => {
     Given("I create a mock with failing generator:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /fail', () => { throw new Error('Generator failed'); });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -201,10 +180,7 @@ describeFeature(feature, ({ Scenario }) => {
     Given("I attempt to create a mock with invalid JSON:", (_, docString: string) => {
       error = null;
       try {
-        mock = schmock();
-        const circularRef: any = {};
-        circularRef.self = circularRef;
-        mock('GET /invalid', circularRef, { contentType: 'application/json' });
+        mock = evalMockSetup(docString);
       } catch (e) {
         error = e as Error;
       }
@@ -222,8 +198,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Namespace mismatch returns 404", ({ Given, When, Then, And }) => {
     Given("I create a mock with namespace:", (_, docString: string) => {
-      mock = schmock({ namespace: '/api/v1' });
-      mock('GET /users', [{ id: 1 }]);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -242,16 +217,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Multiple plugin failures cascade properly", ({ Given, When, Then, And }) => {
     Given("I create a mock with multiple failing plugins:", (_, docString: string) => {
-      mock = schmock();
-      const plugin1 = {
-        name: 'first-fail',
-        process: () => { throw new Error('First error'); }
-      };
-      const plugin2 = {
-        name: 'second-fail', 
-        process: () => { throw new Error('Second error'); }
-      };
-      mock('GET /cascade', 'original').pipe(plugin1).pipe(plugin2);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -270,13 +236,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Plugin onError hook also fails", ({ Given, When, Then, And }) => {
     Given("I create a mock with broken error handler:", (_, docString: string) => {
-      mock = schmock({ debug: true });
-      const brokenPlugin = {
-        name: 'broken-handler',
-        process: () => { throw new Error('Process failed'); },
-        onError: () => { throw new Error('Handler failed'); }
-      };
-      mock('GET /broken', 'original').pipe(brokenPlugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -295,8 +255,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Empty parameter in route returns 404", ({ Given, When, Then, And }) => {
     Given("I create a mock with parameterized route:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /users/:id', ({ params }) => ({ userId: params.id }));
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -315,11 +274,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Async generator error handling", ({ Given, When, Then, And }) => {
     Given("I create a mock with failing async generator:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /async-fail', async () => { 
-        await new Promise(resolve => setTimeout(resolve, 10));
-        throw new Error('Async generator failed'); 
-      });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -338,8 +293,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Error responses include proper headers", ({ Given, When, Then, And }) => {
     Given("I create a mock with failing route:", (_, docString: string) => {
-      mock = schmock();
-      mock('GET /error', () => { throw new Error('Test error'); });
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -363,13 +317,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Plugin onError returns response with status 0", ({ Given, When, Then, And }) => {
     Given("I create a mock with status-zero error handler:", (_, docString: string) => {
-      mock = schmock();
-      const plugin = {
-        name: 'zero-status',
-        process: () => { throw new Error('fail'); },
-        onError: () => ({ status: 0, body: 'zero status', headers: {} })
-      };
-      mock('GET /zero', 'original').pipe(plugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -388,12 +336,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("Plugin null/undefined return handling", ({ Given, When, Then, And }) => {
     Given("I create a mock with null-returning plugin:", (_, docString: string) => {
-      mock = schmock();
-      const nullPlugin = {
-        name: 'null-plugin',
-        process: () => null
-      };
-      mock('GET /null', 'original').pipe(nullPlugin);
+      mock = evalMockSetup(docString);
     });
 
     When("I request {string}", async (_, request: string) => {

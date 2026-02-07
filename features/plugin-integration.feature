@@ -6,7 +6,7 @@ Feature: Plugin Pipeline Integration
   Scenario: Plugin state sharing with pipeline
     Given I create a mock with stateful plugin:
       """
-      const mock = schmock({})
+      const mock = schmock({ state: {} })
       mock('GET /counter', null, { contentType: 'application/json' })
         .pipe({
           name: "counter-plugin",
