@@ -1,3 +1,4 @@
+import { isStatusTuple } from "./constants.js";
 import {
   PluginError,
   RouteDefinitionError,
@@ -510,7 +511,7 @@ export class CallableMockInstance {
     }
 
     // Handle tuple response format [status, body, headers?]
-    if (Array.isArray(result) && typeof result[0] === "number") {
+    if (isStatusTuple(result)) {
       [status, body, headers = {}] = result;
       tupleFormat = true;
     }

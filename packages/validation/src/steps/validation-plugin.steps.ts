@@ -237,6 +237,33 @@ describeFeature(feature, ({ Scenario }) => {
     });
   });
 
+  Scenario("Numeric array response is not misinterpreted as status tuple", ({ Given, When, Then, And }) => {
+    Given("I create a mock returning numeric array with response validation", () => {
+      mock = schmock();
+      mock("GET /numbers", [1, 2, 3])
+        .pipe(validationPlugin({
+          response: {
+            body: {
+              type: "array",
+              items: { type: "number" },
+            },
+          },
+        }));
+    });
+
+    When("I request the numeric array endpoint", async () => {
+      response = await mock.handle("GET", "/numbers");
+    });
+
+    Then("the status should be {int}", (_, status: number) => {
+      expect(response.status).toBe(status);
+    });
+
+    And("the response body should be the array [1, 2, 3]", () => {
+      expect(response.body).toEqual([1, 2, 3]);
+    });
+  });
+
   Scenario("Custom error status codes", ({ Given, When, Then }) => {
     Given("I create a validated mock with custom error status {int}", (_, status: number) => {
       mock = schmock();

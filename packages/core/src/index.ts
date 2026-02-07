@@ -64,6 +64,7 @@ export function schmock(
 export {
   HTTP_METHODS,
   isHttpMethod,
+  isStatusTuple,
   ROUTE_NOT_FOUND_CODE,
   toHttpMethod,
 } from "./constants.js";

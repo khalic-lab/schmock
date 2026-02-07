@@ -50,3 +50,9 @@ Feature: Validation Plugin
     Given I create a validated mock with custom error status 422
     When I send an invalid request body
     Then the status should be 422
+
+  Scenario: Numeric array response is not misinterpreted as status tuple
+    Given I create a mock returning numeric array with response validation
+    When I request the numeric array endpoint
+    Then the status should be 200
+    And the response body should be the array [1, 2, 3]

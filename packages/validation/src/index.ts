@@ -1,5 +1,6 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
+import { isStatusTuple } from "@schmock/core";
 import Ajv, { type ValidateFunction } from "ajv";
 import type { JSONSchema7 } from "json-schema";
 
@@ -116,9 +117,7 @@ export function validationPlugin(
       // Validate response body (if response exists)
       if (validators.responseBody && response !== undefined) {
         // Unwrap tuple responses: [status, body] or [status, body, headers]
-        const isTuple =
-          Array.isArray(response) && typeof response[0] === "number";
-        const responseBody = isTuple ? response[1] : response;
+        const responseBody = isStatusTuple(response) ? response[1] : response;
 
         if (!validators.responseBody(responseBody)) {
           return {
