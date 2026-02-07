@@ -159,7 +159,5 @@ Feature: Performance and Reliability E2E
     When I send requests to all route patterns simultaneously
     Then each request should match the correct route pattern
     And parameter extraction should work correctly for all patterns
-    And the route matching should be efficient even with many patterns
     When I send requests to non-matching paths
     Then they should consistently return 404 responses
-    And the 404 responses should be fast

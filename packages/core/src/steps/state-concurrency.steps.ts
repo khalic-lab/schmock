@@ -141,28 +141,34 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     Then("each plugin should correctly update its state counters", () => {
-      // Just check that we got responses - the plugin behavior is complex with concurrency
       expect(responses).toHaveLength(4);
       responses.forEach(response => {
-        expect(response).toBeDefined();
-        expect(response.body).toBeDefined();
+        expect(response.status).toBe(200);
+        expect(typeof response.body.plugin1Count).toBe("number");
+        expect(typeof response.body.plugin2Count).toBe("number");
       });
+
+      // Each plugin should have counted all 4 requests
+      const plugin1Counts = responses.map(r => r.body.plugin1Count);
+      const plugin2Counts = responses.map(r => r.body.plugin2Count);
+      expect(Math.max(...plugin1Counts)).toBe(4);
+      expect(Math.max(...plugin2Counts)).toBe(4);
     });
 
     And("the global request count should be accurate", () => {
-      // Just verify all requests completed
+      // All 4 responses should have the base data preserved
       expect(responses).toHaveLength(4);
       responses.forEach(response => {
-        expect(response).toBeDefined();
+        expect(response.body.base).toBe("data");
       });
     });
 
     And("plugin state should not interfere with each other", () => {
-      responses.forEach(response => {
-        expect(response).toBeDefined();
-        expect(response.body).toBeDefined();
-        // Verify the base response structure is maintained
-      });
+      // plugin1Count and plugin2Count should increment independently
+      // Both should reach 4 since there are 4 requests
+      const plugin1Max = Math.max(...responses.map(r => r.body.plugin1Count));
+      const plugin2Max = Math.max(...responses.map(r => r.body.plugin2Count));
+      expect(plugin1Max).toBe(plugin2Max);
     });
   });
 
