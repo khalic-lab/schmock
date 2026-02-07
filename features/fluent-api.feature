@@ -142,4 +142,3 @@ Feature: Callable API
       """
       [{ "id": 1, "name": "John" }]
       """
-    And the response should have CORS headers

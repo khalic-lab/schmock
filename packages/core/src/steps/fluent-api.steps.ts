@@ -201,11 +201,5 @@ describeFeature(feature, ({ Scenario }) => {
       const expected = JSON.parse(docString);
       expect(response.body).toEqual(expected);
     });
-
-    And("the response should have CORS headers", () => {
-      // This would check for CORS headers if implemented
-      // For now just verify the response was processed
-      expect(response).toBeDefined();
-    });
   });
 });

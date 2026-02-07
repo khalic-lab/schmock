@@ -76,22 +76,22 @@ Feature: State Management and Concurrency
       const plugin1 = {
         name: 'counter-plugin',
         process: (ctx, response) => {
-          ctx.state.requestCount++
-          ctx.state.pluginData.plugin1 = (ctx.state.pluginData.plugin1 || 0) + 1
+          ctx.routeState.requestCount++
+          ctx.routeState.pluginData.plugin1 = (ctx.routeState.pluginData.plugin1 || 0) + 1
           return {
             context: ctx,
-            response: { ...response, plugin1Count: ctx.state.pluginData.plugin1 }
+            response: { ...response, plugin1Count: ctx.routeState.pluginData.plugin1 }
           }
         }
       }
-      
+
       const plugin2 = {
-        name: 'tracker-plugin', 
+        name: 'tracker-plugin',
         process: (ctx, response) => {
-          ctx.state.pluginData.plugin2 = (ctx.state.pluginData.plugin2 || 0) + 1
+          ctx.routeState.pluginData.plugin2 = (ctx.routeState.pluginData.plugin2 || 0) + 1
           return {
             context: ctx,
-            response: { ...response, plugin2Count: ctx.state.pluginData.plugin2 }
+            response: { ...response, plugin2Count: ctx.routeState.pluginData.plugin2 }
           }
         }
       }

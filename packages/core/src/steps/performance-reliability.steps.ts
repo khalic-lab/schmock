@@ -9,6 +9,7 @@ describeFeature(feature, ({ Scenario }) => {
   let mock: MockInstance<any>;
   let responses: any[] = [];
   let responsesTimes: number[] = [];
+  let expectedResponseCount = 0;
 
   Scenario("High-volume concurrent requests", ({ Given, When, Then, And }) => {
     responses = [];
@@ -22,6 +23,7 @@ describeFeature(feature, ({ Scenario }) => {
       const [method, path] = request.split(" ");
       responses = [];
       responsesTimes = [];
+      expectedResponseCount = count;
 
       const promises = Array.from({ length: count }, async () => {
         const startTime = Date.now();
@@ -36,8 +38,7 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     Then("all concurrent requests should complete successfully", () => {
-      const expectedCount = responses.length;
-      expect(responses).toHaveLength(expectedCount);
+      expect(responses).toHaveLength(expectedResponseCount);
       for (const response of responses) {
         expect(response.status).toBe(200);
       }
@@ -79,6 +80,7 @@ describeFeature(feature, ({ Scenario }) => {
     When("I send {int} concurrent {string} requests with different payloads", async (_, count: number, request: string) => {
       const [method, path] = request.split(" ");
       responses = [];
+      expectedResponseCount = count;
 
       const promises = Array.from({ length: count }, async (_, i) => {
         return await mock.handle(method as any, path, {
@@ -90,8 +92,7 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     And("all concurrent requests should complete successfully", () => {
-      const expectedCount = responses.length;
-      expect(responses).toHaveLength(expectedCount);
+      expect(responses).toHaveLength(expectedResponseCount);
       for (const response of responses) {
         expect(response.status).toBe(200);
       }
@@ -288,11 +289,6 @@ describeFeature(feature, ({ Scenario }) => {
       expect(responses[9].body.version).toBe("v2");
     });
 
-    And("the route matching should be efficient even with many patterns", () => {
-      // All requests completed quickly if we got here
-      expect(responses).toHaveLength(10);
-    });
-
     When("I send requests to non-matching paths", async () => {
       const invalidPaths = [
         "GET /api/invalid",
@@ -313,11 +309,6 @@ describeFeature(feature, ({ Scenario }) => {
       for (const response of responses) {
         expect(response.status).toBe(expectedStatus);
       }
-    });
-
-    And("the {int} responses should be fast", (_, statusCode: number) => {
-      // If we got here quickly, the 404 responses were fast
-      expect(responses.every(r => r.status === statusCode)).toBe(true);
     });
   });
 
