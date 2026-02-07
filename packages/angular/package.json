@@ -42,7 +42,7 @@
     "@types/node": "^25.1.0",
     "jsdom": "^27.4.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.5",
+    "vitest": "^4.0.18",
     "zone.js": "^0.16.0"
   }
 }
