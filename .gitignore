@@ -12,6 +12,9 @@ dist/
 # Package tarballs (npm pack output)
 *.tgz
 
+# Coverage output
+coverage/
+
 # Prevent generated files in source directories
 packages/*/src/**/*.js
 packages/*/src/**/*.d.ts
