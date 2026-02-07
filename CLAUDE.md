@@ -1,5 +1,37 @@
 # Schmock Project Instructions
 
+## What is Schmock?
+
+Schmock is a TypeScript HTTP mocking library with a callable API for creating mock instances with zero boilerplate. It features an extensible plugin pipeline (`.pipe()`), support for all HTTP methods with parameters, stateful mocks, and framework adapters for Express and Angular.
+
+### Monorepo Packages
+| Package | Description |
+|---------|-------------|
+| `@schmock/core` | Core mock builder and request handling |
+| `@schmock/schema` | JSON Schema-based response generation plugin |
+| `@schmock/express` | Express middleware adapter |
+| `@schmock/angular` | Angular HTTP interceptor adapter |
+
+### Key Concepts
+- **Callable API** — `schmock()` returns a mock instance directly, no server needed
+- **Plugin Pipeline** — `mock.pipe(plugin)` chains plugins for schema generation, validation, etc.
+- **BDD-first** — All features start as Gherkin `.feature` files before implementation
+- **Ambient Types** — Shared types live in `/types/schmock.d.ts`, re-exported from core
+
+## Available Skills
+
+Claude Code skills automate common workflows. Invoke them with `/skill-name`:
+
+| Skill | Command | Purpose |
+|-------|---------|---------|
+| **development** | `/development` | BDD-first workflow: scaffold features, reproduce bugs, create branches |
+| **code-quality** | `/code-quality` | Run tests, check coverage, validate full quality gate |
+| **pr-review** | `/pr-review` | Review PRs against project standards (BDD, conventions, tests) |
+| **plugin-authoring** | `/plugin-authoring` | Create new plugins following the Plugin interface |
+| **package-generator** | `/package-generator` | Scaffold a new `@schmock/*` monorepo package |
+| **devops** | `/devops` | Version bumping, npm publishing, GitHub releases |
+| **dependency-management** | `/dependency-management` | Check outdated deps, update safely, security audit |
+
 ## GitHub Flow
 
 This project uses GitHub Flow with the following workflow:
