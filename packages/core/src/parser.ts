@@ -1,3 +1,4 @@
+import { toHttpMethod } from "./constants";
 import { RouteParseError } from "./errors";
 import type { HttpMethod } from "./types";
 
@@ -53,7 +54,7 @@ export function parseRouteKey(routeKey: string): ParsedRoute {
   const pattern = new RegExp(`^${regexPath}$`);
 
   return {
-    method: method as HttpMethod,
+    method: toHttpMethod(method),
     path,
     pattern,
     params,

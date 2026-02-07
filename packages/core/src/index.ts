@@ -29,24 +29,33 @@ export function schmock(
   // Always use new callable API
   const instance = new CallableMockInstance(config || {});
 
-  // Create a callable function that wraps the instance
-  const callableInstance = ((
-    route: Schmock.RouteKey,
-    generator: Schmock.Generator,
-    config: Schmock.RouteConfig = {},
-  ) => {
-    instance.defineRoute(route, generator, config);
-    return callableInstance; // Return the callable function for chaining
-  }) as any;
+  // Callable proxy: a function with attached methods
+  const callableInstance: Schmock.CallableMockInstance = Object.assign(
+    (
+      route: Schmock.RouteKey,
+      generator: Schmock.Generator,
+      routeConfig: Schmock.RouteConfig = {},
+    ) => {
+      instance.defineRoute(route, generator, routeConfig);
+      return callableInstance;
+    },
+    {
+      pipe: (plugin: Schmock.Plugin) => {
+        instance.pipe(plugin);
+        return callableInstance;
+      },
+      handle: instance.handle.bind(instance),
+      history: instance.history.bind(instance),
+      called: instance.called.bind(instance),
+      callCount: instance.callCount.bind(instance),
+      lastRequest: instance.lastRequest.bind(instance),
+      reset: instance.reset.bind(instance),
+      resetHistory: instance.resetHistory.bind(instance),
+      resetState: instance.resetState.bind(instance),
+    },
+  );
 
-  // Manually bind all instance methods to the callable function with proper return values
-  callableInstance.pipe = (plugin: Schmock.Plugin) => {
-    instance.pipe(plugin);
-    return callableInstance; // Return callable function for chaining
-  };
-  callableInstance.handle = instance.handle.bind(instance);
-
-  return callableInstance as Schmock.CallableMockInstance;
+  return callableInstance;
 }
 
 // Re-export constants and utilities
@@ -80,6 +89,7 @@ export type {
   PluginResult,
   RequestContext,
   RequestOptions,
+  RequestRecord,
   Response,
   ResponseBody,
   ResponseResult,

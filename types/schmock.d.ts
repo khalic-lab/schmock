@@ -188,6 +188,28 @@ declare namespace Schmock {
   }
 
   /**
+   * Record of a single request handled by the mock
+   */
+  interface RequestRecord {
+    /** HTTP method */
+    method: HttpMethod;
+    /** Request path (without namespace) */
+    path: string;
+    /** Extracted route parameters */
+    params: Record<string, string>;
+    /** Query parameters */
+    query: Record<string, string>;
+    /** Request headers */
+    headers: Record<string, string>;
+    /** Request body */
+    body: unknown;
+    /** Unix timestamp (ms) when request was handled */
+    timestamp: number;
+    /** Response returned for this request */
+    response: { status: number; body: unknown };
+  }
+
+  /**
    * Main callable mock instance interface
    */
   interface CallableMockInstance {
@@ -225,12 +247,12 @@ declare namespace Schmock {
 
     /**
      * Handle a request and return a response
-     * 
+     *
      * @param method - HTTP method
      * @param path - Request path
      * @param options - Request options (headers, body, query)
      * @returns Promise resolving to response object
-     * 
+     *
      * @example
      * ```typescript
      * const response = await mock.handle('GET', '/users', {
@@ -239,6 +261,65 @@ declare namespace Schmock {
      * ```
      */
     handle(method: HttpMethod, path: string, options?: RequestOptions): Promise<Response>;
+
+    // ===== Request Spy / History API =====
+
+    /**
+     * Get all recorded requests, optionally filtered by method and path
+     *
+     * @param method - Filter by HTTP method
+     * @param path - Filter by request path
+     * @returns Array of request records
+     */
+    history(): RequestRecord[];
+    history(method: HttpMethod, path: string): RequestRecord[];
+
+    /**
+     * Check if any request was made, optionally for a specific route
+     *
+     * @param method - Filter by HTTP method
+     * @param path - Filter by request path
+     * @returns true if at least one matching request was recorded
+     */
+    called(): boolean;
+    called(method: HttpMethod, path: string): boolean;
+
+    /**
+     * Get the number of recorded requests, optionally for a specific route
+     *
+     * @param method - Filter by HTTP method
+     * @param path - Filter by request path
+     * @returns Number of matching requests
+     */
+    callCount(): number;
+    callCount(method: HttpMethod, path: string): number;
+
+    /**
+     * Get the most recent request, optionally for a specific route
+     *
+     * @param method - Filter by HTTP method
+     * @param path - Filter by request path
+     * @returns Most recent matching request record, or undefined
+     */
+    lastRequest(): RequestRecord | undefined;
+    lastRequest(method: HttpMethod, path: string): RequestRecord | undefined;
+
+    // ===== Reset / Lifecycle =====
+
+    /**
+     * Clear all routes, state, plugins, and history
+     */
+    reset(): void;
+
+    /**
+     * Clear only request history, keep routes and state
+     */
+    resetHistory(): void;
+
+    /**
+     * Clear only state, keep routes and history
+     */
+    resetState(): void;
   }
 
 }

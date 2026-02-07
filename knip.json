@@ -1,0 +1,37 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "ignore": ["**/*.d.ts", ".claude/**", "examples/**"],
+  "ignoreDependencies": [
+    "@arethetypeswrong/cli",
+    "@tsconfig/strictest",
+    "@vitest/coverage-v8",
+    "bun-types",
+    "publint"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": ["benchmarks/*.ts", "scripts/*.{js,ts}"]
+    },
+    "packages/core": {
+      "ignore": ["src/steps/**"]
+    },
+    "packages/schema": {
+      "ignore": ["src/steps/**"]
+    },
+    "packages/express": {
+      "ignore": ["src/steps/**"]
+    },
+    "packages/angular": {
+      "ignoreDependencies": [
+        "@angular/platform-browser",
+        "@angular/platform-browser-dynamic"
+      ]
+    },
+    "packages/validation": {
+      "ignore": ["src/steps/**"]
+    },
+    "packages/query": {
+      "ignore": ["src/steps/**"]
+    }
+  }
+}

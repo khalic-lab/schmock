@@ -6,6 +6,10 @@ import {
 } from "./errors";
 import { parseRouteKey } from "./parser";
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error";
+}
+
 /**
  * Debug logger that respects debug mode configuration
  */
@@ -57,6 +61,7 @@ export class CallableMockInstance {
   private routes: CompiledCallableRoute[] = [];
   private plugins: Schmock.Plugin[] = [];
   private logger: DebugLogger;
+  private requestHistory: Schmock.RequestRecord[] = [];
 
   constructor(private globalConfig: Schmock.GlobalConfig = {}) {
     this.logger = new DebugLogger(globalConfig.debug || false);
@@ -159,6 +164,76 @@ export class CallableMockInstance {
       },
     );
     return this;
+  }
+
+  // ===== Request Spy / History API =====
+
+  history(method?: Schmock.HttpMethod, path?: string): Schmock.RequestRecord[] {
+    if (method && path) {
+      return this.requestHistory.filter(
+        (r) => r.method === method && r.path === path,
+      );
+    }
+    return [...this.requestHistory];
+  }
+
+  called(method?: Schmock.HttpMethod, path?: string): boolean {
+    if (method && path) {
+      return this.requestHistory.some(
+        (r) => r.method === method && r.path === path,
+      );
+    }
+    return this.requestHistory.length > 0;
+  }
+
+  callCount(method?: Schmock.HttpMethod, path?: string): number {
+    if (method && path) {
+      return this.requestHistory.filter(
+        (r) => r.method === method && r.path === path,
+      ).length;
+    }
+    return this.requestHistory.length;
+  }
+
+  lastRequest(
+    method?: Schmock.HttpMethod,
+    path?: string,
+  ): Schmock.RequestRecord | undefined {
+    if (method && path) {
+      const filtered = this.requestHistory.filter(
+        (r) => r.method === method && r.path === path,
+      );
+      return filtered[filtered.length - 1];
+    }
+    return this.requestHistory[this.requestHistory.length - 1];
+  }
+
+  // ===== Reset / Lifecycle =====
+
+  reset(): void {
+    this.routes = [];
+    this.plugins = [];
+    this.requestHistory = [];
+    if (this.globalConfig.state) {
+      for (const key of Object.keys(this.globalConfig.state)) {
+        delete this.globalConfig.state[key];
+      }
+    }
+    this.logger.log("lifecycle", "Mock fully reset");
+  }
+
+  resetHistory(): void {
+    this.requestHistory = [];
+    this.logger.log("lifecycle", "Request history cleared");
+  }
+
+  resetState(): void {
+    if (this.globalConfig.state) {
+      for (const key of Object.keys(this.globalConfig.state)) {
+        delete this.globalConfig.state[key];
+      }
+    }
+    this.logger.log("lifecycle", "State cleared");
   }
 
   async handle(
@@ -291,7 +366,7 @@ export class CallableMockInstance {
       } catch (error) {
         this.logger.log(
           "error",
-          `[${requestId}] Plugin pipeline error: ${(error as Error).message}`,
+          `[${requestId}] Plugin pipeline error: ${errorMessage(error)}`,
         );
         throw error;
       }
@@ -301,6 +376,18 @@ export class CallableMockInstance {
 
       // Apply global delay if configured
       await this.applyDelay();
+
+      // Record request in history
+      this.requestHistory.push({
+        method,
+        path: requestPath,
+        params,
+        query: options?.query || {},
+        headers: options?.headers || {},
+        body: options?.body,
+        timestamp: Date.now(),
+        response: { status: response.status, body: response.body },
+      });
 
       // Log successful response
       this.logger.log(
@@ -318,7 +405,7 @@ export class CallableMockInstance {
     } catch (error) {
       this.logger.log(
         "error",
-        `[${requestId}] Error processing request: ${(error as Error).message}`,
+        `[${requestId}] Error processing request: ${errorMessage(error)}`,
         error,
       );
 
@@ -326,11 +413,8 @@ export class CallableMockInstance {
       const errorResponse = {
         status: 500,
         body: {
-          error: (error as Error).message,
-          code:
-            error instanceof SchmockError
-              ? (error as SchmockError).code
-              : "INTERNAL_ERROR",
+          error: errorMessage(error),
+          code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
         },
         headers: {},
       };
@@ -489,14 +573,16 @@ export class CallableMockInstance {
       } catch (error) {
         this.logger.log(
           "pipeline",
-          `Plugin ${plugin.name} failed: ${(error as Error).message}`,
+          `Plugin ${plugin.name} failed: ${errorMessage(error)}`,
         );
 
         // Try error handling if plugin has onError hook
         if (plugin.onError) {
           try {
+            const pluginError =
+              error instanceof Error ? error : new Error(errorMessage(error));
             const errorResult = await plugin.onError(
-              error as Error,
+              pluginError,
               currentContext,
             );
             if (errorResult) {
@@ -518,12 +604,14 @@ export class CallableMockInstance {
           } catch (hookError) {
             this.logger.log(
               "pipeline",
-              `Plugin ${plugin.name} error handler failed: ${(hookError as Error).message}`,
+              `Plugin ${plugin.name} error handler failed: ${errorMessage(hookError)}`,
             );
           }
         }
 
-        throw new PluginError(plugin.name, error as Error);
+        const cause =
+          error instanceof Error ? error : new Error(errorMessage(error));
+        throw new PluginError(plugin.name, cause);
       }
     }
 

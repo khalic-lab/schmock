@@ -25,6 +25,8 @@ run_stage() {
 
 run_stage "Lint"      bun lint:quiet
 run_stage "Typecheck" bun typecheck:quiet
+run_stage "Knip"      bun knip:quiet
+run_stage "ESLint"    bun eslint:quiet
 run_stage "Unit"      bun test:unit:quiet
 run_stage "BDD"       bun test:bdd:quiet
 

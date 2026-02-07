@@ -42,14 +42,24 @@ allowed-tools:
 
 Before any commit, all of these must pass:
 
-1. **Lint** — `bun lint` (Biome)
+1. **Lint** — `bun lint` (Biome: formatting, imports, code smells)
 2. **Typecheck** — `bun typecheck` (tsc --build per package)
-3. **Unit tests** — `bun test:unit`
-4. **BDD tests** — `bun test:bdd`
+3. **Knip** — `bun knip` (dead exports, unused dependencies)
+4. **ESLint** — `bun eslint` (unsafe type assertions via typescript-eslint)
+5. **Unit tests** — `bun test:unit`
+6. **BDD tests** — `bun test:bdd`
 
-Run all at once: `bun test:all`
+Run all at once: `bun test:all` (steps 1-2, 5-6) or `/code-quality validate` (full gate including knip + eslint).
 
-The pre-commit Git hook runs these automatically. Use `/code-quality validate` to run the full gate manually.
+The pre-commit Git hook runs lint + test:all automatically.
+
+### Code Smell Detection Tools
+
+| Tool | Purpose | Config |
+|------|---------|--------|
+| Biome | Formatting, imports, `noNonNullAssertion`, `noShadow`, `noEvolvingTypes`, promise misuse, import cycles | `biome.json` |
+| Knip | Dead exports, unused dependencies, unlisted deps | `knip.json` |
+| typescript-eslint | `no-unsafe-type-assertion` (catches `as` casts) | `eslint.config.js` |
 
 ## Coverage
 
@@ -88,6 +98,8 @@ All script categories support three output levels:
 - `bun lint:quiet` — last summary line only
 - `bun build:quiet` — last summary line only
 - `bun typecheck:quiet` — no output on success
+- `bun knip:quiet` — no progress spinner
+- `bun eslint:quiet` — warnings suppressed, errors only
 
 ### Silent variants
 

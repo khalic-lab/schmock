@@ -17,3 +17,4 @@ export type Plugin = Schmock.Plugin;
 export type PluginContext = Schmock.PluginContext;
 export type PluginResult = Schmock.PluginResult;
 export type StaticData = Schmock.StaticData;
+export type RequestRecord = Schmock.RequestRecord;

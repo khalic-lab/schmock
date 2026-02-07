@@ -251,8 +251,8 @@ describe("Angular Adapter", () => {
         .mockResolvedValue({ status: 200, body: "original", headers: {} });
 
       const InterceptorClass = createSchmockInterceptor(mockInstance, {
-        transformResponse: (response) => ({
-          ...response,
+        transformResponse: (res) => ({
+          ...res,
           status: 201,
           body: "transformed",
         }),
