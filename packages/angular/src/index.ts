@@ -14,7 +14,7 @@ import {
 } from "@angular/common/http";
 import { Injectable } from "@angular/core";
 import type { CallableMockInstance } from "@schmock/core";
-import { toHttpMethod } from "@schmock/core";
+import { ROUTE_NOT_FOUND_CODE, toHttpMethod } from "@schmock/core";
 import { Observable } from "rxjs";
 
 /**
@@ -166,10 +166,19 @@ export function createSchmockInterceptor(
             query: requestData.query,
           })
           .then((schmockResponse) => {
-            if (!schmockResponse && passthrough) {
+            // Detect ROUTE_NOT_FOUND responses
+            const body = schmockResponse.body;
+            const isRouteNotFound =
+              schmockResponse.status === 404 &&
+              body &&
+              typeof body === "object" &&
+              "code" in body &&
+              body.code === ROUTE_NOT_FOUND_CODE;
+
+            if (isRouteNotFound && passthrough) {
               // No matching route, pass to real backend
               innerSub = next.handle(req).subscribe(observer);
-            } else if (!schmockResponse) {
+            } else if (isRouteNotFound) {
               // No matching route and passthrough disabled
               observer.error(
                 new HttpErrorResponse({
@@ -189,7 +198,7 @@ export function createSchmockInterceptor(
               // Convert Schmock response to Angular HttpResponse
               const httpResponse = new HttpResponse({
                 body: response.body,
-                status: response.status || 200,
+                status: response.status ?? 200,
                 statusText: "OK",
                 url: req.url,
                 headers: new HttpHeaders(response.headers || {}),
@@ -199,19 +208,22 @@ export function createSchmockInterceptor(
               observer.complete();
             }
           })
-          .catch((error: any) => {
+          .catch((error: unknown) => {
             // Handle errors
-            let errorBody: any;
+            const isError = error instanceof Error;
+            let errorBody: unknown;
 
-            if (errorFormatter) {
+            if (isError && errorFormatter) {
               errorBody = errorFormatter(error, req);
             } else {
+              const hasCode =
+                error &&
+                typeof error === "object" &&
+                "code" in error &&
+                typeof error.code === "string";
               errorBody = {
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "Internal Server Error",
-                code: (error as any).code || "INTERNAL_ERROR",
+                error: isError ? error.message : "Internal Server Error",
+                code: hasCode ? error.code : "INTERNAL_ERROR",
               };
             }
 
