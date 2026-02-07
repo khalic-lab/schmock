@@ -1,0 +1,33 @@
+/**
+ * {{PLUGIN_TITLE}} plugin for Schmock.
+ */
+
+type Plugin = Schmock.Plugin;
+type PluginContext = Schmock.PluginContext;
+type PluginResult = Schmock.PluginResult;
+
+export interface {{PLUGIN_PASCAL}}Options {
+  // Define plugin options here
+}
+
+export function {{PLUGIN_CAMEL}}Plugin(options: {{PLUGIN_PASCAL}}Options = {}): Plugin {
+  return {
+    name: "{{PLUGIN_NAME}}",
+    version: "1.0.0",
+
+    process(context: PluginContext, response?: any): PluginResult {
+      // Pass through if another plugin already generated a response
+      if (response !== undefined && response !== null) {
+        return { context, response };
+      }
+
+      // TODO: Implement plugin logic
+      return { context };
+    },
+
+    onError(error: Error, context: PluginContext) {
+      // TODO: Handle errors if needed
+      return error;
+    },
+  };
+}
