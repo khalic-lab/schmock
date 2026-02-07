@@ -55,6 +55,8 @@ export function schmock(
     },
   );
 
+  instance.setCallableRef(callableInstance);
+
   return callableInstance;
 }
 

@@ -82,6 +82,7 @@ export class CallableMockInstance {
   private plugins: Schmock.Plugin[] = [];
   private logger: DebugLogger;
   private requestHistory: Schmock.RequestRecord[] = [];
+  private callableRef: Schmock.CallableMockInstance | undefined;
 
   constructor(private globalConfig: Schmock.GlobalConfig = {}) {
     this.logger = new DebugLogger(globalConfig.debug || false);
@@ -185,6 +186,10 @@ export class CallableMockInstance {
     return this;
   }
 
+  setCallableRef(ref: Schmock.CallableMockInstance): void {
+    this.callableRef = ref;
+  }
+
   pipe(plugin: Schmock.Plugin): this {
     this.plugins.push(plugin);
     this.logger.log(
@@ -197,6 +202,9 @@ export class CallableMockInstance {
         hasOnError: typeof plugin.onError === "function",
       },
     );
+    if (plugin.install && this.callableRef) {
+      plugin.install(this.callableRef);
+    }
     return this;
   }
 

@@ -420,6 +420,97 @@ describe("plugin system", () => {
     });
   });
 
+  describe("plugin install hook", () => {
+    it("calls install with callable instance when pipe() is invoked", () => {
+      const mock = schmock();
+      let receivedInstance: unknown;
+
+      const plugin: Schmock.Plugin = {
+        name: "install-test",
+        install(instance) {
+          receivedInstance = instance;
+        },
+        process: (ctx: any, res: any) => ({ context: ctx, response: res }),
+      };
+
+      mock.pipe(plugin);
+      expect(receivedInstance).toBe(mock);
+    });
+
+    it("works normally when plugin has no install method", async () => {
+      const mock = schmock();
+
+      const plugin: Schmock.Plugin = {
+        name: "no-install",
+        process: (ctx: any, res: any) => ({ context: ctx, response: res }),
+      };
+
+      mock("GET /test", "hello").pipe(plugin);
+      const response = await mock.handle("GET", "/test");
+      expect(response.body).toBe("hello");
+    });
+
+    it("allows install to register routes on the instance", async () => {
+      const mock = schmock();
+
+      const plugin: Schmock.Plugin = {
+        name: "route-installer",
+        install(instance) {
+          instance("GET /installed", { message: "from-install" });
+        },
+        process: (ctx: any, res: any) => ({ context: ctx, response: res }),
+      };
+
+      mock.pipe(plugin);
+
+      const response = await mock.handle("GET", "/installed");
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ message: "from-install" });
+    });
+
+    it("allows install to register multiple routes", async () => {
+      const mock = schmock();
+
+      const plugin: Schmock.Plugin = {
+        name: "multi-route-installer",
+        install(instance) {
+          instance("GET /a", "route-a");
+          instance("POST /b", "route-b");
+        },
+        process: (ctx: any, res: any) => ({ context: ctx, response: res }),
+      };
+
+      mock.pipe(plugin);
+
+      const responseA = await mock.handle("GET", "/a");
+      expect(responseA.body).toBe("route-a");
+
+      const responseB = await mock.handle("POST", "/b");
+      expect(responseB.body).toBe("route-b");
+    });
+
+    it("routes registered in install work with generator functions", async () => {
+      const mock = schmock();
+
+      const plugin: Schmock.Plugin = {
+        name: "generator-installer",
+        install(instance) {
+          instance("GET /items/:id", (ctx) => ({
+            id: ctx.params.id,
+            name: "test",
+          }));
+        },
+        process: (ctx: any, res: any) => ({ context: ctx, response: res }),
+      };
+
+      mock.pipe(plugin);
+
+      const response = await mock.handle("GET", "/items/42");
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ id: "42", name: "test" });
+    });
+  });
+
   describe("debug logging", () => {
     it("logs plugin pipeline execution with debug enabled", async () => {
       const mock = schmock({ debug: true });

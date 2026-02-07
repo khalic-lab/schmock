@@ -2,5 +2,6 @@
   "packages/core": "1.1.0",
   "packages/schema": "1.1.0",
   "packages/express": "1.1.0",
-  "packages/angular": "1.4.0"
+  "packages/angular": "1.4.0",
+  "packages/openapi": "1.0.0"
 }

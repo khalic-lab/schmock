@@ -37,6 +37,13 @@ declare namespace Schmock {
     version?: string;
 
     /**
+     * Called once when the plugin is added via .pipe()
+     * Use this to register routes or configure the instance at setup time
+     * @param instance - The callable mock instance
+     */
+    install?(instance: CallableMockInstance): void;
+
+    /**
      * Process the request through this plugin
      * First plugin to set response becomes the generator, others transform
      * @param context - Plugin context with request details

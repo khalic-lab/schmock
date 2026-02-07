@@ -19,6 +19,7 @@
       "@schmock/angular": ["packages/angular/src"],
       "@schmock/validation": ["packages/validation/src"],
       "@schmock/query": ["packages/query/src"],
+      "@schmock/openapi": ["packages/openapi/src"],
       "@features/*": ["features/*"]
     }
   },
