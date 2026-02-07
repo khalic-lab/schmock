@@ -18,3 +18,11 @@ Feature: OpenAPI Seed Data
     Given a mock with Petstore spec and inline seed data
     When I create a new pet named "NewPet"
     Then the new pet ID is greater than existing seed IDs
+
+  Scenario: Invalid seed count produces descriptive error
+    Given a Petstore spec path
+    Then creating a mock with seed count "abc" should throw about non-negative integer
+
+  Scenario: Malformed seed file produces descriptive error
+    Given a Petstore spec path
+    Then creating a mock with malformed seed file should throw about invalid JSON
