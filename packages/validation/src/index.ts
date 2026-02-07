@@ -1,9 +1,7 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
-import Ajv from "ajv";
+import Ajv, { type ValidateFunction } from "ajv";
 import type { JSONSchema7 } from "json-schema";
-
-const ajv = new Ajv({ allErrors: true });
 
 interface ValidationRules {
   request?: {
@@ -29,18 +27,39 @@ export function validationPlugin(
   const requestErrorStatus = options.requestErrorStatus ?? 400;
   const responseErrorStatus = options.responseErrorStatus ?? 500;
 
+  // Pre-compile all validators at plugin creation time
+  const ajv = new Ajv({ allErrors: true });
+  const validators: {
+    requestBody?: ValidateFunction;
+    requestQuery?: ValidateFunction;
+    requestHeaders?: ValidateFunction;
+    responseBody?: ValidateFunction;
+  } = {};
+
+  if (options.request?.body) {
+    validators.requestBody = ajv.compile(options.request.body);
+  }
+  if (options.request?.query) {
+    validators.requestQuery = ajv.compile(options.request.query);
+  }
+  if (options.request?.headers) {
+    validators.requestHeaders = ajv.compile(options.request.headers);
+  }
+  if (options.response?.body) {
+    validators.responseBody = ajv.compile(options.response.body);
+  }
+
   return {
     name: "validation",
     version: "1.0.0",
 
     process(
       context: Schmock.PluginContext,
-      response?: any,
+      response?: unknown,
     ): Schmock.PluginResult {
-      // Validate request body
-      if (options.request?.body && context.body !== undefined) {
-        const validate = ajv.compile(options.request.body);
-        if (!validate(context.body)) {
+      // Validate request body (skip when no body provided, e.g. GET requests)
+      if (validators.requestBody && context.body !== undefined) {
+        if (!validators.requestBody(context.body)) {
           return {
             context,
             response: {
@@ -48,7 +67,7 @@ export function validationPlugin(
               body: {
                 error: "Request validation failed",
                 code: "REQUEST_VALIDATION_ERROR",
-                details: validate.errors,
+                details: validators.requestBody.errors,
               },
             },
           };
@@ -56,9 +75,8 @@ export function validationPlugin(
       }
 
       // Validate request query parameters
-      if (options.request?.query && context.query) {
-        const validate = ajv.compile(options.request.query);
-        if (!validate(context.query)) {
+      if (validators.requestQuery && context.query) {
+        if (!validators.requestQuery(context.query)) {
           return {
             context,
             response: {
@@ -66,7 +84,7 @@ export function validationPlugin(
               body: {
                 error: "Query parameter validation failed",
                 code: "QUERY_VALIDATION_ERROR",
-                details: validate.errors,
+                details: validators.requestQuery.errors,
               },
             },
           };
@@ -74,14 +92,13 @@ export function validationPlugin(
       }
 
       // Validate request headers
-      if (options.request?.headers && context.headers) {
-        const validate = ajv.compile(options.request.headers);
+      if (validators.requestHeaders && context.headers) {
         // Lowercase all header names for comparison
         const normalizedHeaders: Record<string, string> = {};
         for (const [key, value] of Object.entries(context.headers)) {
           normalizedHeaders[key.toLowerCase()] = value;
         }
-        if (!validate(normalizedHeaders)) {
+        if (!validators.requestHeaders(normalizedHeaders)) {
           return {
             context,
             response: {
@@ -89,7 +106,7 @@ export function validationPlugin(
               body: {
                 error: "Header validation failed",
                 code: "HEADER_VALIDATION_ERROR",
-                details: validate.errors,
+                details: validators.requestHeaders.errors,
               },
             },
           };
@@ -97,14 +114,13 @@ export function validationPlugin(
       }
 
       // Validate response body (if response exists)
-      if (options.response?.body && response !== undefined) {
+      if (validators.responseBody && response !== undefined) {
         // Unwrap tuple responses: [status, body] or [status, body, headers]
         const isTuple =
           Array.isArray(response) && typeof response[0] === "number";
         const responseBody = isTuple ? response[1] : response;
 
-        const validate = ajv.compile(options.response.body);
-        if (!validate(responseBody)) {
+        if (!validators.responseBody(responseBody)) {
           return {
             context,
             response: {
@@ -112,7 +128,7 @@ export function validationPlugin(
               body: {
                 error: "Response validation failed",
                 code: "RESPONSE_VALIDATION_ERROR",
-                details: validate.errors,
+                details: validators.responseBody.errors,
               },
             },
           };
