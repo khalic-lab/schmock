@@ -17,9 +17,19 @@
     "test:unit:quiet": "bash -c 'set -o pipefail; bun run --filter \"*\" test --reporter=dot 2>&1 | grep -E \"^[·.F]+$|Test Files|Tests |Duration\"'",
     "test:bdd": "bun run --filter '*' test:bdd",
     "test:bdd:quiet": "bash -c 'set -o pipefail; bun run --filter \"*\" test:bdd --reporter=dot 2>&1 | grep -E \"^[·.F]+$|Test Files|Tests |Duration\"'",
+    "test:quiet": "bun run test:all:quiet",
+    "test:silent": "bun run test:unit:silent && bun run test:bdd:silent",
+    "test:all:silent": "bun run typecheck:silent && bun run test:unit:silent && bun run test:bdd:silent",
+    "test:unit:silent": "bun run --filter '*' test > /dev/null 2>&1",
+    "test:bdd:silent": "bun run --filter '*' test:bdd > /dev/null 2>&1",
     "lint": "bun run --filter '*' lint",
+    "lint:quiet": "bash -c 'set -o pipefail; bun run --filter \"*\" lint 2>&1 | tail -1'",
+    "lint:silent": "bun run --filter '*' lint > /dev/null 2>&1",
     "lint:fix": "bun run --filter '*' lint:fix",
+    "build:quiet": "bash -c 'set -o pipefail; bun run build 2>&1 | tail -1'",
+    "build:silent": "bun run build > /dev/null 2>&1",
     "typecheck:quiet": "bun run --filter @schmock/core build:types > /dev/null && bun run --filter @schmock/schema build:types > /dev/null && bun run --filter @schmock/express build:types > /dev/null && bun run --filter @schmock/angular build:types > /dev/null",
+    "typecheck:silent": "bun run typecheck > /dev/null 2>&1",
     "typecheck": "bun run --filter @schmock/core build:types && bun run --filter @schmock/schema build:types && bun run --filter @schmock/express build:types && bun run --filter @schmock/angular build:types"
   },
   "devDependencies": {
@@ -29,6 +39,7 @@
     "@types/bun": "1.3.1",
     "@vitest/coverage-v8": "^4.0.18",
     "bun-types": "1.3.5",
+    "fast-check": "^4.5.3",
     "publint": "0.3.17",
     "typescript": "5.9.3"
   }

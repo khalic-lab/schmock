@@ -131,7 +131,7 @@ describeFeature(feature, ({ Scenario }) => {
 
     Then("it should throw a SchemaValidationError", () => {
       expect(error).not.toBeNull();
-      expect(error!.constructor.name).toBe("SchemaValidationError");
+      expect(error!.name).toBe("SchemaValidationError");
     });
   });
 
@@ -153,7 +153,7 @@ describeFeature(feature, ({ Scenario }) => {
 
     Then("it should throw a SchemaValidationError with message {string}", (_, message: string) => {
       expect(error).not.toBeNull();
-      expect(error!.constructor.name).toBe("SchemaValidationError");
+      expect(error!.name).toBe("SchemaValidationError");
       expect(error!.message).toContain(message);
     });
   });

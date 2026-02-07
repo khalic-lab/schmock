@@ -11,13 +11,14 @@
         "@types/bun": "1.3.1",
         "@vitest/coverage-v8": "^4.0.18",
         "bun-types": "1.3.5",
+        "fast-check": "^4.5.3",
         "publint": "0.3.17",
         "typescript": "5.9.3",
       },
     },
     "packages/angular": {
       "name": "@schmock/angular",
-      "version": "1.0.1",
+      "version": "1.3.2",
       "dependencies": {
         "@schmock/core": "^1.0.0",
         "rxjs": "^7.8.1",
@@ -41,7 +42,7 @@
     },
     "packages/core": {
       "name": "@schmock/core",
-      "version": "1.0.0",
+      "version": "1.0.4",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.2.0",
         "@types/node": "^25.1.0",
@@ -51,7 +52,7 @@
     },
     "packages/express": {
       "name": "@schmock/express",
-      "version": "1.0.0",
+      "version": "1.0.2",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.2.0",
         "@types/express": "^5.0.6",
@@ -66,7 +67,7 @@
     },
     "packages/schema": {
       "name": "@schmock/schema",
-      "version": "1.0.0",
+      "version": "1.0.2",
       "dependencies": {
         "@faker-js/faker": "^10.2.0",
         "json-schema-faker": "^0.5.6",
@@ -455,6 +456,8 @@
 
     "express": ["express@5.2.1", "", { "dependencies": { "accepts": "^2.0.0", "body-parser": "^2.2.1", "content-disposition": "^1.0.0", "content-type": "^1.0.5", "cookie": "^0.7.1", "cookie-signature": "^1.2.1", "debug": "^4.4.0", "depd": "^2.0.0", "encodeurl": "^2.0.0", "escape-html": "^1.0.3", "etag": "^1.8.1", "finalhandler": "^2.1.0", "fresh": "^2.0.0", "http-errors": "^2.0.0", "merge-descriptors": "^2.0.0", "mime-types": "^3.0.0", "on-finished": "^2.4.1", "once": "^1.4.0", "parseurl": "^1.3.3", "proxy-addr": "^2.0.7", "qs": "^6.14.0", "range-parser": "^1.2.1", "router": "^2.2.0", "send": "^1.1.0", "serve-static": "^2.2.0", "statuses": "^2.0.1", "type-is": "^2.0.1", "vary": "^1.1.2" } }, "sha512-hIS4idWWai69NezIdRt2xFVofaF4j+6INOpJlVOLDO8zXGpUVEVzIYk12UUi2JzjEzWL3IOAxcTubgz9Po0yXw=="],
 
+    "fast-check": ["fast-check@4.5.3", "", { "dependencies": { "pure-rand": "^7.0.0" } }, "sha512-IE9csY7lnhxBnA8g/WI5eg/hygA6MGWJMSNfFRrBlXUciADEhS1EDB0SIsMSvzubzIlOBbVITSsypCsW717poA=="],
+
     "fast-glob": ["fast-glob@3.3.3", "", { "dependencies": { "@nodelib/fs.stat": "^2.0.2", "@nodelib/fs.walk": "^1.2.3", "glob-parent": "^5.1.2", "merge2": "^1.3.0", "micromatch": "^4.0.8" } }, "sha512-7MptL8U0cqcFdzIzwOTHoilX9x5BrNqye7Z/LuC7kCMRio1EMSyqRK3BEAUD7sXRq4iT4AzTVuZdhgQ2TCvYLg=="],
 
     "fastq": ["fastq@1.19.1", "", { "dependencies": { "reusify": "^1.0.4" } }, "sha512-GwLTyxkCXjXbxqIhTsMI2Nui8huMPtnxg7krajPJAjnEG/iiOS7i+zCtWGZR9G0NBKbXKh6X9m9UIsYX/N6vvQ=="],
@@ -630,6 +633,8 @@
     "publint": ["publint@0.3.17", "", { "dependencies": { "@publint/pack": "^0.1.3", "package-manager-detector": "^1.6.0", "picocolors": "^1.1.1", "sade": "^1.8.1" }, "bin": { "publint": "src/cli.js" } }, "sha512-Q3NLegA9XM6usW+dYQRG1g9uEHiYUzcCVBJDJ7yMcWRqVU9LYZUWdqbwMZfmTCFC5PZLQpLAmhvRcQRl3exqkw=="],
 
     "punycode": ["punycode@2.3.1", "", {}, "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg=="],
+
+    "pure-rand": ["pure-rand@7.0.1", "", {}, "sha512-oTUZM/NAZS8p7ANR3SHh30kXB+zK2r2BPcEn/awJIbOvq82WoMN4p62AWWp3Hhw50G0xMsw1mhIBLqHw64EcNQ=="],
 
     "qs": ["qs@6.14.0", "", { "dependencies": { "side-channel": "^1.1.0" } }, "sha512-YWWTjgABSKcvs/nWBi9PycY/JiPJqOD4JA6o9Sej2AtvSGarXxKC3OQSk4pAarbdQlKAh5D4FCQkJNkW+GAn3w=="],
 
