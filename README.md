@@ -14,6 +14,19 @@ Schmock is a mock API generator that allows you to quickly create predictable, s
 - 🎯 **Type-Safe**: Full TypeScript support with ambient types
 - 🔄 **Stateful Mocks**: Maintain state between requests
 - 🔧 **Plugin Pipeline**: Extensible `.pipe()` architecture
+- 📄 **OpenAPI Auto-Mock**: Throw a swagger.json at it and let it manage the rest
+
+## Packages
+
+| Package | Description |
+|---------|-------------|
+| `@schmock/core` | Core mock builder, routing, and plugin pipeline |
+| `@schmock/schema` | JSON Schema-based response generation plugin |
+| `@schmock/validation` | Request/response validation via AJV |
+| `@schmock/query` | Pagination, sorting, and filtering for list endpoints |
+| `@schmock/openapi` | Auto-register routes from OpenAPI/Swagger specs |
+| `@schmock/express` | Express middleware adapter |
+| `@schmock/angular` | Angular HTTP interceptor adapter |
 
 ## Installation
 
@@ -325,6 +338,51 @@ mock('GET /api/items', ({ query }) =>
 );
 ```
 
+### OpenAPI Auto-Mock
+
+Throw a Swagger/OpenAPI spec at Schmock and get a fully functional CRUD mock API with zero boilerplate. Supports Swagger 2.0, OpenAPI 3.0, and 3.1.
+
+```sh
+bun add @schmock/openapi
+```
+
+```typescript
+import { schmock } from '@schmock/core'
+import { openapi } from '@schmock/openapi'
+
+const mock = schmock({ state: {} })
+
+// One line — all routes auto-registered with CRUD behavior
+mock.pipe(await openapi({
+  spec: './petstore.yaml',
+  seed: {
+    pets: [
+      { petId: 1, name: 'Rex', tag: 'dog' },
+      { petId: 2, name: 'Whiskers', tag: 'cat' },
+    ]
+  }
+}))
+
+// Full CRUD lifecycle works out of the box
+const created = await mock.handle('POST', '/pets', {
+  body: { name: 'Buddy', tag: 'dog' }
+})
+console.log(created.status) // 201
+console.log(created.body)   // { petId: 3, name: 'Buddy', tag: 'dog' }
+
+const list = await mock.handle('GET', '/pets')
+console.log(list.body.length) // 3
+
+const read = await mock.handle('GET', '/pets/1')
+console.log(read.body.name) // 'Rex'
+
+await mock.handle('DELETE', '/pets/2')
+const updated = await mock.handle('GET', '/pets')
+console.log(updated.body.length) // 2
+```
+
+Stress tested with real-world specs: Petstore, Train Travel API, Scalar Galaxy, and Stripe's 5.8MB API spec (415 endpoints).
+
 ## API Reference
 
 ### Factory Function
@@ -414,7 +472,7 @@ bun run build
 ### Testing Commands
 
 ```sh
-# Run all tests (262 total: 101 unit + 161 BDD)
+# Run all tests
 bun test
 
 # Run comprehensive test suite with typecheck (recommended before commits)
@@ -451,14 +509,16 @@ git commit --no-verify
 ```
 schmock/
 ├── packages/
-│   ├── core/           # Core Schmock functionality with callable API
-│   ├── schema/         # Schema plugin for JSON Schema generation
+│   ├── core/           # Core mock builder, routing, plugin pipeline
+│   ├── schema/         # JSON Schema-based response generation
+│   ├── validation/     # Request/response validation (AJV)
+│   ├── query/          # Pagination, sorting, filtering
+│   ├── openapi/        # OpenAPI/Swagger auto-mock plugin
 │   ├── express/        # Express middleware adapter
 │   └── angular/        # Angular HTTP interceptor adapter
 ├── features/           # BDD feature files
-├── types/              # Shared TypeScript types
-├── docs/               # API documentation
-└── examples/           # Usage examples
+├── types/              # Shared TypeScript types (ambient)
+└── docs/               # API documentation
 ```
 
 ## Contributing
@@ -515,14 +575,15 @@ This is a project developped to test LLM agents capabilities using BDD as framew
 - [x] Direct callable API with zero boilerplate
 - [x] Custom status codes and headers
 - [x] Plugin pipeline with `.pipe()` chaining
-- [x] Schema-based data generation
-- [x] Express middleware adapter
-- [x] Angular HTTP interceptor adapter
-- [ ] Runtime content-type validation
-- [ ] Request/response validation plugins
+- [x] Schema-based data generation (`@schmock/schema`)
+- [x] Express middleware adapter (`@schmock/express`)
+- [x] Angular HTTP interceptor adapter (`@schmock/angular`)
+- [x] Request spy/history tracking (`called()`, `callCount()`, `lastRequest()`)
+- [x] Reset/lifecycle management (`reset()`, `resetHistory()`, `resetState()`)
+- [x] Request/response validation plugin (`@schmock/validation`)
+- [x] Pagination, sorting, filtering plugin (`@schmock/query`)
+- [x] OpenAPI/Swagger auto-mock plugin (`@schmock/openapi`)
 - [ ] Response delays and error simulation
-- [ ] Caching plugin
-- [ ] Persistence plugin
 - [ ] GraphQL support
 - [ ] WebSocket support
 
