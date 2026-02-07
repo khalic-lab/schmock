@@ -241,7 +241,7 @@ export class CallableMockInstance {
     path: string,
     options?: Schmock.RequestOptions,
   ): Promise<Schmock.Response> {
-    const requestId = Math.random().toString(36).substring(2, 10) || "00000000";
+    const requestId = crypto.randomUUID();
     this.logger.log("request", `[${requestId}] ${method} ${path}`, {
       headers: options?.headers,
       query: options?.query,
@@ -252,46 +252,40 @@ export class CallableMockInstance {
     try {
       // Apply namespace if configured
       let requestPath = path;
-      if (this.globalConfig.namespace) {
-        // Normalize namespace to handle edge cases
-        const namespace = this.globalConfig.namespace;
-        if (namespace === "/") {
-          // Root namespace means no transformation needed
-          requestPath = path;
-        } else {
-          // Handle namespace without leading slash by normalizing both namespace and path
-          const normalizedNamespace = namespace.startsWith("/")
-            ? namespace
-            : `/${namespace}`;
-          const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+      if (this.globalConfig.namespace && this.globalConfig.namespace !== "/") {
+        const namespace = this.globalConfig.namespace.startsWith("/")
+          ? this.globalConfig.namespace
+          : `/${this.globalConfig.namespace}`;
 
-          // Remove trailing slash from namespace unless it's root
-          const finalNamespace =
-            normalizedNamespace.endsWith("/") && normalizedNamespace !== "/"
-              ? normalizedNamespace.slice(0, -1)
-              : normalizedNamespace;
+        const pathToCheck = path.startsWith("/") ? path : `/${path}`;
 
-          if (!normalizedPath.startsWith(finalNamespace)) {
-            this.logger.log(
-              "route",
-              `[${requestId}] Path doesn't match namespace ${namespace}`,
-            );
-            const error = new RouteNotFoundError(method, path);
-            const response = {
-              status: 404,
-              body: { error: error.message, code: error.code },
-              headers: {},
-            };
-            this.logger.timeEnd(`request-${requestId}`);
-            return response;
-          }
+        // Check if path starts with namespace
+        // handle both "/api/users" (starts with /api) and "/api" (exact match)
+        // but NOT "/apiv2" (prefix match but wrong segment)
+        const isMatch =
+          pathToCheck === namespace ||
+          pathToCheck.startsWith(
+            namespace.endsWith("/") ? namespace : `${namespace}/`,
+          );
 
-          // Remove namespace prefix, ensuring we always start with /
-          requestPath = normalizedPath.substring(finalNamespace.length);
-          if (!requestPath.startsWith("/")) {
-            requestPath = `/${requestPath}`;
-          }
+        if (!isMatch) {
+          this.logger.log(
+            "route",
+            `[${requestId}] Path doesn't match namespace ${namespace}`,
+          );
+          const error = new RouteNotFoundError(method, path);
+          const response = {
+            status: 404,
+            body: { error: error.message, code: error.code },
+            headers: {},
+          };
+          this.logger.timeEnd(`request-${requestId}`);
+          return response;
         }
+
+        // Remove namespace prefix, ensuring we always start with /
+        const stripped = pathToCheck.slice(namespace.length);
+        requestPath = stripped.startsWith("/") ? stripped : `/${stripped}`;
       }
 
       // Find matching route

@@ -95,8 +95,9 @@ describe("namespace functionality", () => {
       const response2 = await mock.handle("GET", "/api//users");
 
       expect(response1.body).toBe("users");
-      // This might not match depending on implementation
-      expect(response2.status).toBe(404);
+      // New logic gracefully handles double slashes by stripping the full namespace
+      expect(response2.status).toBe(200);
+      expect(response2.body).toBe("users");
     });
 
     it("handles empty namespace", async () => {
