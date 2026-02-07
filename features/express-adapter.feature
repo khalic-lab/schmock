@@ -4,10 +4,7 @@ Feature: Express Adapter
   So that Schmock integrates seamlessly into my Express application
 
   Scenario: Matched route returns Schmock response
-    Given I create an Express middleware from a Schmock mock with:
-      """
-      mock('GET /users', [{ id: 1, name: 'John' }])
-      """
+    Given I create an Express middleware with a GET /users route returning users
     When a request is made to "GET /users"
     Then the Express response should have status 200
     And the Express response body should be:
@@ -17,44 +14,29 @@ Feature: Express Adapter
     And next should not have been called
 
   Scenario: Unmatched route calls next for passthrough
-    Given I create an Express middleware from a Schmock mock with:
-      """
-      mock('GET /users', [{ id: 1 }])
-      """
+    Given I create an Express middleware with a GET /users route for passthrough testing
     When a request is made to "GET /posts"
     Then next should have been called without error
 
   Scenario: Unmatched HTTP method calls next for passthrough
-    Given I create an Express middleware from a Schmock mock with:
-      """
-      mock('GET /users', [{ id: 1 }])
-      """
+    Given I create an Express middleware with only a GET /users route
     When a request is made to "POST /users"
     Then next should have been called without error
 
   Scenario: Error status codes are sent as responses not passthrough
-    Given I create an Express middleware from a Schmock mock with:
-      """
-      mock('GET /error', () => [500, { error: 'Server Error' }])
-      """
+    Given I create an Express middleware with a route returning status 500
     When a request is made to "GET /error"
     Then the Express response should have status 500
     And next should not have been called
 
   Scenario: Generator errors return 500 response
-    Given I create an Express middleware from a Schmock mock with:
-      """
-      mock('GET /fail', () => { throw new Error('Generator exploded') })
-      """
+    Given I create an Express middleware with a route that throws an error
     When a request is made to "GET /fail"
     Then the Express response should have status 500
     And next should not have been called
 
   Scenario: Response headers are forwarded to Express
-    Given I create an Express middleware from a Schmock mock with:
-      """
-      mock('GET /custom', () => [200, { ok: true }, { 'x-custom': 'value' }])
-      """
+    Given I create an Express middleware with a route returning custom headers
     When a request is made to "GET /custom"
     Then the Express response should have status 200
     And the Express response should have header "x-custom" with value "value"

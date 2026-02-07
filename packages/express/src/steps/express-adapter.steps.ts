@@ -55,10 +55,10 @@ describeFeature(feature, ({ Scenario }) => {
     "Matched route returns Schmock response",
     ({ Given, When, Then, And }) => {
       Given(
-        "I create an Express middleware from a Schmock mock with:",
-        (_, docString: string) => {
+        "I create an Express middleware with a GET /users route returning users",
+        () => {
           mock = schmock();
-          new Function("mock", docString)(mock);
+          mock("GET /users", [{ id: 1, name: "John" }]);
           middleware = toExpress(mock);
         },
       );
@@ -93,10 +93,10 @@ describeFeature(feature, ({ Scenario }) => {
     "Unmatched route calls next for passthrough",
     ({ Given, When, Then }) => {
       Given(
-        "I create an Express middleware from a Schmock mock with:",
-        (_, docString: string) => {
+        "I create an Express middleware with a GET /users route for passthrough testing",
+        () => {
           mock = schmock();
-          new Function("mock", docString)(mock);
+          mock("GET /users", [{ id: 1 }]);
           middleware = toExpress(mock);
         },
       );
@@ -119,10 +119,10 @@ describeFeature(feature, ({ Scenario }) => {
     "Unmatched HTTP method calls next for passthrough",
     ({ Given, When, Then }) => {
       Given(
-        "I create an Express middleware from a Schmock mock with:",
-        (_, docString: string) => {
+        "I create an Express middleware with only a GET /users route",
+        () => {
           mock = schmock();
-          new Function("mock", docString)(mock);
+          mock("GET /users", [{ id: 1 }]);
           middleware = toExpress(mock);
         },
       );
@@ -145,10 +145,10 @@ describeFeature(feature, ({ Scenario }) => {
     "Error status codes are sent as responses not passthrough",
     ({ Given, When, Then, And }) => {
       Given(
-        "I create an Express middleware from a Schmock mock with:",
-        (_, docString: string) => {
+        "I create an Express middleware with a route returning status 500",
+        () => {
           mock = schmock();
-          new Function("mock", docString)(mock);
+          mock("GET /error", () => [500, { error: "Server Error" }]);
           middleware = toExpress(mock);
         },
       );
@@ -178,10 +178,12 @@ describeFeature(feature, ({ Scenario }) => {
     "Generator errors return 500 response",
     ({ Given, When, Then, And }) => {
       Given(
-        "I create an Express middleware from a Schmock mock with:",
-        (_, docString: string) => {
+        "I create an Express middleware with a route that throws an error",
+        () => {
           mock = schmock();
-          new Function("mock", docString)(mock);
+          mock("GET /fail", () => {
+            throw new Error("Generator exploded");
+          });
           middleware = toExpress(mock);
         },
       );
@@ -211,10 +213,14 @@ describeFeature(feature, ({ Scenario }) => {
     "Response headers are forwarded to Express",
     ({ Given, When, Then, And }) => {
       Given(
-        "I create an Express middleware from a Schmock mock with:",
-        (_, docString: string) => {
+        "I create an Express middleware with a route returning custom headers",
+        () => {
           mock = schmock();
-          new Function("mock", docString)(mock);
+          mock("GET /custom", () => [
+            200,
+            { ok: true },
+            { "x-custom": "value" },
+          ]);
           middleware = toExpress(mock);
         },
       );

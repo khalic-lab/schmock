@@ -1,12 +1,12 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { evalMockSetup } from "./eval-mock";
-import type { MockInstance } from "../types";
+import { schmock } from "../index";
+import type { CallableMockInstance } from "../types";
 
 const feature = await loadFeature("../../features/performance-reliability.feature");
 
 describeFeature(feature, ({ Scenario }) => {
-  let mock: MockInstance<any>;
+  let mock: CallableMockInstance;
   let responses: any[] = [];
   let responsesTimes: number[] = [];
   let expectedResponseCount = 0;
@@ -15,8 +15,28 @@ describeFeature(feature, ({ Scenario }) => {
     responses = [];
     responsesTimes = [];
 
-    Given("I create a mock for load testing:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock for high-volume load testing", () => {
+      mock = schmock();
+      mock('GET /api/health', () => ({
+        status: 'healthy',
+        timestamp: Date.now()
+      }));
+      mock('GET /api/data/:id', ({ params }) => ({
+        id: params.id,
+        data: Array.from({ length: 50 }, (_, i) => ({
+          index: i,
+          value: Math.random()
+        })),
+        generated_at: new Date().toISOString()
+      }));
+      mock('POST /api/process', ({ body }) => {
+        const items = Array.isArray(body) ? body : [body];
+        return {
+          processed: items.length,
+          results: items.map(item => ({ ...item, processed: true })),
+          batch_id: Math.random().toString(36)
+        };
+      });
     });
 
     When("I send {int} concurrent {string} requests", async (_, count: number, request: string) => {
@@ -106,8 +126,38 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Memory usage under sustained load", ({ Given, When, Then, And }) => {
-    Given("I create a mock with potential memory concerns:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with large payload handling", () => {
+      mock = schmock();
+      mock('POST /api/large-data', ({ body }) => {
+        const largeArray = Array.from({ length: 1000 }, (_, i) => ({
+          id: i,
+          data: 'x'.repeat(100),
+          timestamp: Date.now(),
+          payload: body
+        }));
+        return {
+          results: largeArray,
+          items: largeArray,
+          total_size: largeArray.length,
+          size: 'large',
+          memory_usage: process.memoryUsage ? process.memoryUsage() : null
+        };
+      });
+      mock('GET /api/accumulate/:count', ({ params }) => {
+        const count = parseInt(params.count);
+        const items = Array.from({ length: count }, (_, i) => ({
+          id: i,
+          value: Math.random(),
+          timestamp: Date.now()
+        }));
+        return {
+          items: items,
+          accumulated: items,
+          total: items.length,
+          count: items.length,
+          memory_usage: process.memoryUsage ? process.memoryUsage() : null
+        };
+      });
     });
 
     When("I send {int} requests to {string} with {int}KB payloads", async (_, count: number, request: string, payloadSize: number) => {
@@ -161,8 +211,36 @@ describeFeature(feature, ({ Scenario }) => {
   Scenario("Error resilience and recovery", ({ Given, When, Then, And }) => {
     responses = [];
 
-    Given("I create a mock with intermittent failures:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with intermittent failure simulation", () => {
+      mock = schmock();
+      let requestCount = 0;
+      mock('POST /api/unreliable', ({ body }) => {
+        requestCount++;
+        if (requestCount % 5 === 0) {
+          return [500, { error: 'Simulated server error', request_id: requestCount }];
+        }
+        return [200, { success: true, data: body, request_id: requestCount }];
+      });
+      mock('GET /api/flaky', () => {
+        requestCount++;
+        if (requestCount % 5 === 0) {
+          return [500, { error: 'Flaky service error', request_id: requestCount }];
+        }
+        return [200, { success: true, request_id: requestCount }];
+      });
+      mock('POST /api/validate-strict', ({ body }) => {
+        if (!body || typeof body !== 'object') {
+          return [400, { error: 'Request body is required and must be an object', code: 'INVALID_BODY' }];
+        }
+        const record = body as Record<string, unknown>;
+        if (!record.name || typeof record.name !== 'string') {
+          return [422, { error: 'Name field is required and must be a string', code: 'INVALID_NAME' }];
+        }
+        if (!record.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(record.email as string)) {
+          return [422, { error: 'Valid email address is required', code: 'INVALID_EMAIL' }];
+        }
+        return [200, { message: 'Validation successful', data: body }];
+      });
     });
 
     When("I send {int} requests to {string}", async (_, count: number, request: string) => {
@@ -207,7 +285,7 @@ describeFeature(feature, ({ Scenario }) => {
       responses = [];
 
       // Test various invalid scenarios
-      const testCases = [
+      const testCases: Schmock.RequestOptions[] = [
         { headers: {}, body: null }, // No content-type, no body
         { headers: { 'content-type': 'application/json' }, body: null }, // No body
         { headers: { 'content-type': 'application/json' }, body: "invalid" }, // Invalid body type
@@ -240,8 +318,38 @@ describeFeature(feature, ({ Scenario }) => {
   Scenario("Route matching performance with complex patterns", ({ Given, When, Then, And }) => {
     responses = [];
 
-    Given("I create a mock with many route patterns:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with many nested route patterns", () => {
+      mock = schmock();
+      mock('GET /api/users', () => ({ type: 'users-list' }));
+      mock('GET /api/users/:id', ({ params }) => ({ type: 'user', id: params.id }));
+      mock('GET /api/users/:userId/posts', ({ params }) => ({ type: 'user-posts', userId: params.userId }));
+      mock('GET /api/users/:userId/posts/:postId', ({ params }) => ({
+        type: 'user-post',
+        userId: params.userId,
+        postId: params.postId
+      }));
+      mock('GET /api/users/:userId/posts/:postId/comments', ({ params }) => ({
+        type: 'post-comments',
+        userId: params.userId,
+        postId: params.postId
+      }));
+      mock('GET /api/posts', () => ({ type: 'posts-list' }));
+      mock('GET /api/posts/:postId', ({ params }) => ({ type: 'post', postId: params.postId }));
+      mock('GET /api/posts/:postId/comments/:commentId', ({ params }) => ({
+        type: 'comment',
+        postId: params.postId,
+        commentId: params.commentId
+      }));
+      mock('GET /static/:category/:file', ({ params }) => ({
+        type: 'static',
+        category: params.category,
+        file: params.file
+      }));
+      mock('GET /api/v2/users/:userId', ({ params }) => ({
+        type: 'versioned-user',
+        userId: params.userId,
+        version: 'v2'
+      }));
     });
 
     When("I send requests to all route patterns simultaneously", async () => {

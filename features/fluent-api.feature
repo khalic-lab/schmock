@@ -12,11 +12,7 @@ Feature: Callable API
   # - Route-specific configuration support
 
   Scenario: Simple route with generator function
-    Given I create a mock with:
-      """
-      const mock = schmock({})
-      mock('GET /users', () => [{ id: 1, name: 'John' }], { contentType: 'application/json' })
-      """
+    Given I create a mock with a JSON generator at "GET /users"
     When I request "GET /users"
     Then I should receive:
       """
@@ -24,24 +20,13 @@ Feature: Callable API
       """
 
   Scenario: Route with dynamic response and global state
-    Given I create a mock with:
-      """
-      const mock = schmock({ state: { count: 0 } })
-      mock('GET /counter', ({ state }) => {
-        state.count++;
-        return { value: state.count };
-      }, { contentType: 'application/json' })
-      """
+    Given I create a mock with a stateful counter
     When I request "GET /counter" twice
     Then the first response should have value 1
     And the second response should have value 2
 
   Scenario: Route with parameters
-    Given I create a mock with:
-      """
-      const mock = schmock({})
-      mock('GET /users/:id', ({ params }) => ({ userId: params.id }), { contentType: 'application/json' })
-      """
+    Given I create a mock with a parameterized route "GET /users/:id"
     When I request "GET /users/123"
     Then I should receive:
       """
@@ -49,11 +34,7 @@ Feature: Callable API
       """
 
   Scenario: Response with custom status code
-    Given I create a mock with:
-      """
-      const mock = schmock({})
-      mock('POST /users', ({ body }) => [201, { id: 1, ...body }], { contentType: 'application/json' })
-      """
+    Given I create a mock returning status 201 for "POST /users"
     When I request "POST /users" with body:
       """
       { "name": "Alice" }
@@ -65,11 +46,7 @@ Feature: Callable API
       """
 
   Scenario: Static data response
-    Given I create a mock with:
-      """
-      const mock = schmock({})
-      mock('GET /config', { version: '1.0.0', features: ['auth'] }, { contentType: 'application/json' })
-      """
+    Given I create a mock with static config data at "GET /config"
     When I request "GET /config"
     Then I should receive:
       """
@@ -77,23 +54,12 @@ Feature: Callable API
       """
 
   Scenario: 404 for undefined routes
-    Given I create a mock with:
-      """
-      const mock = schmock({})
-      mock('GET /users', () => [], { contentType: 'application/json' })
-      """
+    Given I create a mock with only a "GET /users" route
     When I request "GET /posts"
     Then the status should be 404
 
   Scenario: Query parameters
-    Given I create a mock with:
-      """
-      const mock = schmock({})
-      mock('GET /search', ({ query }) => ({ 
-        results: [], 
-        query: query.q 
-      }), { contentType: 'application/json' })
-      """
+    Given I create a mock that reads query parameters at "GET /search"
     When I request "GET /search?q=test"
     Then I should receive:
       """
@@ -101,13 +67,7 @@ Feature: Callable API
       """
 
   Scenario: Request headers access
-    Given I create a mock with:
-      """
-      const mock = schmock({})
-      mock('GET /auth', ({ headers }) => ({ 
-        authenticated: headers.authorization === 'Bearer token123' 
-      }), { contentType: 'application/json' })
-      """
+    Given I create a mock that reads headers at "GET /auth"
     When I request "GET /auth" with headers:
       """
       { "authorization": "Bearer token123" }
@@ -118,11 +78,7 @@ Feature: Callable API
       """
 
   Scenario: Global configuration with namespace
-    Given I create a mock with:
-      """
-      const mock = schmock({ namespace: '/api/v1' })
-      mock('GET /users', () => [], { contentType: 'application/json' })
-      """
+    Given I create a mock with namespace "/api/v1"
     When I request "GET /api/v1/users"
     Then I should receive:
       """
@@ -130,13 +86,7 @@ Feature: Callable API
       """
 
   Scenario: Plugin pipeline with pipe chaining
-    Given I create a mock with:
-      """
-      const mock = schmock({})
-      mock('GET /users', () => [{ id: 1, name: 'John' }], { contentType: 'application/json' })
-        .pipe({ name: 'logging', process: (ctx, response) => ({ context: ctx, response }) })
-        .pipe({ name: 'cors', process: (ctx, response) => ({ context: ctx, response }) })
-      """
+    Given I create a mock with two passthrough plugins
     When I request "GET /users"
     Then I should receive:
       """
