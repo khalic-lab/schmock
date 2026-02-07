@@ -3,8 +3,8 @@
   "version": "1.2.0",
   "description": "Express adapter for Schmock mock API generator",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
