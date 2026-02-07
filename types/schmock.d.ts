@@ -117,7 +117,7 @@ declare namespace Schmock {
     /** MIME type for content type validation (auto-detected if not provided) */
     contentType?: string;
     /** Additional route-specific options */
-    [key: string]: any;
+    [key: string]: unknown;
   }
 
   /**
@@ -183,7 +183,7 @@ declare namespace Schmock {
    */
   interface RequestOptions {
     headers?: Record<string, string>;
-    body?: any;
+    body?: unknown;
     query?: Record<string, string>;
   }
 
