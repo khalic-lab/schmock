@@ -96,7 +96,7 @@ function schmockToExpressResponse(
   res: Response,
 ): void {
   // Set status code
-  if (schmockResponse.status) {
+  if (schmockResponse.status != null) {
     res.status(schmockResponse.status);
   }
 
@@ -187,6 +187,7 @@ export function toExpress(
           requestData = {
             ...requestData,
             ...intercepted,
+            method: toHttpMethod(intercepted.method || requestData.method),
           };
         }
       }
