@@ -7,8 +7,8 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
   "files": [
@@ -22,7 +22,8 @@
     "test:watch": "vitest --watch",
     "test:bdd": "vitest run --config vitest.config.bdd.ts",
     "lint": "biome check src/",
-    "lint:fix": "biome check --write --unsafe src/"
+    "lint:fix": "biome check --write --unsafe src/",
+    "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
   "dependencies": {},
   "devDependencies": {

@@ -1,4 +1,4 @@
-import { CallableMockInstance } from "./builder";
+import { CallableMockInstance } from "./builder.js";
 
 /**
  * Create a new Schmock mock instance with callable API.
@@ -64,7 +64,7 @@ export {
   isHttpMethod,
   ROUTE_NOT_FOUND_CODE,
   toHttpMethod,
-} from "./constants";
+} from "./constants.js";
 // Re-export errors
 export {
   PluginError,
@@ -76,7 +76,7 @@ export {
   SchemaGenerationError,
   SchemaValidationError,
   SchmockError,
-} from "./errors";
+} from "./errors.js";
 // Re-export types
 export type {
   CallableMockInstance,
@@ -96,4 +96,4 @@ export type {
   RouteConfig,
   RouteKey,
   StaticData,
-} from "./types";
+} from "./types.js";

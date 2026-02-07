@@ -1,5 +1,3 @@
-/// <reference path="../../../types/schmock.d.ts" />
-
 import type {
   HttpEvent,
   HttpHandler,
@@ -13,9 +11,51 @@ import {
   HttpResponse,
 } from "@angular/common/http";
 import { Injectable } from "@angular/core";
-import type { CallableMockInstance } from "@schmock/core";
-import { ROUTE_NOT_FOUND_CODE, toHttpMethod } from "@schmock/core";
+import type {
+  CallableMockInstance,
+  HttpMethod,
+  ResponseResult,
+} from "@schmock/core";
+import { ROUTE_NOT_FOUND_CODE } from "@schmock/core";
 import { Observable } from "rxjs";
+
+const HTTP_METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "DELETE",
+  "PATCH",
+  "HEAD",
+  "OPTIONS",
+] as const;
+
+function isHttpMethod(method: string): method is HttpMethod {
+  return (HTTP_METHODS as readonly string[]).includes(method);
+}
+
+function toHttpMethod(method: string): HttpMethod {
+  if (isHttpMethod(method)) {
+    return method;
+  }
+  return "GET";
+}
+
+/**
+ * Get HTTP status text for a status code
+ */
+function getStatusText(status: number): string {
+  const statusTexts: Record<number, string> = {
+    200: "OK",
+    201: "Created",
+    204: "No Content",
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    500: "Internal Server Error",
+  };
+  return statusTexts[status] || "Unknown";
+}
 
 /**
  * Configuration options for Angular adapter
@@ -61,34 +101,73 @@ export interface AngularAdapterOptions {
    * @returns Modified response
    */
   transformResponse?: (
-    response: Schmock.Response,
+    response: {
+      status: number;
+      body: unknown;
+      headers: Record<string, string>;
+    },
     request: HttpRequest<any>,
-  ) => Schmock.Response;
+  ) => { status: number; body: unknown; headers: Record<string, string> };
 }
 
 /**
- * Extract query parameters from URL
+ * Extract query parameters from Angular HttpRequest
+ * Uses Angular's built-in params which are already parsed
  */
-function extractQueryParams(url: string): Record<string, string> {
-  const queryStart = url.indexOf("?");
-  if (queryStart === -1) return {};
-
-  const params = new URLSearchParams(url.slice(queryStart + 1));
+function extractQueryParams(request: HttpRequest<any>): Record<string, string> {
   const result: Record<string, string> = {};
 
-  params.forEach((value, key) => {
-    result[key] = value;
+  // Use Angular's HttpParams which are already parsed
+  request.params.keys().forEach((key) => {
+    const value = request.params.get(key);
+    if (value !== null) {
+      result[key] = value;
+    }
   });
+
+  // Also check URL for query params (fallback for params in URL string)
+  const url = request.url;
+  const queryStart = url.indexOf("?");
+  if (queryStart !== -1) {
+    const urlParams = new URLSearchParams(url.slice(queryStart + 1));
+    urlParams.forEach((value, key) => {
+      // Don't overwrite params from Angular's HttpParams
+      if (!(key in result)) {
+        result[key] = value;
+      }
+    });
+  }
 
   return result;
 }
 
 /**
- * Extract path without query parameters
+ * Extract pathname from URL (handles full URLs and relative paths)
+ * - "http://localhost:4200/api/users" → "/api/users"
+ * - "/api/users?foo=bar" → "/api/users"
+ * - "api/users" → "/api/users"
  */
-function extractPath(url: string): string {
+function extractPathname(url: string): string {
+  // Remove query string first
   const queryStart = url.indexOf("?");
-  return queryStart === -1 ? url : url.slice(0, queryStart);
+  const urlWithoutQuery = queryStart === -1 ? url : url.slice(0, queryStart);
+
+  // Check if it's a full URL with protocol
+  if (urlWithoutQuery.includes("://")) {
+    try {
+      const parsed = new URL(urlWithoutQuery);
+      return parsed.pathname;
+    } catch {
+      // If URL parsing fails, fall through to simple extraction
+    }
+  }
+
+  // Handle relative paths - ensure it starts with /
+  if (!urlWithoutQuery.startsWith("/")) {
+    return `/${urlWithoutQuery}`;
+  }
+
+  return urlWithoutQuery;
 }
 
 /**
@@ -128,14 +207,16 @@ export function createSchmockInterceptor(
       req: HttpRequest<any>,
       next: HttpHandler,
     ): Observable<HttpEvent<any>> {
+      // Extract pathname from URL (handles full URLs like http://localhost:4200/api/users)
+      const path = extractPathname(req.url);
+
       // Check if we should intercept this request
-      if (baseUrl && !req.url.startsWith(baseUrl)) {
+      if (baseUrl && !path.startsWith(baseUrl)) {
         return next.handle(req);
       }
 
-      // Extract request data
-      const path = extractPath(req.url);
-      const query = extractQueryParams(req.url);
+      // Extract request data using Angular's built-in params
+      const query = extractQueryParams(req);
 
       let requestData = {
         method: toHttpMethod(req.method),
@@ -151,7 +232,7 @@ export function createSchmockInterceptor(
         requestData = {
           ...requestData,
           ...transformed,
-          method: toHttpMethod(transformed.method || requestData.method),
+          method: toHttpMethod(transformed.method ?? req.method),
         };
       }
 
@@ -165,12 +246,12 @@ export function createSchmockInterceptor(
             body: requestData.body,
             query: requestData.query,
           })
-          .then((schmockResponse) => {
+          .then((schmockResponse: ResponseResult) => {
             // Detect ROUTE_NOT_FOUND responses
             const body = schmockResponse.body;
             const isRouteNotFound =
               schmockResponse.status === 404 &&
-              body &&
+              body !== null &&
               typeof body === "object" &&
               "code" in body &&
               body.code === ROUTE_NOT_FOUND_CODE;
@@ -195,34 +276,77 @@ export function createSchmockInterceptor(
                 response = transformResponse(response, req);
               }
 
-              // Convert Schmock response to Angular HttpResponse
-              const httpResponse = new HttpResponse({
-                body: response.body,
-                status: response.status ?? 200,
-                statusText: "OK",
-                url: req.url,
-                headers: new HttpHeaders(response.headers || {}),
-              });
+              const status = response.status || 200;
 
-              observer.next(httpResponse);
-              observer.complete();
+              // Auto-convert error status codes (>= 400) to HttpErrorResponse
+              if (status >= 400) {
+                let errorBody = response.body;
+
+                // Check if this is a 500 error from a handler that threw an exception
+                // and if errorFormatter is configured
+                const respBody = response.body;
+                if (
+                  status === 500 &&
+                  errorFormatter &&
+                  respBody !== null &&
+                  typeof respBody === "object" &&
+                  "error" in respBody &&
+                  "code" in respBody
+                ) {
+                  // This is an error from Schmock core (handler threw an error)
+                  // Apply the custom errorFormatter
+                  const errMsg =
+                    typeof respBody.error === "string"
+                      ? respBody.error
+                      : "Unknown error";
+                  const error = new Error(errMsg);
+                  errorBody = errorFormatter(error, req);
+                }
+
+                observer.error(
+                  new HttpErrorResponse({
+                    error: errorBody,
+                    status,
+                    statusText: getStatusText(status),
+                    url: req.url,
+                    headers: new HttpHeaders(response.headers || {}),
+                  }),
+                );
+              } else {
+                // Convert Schmock response to Angular HttpResponse
+                const httpResponse = new HttpResponse({
+                  body: response.body,
+                  status,
+                  statusText: getStatusText(status),
+                  url: req.url,
+                  headers: new HttpHeaders(response.headers || {}),
+                });
+
+                observer.next(httpResponse);
+                observer.complete();
+              }
             }
           })
           .catch((error: unknown) => {
             // Handle errors
-            const isError = error instanceof Error;
             let errorBody: unknown;
 
-            if (isError && errorFormatter) {
-              errorBody = errorFormatter(error, req);
+            if (errorFormatter) {
+              errorBody = errorFormatter(
+                error instanceof Error ? error : new Error(String(error)),
+                req,
+              );
             } else {
               const hasCode =
-                error &&
+                error !== null &&
                 typeof error === "object" &&
                 "code" in error &&
                 typeof error.code === "string";
               errorBody = {
-                error: isError ? error.message : "Internal Server Error",
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Internal Server Error",
                 code: hasCode ? error.code : "INTERNAL_ERROR",
               };
             }
@@ -258,5 +382,129 @@ export function provideSchmockInterceptor(
     provide: HTTP_INTERCEPTORS,
     useClass: createSchmockInterceptor(mock, options),
     multi: true,
+  };
+}
+
+// ============================================================================
+// Response Helpers
+// ============================================================================
+
+/**
+ * Helper to create a 404 Not Found response
+ * @example mock('GET /api/users/999', notFound('User not found'))
+ */
+export function notFound(
+  message: string | object = "Not Found",
+): [number, object] {
+  const body = typeof message === "string" ? { message } : message;
+  return [404, body];
+}
+
+/**
+ * Helper to create a 400 Bad Request response
+ * @example mock('POST /api/users', badRequest('Invalid email format'))
+ */
+export function badRequest(
+  message: string | object = "Bad Request",
+): [number, object] {
+  const body = typeof message === "string" ? { message } : message;
+  return [400, body];
+}
+
+/**
+ * Helper to create a 401 Unauthorized response
+ * @example mock('GET /api/protected', unauthorized('Token expired'))
+ */
+export function unauthorized(
+  message: string | object = "Unauthorized",
+): [number, object] {
+  const body = typeof message === "string" ? { message } : message;
+  return [401, body];
+}
+
+/**
+ * Helper to create a 403 Forbidden response
+ * @example mock('GET /api/admin', forbidden('Admin access required'))
+ */
+export function forbidden(
+  message: string | object = "Forbidden",
+): [number, object] {
+  const body = typeof message === "string" ? { message } : message;
+  return [403, body];
+}
+
+/**
+ * Helper to create a 500 Internal Server Error response
+ * @example mock('GET /api/broken', serverError('Database connection failed'))
+ */
+export function serverError(
+  message: string | object = "Internal Server Error",
+): [number, object] {
+  const body = typeof message === "string" ? { message } : message;
+  return [500, body];
+}
+
+/**
+ * Helper to create a 201 Created response
+ * @example mock('POST /api/users', created({ id: 1, name: 'John' }))
+ */
+export function created(body: object): [number, object] {
+  return [201, body];
+}
+
+/**
+ * Helper to create a 204 No Content response
+ * @example mock('DELETE /api/users/1', noContent())
+ */
+export function noContent(): [number, null] {
+  return [204, null];
+}
+
+/**
+ * Pagination options
+ */
+export interface PaginateOptions {
+  page?: number;
+  pageSize?: number;
+}
+
+/**
+ * Paginated response structure
+ */
+export interface PaginatedResponse<T> {
+  data: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+/**
+ * Helper to create a paginated response
+ * @example
+ * const items = [{ id: 1 }, { id: 2 }, { id: 3 }]
+ * mock('GET /api/items', ({ query }) => paginate(items, {
+ *   page: parseInt(query.page || '1'),
+ *   pageSize: parseInt(query.pageSize || '10')
+ * }))
+ */
+export function paginate<T>(
+  items: T[],
+  options: PaginateOptions = {},
+): PaginatedResponse<T> {
+  const page = options.page || 1;
+  const pageSize = options.pageSize || 10;
+  const total = items.length;
+  const totalPages = Math.ceil(total / pageSize);
+  const start = (page - 1) * pageSize;
+  const end = start + pageSize;
+  const data = items.slice(start, end);
+
+  return {
+    data,
+    page,
+    pageSize,
+    total,
+    totalPages,
   };
 }

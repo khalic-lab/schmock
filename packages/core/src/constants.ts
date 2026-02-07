@@ -1,4 +1,4 @@
-import type { HttpMethod } from "./types";
+import type { HttpMethod } from "./types.js";
 
 export const ROUTE_NOT_FOUND_CODE = "ROUTE_NOT_FOUND" as const;
 

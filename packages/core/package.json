@@ -18,16 +18,16 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "bun build:lib && bun build:types",
-    "build:lib": "bun build --minify --outdir=dist src/index.ts",
-    "build:types": "tsc -p tsconfig.json",
+    "build": "rm -rf dist tsconfig.tsbuildinfo && tsc --build",
+    "build:types": "rm -f tsconfig.tsbuildinfo && tsc --build",
     "pretest": "rm -f src/*.js src/*.d.ts || true",
     "test": "vitest",
     "test:watch": "vitest --watch",
     "pretest:bdd": "rm -f src/*.js src/*.d.ts || true",
     "test:bdd": "vitest run --config vitest.config.bdd.ts",
     "lint": "biome check src/*.ts",
-    "lint:fix": "biome check --write --unsafe src/*.ts"
+    "lint:fix": "biome check --write --unsafe src/*.ts",
+    "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
   "license": "MIT",
   "devDependencies": {
