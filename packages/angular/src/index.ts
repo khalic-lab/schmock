@@ -239,6 +239,7 @@ export function createSchmockInterceptor(
       // Handle with Schmock
       return new Observable<HttpEvent<any>>((observer) => {
         let innerSub: { unsubscribe(): void } | undefined;
+        let aborted = false;
 
         mock
           .handle(requestData.method, requestData.path, {
@@ -247,6 +248,8 @@ export function createSchmockInterceptor(
             query: requestData.query,
           })
           .then((schmockResponse: ResponseResult) => {
+            if (aborted) return;
+
             // Detect ROUTE_NOT_FOUND responses
             const body = schmockResponse.body;
             const isRouteNotFound =
@@ -328,6 +331,8 @@ export function createSchmockInterceptor(
             }
           })
           .catch((error: unknown) => {
+            if (aborted) return;
+
             // Handle errors
             let errorBody: unknown;
 
@@ -362,6 +367,7 @@ export function createSchmockInterceptor(
           });
 
         return () => {
+          aborted = true;
           innerSub?.unsubscribe();
         };
       });
