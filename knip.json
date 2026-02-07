@@ -2,11 +2,9 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "ignore": ["**/*.d.ts", ".claude/**", "examples/**"],
   "ignoreDependencies": [
-    "@arethetypeswrong/cli",
     "@tsconfig/strictest",
     "@vitest/coverage-v8",
-    "bun-types",
-    "publint"
+    "bun-types"
   ],
   "workspaces": {
     ".": {
@@ -22,6 +20,7 @@
       "ignore": ["src/steps/**"]
     },
     "packages/angular": {
+      "ignore": ["src/steps/**"],
       "ignoreDependencies": [
         "@angular/platform-browser",
         "@angular/platform-browser-dynamic"

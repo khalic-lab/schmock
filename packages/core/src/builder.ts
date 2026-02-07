@@ -3,8 +3,8 @@ import {
   RouteDefinitionError,
   RouteNotFoundError,
   SchmockError,
-} from "./errors";
-import { parseRouteKey } from "./parser";
+} from "./errors.js";
+import { parseRouteKey } from "./parser.js";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";

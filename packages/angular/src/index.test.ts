@@ -80,10 +80,13 @@ describe("Angular Adapter", () => {
     });
 
     it("passes through when no route matches", async () => {
+      // Schmock core returns a 404 with ROUTE_NOT_FOUND for unmatched routes
       mockInstance.handle = vi.fn().mockResolvedValue({
         status: 404,
-        body: { error: "Route not found", code: "ROUTE_NOT_FOUND" },
-        headers: {},
+        body: {
+          error: "Route not found: GET /api/test",
+          code: "ROUTE_NOT_FOUND",
+        },
       });
 
       const InterceptorClass = createSchmockInterceptor(mockInstance);
@@ -110,10 +113,13 @@ describe("Angular Adapter", () => {
     });
 
     it("returns 404 when passthrough is false", async () => {
+      // Schmock core returns a 404 with ROUTE_NOT_FOUND for unmatched routes
       mockInstance.handle = vi.fn().mockResolvedValue({
         status: 404,
-        body: { error: "Route not found", code: "ROUTE_NOT_FOUND" },
-        headers: {},
+        body: {
+          error: "Route not found: GET /api/test",
+          code: "ROUTE_NOT_FOUND",
+        },
       });
 
       const InterceptorClass = createSchmockInterceptor(mockInstance, {
@@ -259,8 +265,8 @@ describe("Angular Adapter", () => {
         .mockResolvedValue({ status: 200, body: "original", headers: {} });
 
       const InterceptorClass = createSchmockInterceptor(mockInstance, {
-        transformResponse: (res) => ({
-          ...res,
+        transformResponse: (response) => ({
+          ...response,
           status: 201,
           body: "transformed",
         }),

@@ -1,6 +1,6 @@
-import { toHttpMethod } from "./constants";
-import { RouteParseError } from "./errors";
-import type { HttpMethod } from "./types";
+import { toHttpMethod } from "./constants.js";
+import { RouteParseError } from "./errors.js";
+import type { HttpMethod } from "./types.js";
 
 export interface ParsedRoute {
   method: HttpMethod;

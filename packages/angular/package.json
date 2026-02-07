@@ -2,9 +2,15 @@
   "name": "@schmock/angular",
   "version": "1.3.2",
   "description": "Angular HTTP interceptor adapter for Schmock",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "files": [
     "dist"
   ],
@@ -12,20 +18,20 @@
     "dev": "bun build:lib --watch",
     "clean": "rm -rf dist",
     "build": "bun run clean && bun run build:lib && bun run build:types",
-    "build:lib": "bun build src/index.ts --outdir dist --target node --format esm",
-    "build:types": "tsc --emitDeclarationOnly --declaration --outDir dist",
+    "build:lib": "bun build src/index.ts --outdir dist --target node --format esm --external @angular/common --external @angular/core --external @schmock/core --external rxjs",
+    "build:types": "rm -f tsconfig.tsbuildinfo && tsc --build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:bdd": "vitest run --config vitest.config.bdd.ts",
     "lint": "biome check src",
-    "lint:fix": "biome check --write src"
-  },
-  "dependencies": {
-    "@schmock/core": "^1.0.0",
-    "rxjs": "^7.8.1"
+    "lint:fix": "biome check --write src",
+    "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
   "peerDependencies": {
-    "@angular/common": ">=15.0.0",
-    "@angular/core": ">=15.0.0"
+    "@angular/common": ">=15.0.0 <22.0.0",
+    "@angular/core": ">=15.0.0 <22.0.0",
+    "@schmock/core": "^1.0.0",
+    "rxjs": "^7.0.0"
   },
   "devDependencies": {
     "@angular/common": "^21.1.2",
