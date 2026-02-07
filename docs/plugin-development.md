@@ -10,7 +10,13 @@ A Schmock plugin is an object that implements the simplified `Plugin` interface:
 interface Plugin {
   name: string;
   version?: string;
-  
+
+  /**
+   * Called when the plugin is added to the pipeline via .pipe()
+   * @param instance - The callable mock instance
+   */
+  install?(instance: CallableMockInstance): void;
+
   /**
    * Process the request through this plugin
    * @param context - Plugin context with request details
@@ -37,6 +43,40 @@ The new architecture is based on a linear pipeline where:
 2. **First plugin** to set response becomes the generator
 3. **Later plugins** can transform the response
 4. **All plugins** can modify the context (headers, state, etc.)
+
+## Install Hook
+
+Plugins can optionally implement the `install()` method to register routes at `.pipe()` time. The install hook receives the callable mock instance, allowing plugins to call `instance('GET /path', generator)` to register routes programmatically.
+
+This pattern is used by `@schmock/openapi` to auto-register CRUD routes from an OpenAPI specification.
+
+### Example: Auto-Route Plugin
+
+```typescript
+function autoRoutePlugin(routes: Record<string, Function>): Plugin {
+  return {
+    name: 'auto-routes',
+    install(instance) {
+      for (const [key, handler] of Object.entries(routes)) {
+        instance(key as any, handler);
+      }
+    },
+    process(context, response) {
+      return { context, response };
+    }
+  };
+}
+
+// Usage
+const mock = schmock();
+mock.pipe(autoRoutePlugin({
+  'GET /users': () => [{ id: 1, name: 'John' }],
+  'POST /users': ({ body }) => ({ id: 2, ...body })
+}));
+
+// Routes are now registered and ready to handle requests
+const response = await mock.handle('GET', '/users');
+```
 
 ## Plugin Context & Result
 
@@ -631,6 +671,43 @@ describe('MyPlugin Integration', () => {
 });
 ```
 
+## Built-in Plugins
+
+Schmock includes four official plugins that serve as reference implementations for different plugin patterns:
+
+### `@schmock/schema`
+JSON Schema-based data generation using json-schema-faker. Demonstrates the **generator plugin pattern** where the plugin sets the response if none exists yet.
+
+```typescript
+mock('GET /users', null, { contentType: 'application/json' })
+  .pipe(schema({ type: 'array', items: { ... } }));
+```
+
+### `@schmock/validation`
+Request and response validation using AJV. Demonstrates the **guard plugin pattern** where the plugin validates data and throws errors to prevent invalid requests/responses.
+
+```typescript
+mock('POST /users', handler, { contentType: 'application/json' })
+  .pipe(validation({ request: { body: userSchema } }));
+```
+
+### `@schmock/query`
+Pagination, sorting, and filtering for array responses. Demonstrates the **transformer plugin pattern** where the plugin modifies existing response data.
+
+```typescript
+mock('GET /users', () => allUsers, { contentType: 'application/json' })
+  .pipe(query());
+```
+
+### `@schmock/openapi`
+Auto-registers CRUD routes from OpenAPI specifications. Demonstrates the **install hook pattern** where the plugin uses `install()` to register routes at pipeline setup time.
+
+```typescript
+const mock = schmock();
+mock.pipe(openapi({ spec: './petstore.json' }));
+// Routes are now auto-registered from the spec
+```
+
 ## Publishing Plugins
 
 When publishing plugins as npm packages:
@@ -653,7 +730,7 @@ Example `package.json`:
   "types": "dist/index.d.ts",
   "keywords": ["schmock", "plugin", "auth", "mock", "pipeline"],
   "peerDependencies": {
-    "@schmock/core": "^0.2.0"
+    "@schmock/core": "^1.0.0"
   },
   "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
@@ -732,7 +809,7 @@ npm init
 ```
 
 #### Quality Assurance
-- **Automated Testing**: Use Vitest with comprehensive test coverage (follow Schmock's 262 tests example)
+- **Automated Testing**: Use Vitest with comprehensive test coverage (follow Schmock's 1500+ tests example)
 - **Type Safety**: Develop in TypeScript with strict mode enabled
 - **Linting**: Use Biome for consistent code style with auto-fixing
 - **Git Hooks**: Configure pre-commit hooks for automated quality checks

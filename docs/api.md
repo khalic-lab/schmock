@@ -138,6 +138,115 @@ console.log(response.body);    // { id: 123, name: "John Doe", ... }
 console.log(response.headers); // { "content-type": "application/json" }
 ```
 
+#### `.history(method?, path?)`
+
+Get recorded request history, optionally filtered by method and path.
+
+```typescript
+history(method?: HttpMethod, path?: string): RequestRecord[]
+```
+
+**Parameters**:
+- `method?: HttpMethod` — Filter by HTTP method
+- `path?: string` — Filter by path (exact match)
+
+**Returns**: Array of `RequestRecord` objects.
+
+**Example**:
+```typescript
+await mock.handle('GET', '/users');
+await mock.handle('POST', '/users', { body: { name: 'John' } });
+
+const allRequests = mock.history();           // All requests
+const getRequests = mock.history('GET');      // Only GET requests
+const userPosts = mock.history('POST', '/users');  // POST /users only
+```
+
+#### `.called(method?, path?)`
+
+Check if any matching requests were recorded. Returns boolean.
+
+```typescript
+called(method?: HttpMethod, path?: string): boolean
+```
+
+**Example**:
+```typescript
+mock.called('GET', '/users');     // true if GET /users was called
+mock.called('POST');              // true if any POST request was made
+mock.called();                    // true if any request was made
+```
+
+#### `.callCount(method?, path?)`
+
+Get the count of matching recorded requests.
+
+```typescript
+callCount(method?: HttpMethod, path?: string): number
+```
+
+**Example**:
+```typescript
+mock.callCount('GET', '/users');  // Number of GET /users requests
+mock.callCount('DELETE');         // Number of DELETE requests
+mock.callCount();                 // Total request count
+```
+
+#### `.lastRequest(method?, path?)`
+
+Get the most recent matching request record.
+
+```typescript
+lastRequest(method?: HttpMethod, path?: string): RequestRecord | undefined
+```
+
+**Returns**: Most recent `RequestRecord` or `undefined` if no match.
+
+**Example**:
+```typescript
+const last = mock.lastRequest('POST', '/users');
+console.log(last?.body);  // { name: 'John' }
+```
+
+#### `.reset()`
+
+Clear all routes, state, and history.
+
+```typescript
+reset(): void
+```
+
+**Example**:
+```typescript
+mock.reset();  // Full reset — removes all routes, clears state and history
+```
+
+#### `.resetHistory()`
+
+Clear only request history.
+
+```typescript
+resetHistory(): void
+```
+
+**Example**:
+```typescript
+mock.resetHistory();  // Clear history but keep routes and state
+```
+
+#### `.resetState()`
+
+Clear only state, keep routes and history.
+
+```typescript
+resetState(): void
+```
+
+**Example**:
+```typescript
+mock.resetState();  // Reset state to initial config, keep routes and history
+```
+
 ## Types
 
 ### `HttpMethod`
@@ -219,6 +328,8 @@ interface Response {
 interface Plugin {
   name: string;
   version?: string;
+
+  install?(instance: CallableMockInstance): void;  // Register routes at pipe() time
 
   process(
     context: PluginContext,
@@ -556,6 +667,260 @@ import { provideSchmockInterceptor } from '@schmock/angular';
 providers: [
   provideSchmockInterceptor(mock, { baseUrl: '/api' })
 ]
+```
+
+## Validation Plugin
+
+### `validationPlugin(options)`
+
+Creates a validation plugin for JSON Schema-based request and response validation using AJV.
+
+```typescript
+function validationPlugin(options: ValidationPluginOptions): Plugin
+```
+
+```typescript
+interface ValidationPluginOptions {
+  requestBody?: JSONSchema7;      // Validate request body
+  requestQuery?: JSONSchema7;     // Validate query parameters
+  requestHeaders?: JSONSchema7;   // Validate request headers
+  responseBody?: JSONSchema7;     // Validate response body
+}
+```
+
+**Behavior**:
+- Returns `400 Bad Request` for invalid request data
+- Returns `500 Internal Server Error` for invalid response data
+- Validation errors include detailed AJV error messages
+
+**Example**:
+```typescript
+import { validationPlugin } from '@schmock/validation';
+
+const mock = schmock();
+
+mock('POST /users', ({ body, state }) => {
+  state.users.push(body);
+  return [201, body];
+}, { contentType: 'application/json' })
+  .pipe(validationPlugin({
+    requestBody: {
+      type: 'object',
+      required: ['name', 'email'],
+      properties: {
+        name: { type: 'string', minLength: 1 },
+        email: { type: 'string', format: 'email' }
+      }
+    },
+    responseBody: {
+      type: 'object',
+      required: ['id', 'name', 'email'],
+      properties: {
+        id: { type: 'integer' },
+        name: { type: 'string' },
+        email: { type: 'string' }
+      }
+    }
+  }));
+
+// Valid request
+await mock.handle('POST', '/users', {
+  body: { name: 'John', email: 'john@example.com' }
+}); // 201
+
+// Invalid request
+await mock.handle('POST', '/users', {
+  body: { name: 'John' }  // Missing email
+}); // 400 with validation errors
+```
+
+## Query Plugin
+
+### `queryPlugin(options?)`
+
+Creates a query plugin that adds pagination, sorting, and filtering capabilities to array responses.
+
+```typescript
+function queryPlugin(options?: QueryPluginOptions): Plugin
+```
+
+```typescript
+interface QueryPluginOptions {
+  pagination?: boolean;     // Enable pagination (?page=1&limit=10) — default: true
+  sorting?: boolean;        // Enable sorting (?sort=name) — default: true
+  filtering?: boolean;      // Enable filtering (?filter[role]=admin) — default: true
+  defaultLimit?: number;    // Default items per page — default: 10
+  maxLimit?: number;        // Maximum items per page — default: 100
+}
+```
+
+**Query Parameters**:
+- Pagination: `?page=1&limit=10`
+- Sorting: `?sort=name` or `?sort=-name` (descending)
+- Filtering: `?filter[field]=value` (exact match)
+
+**Example**:
+```typescript
+import { queryPlugin } from '@schmock/query';
+
+const mock = schmock({
+  state: {
+    users: [
+      { id: 1, name: 'Alice', role: 'admin' },
+      { id: 2, name: 'Bob', role: 'user' },
+      { id: 3, name: 'Charlie', role: 'user' },
+      { id: 4, name: 'Diana', role: 'admin' }
+    ]
+  }
+});
+
+mock('GET /users', ({ state }) => state.users, {
+  contentType: 'application/json'
+})
+  .pipe(queryPlugin({
+    pagination: true,
+    sorting: true,
+    filtering: true,
+    defaultLimit: 2,
+    maxLimit: 50
+  }));
+
+// Pagination
+await mock.handle('GET', '/users?page=1&limit=2');
+// Returns first 2 users
+
+// Sorting
+await mock.handle('GET', '/users?sort=name');
+// Returns users sorted by name ascending
+
+await mock.handle('GET', '/users?sort=-name');
+// Returns users sorted by name descending
+
+// Filtering
+await mock.handle('GET', '/users?filter[role]=admin');
+// Returns only admin users
+
+// Combined
+await mock.handle('GET', '/users?filter[role]=user&sort=name&page=1&limit=2');
+// Returns first 2 users with role=user, sorted by name
+```
+
+## OpenAPI Plugin
+
+### `openapi(options)`
+
+Creates an OpenAPI plugin that automatically registers routes from an OpenAPI/Swagger specification.
+
+```typescript
+async function openapi(options: OpenApiOptions): Promise<Plugin>
+```
+
+**Note**: This is an async factory function that returns a Promise resolving to a Plugin with an `install()` hook.
+
+```typescript
+interface OpenApiOptions {
+  spec: string | object;    // File path to spec or inline spec object
+  seed?: SeedConfig;        // Optional seed data for CRUD resources
+}
+
+type SeedConfig = {
+  [resourceName: string]: unknown[] | string | { count: number }
+};
+```
+
+**Seed Configuration**:
+- `unknown[]` — Inline array of seed data
+- `string` — File path to JSON file containing seed data
+- `{ count: number }` — Auto-generate N items using schema
+
+**Features**:
+- Supports Swagger 2.0, OpenAPI 3.0, and OpenAPI 3.1
+- Auto-detects CRUD resources from path patterns (e.g., `/users`, `/users/{id}`)
+- Registers CRUD routes with in-memory stateful collections
+- Non-CRUD endpoints get schema-generated static responses
+- Handles discriminators, circular references, and complex schemas
+- Supports polymorphic responses (oneOf, anyOf, allOf)
+
+**Example**:
+```typescript
+import { openapi } from '@schmock/openapi';
+
+const mock = schmock();
+
+// Load from file with seed data
+await mock.pipe(await openapi({
+  spec: './openapi.yaml',
+  seed: {
+    users: [
+      { userId: 1, name: 'Alice', email: 'alice@example.com' },
+      { userId: 2, name: 'Bob', email: 'bob@example.com' }
+    ],
+    posts: { count: 10 },  // Auto-generate 10 posts from schema
+    tags: './seed/tags.json'  // Load from file
+  }
+}));
+
+// Or load inline spec
+await mock.pipe(await openapi({
+  spec: {
+    openapi: '3.0.0',
+    paths: {
+      '/users': {
+        get: {
+          responses: {
+            '200': {
+              description: 'List users',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        id: { type: 'integer' },
+                        name: { type: 'string' }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}));
+
+// CRUD operations work automatically
+await mock.handle('GET', '/users');           // List all users
+await mock.handle('GET', '/users/1');         // Get user by ID
+await mock.handle('POST', '/users', {         // Create user
+  body: { name: 'Charlie', email: 'charlie@example.com' }
+});
+await mock.handle('PUT', '/users/1', {        // Update user
+  body: { name: 'Alice Updated', email: 'alice@example.com' }
+});
+await mock.handle('DELETE', '/users/1');      // Delete user
+```
+
+**CRUD Detection**:
+The plugin automatically detects CRUD resources by analyzing path patterns. For example:
+- `/users` + `/users/{id}` → Detected as "users" CRUD resource
+- `/posts` + `/posts/{postId}` → Detected as "posts" CRUD resource
+
+Detected CRUD resources get full in-memory collection behavior with create, read, update, delete operations.
+
+**Seed Data Matching**:
+Seed data objects must include an ID field that matches the path parameter name from your OpenAPI spec:
+```typescript
+// If your spec defines /users/{userId}, seed data needs userId field:
+seed: {
+  users: [
+    { userId: 1, name: 'Alice' },  // Matches path param {userId}
+    { userId: 2, name: 'Bob' }
+  ]
+}
 ```
 
 ## Error Handling
