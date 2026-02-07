@@ -13,7 +13,7 @@ export const HTTP_METHODS: readonly HttpMethod[] = [
 ] as const;
 
 export function isHttpMethod(method: string): method is HttpMethod {
-  return HTTP_METHODS.includes(method as HttpMethod);
+  return (HTTP_METHODS as readonly string[]).includes(method);
 }
 
 export function toHttpMethod(method: string): HttpMethod {

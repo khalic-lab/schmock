@@ -9,6 +9,11 @@ import {
 import type { JSONSchema7 } from "json-schema";
 import jsf from "json-schema-faker";
 
+/** JSONSchema7 extended with json-schema-faker's `faker` property */
+interface FakerSchema extends JSONSchema7 {
+  faker?: string;
+}
+
 /**
  * Create isolated faker instance to avoid race conditions
  * Each generation gets its own faker instance to ensure thread-safety
@@ -123,22 +128,22 @@ export function generateFromSchema(options: SchemaGenerationContext): any {
       throw new ResourceLimitError("array_size", MAX_ARRAY_SIZE, itemCount);
     }
 
-    const itemSchema = Array.isArray(schema.items)
+    const rawItemSchema = Array.isArray(schema.items)
       ? schema.items[0]
       : schema.items;
 
-    if (!itemSchema) {
+    if (!rawItemSchema || typeof rawItemSchema === "boolean") {
       throw new SchemaValidationError(
         "$.items",
         "Array schema must have valid items definition",
       );
     }
 
+    const itemSchema = rawItemSchema;
+
     generated = [];
     for (let i = 0; i < itemCount; i++) {
-      let item = getJsf().generate(
-        enhanceSchemaWithSmartMapping(itemSchema as JSONSchema7),
-      );
+      let item = getJsf().generate(enhanceSchemaWithSmartMapping(itemSchema));
       item = applyOverrides(item, overrides, params, state, query);
       generated.push(item);
     }
@@ -174,17 +179,19 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
   }
 
   // Check for invalid schema types
+  const validTypes = [
+    "object",
+    "array",
+    "string",
+    "number",
+    "integer",
+    "boolean",
+    "null",
+  ];
   if (
     schema.type &&
-    ![
-      "object",
-      "array",
-      "string",
-      "number",
-      "integer",
-      "boolean",
-      "null",
-    ].includes(schema.type as string)
+    typeof schema.type === "string" &&
+    !validTypes.includes(schema.type)
   ) {
     throw new SchemaValidationError(
       path,
@@ -210,28 +217,34 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
     for (const [propName, propSchema] of Object.entries(schema.properties)) {
       if (typeof propSchema === "object" && propSchema !== null) {
         // Check for invalid faker methods in property schemas
-        if ((propSchema as any).faker) {
+        const fakerProp =
+          "faker" in propSchema ? String(propSchema.faker) : undefined;
+        if (fakerProp) {
           try {
-            validateFakerMethod((propSchema as any).faker);
+            validateFakerMethod(fakerProp);
           } catch (error: unknown) {
             // Re-throw with proper path context
             if (error instanceof SchemaValidationError) {
-              const context = error.context as
-                | { issue?: string; suggestion?: string }
-                | undefined;
+              const ctx = error.context;
+              let issue = "Invalid faker method";
+              let suggestion: string | undefined;
+              if (ctx && typeof ctx === "object") {
+                if ("issue" in ctx && typeof ctx.issue === "string")
+                  issue = ctx.issue;
+                if ("suggestion" in ctx && typeof ctx.suggestion === "string")
+                  suggestion = ctx.suggestion;
+              }
               throw new SchemaValidationError(
                 `${path}.properties.${propName}.faker`,
-                context?.issue || "Invalid faker method",
-                context?.suggestion,
+                issue,
+                suggestion,
               );
             }
-            throw error as Error;
+            if (error instanceof Error) throw error;
+            throw new Error(String(error));
           }
         }
-        validateSchema(
-          propSchema as JSONSchema7,
-          `${path}.properties.${propName}`,
-        );
+        validateSchema(propSchema, `${path}.properties.${propName}`);
       }
     }
   }
@@ -257,11 +270,11 @@ function validateSchema(schema: JSONSchema7, path = "$"): void {
       }
       schema.items.forEach((item, index) => {
         if (typeof item === "object" && item !== null) {
-          validateSchema(item as JSONSchema7, `${path}.items[${index}]`);
+          validateSchema(item, `${path}.items[${index}]`);
         }
       });
     } else if (typeof schema.items === "object" && schema.items !== null) {
-      validateSchema(schema.items as JSONSchema7, `${path}.items`);
+      validateSchema(schema.items, `${path}.items`);
     }
   }
 
@@ -406,16 +419,16 @@ function checkForDeepNestingWithArrays(
 ): void {
   // Look for arrays in deeply nested structures that could cause memory issues
   function findArraysInDeepNesting(
-    schema: JSONSchema7,
+    node: JSONSchema7,
     currentDepth: number,
   ): boolean {
-    const schemaType = schema.type;
+    const schemaType = node.type;
     const isArray = Array.isArray(schemaType)
       ? schemaType.includes("array")
       : schemaType === "array";
 
     if (isArray) {
-      const maxItems = schema.maxItems || DEFAULT_ARRAY_COUNT;
+      const maxItems = node.maxItems || DEFAULT_ARRAY_COUNT;
       // Be more aggressive about deep nesting detection
       if (
         currentDepth >= DEEP_NESTING_THRESHOLD &&
@@ -429,10 +442,8 @@ function checkForDeepNestingWithArrays(
       }
 
       // Check items if they exist
-      if (schema.items) {
-        const items = Array.isArray(schema.items)
-          ? schema.items
-          : [schema.items];
+      if (node.items) {
+        const items = Array.isArray(node.items) ? node.items : [node.items];
         for (const item of items) {
           if (typeof item === "object" && item !== null) {
             if (
@@ -447,8 +458,8 @@ function checkForDeepNestingWithArrays(
       return true;
     }
 
-    if (schemaType === "object" && schema.properties) {
-      for (const prop of Object.values(schema.properties)) {
+    if (schemaType === "object" && node.properties) {
+      for (const prop of Object.values(node.properties)) {
         if (typeof prop === "object" && prop !== null) {
           if (findArraysInDeepNesting(prop as JSONSchema7, currentDepth + 1)) {
             return true;
@@ -764,12 +775,12 @@ function enhanceSchemaWithSmartMapping(schema: JSONSchema7): JSONSchema7 {
 function enhanceFieldSchema(
   fieldName: string,
   fieldSchema: JSONSchema7,
-): JSONSchema7 {
-  const enhanced = { ...fieldSchema };
+): FakerSchema {
+  const enhanced: FakerSchema = { ...fieldSchema };
 
   // If already has faker extension, validate it and don't override
-  if ((enhanced as any).faker) {
-    validateFakerMethod((enhanced as any).faker);
+  if (enhanced.faker) {
+    validateFakerMethod(enhanced.faker);
     return enhanced;
   }
 
@@ -779,34 +790,34 @@ function enhanceFieldSchema(
   // Email fields
   if (lowerFieldName.includes("email")) {
     enhanced.format = "email";
-    (enhanced as any).faker = "internet.email";
+    enhanced.faker = "internet.email";
   }
   // Name fields
   else if (lowerFieldName === "firstname" || lowerFieldName === "first_name") {
-    (enhanced as any).faker = "person.firstName";
+    enhanced.faker = "person.firstName";
   } else if (lowerFieldName === "lastname" || lowerFieldName === "last_name") {
-    (enhanced as any).faker = "person.lastName";
+    enhanced.faker = "person.lastName";
   } else if (lowerFieldName === "name" || lowerFieldName === "fullname") {
-    (enhanced as any).faker = "person.fullName";
+    enhanced.faker = "person.fullName";
   }
   // Phone fields
   else if (lowerFieldName.includes("phone") || lowerFieldName === "mobile") {
-    (enhanced as any).faker = "phone.number";
+    enhanced.faker = "phone.number";
   }
   // Address fields
   else if (lowerFieldName === "street" || lowerFieldName === "address") {
-    (enhanced as any).faker = "location.streetAddress";
+    enhanced.faker = "location.streetAddress";
   } else if (lowerFieldName === "city") {
-    (enhanced as any).faker = "location.city";
+    enhanced.faker = "location.city";
   } else if (lowerFieldName === "zipcode" || lowerFieldName === "zip") {
-    (enhanced as any).faker = "location.zipCode";
+    enhanced.faker = "location.zipCode";
   }
   // UUID fields
   else if (
     lowerFieldName === "uuid" ||
     (lowerFieldName === "id" && enhanced.format === "uuid")
   ) {
-    (enhanced as any).faker = "string.uuid";
+    enhanced.faker = "string.uuid";
   }
   // Date fields
   else if (
@@ -816,17 +827,17 @@ function enhanceFieldSchema(
     lowerFieldName.includes("updated_at")
   ) {
     enhanced.format = "date-time";
-    (enhanced as any).faker = "date.recent";
+    enhanced.faker = "date.recent";
   }
   // Company fields
   else if (lowerFieldName.includes("company")) {
-    (enhanced as any).faker = "company.name";
+    enhanced.faker = "company.name";
   } else if (lowerFieldName === "position" || lowerFieldName === "jobtitle") {
-    (enhanced as any).faker = "person.jobTitle";
+    enhanced.faker = "person.jobTitle";
   }
   // Price/money fields
   else if (lowerFieldName === "price" || lowerFieldName === "amount") {
-    (enhanced as any).faker = "commerce.price";
+    enhanced.faker = "commerce.price";
   }
 
   return enhanced;

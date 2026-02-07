@@ -271,9 +271,9 @@ describe("schmock callable API", () => {
       const mock = schmock();
       mock("GET /users", [{ id: 1, name: "John" }], {}).pipe({
         name: "test-plugin",
-        process: (ctx, response) => ({
+        process: (ctx, pluginResponse) => ({
           context: ctx,
-          response: { data: response, processed: true },
+          response: { data: pluginResponse, processed: true },
         }),
       });
 

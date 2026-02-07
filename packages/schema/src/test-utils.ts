@@ -2,6 +2,10 @@ import type { JSONSchema7 } from "json-schema";
 import { expect } from "vitest";
 import { generateFromSchema } from "./index";
 
+interface FakerSchema extends JSONSchema7 {
+  faker?: string;
+}
+
 // Schema Factory Functions
 export const schemas = {
   simple: {
@@ -28,11 +32,10 @@ export const schemas = {
     }),
   },
 
-  withFaker: (type: JSONSchema7["type"], fakerMethod: string): JSONSchema7 =>
-    ({
-      type: type as any,
-      faker: fakerMethod,
-    }) as any,
+  withFaker: (type: JSONSchema7["type"], fakerMethod: string): FakerSchema => ({
+    type,
+    faker: fakerMethod,
+  }),
 
   nested: {
     deep: (
@@ -99,17 +102,17 @@ export const validators = {
     fieldName: string,
     fieldType: JSONSchema7["type"] = "string",
   ): Promise<boolean> => {
-    const mappedSchema = {
-      type: "object" as const,
+    const mappedSchema: JSONSchema7 = {
+      type: "object",
       properties: {
-        [fieldName]: { type: fieldType as any },
+        [fieldName]: { type: fieldType },
       },
     };
 
-    const unmappedSchema = {
-      type: "object" as const,
+    const unmappedSchema: JSONSchema7 = {
+      type: "object",
       properties: {
-        unmappedRandomField12345: { type: fieldType as any },
+        unmappedRandomField12345: { type: fieldType },
       },
     };
 
@@ -340,18 +343,3 @@ function analyzeDataCharacteristics(samples: any[]): string {
 
   return characteristics.join("-");
 }
-
-// Mock/Spy utilities for testing faker integration
-export const mocks = {
-  trackFakerCalls: () => {
-    const calls: string[] = [];
-    // This would need actual implementation with faker.js internals
-    // For now, it's a placeholder for the concept
-    return {
-      calls,
-      reset: () => {
-        calls.length = 0;
-      },
-    };
-  },
-};

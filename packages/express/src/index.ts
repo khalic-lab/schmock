@@ -1,7 +1,11 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
 import type { CallableMockInstance } from "@schmock/core";
-import { ROUTE_NOT_FOUND_CODE, SchmockError } from "@schmock/core";
+import {
+  ROUTE_NOT_FOUND_CODE,
+  SchmockError,
+  toHttpMethod,
+} from "@schmock/core";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 /**
@@ -170,7 +174,7 @@ export function toExpress(
     try {
       // Run request interceptor if provided
       let requestData = {
-        method: req.method as Schmock.HttpMethod,
+        method: toHttpMethod(req.method),
         path: req.path,
         headers: transformHeaders(req.headers),
         body: req.body,
@@ -199,12 +203,13 @@ export function toExpress(
       );
 
       // Detect ROUTE_NOT_FOUND responses and pass to next middleware
+      const body = schmockResponse.body;
       if (
         schmockResponse.status === 404 &&
-        schmockResponse.body &&
-        typeof schmockResponse.body === "object" &&
-        (schmockResponse.body as Record<string, unknown>).code ===
-          ROUTE_NOT_FOUND_CODE
+        body &&
+        typeof body === "object" &&
+        "code" in body &&
+        body.code === ROUTE_NOT_FOUND_CODE
       ) {
         next();
         return;
@@ -223,25 +228,17 @@ export function toExpress(
     } catch (error) {
       // Handle errors based on configuration
       if (error instanceof SchmockError && errorFormatter) {
-        // Use custom error formatter for Schmock errors
-        const formatted = errorFormatter(error as SchmockError, req);
+        const formatted = errorFormatter(error, req);
         res.status(500).json(formatted);
       } else if (passErrorsToNext) {
-        // Pass errors to Express error handler
         next(error);
       } else {
-        // Handle error directly
         res.status(500).json({
           error:
             error instanceof Error ? error.message : "Internal Server Error",
-          code:
-            error instanceof SchmockError
-              ? (error as SchmockError).code
-              : "INTERNAL_ERROR",
+          code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
         });
       }
     }
   };
 }
-
-export default toExpress;

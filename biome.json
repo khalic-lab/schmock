@@ -21,14 +21,22 @@
         "noUnusedTemplateLiteral": "error",
         "useNumberNamespace": "error",
         "noInferrableTypes": "warn",
-        "noUselessElse": "warn"
+        "noUselessElse": "warn",
+        "noNonNullAssertion": "error"
       },
       "suspicious": {
-        "noExplicitAny": "off"
+        "noExplicitAny": "off",
+        "noEvolvingTypes": "warn"
       },
       "correctness": {
         "noUnusedPrivateClassMembers": "warn",
         "noUnusedFunctionParameters": "warn"
+      },
+      "nursery": {
+        "noFloatingPromises": "warn",
+        "noMisusedPromises": "warn",
+        "noShadow": "warn",
+        "noImportCycles": "warn"
       }
     }
   },

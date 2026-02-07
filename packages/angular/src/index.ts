@@ -14,6 +14,7 @@ import {
 } from "@angular/common/http";
 import { Injectable } from "@angular/core";
 import type { CallableMockInstance } from "@schmock/core";
+import { toHttpMethod } from "@schmock/core";
 import { Observable } from "rxjs";
 
 /**
@@ -137,7 +138,7 @@ export function createSchmockInterceptor(
       const query = extractQueryParams(req.url);
 
       let requestData = {
-        method: req.method as Schmock.HttpMethod,
+        method: toHttpMethod(req.method),
         path,
         headers: headersToObject(req),
         body: req.body,
@@ -150,8 +151,7 @@ export function createSchmockInterceptor(
         requestData = {
           ...requestData,
           ...transformed,
-          method: (transformed.method ||
-            requestData.method) as Schmock.HttpMethod,
+          method: toHttpMethod(transformed.method || requestData.method),
         };
       }
 
