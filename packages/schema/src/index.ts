@@ -577,7 +577,7 @@ function applyOverrides(
 ): any {
   if (!overrides) return data;
 
-  const result = JSON.parse(JSON.stringify(data)); // Deep clone
+  const result = structuredClone(data);
 
   for (const [key, value] of Object.entries(overrides)) {
     // Handle nested paths like "data.id" or "pagination.page"
