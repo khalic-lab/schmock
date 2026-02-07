@@ -8,7 +8,7 @@ set -euo pipefail
 #   bash publish.sh <package>  # Publish a single package (core, schema, express, angular)
 
 TARGET="${1:-all}"
-VALID_PACKAGES="core schema express angular"
+VALID_PACKAGES="core schema express angular query validation"
 
 publish_package() {
   local pkg="$1"
@@ -47,11 +47,11 @@ bun test:all:quiet
 
 echo ""
 echo "Building..."
-bun build
+bun run build
 
 echo ""
 echo "Checking package exports..."
-bun check:publish
+bun run check:publish
 
 echo ""
 echo "Publishing..."
