@@ -15,8 +15,11 @@ Schmock is a TypeScript HTTP mocking library with a callable API, extensible plu
 
 | Package | Description |
 |---------|-------------|
-| `@schmock/core` | Core mock builder and request handling |
+| `@schmock/core` | Core mock builder, routing, and plugin pipeline |
 | `@schmock/schema` | JSON Schema-based response generation plugin |
+| `@schmock/validation` | Request/response validation via AJV |
+| `@schmock/query` | Pagination, sorting, and filtering for list endpoints |
+| `@schmock/openapi` | Auto-register routes from OpenAPI/Swagger specs |
 | `@schmock/express` | Express middleware adapter |
 | `@schmock/angular` | Angular HTTP interceptor adapter |
 
@@ -28,6 +31,7 @@ Schmock is a TypeScript HTTP mocking library with a callable API, extensible plu
 | `/code-quality` | Run tests, check coverage, validate quality gate |
 | `/pr-review` | Review PRs against project standards |
 | `/plugin-authoring` | Create new plugins following the Plugin interface |
+| `/devops` | Version bumping, npm publishing, and GitHub release creation |
 
 ## Commands
 

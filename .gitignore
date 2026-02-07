@@ -1,9 +1,7 @@
 # Dependency directories
-
 node_modules/
 
-# Generate output
-
+# Generated output
 dist/
 
 # TypeScript build info
@@ -20,3 +18,23 @@ packages/*/src/**/*.js
 packages/*/src/**/*.d.ts
 !packages/*/src/**/*.test.js
 !packages/*/src/**/*.spec.js
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*

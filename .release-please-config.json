@@ -21,6 +21,21 @@
       "package-name": "@schmock/angular",
       "include-component-in-tag": true,
       "component": "angular"
+    },
+    "packages/validation": {
+      "package-name": "@schmock/validation",
+      "include-component-in-tag": true,
+      "component": "validation"
+    },
+    "packages/query": {
+      "package-name": "@schmock/query",
+      "include-component-in-tag": true,
+      "component": "query"
+    },
+    "packages/openapi": {
+      "package-name": "@schmock/openapi",
+      "include-component-in-tag": true,
+      "component": "openapi"
     }
   },
   "skip-github-release": false,
