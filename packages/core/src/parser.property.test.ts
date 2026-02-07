@@ -124,9 +124,7 @@ const namespace = fc.oneof(
   safeSeg.map((s) => `/${s}/`), // trailing slash
   fc.constant(""),
   safeSeg.map((s) => `//${s}`), // double leading slash
-  fc
-    .tuple(safeSeg, safeSeg)
-    .map(([a, b]) => `/${a}/${b}`), // nested
+  fc.tuple(safeSeg, safeSeg).map(([a, b]) => `/${a}/${b}`), // nested
 );
 
 // ============================================================
