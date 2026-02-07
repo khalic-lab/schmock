@@ -425,4 +425,28 @@ describeFeature(feature, ({ Scenario }) => {
       }
     });
   });
+
+  Scenario("Atomic state updates with AsyncMutex", ({ Given, When, Then, And }) => {
+    Given("I create a mock with AsyncMutex:", (_, docString: string) => {
+      mock = evalMockSetup(docString);
+    });
+
+    When("I make 10 concurrent increment requests", async () => {
+      const promises = Array.from({ length: 10 }, () =>
+        mock.handle("POST", "/increment"),
+      );
+      responses = await Promise.all(promises);
+    });
+
+    Then("the final counter should be 10", () => {
+      const counters = responses.map((r) => r.body.counter);
+      expect(Math.max(...counters)).toBe(10);
+    });
+
+    And("all responses should have sequential counter values", () => {
+      const counters = responses.map((r) => r.body.counter).sort((a, b) => a - b);
+      // If atomic, we should have exactly 1, 2, 3... 10
+      expect(counters).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    });
+  });
 });

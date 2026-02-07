@@ -307,3 +307,22 @@ Feature: State Management and Concurrency
     And failed transactions should not modify state
     And final balance should reflect only successful transactions
     And transaction history should be consistent
+
+  Scenario: Atomic state updates with AsyncMutex
+    Given I create a mock with AsyncMutex:
+      """
+      const mutex = createMutex()
+      const mock = schmock({ state: { counter: 0 } })
+      mock('POST /increment', async ({ state }) => {
+        return await mutex.run(async () => {
+          const current = state.counter
+          // Simulate async operation
+          await new Promise(r => setTimeout(r, 10))
+          state.counter = current + 1
+          return { counter: state.counter }
+        })
+      })
+      """
+    When I make 10 concurrent increment requests
+    Then the final counter should be 10
+    And all responses should have sequential counter values

@@ -14,7 +14,7 @@ import {
 } from "@angular/common/http";
 import { Injectable } from "@angular/core";
 import type { CallableMockInstance } from "@schmock/core";
-import { toHttpMethod } from "@schmock/core";
+import { SchmockError, toHttpMethod } from "@schmock/core";
 import { Observable } from "rxjs";
 
 /**
@@ -64,8 +64,13 @@ export interface AngularAdapterOptions {
     response: Schmock.Response,
     request: HttpRequest<any>,
   ) => Schmock.Response;
-}
 
+  /**
+   * Whether to include error details in the response
+   * @default false
+   */
+  debug?: boolean;
+}
 /**
  * Extract query parameters from URL
  */
@@ -120,6 +125,7 @@ export function createSchmockInterceptor(
     errorFormatter,
     transformRequest,
     transformResponse,
+    debug = false,
   } = options;
 
   @Injectable()
@@ -211,8 +217,17 @@ export function createSchmockInterceptor(
                   error instanceof Error
                     ? error.message
                     : "Internal Server Error",
-                code: (error as any).code || "INTERNAL_ERROR",
+                code:
+                  error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
               };
+
+              if (debug && error instanceof Error) {
+                errorBody.stack = error.stack;
+                if (error instanceof SchmockError) {
+                  errorBody.code = error.code;
+                  errorBody.context = error.context;
+                }
+              }
             }
 
             observer.error(

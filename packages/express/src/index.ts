@@ -82,6 +82,12 @@ export interface ExpressAdapterOptions {
         | { status: number; body: any; headers: Record<string, string> }
         | undefined
       >;
+
+  /**
+   * Whether to include error details in the response
+   * @default false
+   */
+  debug?: boolean;
 }
 
 /**
@@ -168,6 +174,7 @@ export function toExpress(
     transformQuery = defaultTransformQuery,
     beforeRequest,
     beforeResponse,
+    debug = false,
   } = options;
 
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -233,11 +240,20 @@ export function toExpress(
       } else if (passErrorsToNext) {
         next(error);
       } else {
-        res.status(500).json({
+        const response: any = {
           error:
             error instanceof Error ? error.message : "Internal Server Error",
           code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
-        });
+        };
+
+        if (debug && error instanceof Error) {
+          response.stack = error.stack;
+          if (error instanceof SchmockError) {
+            response.context = error.context;
+          }
+        }
+
+        res.status(500).json(response);
       }
     }
   };

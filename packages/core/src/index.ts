@@ -77,6 +77,12 @@ export {
   SchemaValidationError,
   SchmockError,
 } from "./errors";
+export { AsyncMutex, createMutex } from "./mutex";
+export {
+  createGeneratorPlugin,
+  createPlugin,
+  createTransformerPlugin,
+} from "./plugin-factory";
 // Re-export types
 export type {
   CallableMockInstance,

@@ -5,6 +5,7 @@ import {
   SchmockError,
 } from "./errors";
 import { parseRouteKey } from "./parser";
+import { safeStringify } from "./utils";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
@@ -59,6 +60,7 @@ interface CompiledCallableRoute {
  */
 export class CallableMockInstance {
   private routes: CompiledCallableRoute[] = [];
+  private staticRoutes = new Map<string, CompiledCallableRoute>();
   private plugins: Schmock.Plugin[] = [];
   private logger: DebugLogger;
   private requestHistory: Schmock.RequestRecord[] = [];
@@ -142,6 +144,15 @@ export class CallableMockInstance {
     };
 
     this.routes.push(compiledRoute);
+
+    // Optimize: Store static routes in a Map for O(1) lookup
+    if (parsed.params.length === 0) {
+      const key = `${parsed.method}|${parsed.path}`;
+      if (!this.staticRoutes.has(key)) {
+        this.staticRoutes.set(key, compiledRoute);
+      }
+    }
+
     this.logger.log("route", `Route defined: ${route}`, {
       contentType: config.contentType,
       generatorType: typeof generator,
@@ -212,6 +223,7 @@ export class CallableMockInstance {
 
   reset(): void {
     this.routes = [];
+    this.staticRoutes.clear();
     this.plugins = [];
     this.requestHistory = [];
     if (this.globalConfig.state) {
@@ -496,7 +508,7 @@ export class CallableMockInstance {
       // Handle special conversion cases when contentType is explicitly set
       if (routeConfig.contentType === "text/plain" && body !== undefined) {
         if (typeof body === "object" && !Buffer.isBuffer(body)) {
-          body = JSON.stringify(body);
+          body = safeStringify(body);
         } else if (typeof body !== "string") {
           body = String(body);
         }
@@ -625,15 +637,11 @@ export class CallableMockInstance {
     method: Schmock.HttpMethod,
     path: string,
   ): CompiledCallableRoute | undefined {
-    // First pass: Look for static routes (routes without parameters)
-    for (const route of this.routes) {
-      if (
-        route.method === method &&
-        route.params.length === 0 &&
-        route.pattern.test(path)
-      ) {
-        return route;
-      }
+    // First pass: O(1) lookup for static routes
+    const staticKey = `${method}|${path}`;
+    const staticMatch = this.staticRoutes.get(staticKey);
+    if (staticMatch) {
+      return staticMatch;
     }
 
     // Second pass: Look for parameterized routes
