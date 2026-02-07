@@ -1,6 +1,6 @@
 {
   "name": "@schmock/angular",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Angular HTTP interceptor adapter for Schmock",
   "type": "module",
   "main": "./dist/index.js",

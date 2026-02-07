@@ -1,9 +1,9 @@
 {
-  "packages/core": "1.2.1",
-  "packages/schema": "1.2.1",
-  "packages/express": "1.2.1",
-  "packages/angular": "1.5.1",
-  "packages/validation": "1.2.1",
-  "packages/query": "1.2.1",
-  "packages/openapi": "1.1.2"
+  "packages/core": "1.2.2",
+  "packages/schema": "1.2.2",
+  "packages/express": "1.2.2",
+  "packages/angular": "1.5.2",
+  "packages/validation": "1.2.2",
+  "packages/query": "1.2.2",
+  "packages/openapi": "1.1.3"
 }

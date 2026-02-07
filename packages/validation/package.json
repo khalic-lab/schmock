@@ -1,7 +1,7 @@
 {
   "name": "@schmock/validation",
   "description": "Request/response validation plugin for Schmock",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
