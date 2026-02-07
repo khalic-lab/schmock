@@ -12,110 +12,100 @@ allowed-tools:
 
 # Schmock Code Quality Skill
 
-## Testing Strategy
+## The Gate: `/code-quality validate`
 
-### Unit Tests (`.test.ts`)
+The primary command. Runs all 6 quality stages in order and reports pass/fail with fix hints:
 
-- Located in `packages/*/src/**/*.test.ts`
-- Test internal logic, pure functions, edge cases
-- Config: `packages/*/vitest.config.ts`
-- Run: `bun test:unit` or per-package: `bun run --filter "@schmock/<pkg>" test`
+| # | Stage | What it checks | Auto-fix? |
+|---|-------|---------------|-----------|
+| 1 | **Lint** | Biome: formatting, imports, code smells | `bun lint:fix` |
+| 2 | **Typecheck** | tsc --build per package | Manual |
+| 3 | **Knip** | Dead exports, unused dependencies | Manual |
+| 4 | **ESLint** | `as` type assertions (zero tolerance) | Manual |
+| 5 | **Unit** | `packages/*/src/**/*.test.ts` | Manual |
+| 6 | **BDD** | `packages/*/src/steps/*.steps.ts` vs `features/*.feature` | Manual |
 
-### BDD Tests (`.steps.ts`)
+All 6 must pass before committing. The pre-commit hook enforces Lint + Typecheck + Unit + BDD automatically.
 
-- Located in `packages/*/src/steps/*.steps.ts`
-- Test behavior against `.feature` specifications in `features/`
-- Config: `packages/*/vitest.config.bdd.ts`
-- Run: `bun test:bdd` or per-package: `bun run --filter "@schmock/<pkg>" test:bdd`
-- 1:1 mapping: each `.feature` file has exactly one `.steps.ts` in the implementing package
+### When a stage fails
 
-### When to Run Each
+| Failed stage | What to do |
+|-------------|------------|
+| **Lint** | Run `bun lint:fix` — most issues auto-fix. For remaining: check biome output for the rule name and fix manually. |
+| **Typecheck** | Run `bun typecheck` for full errors. Usually a missing import, wrong return type, or ambient type mismatch in `types/schmock.d.ts`. |
+| **Knip** | Run `bun knip` to see unused exports/deps. Either delete the dead code or, if intentional, add to `knip.json` ignore. |
+| **ESLint** | Run `bun eslint` to see `as` casts. Replace with: `toHttpMethod()` for HttpMethod, `errorMessage()` for unknown errors, `"prop" in obj` narrowing, `FakerSchema` interface for jsf extensions. Never add `as` — use `satisfies` if needed. |
+| **Unit** | Run `bun test:unit` for full output. Read the failing assertion, fix the source or update the test expectation. |
+| **BDD** | Run `bun test:bdd` for full output. Common issues: step text doesn't match `.feature` file exactly, or a new Scenario is missing step definitions. Each step text must be unique within a Scenario. |
+
+### Zero `as` policy
+
+The codebase has zero unsafe type assertions. Patterns to avoid `as`:
+
+| Instead of | Use |
+|-----------|-----|
+| `method as HttpMethod` | `toHttpMethod(method)` — runtime validation |
+| `(error as Error).message` | `errorMessage(error)` helper or `instanceof Error` guard |
+| `(obj as any).faker` | `FakerSchema` interface extending JSONSchema7, or `"faker" in obj` guard |
+| `body as Record<string, unknown>` | `"code" in body && body.code === ...` narrowing |
+| `error as SchmockError` | Redundant after `instanceof SchmockError` — just use `error.code` |
+| `value as SomeType` | `satisfies SomeType` (checks without asserting) |
+
+### Code smell detection stack
+
+| Tool | Rules | Config |
+|------|-------|--------|
+| **Biome** | `noNonNullAssertion`, `noShadow`, `noEvolvingTypes`, `noFloatingPromises`, `noMisusedPromises`, `noImportCycles` | `biome.json` |
+| **Knip** | Dead exports, unused dependencies, unlisted deps | `knip.json` |
+| **typescript-eslint** | `no-unsafe-type-assertion` (error) | `eslint.config.js` |
+
+## Testing
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/code-quality validate` | **Full gate** — Lint, Typecheck, Knip, ESLint, Unit, BDD |
+| `/code-quality test all` | Typecheck + Unit + BDD (no lint/knip/eslint) |
+| `/code-quality test unit` | Unit tests only |
+| `/code-quality test bdd` | BDD tests only |
+| `/code-quality test <pkg>` | Tests for one package: core, schema, express, angular, validation, query |
+| `/code-quality coverage <pkg>` | Per-package coverage report |
+
+### Test types
+
+| Type | Location | Config | Purpose |
+|------|----------|--------|---------|
+| Unit (`.test.ts`) | `packages/*/src/**/*.test.ts` | `vitest.config.ts` | Internal logic, edge cases |
+| BDD (`.steps.ts`) | `packages/*/src/steps/*.steps.ts` | `vitest.config.bdd.ts` | Behavior contracts vs `.feature` specs |
+
+### When to run what
 
 | Situation | Command |
 |-----------|---------|
-| Quick check during development | `bun test:unit` |
-| Verifying behavior contracts | `bun test:bdd` |
-| Before committing | `bun test:all` (typecheck + unit + BDD) |
-| Single package | `bun run --filter "@schmock/<pkg>" test` |
-
-## Quality Gates
-
-Before any commit, all of these must pass:
-
-1. **Lint** — `bun lint` (Biome: formatting, imports, code smells)
-2. **Typecheck** — `bun typecheck` (tsc --build per package)
-3. **Knip** — `bun knip` (dead exports, unused dependencies)
-4. **ESLint** — `bun eslint` (unsafe type assertions via typescript-eslint)
-5. **Unit tests** — `bun test:unit`
-6. **BDD tests** — `bun test:bdd`
-
-Run all at once: `bun test:all` (steps 1-2, 5-6) or `/code-quality validate` (full gate including knip + eslint).
-
-The pre-commit Git hook runs lint + test:all automatically.
-
-### Code Smell Detection Tools
-
-| Tool | Purpose | Config |
-|------|---------|--------|
-| Biome | Formatting, imports, `noNonNullAssertion`, `noShadow`, `noEvolvingTypes`, promise misuse, import cycles | `biome.json` |
-| Knip | Dead exports, unused dependencies, unlisted deps | `knip.json` |
-| typescript-eslint | `no-unsafe-type-assertion` (catches `as` casts) | `eslint.config.js` |
+| Quick check during dev | `/code-quality test unit` |
+| Verifying behavior contracts | `/code-quality test bdd` |
+| Before committing | `/code-quality validate` |
+| Single package focus | `/code-quality test core` |
+| After fixing lint/types only | `bun lint:quiet && bun typecheck:quiet` |
 
 ## Coverage
-
-Run per-package coverage reports with:
 
 ```
 /code-quality coverage core
 /code-quality coverage schema
+/code-quality coverage validation
+/code-quality coverage query
 ```
 
-Coverage excludes test files (`.test.ts`, `.steps.ts`). Focus on source coverage only.
-
-## BDD Alignment Verification
-
-To verify that `.feature` files and `.steps.ts` files are in sync:
-
-1. Read the `.feature` file — note all Scenario names
-2. Read the corresponding `.steps.ts` — verify each Scenario is implemented
-3. Check that step text in `.steps.ts` matches the Gherkin steps exactly
-
-This is a manual review — Claude reads and compares the files natively.
+Excludes test files. Focus on source coverage only.
 
 ## Output Levels
 
-All script categories support three output levels:
+| Level | Suffix | Use case |
+|-------|--------|----------|
+| Normal | _(none)_ | Interactive development |
+| Quiet | `:quiet` | Claude assistant, CI |
+| Silent | `:silent` | Pre-commit hooks |
 
-| Level | Suffix | Output | Use case |
-|-------|--------|--------|----------|
-| Normal | _(none)_ | Full output | Interactive development |
-| Quiet | `:quiet` | Summary only | Claude assistant, CI logs |
-| Silent | `:silent` | No output (exit code only) | Pre-commit hooks, CI gates |
-
-### Quiet variants
-
-- `bun test:quiet` — dots + final summary
-- `bun lint:quiet` — last summary line only
-- `bun build:quiet` — last summary line only
-- `bun typecheck:quiet` — no output on success
-- `bun knip:quiet` — no progress spinner
-- `bun eslint:quiet` — warnings suppressed, errors only
-
-### Silent variants
-
-- `bun test:silent` — unit + BDD, no output
-- `bun test:all:silent` — typecheck + unit + BDD, no output
-- `bun lint:silent` — no output
-- `bun build:silent` — no output
-- `bun typecheck:silent` — no output
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `/code-quality test all` | Run typecheck + unit + BDD |
-| `/code-quality test unit` | Run unit tests only |
-| `/code-quality test bdd` | Run BDD tests only |
-| `/code-quality test <package>` | Run tests for a specific package |
-| `/code-quality validate` | Full quality gate (lint → typecheck → unit → BDD) |
-| `/code-quality coverage <package>` | Per-package coverage report |
+Quiet variants: `bun test:quiet`, `bun lint:quiet`, `bun typecheck:quiet`, `bun knip:quiet`, `bun eslint:quiet`

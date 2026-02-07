@@ -11,7 +11,7 @@ set -euo pipefail
 #   bash coverage.sh schema
 
 PKG="${1:?Usage: coverage.sh <package>}"
-VALID_PACKAGES="core schema express angular"
+VALID_PACKAGES="core schema express angular validation query"
 
 if ! echo "$VALID_PACKAGES" | grep -qw "$PKG"; then
   echo "Invalid package: ${PKG}"
