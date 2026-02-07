@@ -1,7 +1,7 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
 import type { CallableMockInstance } from "../types";
-import { evalMockSetup } from "./eval-mock";
+import { schmock } from "../index";
 
 const feature = await loadFeature("../../features/basic-usage.feature");
 
@@ -10,8 +10,10 @@ describeFeature(feature, ({ Scenario }) => {
   let response: any;
 
   Scenario("Simplest possible mock - plain text", ({ Given, When, Then, And }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a plain text mock returning {string} at {string}", (_, text: string, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, text);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -29,8 +31,10 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Return JSON without specifying contentType", ({ Given, When, Then, And }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock returning a JSON array at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, [{ id: 1, name: "John" }]);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -49,8 +53,10 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Return object without contentType", ({ Given, When, Then, And }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock returning a JSON object at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, { id: 1, name: "John" });
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -69,8 +75,8 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Empty mock instance", ({ Given, When, Then }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create an empty mock with no routes", () => {
+      mock = schmock();
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -84,8 +90,10 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Null response", ({ Given, When, Then, And }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock returning null at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, null);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -103,8 +111,10 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Undefined response", ({ Given, When, Then, And }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock returning undefined at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, undefined);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -122,8 +132,10 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Empty string response", ({ Given, When, Then, And }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock returning empty string at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, "");
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -141,8 +153,10 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Number response", ({ Given, When, Then, And }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock returning number {int} at {string}", (_, num: number, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, num);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -160,8 +174,10 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Boolean response", ({ Given, When, Then, And }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock returning boolean true at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, true);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -179,8 +195,10 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Function returning string", ({ Given, When, Then }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with a string generator at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, () => "Dynamic response");
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -194,8 +212,10 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Function returning object", ({ Given, When, Then, And }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with an object generator at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, () => ({ timestamp: Date.now() }));
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -217,14 +237,17 @@ describeFeature(feature, ({ Scenario }) => {
     let aboutResponse: any;
     let contactResponse: any;
 
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with three routes", () => {
+      mock = schmock();
+      mock("GET /", "Home");
+      mock("GET /about", "About Us");
+      mock("GET /contact", { email: "test@example.com" });
     });
 
     When("I make three requests to different routes", async () => {
-      homeResponse = await mock.handle('GET', '/');
-      aboutResponse = await mock.handle('GET', '/about');
-      contactResponse = await mock.handle('GET', '/contact');
+      homeResponse = await mock.handle("GET", "/");
+      aboutResponse = await mock.handle("GET", "/about");
+      contactResponse = await mock.handle("GET", "/contact");
     });
 
     Then("the home route should return {string}", (_, expectedText: string) => {
@@ -242,8 +265,10 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Override contentType detection", ({ Given, When, Then, And }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with explicit text/plain contentType at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, { foo: "bar" }, { contentType: "text/plain" });
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -261,8 +286,10 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("HTML response", ({ Given, When, Then, And }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock returning HTML at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, "<h1>Hello</h1>", { contentType: "text/html" });
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -280,8 +307,10 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Binary/buffer response detection", ({ Given, When, Then, And }) => {
-    Given("I create a mock with:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock returning a Buffer at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as Schmock.RouteKey, Buffer.from("binary data") as unknown as Schmock.Generator);
     });
 
     When("I request {string}", async (_, request: string) => {
