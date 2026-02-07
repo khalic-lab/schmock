@@ -612,18 +612,28 @@ export class CallableMockInstance {
                 "pipeline",
                 `Plugin ${plugin.name} handled error`,
               );
-              // If error handler returns response, use it and stop pipeline
+
+              // Error return → transform the thrown error
+              if (errorResult instanceof Error) {
+                throw new PluginError(plugin.name, errorResult);
+              }
+
+              // ResponseResult return → recover, stop pipeline
               if (
                 typeof errorResult === "object" &&
                 errorResult !== null &&
                 "status" in errorResult
               ) {
-                // Return the error response as the current response, stop pipeline
                 response = errorResult;
                 break;
               }
             }
+            // void/falsy return → propagate original error below
           } catch (hookError) {
+            // If the hook itself threw (including our PluginError above), re-throw it
+            if (hookError instanceof PluginError) {
+              throw hookError;
+            }
             this.logger.log(
               "pipeline",
               `Plugin ${plugin.name} error handler failed: ${errorMessage(hookError)}`,
