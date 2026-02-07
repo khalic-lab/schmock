@@ -72,13 +72,30 @@ To verify that `.feature` files and `.steps.ts` files are in sync:
 
 This is a manual review — Claude reads and compares the files natively.
 
-## Quiet Commands
+## Output Levels
 
-For CI and automated usage, use quiet variants that minimize output:
+All script categories support three output levels:
+
+| Level | Suffix | Output | Use case |
+|-------|--------|--------|----------|
+| Normal | _(none)_ | Full output | Interactive development |
+| Quiet | `:quiet` | Summary only | Claude assistant, CI logs |
+| Silent | `:silent` | No output (exit code only) | Pre-commit hooks, CI gates |
+
+### Quiet variants
 
 - `bun test:quiet` — dots + final summary
-- `bun lint:quiet` — errors only
-- `bun build:quiet` — errors only
+- `bun lint:quiet` — last summary line only
+- `bun build:quiet` — last summary line only
+- `bun typecheck:quiet` — no output on success
+
+### Silent variants
+
+- `bun test:silent` — unit + BDD, no output
+- `bun test:all:silent` — typecheck + unit + BDD, no output
+- `bun lint:silent` — no output
+- `bun build:silent` — no output
+- `bun typecheck:silent` — no output
 
 ## Commands
 
