@@ -1,7 +1,7 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { evalMockSetup } from "./eval-mock";
-import type { CallableMockInstance } from "../types";
+import { schmock } from "../index";
+import type { CallableMockInstance, Plugin } from "../types";
 
 const feature = await loadFeature("../../features/async-support.feature");
 
@@ -13,8 +13,13 @@ describeFeature(feature, ({ Scenario }) => {
   let endTime: number;
 
   Scenario("Async generator function returns Promise", ({ Given, When, Then, And }) => {
-    Given("I create a mock with async generator:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with an async generator at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as any, async () => {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        return { message: "async response" };
+      });
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -33,8 +38,16 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Async generator with context access", ({ Given, When, Then, And }) => {
-    Given("I create a mock with async context generator:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with an async param-based generator at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as any, async ({ params }: any) => {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return {
+          userId: params.id,
+          fetchedAt: new Date().toISOString(),
+        };
+      });
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -52,14 +65,22 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Multiple async generators in different routes", ({ Given, When, Then, And }) => {
-    Given("I create a mock with multiple async routes:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with async routes for posts and comments", () => {
+      mock = schmock();
+      mock("GET /async-posts", async () => {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return [{ id: 1, title: "First Post" }];
+      });
+      mock("GET /async-comments", async () => {
+        await new Promise(resolve => setTimeout(resolve, 8));
+        return [{ id: 1, comment: "Great post!" }];
+      });
     });
 
     When("I make concurrent requests to {string} and {string}", async (_, path1: string, path2: string) => {
       const [posts, comments] = await Promise.all([
-        mock.handle('GET', path1),
-        mock.handle('GET', path2)
+        mock.handle("GET", path1),
+        mock.handle("GET", path2),
       ]);
       responses = [posts, comments];
     });
@@ -79,8 +100,24 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Async plugin processing", ({ Given, When, Then, And }) => {
-    Given("I create a mock with async plugin:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with an async processing plugin at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      const asyncPlugin: Plugin = {
+        name: "async-processor",
+        process: async (ctx, response) => {
+          await new Promise(resolve => setTimeout(resolve, 5));
+          return {
+            context: ctx,
+            response: {
+              data: response,
+              processedAsync: true,
+              timestamp: new Date().toISOString(),
+            },
+          };
+        },
+      };
+      mock(`${method} ${path}` as any, { original: "data" }).pipe(asyncPlugin);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -93,7 +130,7 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     And("the async response should have property {string} with value {word}", (_, property: string, value: string) => {
-      const expectedValue = value === 'true' ? true : value === 'false' ? false : value;
+      const expectedValue = value === "true" ? true : value === "false" ? false : value;
       expect(response.body).toHaveProperty(property, expectedValue);
     });
 
@@ -103,8 +140,29 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Mixed sync and async plugin pipeline", ({ Given, When, Then, And }) => {
-    Given("I create a mock with mixed plugin pipeline:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with sync and async plugins at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      const syncPlugin: Plugin = {
+        name: "sync-step",
+        process: (ctx, response) => ({
+          context: ctx,
+          response: { ...response, syncStep: true },
+        }),
+      };
+      const asyncPlugin: Plugin = {
+        name: "async-step",
+        process: async (ctx, response) => {
+          await new Promise(resolve => setTimeout(resolve, 5));
+          return {
+            context: ctx,
+            response: { ...response, asyncStep: true },
+          };
+        },
+      };
+      mock(`${method} ${path}` as any, { base: "data" })
+        .pipe(syncPlugin)
+        .pipe(asyncPlugin);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -117,19 +175,24 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     And("the response should have property {string} with value {word}", (_, property: string, value: string) => {
-      const expectedValue = value === 'true' ? true : value === 'false' ? false : value;
+      const expectedValue = value === "true" ? true : value === "false" ? false : value;
       expect(response.body).toHaveProperty(property, expectedValue);
     });
 
     And("the response should have property {string} with boolean value {word}", (_, property: string, value: string) => {
-      const expectedValue = value === 'true' ? true : value === 'false' ? false : value;
+      const expectedValue = value === "true" ? true : value === "false" ? false : value;
       expect(response.body).toHaveProperty(property, expectedValue);
     });
   });
 
   Scenario("Async generator with Promise rejection", ({ Given, When, Then, And }) => {
-    Given("I create a mock with failing async generator:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with an async generator that throws at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as any, async () => {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        throw new Error("Async operation failed");
+      });
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -147,8 +210,25 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Async plugin error recovery", ({ Given, When, Then, And }) => {
-    Given("I create a mock with async error recovery:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with an async error-recovery plugin at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      const asyncErrorPlugin: Plugin = {
+        name: "async-error-handler",
+        process: async () => {
+          await new Promise(resolve => setTimeout(resolve, 5));
+          throw new Error("Async plugin failed");
+        },
+        onError: async (error) => {
+          await new Promise(resolve => setTimeout(resolve, 3));
+          return {
+            status: 200,
+            body: { recovered: true, originalError: error.message },
+            headers: {},
+          };
+        },
+      };
+      mock(`${method} ${path}` as any, "original").pipe(asyncErrorPlugin);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -161,7 +241,7 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     And("the response should have property {string} with value {word}", (_, property: string, value: string) => {
-      const expectedValue = value === 'true' ? true : value === 'false' ? false : value;
+      const expectedValue = value === "true" ? true : value === "false" ? false : value;
       expect(response.body).toHaveProperty(property, expectedValue);
     });
 
@@ -171,8 +251,13 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Async generator with delay configuration", ({ Given, When, Then, And }) => {
-    Given("I create a mock with async generator and delay:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with delay 20ms and async generator at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock({ delay: 20 });
+      mock(`${method} ${path}` as any, async () => {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        return { delayed: true, async: true };
+      });
     });
 
     When("I request {string} and measure time", async (_, request: string) => {
@@ -194,8 +279,17 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Async generator with state management", ({ Given, When, Then, And }) => {
-    Given("I create a mock with async stateful generator:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with async stateful counter at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock({ state: { asyncCounter: 0 } });
+      mock(`${method} ${path}` as any, async ({ state }: any) => {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        state.asyncCounter = (state.asyncCounter || 0) + 1;
+        return {
+          count: state.asyncCounter,
+          processedAsync: true,
+        };
+      });
     });
 
     When("I request {string} twice", async (_, request: string) => {
@@ -214,15 +308,27 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     And("both responses should have processedAsync {word}", (_, value: string) => {
-      const expectedValue = value === 'true' ? true : value === 'false' ? false : value;
+      const expectedValue = value === "true" ? true : value === "false" ? false : value;
       expect(responses[0].body.processedAsync).toBe(expectedValue);
       expect(responses[1].body.processedAsync).toBe(expectedValue);
     });
   });
 
   Scenario("Promise-based plugin response generation", ({ Given, When, Then }) => {
-    Given("I create a mock with Promise-generating plugin:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with a Promise-generating plugin at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      const promisePlugin: Plugin = {
+        name: "promise-generator",
+        process: async (ctx, response) => {
+          if (!response) {
+            const data = await Promise.resolve({ generated: "by promise" });
+            return { context: ctx, response: data };
+          }
+          return { context: ctx, response };
+        },
+      };
+      mock(`${method} ${path}` as any, null).pipe(promisePlugin);
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -237,25 +343,33 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Concurrent async requests isolation", ({ Given, When, Then, And }) => {
-    Given("I create a mock with async state isolation:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with async delay per id at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      mock(`${method} ${path}` as any, async ({ params }: any) => {
+        const delay = parseInt(params.id) * 5;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return {
+          id: params.id,
+          processedAt: Date.now(),
+        };
+      });
     });
 
     When("I make concurrent requests to {string}, {string}, and {string}", async (_, path1: string, path2: string, path3: string) => {
       const promises = [
-        mock.handle('GET', path1),
-        mock.handle('GET', path2),
-        mock.handle('GET', path3)
+        mock.handle("GET", path1),
+        mock.handle("GET", path2),
+        mock.handle("GET", path3),
       ];
       responses = await Promise.all(promises);
     });
 
     Then("all responses should have different processedAt timestamps", () => {
       const timestamps = responses.map(r => r.body.processedAt);
-      const uniqueTimestamps = new Set(timestamps);
       // In fast test environments, timestamps might be the same, so just check they exist
       expect(timestamps).toHaveLength(3);
-      timestamps.forEach(timestamp => expect(timestamp).toBeGreaterThan(0));
+      timestamps.forEach((timestamp: number) => expect(timestamp).toBeGreaterThan(0));
     });
 
     And("each response should have the correct id value", () => {
@@ -268,15 +382,42 @@ describeFeature(feature, ({ Scenario }) => {
       // All responses should be successful regardless of timing
       for (const response of responses) {
         expect(response.status).toBe(200);
-        expect(response.body).toHaveProperty('id');
-        expect(response.body).toHaveProperty('processedAt');
+        expect(response.body).toHaveProperty("id");
+        expect(response.body).toHaveProperty("processedAt");
       }
     });
   });
 
   Scenario("Async plugin pipeline with context state", ({ Given, When, Then, And }) => {
-    Given("I create a mock with async stateful plugins:", (_, docString: string) => {
-      mock = evalMockSetup(docString);
+    Given("I create a mock with two async stateful plugins at {string}", (_, route: string) => {
+      const [method, path] = route.split(" ");
+      mock = schmock();
+      const plugin1: Plugin = {
+        name: "async-step-1",
+        process: async (ctx, response) => {
+          await new Promise(resolve => setTimeout(resolve, 5));
+          ctx.state.set("step1", "completed");
+          return { context: ctx, response };
+        },
+      };
+      const plugin2: Plugin = {
+        name: "async-step-2",
+        process: async (ctx, response) => {
+          await new Promise(resolve => setTimeout(resolve, 3));
+          const step1Status = ctx.state.get("step1");
+          return {
+            context: ctx,
+            response: {
+              ...response,
+              step1: step1Status,
+              step2: "completed",
+            },
+          };
+        },
+      };
+      mock(`${method} ${path}` as any, { base: "data" })
+        .pipe(plugin1)
+        .pipe(plugin2);
     });
 
     When("I request {string}", async (_, request: string) => {
