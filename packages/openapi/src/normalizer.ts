@@ -1,17 +1,7 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
 import type { JSONSchema7 } from "json-schema";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function toJsonSchema(node: Record<string, unknown>): JSONSchema7 {
-  // Object.assign merges unknown-keyed properties into JSONSchema7.
-  // This is safe because the normalizer has already ensured the shape
-  // is valid JSON Schema 7 before calling this function.
-  return Object.assign<JSONSchema7, Record<string, unknown>>({}, node);
-}
+import { isRecord, toJsonSchema } from "./utils.js";
 
 /**
  * Normalize an OpenAPI schema to pure JSON Schema 7 that json-schema-faker understands.
