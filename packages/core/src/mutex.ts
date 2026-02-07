@@ -2,6 +2,24 @@
  * Simple async mutex to serialize operations.
  * Useful for ensuring atomic state updates in async mock handlers.
  *
+ * Logic Flow (Promise Chain):
+ * =============================================================================
+ * [ Task 1: RUNNING ] <── awaits ── [ Task 2: QUEUED ] <── awaits ── [ Task 3: QUEUED ] <── (this.queue Tail)
+ *          |                               |                               |
+ *          V                               V                               V
+ *   await previous;                 await previous;                 await previous;
+ *          |                               |                               |
+ *    [ Runs logic ]                  [ Paused... ]                   [ Paused... ]
+ *          |                               |                               |
+ *   resolveLock1() ━━━━━━━━━━━━ triggers ━━┛                               |
+ *                                  |                                       |
+ *                            [ Runs logic ]                                |
+ *                                  |                                       |
+ *                           resolveLock2() ━━━━━━━━━━━━━━━━━━━━ triggers ━━┛
+ *                                                                          |
+ *                                                                    [ Runs logic ]
+ * =============================================================================
+ *
  * @example
  * ```typescript
  * const mutex = new AsyncMutex();
