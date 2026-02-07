@@ -1,7 +1,7 @@
 {
   "name": "@schmock/schema",
   "description": "JSON Schema-based automatic data generation for Schmock",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
