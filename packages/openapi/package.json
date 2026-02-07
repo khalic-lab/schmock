@@ -38,8 +38,8 @@
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^6.2.0",
     "@types/json-schema": "^7.0.15",
-    "@types/node": "^25.1.0",
+    "@types/node": "^25.2.1",
     "openapi-types": "^12.1.3",
-    "vitest": "^4.0.15"
+    "vitest": "^4.0.18"
   }
 }
