@@ -376,7 +376,7 @@ describe("toExpress", () => {
   });
 
   describe("edge cases", () => {
-    it("skips res.status when status is 0", async () => {
+    it("sends status 0 when status is explicitly 0", async () => {
       const mock = createMock(() =>
         Promise.resolve({ status: 0, body: "ok", headers: {} }),
       );
@@ -385,7 +385,7 @@ describe("toExpress", () => {
 
       await toExpress(mock)(createReq(), res, next);
 
-      expect(res.status).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(0);
       expect(res.send).toHaveBeenCalledWith("ok");
     });
 
