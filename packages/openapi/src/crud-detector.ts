@@ -3,6 +3,14 @@
 import type { JSONSchema7 } from "json-schema";
 import type { ParsedPath } from "./parser.js";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toJsonSchema(node: Record<string, unknown>): JSONSchema7 {
+  return Object.assign<JSONSchema7, Record<string, unknown>>({}, node);
+}
+
 export type CrudOperation = "list" | "create" | "read" | "update" | "delete";
 
 export interface CrudResource {
@@ -110,8 +118,8 @@ function buildResource(
           const items = Array.isArray(listSchema.items)
             ? listSchema.items[0]
             : listSchema.items;
-          if (typeof items === "object" && items !== null) {
-            schema = schema ?? (items as JSONSchema7);
+          if (isRecord(items)) {
+            schema = schema ?? toJsonSchema(items);
           }
         }
       } else if (p.method === "POST") {

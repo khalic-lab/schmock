@@ -31,7 +31,14 @@ export function loadSeed(
     } else if (typeof source === "string") {
       // File path
       const content = readFileSync(source, "utf-8");
-      const parsed: unknown = JSON.parse(content);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(content);
+      } catch {
+        throw new Error(
+          `Seed file "${source}" for resource "${resourceName}" contains invalid JSON`,
+        );
+      }
       if (!Array.isArray(parsed)) {
         throw new Error(
           `Seed file "${source}" for resource "${resourceName}" must contain a JSON array`,
@@ -44,6 +51,16 @@ export function loadSeed(
       "count" in source
     ) {
       // Auto-generate from schema
+      const rawCount = source.count;
+      if (
+        typeof rawCount !== "number" ||
+        !Number.isInteger(rawCount) ||
+        rawCount < 0
+      ) {
+        throw new Error(
+          `Seed count for "${resourceName}" must be a non-negative integer, got: ${String(rawCount)}`,
+        );
+      }
       if (!resource?.schema) {
         throw new Error(
           `Cannot auto-generate seed for "${resourceName}": no schema found in spec`,
@@ -51,7 +68,7 @@ export function loadSeed(
       }
       const items = generateSeedItems(
         resource.schema,
-        source.count,
+        rawCount,
         resource.idParam,
       );
       result.set(resourceName, items);
