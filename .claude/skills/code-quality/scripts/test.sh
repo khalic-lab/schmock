@@ -24,14 +24,14 @@ case "$TARGET" in
     echo "Running BDD tests..."
     bun test:bdd:quiet
     ;;
-  core|schema|express|angular)
+  core|schema|express|angular|validation|query)
     echo "Running tests for @schmock/${TARGET}..."
     bun run --filter "@schmock/${TARGET}" test
     ;;
   *)
     echo "Unknown target: ${TARGET}"
     echo "Usage: test.sh all|unit|bdd|<package>"
-    echo "Packages: core, schema, express, angular"
+    echo "Packages: core, schema, express, angular, validation, query"
     exit 1
     ;;
 esac
