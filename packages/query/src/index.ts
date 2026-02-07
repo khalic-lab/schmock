@@ -95,6 +95,7 @@ function applyFiltering(
       result = result.filter((item) => {
         const itemValue = item[field];
         if (itemValue === undefined) return false;
+        // Intentional string coercion: query params are inherently strings
         return String(itemValue) === value;
       });
     }
