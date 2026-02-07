@@ -5,5 +5,5 @@
   "packages/angular": "1.5.0",
   "packages/validation": "1.2.0",
   "packages/query": "1.2.0",
-  "packages/openapi": "1.1.0"
+  "packages/openapi": "1.1.1"
 }
