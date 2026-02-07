@@ -16,7 +16,7 @@ function errorMessage(error: unknown): string {
 class DebugLogger {
   constructor(private enabled = false) {}
 
-  log(category: string, message: string, data?: any) {
+  log(category: string, message: string, data?: unknown) {
     if (!this.enabled) return;
 
     const timestamp = new Date().toISOString();
@@ -50,6 +50,25 @@ interface CompiledCallableRoute {
   path: string;
   generator: Schmock.Generator;
   config: Schmock.RouteConfig;
+}
+
+function isGeneratorFunction(
+  gen: Schmock.Generator,
+): gen is Schmock.GeneratorFunction {
+  return typeof gen === "function";
+}
+
+function isResponseObject(value: unknown): value is {
+  status: number;
+  body: unknown;
+  headers?: Record<string, string>;
+} {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "status" in value &&
+    "body" in value
+  );
 }
 
 /**
@@ -341,11 +360,9 @@ export class CallableMockInstance {
         state: this.globalConfig.state || {},
       };
 
-      let result: any;
-      if (typeof matchedRoute.generator === "function") {
-        result = await (matchedRoute.generator as Schmock.GeneratorFunction)(
-          context,
-        );
+      let result: unknown;
+      if (isGeneratorFunction(matchedRoute.generator)) {
+        result = await matchedRoute.generator(context);
       } else {
         result = matchedRoute.generator;
       }
@@ -466,22 +483,17 @@ export class CallableMockInstance {
    * @private
    */
   private parseResponse(
-    result: any,
+    result: unknown,
     routeConfig: Schmock.RouteConfig,
   ): Schmock.Response {
     let status = 200;
-    let body = result;
+    let body: unknown = result;
     let headers: Record<string, string> = {};
 
     let tupleFormat = false;
 
     // Handle already-formed response objects (from plugin error recovery)
-    if (
-      result &&
-      typeof result === "object" &&
-      "status" in result &&
-      "body" in result
-    ) {
+    if (isResponseObject(result)) {
       return {
         status: result.status,
         body: result.body,
@@ -539,12 +551,12 @@ export class CallableMockInstance {
    */
   private async runPluginPipeline(
     context: Schmock.PluginContext,
-    initialResponse?: any,
+    initialResponse?: unknown,
     _routeConfig?: Schmock.RouteConfig,
     _requestId?: string,
-  ): Promise<{ context: Schmock.PluginContext; response?: any }> {
+  ): Promise<{ context: Schmock.PluginContext; response?: unknown }> {
     let currentContext = context;
-    let response: any = initialResponse;
+    let response: unknown = initialResponse;
 
     this.logger.log(
       "pipeline",
