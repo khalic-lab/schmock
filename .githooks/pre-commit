@@ -40,6 +40,12 @@ if ! run_check "Tests & TypeCheck" "bun run test:all:quiet"; then
     echo "${RED}💡 Debug with: bun run test (faster) or bun run typecheck${NC}"
 fi
 
+# Run stress tests (throughput benchmarks)
+if ! run_check "Benchmarks" "bun run bench"; then
+    FAILED=1
+    echo "${RED}💡 Debug with: bun run bench${NC}"
+fi
+
 # Check if any changes need to be staged after linting
 if [ $FAILED -eq 0 ]; then
     if ! git diff --quiet; then

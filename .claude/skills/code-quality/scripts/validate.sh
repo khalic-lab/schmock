@@ -2,7 +2,7 @@
 set -uo pipefail
 
 # Full quality validation gate for Schmock.
-# Runs all 6 stages sequentially and reports pass/fail with fix hints.
+# Runs all 7 stages sequentially and reports pass/fail with fix hints.
 
 PASS=0
 FAIL=0
@@ -42,6 +42,9 @@ run_stage "Unit"      "Run 'bun test:unit' for full output, fix failing assertio
 
 run_stage "BDD"       "Run 'bun test:bdd' for full output, check step text matches .feature files" \
   bun test:bdd:quiet
+
+run_stage "Bench"     "Run 'bun bench' for full output, check for throughput regressions" \
+  bun bench
 
 echo "━━━ Results ━━━"
 for r in "${RESULTS[@]}"; do
