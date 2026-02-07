@@ -1,6 +1,6 @@
 {
   "name": "@schmock/express",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Express adapter for Schmock mock API generator",
   "type": "module",
   "main": "dist/index.js",
