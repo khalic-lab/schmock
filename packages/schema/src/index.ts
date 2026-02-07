@@ -9,6 +9,10 @@ import {
 import type { JSONSchema7 } from "json-schema";
 import jsf from "json-schema-faker";
 
+function isJSONSchema7(value: unknown): value is JSONSchema7 {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** JSONSchema7 extended with json-schema-faker's `faker` property */
 interface FakerSchema extends JSONSchema7 {
   faker?: string;
@@ -341,8 +345,8 @@ function hasCircularReference(
 
   if (schema.type === "object" && schema.properties) {
     for (const prop of Object.values(schema.properties)) {
-      if (typeof prop === "object" && prop !== null) {
-        if (hasCircularReference(prop as JSONSchema7, currentPath)) {
+      if (isJSONSchema7(prop)) {
+        if (hasCircularReference(prop, currentPath)) {
           return true;
         }
       }
@@ -352,8 +356,8 @@ function hasCircularReference(
   if (schema.type === "array" && schema.items) {
     const items = Array.isArray(schema.items) ? schema.items : [schema.items];
     for (const item of items) {
-      if (typeof item === "object" && item !== null) {
-        if (hasCircularReference(item as JSONSchema7, currentPath)) {
+      if (isJSONSchema7(item)) {
+        if (hasCircularReference(item, currentPath)) {
           return true;
         }
       }
@@ -382,11 +386,8 @@ function calculateNestingDepth(schema: JSONSchema7, depth = 0): number {
 
   if (schema.type === "object" && schema.properties) {
     for (const prop of Object.values(schema.properties)) {
-      if (typeof prop === "object" && prop !== null) {
-        maxDepth = Math.max(
-          maxDepth,
-          calculateNestingDepth(prop as JSONSchema7, depth + 1),
-        );
+      if (isJSONSchema7(prop)) {
+        maxDepth = Math.max(maxDepth, calculateNestingDepth(prop, depth + 1));
       }
     }
   }
@@ -394,11 +395,8 @@ function calculateNestingDepth(schema: JSONSchema7, depth = 0): number {
   if (schema.type === "array" && schema.items) {
     const items = Array.isArray(schema.items) ? schema.items : [schema.items];
     for (const item of items) {
-      if (typeof item === "object" && item !== null) {
-        maxDepth = Math.max(
-          maxDepth,
-          calculateNestingDepth(item as JSONSchema7, depth + 1),
-        );
+      if (isJSONSchema7(item)) {
+        maxDepth = Math.max(maxDepth, calculateNestingDepth(item, depth + 1));
       }
     }
   }
@@ -445,10 +443,8 @@ function checkForDeepNestingWithArrays(
       if (node.items) {
         const items = Array.isArray(node.items) ? node.items : [node.items];
         for (const item of items) {
-          if (typeof item === "object" && item !== null) {
-            if (
-              findArraysInDeepNesting(item as JSONSchema7, currentDepth + 1)
-            ) {
+          if (isJSONSchema7(item)) {
+            if (findArraysInDeepNesting(item, currentDepth + 1)) {
               return true;
             }
           }
@@ -460,8 +456,8 @@ function checkForDeepNestingWithArrays(
 
     if (schemaType === "object" && node.properties) {
       for (const prop of Object.values(node.properties)) {
-        if (typeof prop === "object" && prop !== null) {
-          if (findArraysInDeepNesting(prop as JSONSchema7, currentDepth + 1)) {
+        if (isJSONSchema7(prop)) {
+          if (findArraysInDeepNesting(prop, currentDepth + 1)) {
             return true;
           }
         }
@@ -507,11 +503,8 @@ function checkArraySizeLimits(schema: JSONSchema7, path: string): void {
   // Recursively check nested schemas
   if (schema.type === "object" && schema.properties) {
     for (const [propName, propSchema] of Object.entries(schema.properties)) {
-      if (typeof propSchema === "object" && propSchema !== null) {
-        checkArraySizeLimits(
-          propSchema as JSONSchema7,
-          `${path}.properties.${propName}`,
-        );
+      if (isJSONSchema7(propSchema)) {
+        checkArraySizeLimits(propSchema, `${path}.properties.${propName}`);
       }
     }
   }
@@ -519,12 +512,12 @@ function checkArraySizeLimits(schema: JSONSchema7, path: string): void {
   if (schema.type === "array" && schema.items) {
     if (Array.isArray(schema.items)) {
       schema.items.forEach((item, index) => {
-        if (typeof item === "object" && item !== null) {
-          checkArraySizeLimits(item as JSONSchema7, `${path}.items[${index}]`);
+        if (isJSONSchema7(item)) {
+          checkArraySizeLimits(item, `${path}.items[${index}]`);
         }
       });
-    } else if (typeof schema.items === "object" && schema.items !== null) {
-      checkArraySizeLimits(schema.items as JSONSchema7, `${path}.items`);
+    } else if (isJSONSchema7(schema.items)) {
+      checkArraySizeLimits(schema.items, `${path}.items`);
     }
   }
 }
@@ -760,10 +753,10 @@ function enhanceSchemaWithSmartMapping(schema: JSONSchema7): JSONSchema7 {
     for (const [fieldName, fieldSchema] of Object.entries(
       enhanced.properties,
     )) {
-      if (typeof fieldSchema === "object" && fieldSchema !== null) {
+      if (isJSONSchema7(fieldSchema)) {
         enhanced.properties[fieldName] = enhanceFieldSchema(
           fieldName,
-          fieldSchema as JSONSchema7,
+          fieldSchema,
         );
       }
     }
