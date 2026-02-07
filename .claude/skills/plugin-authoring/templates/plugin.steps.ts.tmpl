@@ -1,0 +1,30 @@
+import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
+import { expect } from "vitest";
+import { schmock } from "../index";
+import type { MockInstance } from "../types";
+import { {{PLUGIN_CAMEL}}Plugin } from "../{{PLUGIN_NAME}}";
+
+const feature = await loadFeature("../../features/{{PLUGIN_NAME}}-plugin.feature");
+
+describeFeature(feature, ({ Scenario }) => {
+  let mock: MockInstance<any>;
+  let response: any;
+
+  Scenario("Basic {{PLUGIN_NAME}} behavior", ({ Given, When, Then }) => {
+    Given("I create a mock with the {{PLUGIN_NAME}} plugin", () => {
+      mock = schmock({});
+      mock("GET /test", () => ({ message: "test" }), {})
+        .pipe({{PLUGIN_CAMEL}}Plugin());
+    });
+
+    When("I request {string}", async (_, request: string) => {
+      const [method, path] = request.split(" ");
+      response = await mock.handle(method as any, path);
+    });
+
+    Then("the response should reflect {{PLUGIN_NAME}} processing", () => {
+      expect(response).toBeDefined();
+      expect(response.status).toBe(200);
+    });
+  });
+});
