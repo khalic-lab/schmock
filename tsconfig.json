@@ -20,6 +20,7 @@
       "@schmock/validation": ["packages/validation/src"],
       "@schmock/query": ["packages/query/src"],
       "@schmock/openapi": ["packages/openapi/src"],
+      "@schmock/cli": ["packages/cli/src"],
       "@features/*": ["features/*"]
     }
   },

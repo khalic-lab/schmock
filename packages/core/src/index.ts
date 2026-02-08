@@ -52,6 +52,8 @@ export function schmock(
       reset: instance.reset.bind(instance),
       resetHistory: instance.resetHistory.bind(instance),
       resetState: instance.resetState.bind(instance),
+      listen: instance.listen.bind(instance),
+      close: instance.close.bind(instance),
     },
   );
 
@@ -98,5 +100,6 @@ export type {
   ResponseResult,
   RouteConfig,
   RouteKey,
+  ServerInfo,
   StaticData,
 } from "./types.js";

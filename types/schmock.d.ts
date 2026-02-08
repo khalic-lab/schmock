@@ -327,6 +327,33 @@ declare namespace Schmock {
      * Clear only state, keep routes and history
      */
     resetState(): void;
+
+    // ===== Standalone Server =====
+
+    /**
+     * Start a standalone HTTP server
+     *
+     * @param port - Port to listen on (0 for random)
+     * @param hostname - Hostname to bind to (default: "127.0.0.1")
+     * @returns Promise resolving to server info with actual port and hostname
+     * @throws If the server is already running
+     */
+    listen(port?: number, hostname?: string): Promise<ServerInfo>;
+
+    /**
+     * Stop the standalone server (idempotent, no-op if not running)
+     */
+    close(): void;
+  }
+
+  /**
+   * Information about a running standalone server
+   */
+  interface ServerInfo {
+    /** Port the server is listening on */
+    port: number;
+    /** Hostname the server is bound to */
+    hostname: string;
   }
 
 }
