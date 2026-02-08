@@ -1,6 +1,7 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
 import type { JSONSchema7 } from "json-schema";
+import { findArrayProperty } from "./generators.js";
 import type { ParsedPath } from "./parser.js";
 import { isRecord, toJsonSchema } from "./utils.js";
 
@@ -19,6 +20,8 @@ export interface CrudResource {
   operations: CrudOperation[];
   /** Response schema for the resource item */
   schema?: JSONSchema7;
+  /** Per-operation metadata auto-detected from spec */
+  operationMeta?: Map<CrudOperation, Schmock.CrudOperationMeta>;
 }
 
 interface DetectionResult {
@@ -97,6 +100,7 @@ function buildResource(
   let itemPath = "";
   let idParam = "";
   let schema: JSONSchema7 | undefined;
+  const operationMeta = new Map<CrudOperation, Schmock.CrudOperationMeta>();
 
   for (const p of paths) {
     const isCollection = p.path === basePath;
@@ -105,18 +109,30 @@ function buildResource(
     if (isCollection) {
       if (p.method === "GET") {
         operations.push("list");
-        // Try to extract item schema from list response (array items)
         const listSchema = getSuccessResponseSchema(p);
-        if (listSchema && listSchema.type === "array" && listSchema.items) {
-          const items = Array.isArray(listSchema.items)
-            ? listSchema.items[0]
-            : listSchema.items;
-          if (isRecord(items)) {
-            schema = schema ?? toJsonSchema(items);
+        if (listSchema) {
+          // Extract item schema from both flat arrays and wrapped lists
+          const arrayInfo = findArrayProperty(listSchema);
+          if (arrayInfo.itemSchema) {
+            schema = schema ?? arrayInfo.itemSchema;
+          } else if (listSchema.type === "array" && listSchema.items) {
+            // Fallback: direct flat array
+            const items = Array.isArray(listSchema.items)
+              ? listSchema.items[0]
+              : listSchema.items;
+            if (isRecord(items)) {
+              schema = schema ?? toJsonSchema(items);
+            }
           }
         }
+
+        // Capture list operation metadata
+        const meta = buildOperationMeta(p, "list");
+        operationMeta.set("list", meta);
       } else if (p.method === "POST") {
         operations.push("create");
+        const meta = buildOperationMeta(p, "create");
+        operationMeta.set("create", meta);
       }
     } else if (isItem) {
       // Extract ID param from the item path
@@ -134,12 +150,18 @@ function buildResource(
         if (p.method === "GET") {
           operations.push("read");
           schema = schema ?? getSuccessResponseSchema(p);
+          const meta = buildOperationMeta(p, "read");
+          operationMeta.set("read", meta);
         } else if (p.method === "PUT" || p.method === "PATCH") {
           if (!operations.includes("update")) {
             operations.push("update");
+            const meta = buildOperationMeta(p, "update");
+            operationMeta.set("update", meta);
           }
         } else if (p.method === "DELETE") {
           operations.push("delete");
+          const meta = buildOperationMeta(p, "delete");
+          operationMeta.set("delete", meta);
         }
       }
     }
@@ -177,7 +199,42 @@ function buildResource(
     idParam,
     operations,
     schema,
+    operationMeta: operationMeta.size > 0 ? operationMeta : undefined,
   };
+}
+
+function buildOperationMeta(
+  p: ParsedPath,
+  _operation: CrudOperation,
+): Schmock.CrudOperationMeta {
+  const meta: Schmock.CrudOperationMeta = {};
+
+  // Capture full success response schema
+  const responseSchema = getSuccessResponseSchema(p);
+  if (responseSchema) {
+    meta.responseSchema = responseSchema;
+  }
+
+  // Capture success response headers
+  for (const [code, resp] of p.responses) {
+    if (code >= 200 && code < 300 && resp.headers) {
+      meta.responseHeaders = resp.headers;
+      break;
+    }
+  }
+
+  // Capture error response schemas (4xx)
+  const errorSchemas = new Map<number, JSONSchema7>();
+  for (const [code, resp] of p.responses) {
+    if (code >= 400 && code < 600 && resp.schema) {
+      errorSchemas.set(code, resp.schema);
+    }
+  }
+  if (errorSchemas.size > 0) {
+    meta.errorSchemas = errorSchemas;
+  }
+
+  return meta;
 }
 
 function getSuccessResponseSchema(p: ParsedPath): JSONSchema7 | undefined {
