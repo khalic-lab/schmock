@@ -123,6 +123,8 @@ declare namespace Schmock {
   interface RouteConfig {
     /** MIME type for content type validation (auto-detected if not provided) */
     contentType?: string;
+    /** Per-route response delay in ms, or [min, max] for random delay (overrides global) */
+    delay?: number | [number, number];
     /** Additional route-specific options */
     [key: string]: unknown;
   }
@@ -328,6 +330,30 @@ declare namespace Schmock {
      */
     resetState(): void;
 
+    // ===== Lifecycle Events =====
+
+    /**
+     * Register an event listener
+     */
+    on<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => void): CallableMockInstance;
+
+    /**
+     * Remove an event listener
+     */
+    off<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => void): CallableMockInstance;
+
+    // ===== Introspection =====
+
+    /**
+     * Get all registered routes as an array of route info objects
+     */
+    getRoutes(): RouteInfo[];
+
+    /**
+     * Get the current shared state object
+     */
+    getState(): Record<string, unknown>;
+
     // ===== Standalone Server =====
 
     /**
@@ -354,6 +380,84 @@ declare namespace Schmock {
     port: number;
     /** Hostname the server is bound to */
     hostname: string;
+  }
+
+  // ===== Lifecycle Events =====
+
+  interface RequestStartEvent {
+    method: HttpMethod;
+    path: string;
+    headers: Record<string, string>;
+  }
+
+  interface RequestMatchEvent {
+    method: HttpMethod;
+    path: string;
+    routePath: string;
+    params: Record<string, string>;
+  }
+
+  interface RequestNotFoundEvent {
+    method: HttpMethod;
+    path: string;
+  }
+
+  interface RequestEndEvent {
+    method: HttpMethod;
+    path: string;
+    status: number;
+    duration: number;
+  }
+
+  type SchmockEventMap = {
+    "request:start": RequestStartEvent;
+    "request:match": RequestMatchEvent;
+    "request:notfound": RequestNotFoundEvent;
+    "request:end": RequestEndEvent;
+  };
+
+  type SchmockEvent = keyof SchmockEventMap;
+
+  // ===== Introspection Types =====
+
+  interface RouteInfo {
+    method: HttpMethod;
+    path: string;
+    hasParams: boolean;
+  }
+
+  // ===== OpenAPI Plugin Types =====
+
+  /**
+   * Per-resource configuration override for OpenAPI plugin
+   */
+  interface ResourceOverride {
+    /** Override: which property in list response holds the items array (e.g. "data") */
+    listWrapProperty?: string;
+    /** Override: force flat array for list (ignores any wrapper in the spec) */
+    listFlat?: boolean;
+    /** Override: JSON Schema for error responses (404, etc.) */
+    errorSchema?: JSONSchema7;
+  }
+
+  /**
+   * Response header definition from an OpenAPI spec
+   */
+  interface ResponseHeaderDef {
+    schema?: JSONSchema7;
+    description: string;
+  }
+
+  /**
+   * Per-operation metadata auto-detected from spec or set via overrides
+   */
+  interface CrudOperationMeta {
+    /** Full success response schema (wrapper + items) */
+    responseSchema?: JSONSchema7;
+    /** Response headers from spec */
+    responseHeaders?: Record<string, ResponseHeaderDef>;
+    /** Error response schemas keyed by status code */
+    errorSchemas?: Map<number, JSONSchema7>;
   }
 
 }

@@ -197,10 +197,11 @@ describe("stress: integration — train-travel.yaml", () => {
     const trips = await mock.handle("GET", "/trips");
     expect(trips.status).toBe(200);
 
-    // Bookings: CRUD resource
+    // Bookings: CRUD resource (wrapped list — allOf with data array)
     const emptyList = await mock.handle("GET", "/bookings");
     expect(emptyList.status).toBe(200);
-    expect(emptyList.body).toEqual([]);
+    const emptyBody = emptyList.body as Record<string, unknown>;
+    expect(emptyBody.data).toEqual([]);
   });
 
   it("bookings CRUD lifecycle", async () => {
@@ -226,10 +227,11 @@ describe("stress: integration — train-travel.yaml", () => {
     expect(read.status).toBe(200);
     expect(read.body).toMatchObject({ passenger_name: "John Doe" });
 
-    // List
+    // List (wrapped)
     const list = await mock.handle("GET", "/bookings");
     expect(list.status).toBe(200);
-    expect(list.body).toHaveLength(1);
+    const listBody = list.body as Record<string, unknown>;
+    expect(listBody.data).toHaveLength(1);
 
     // Delete
     const deleted = await mock.handle("DELETE", "/bookings/1");
@@ -270,7 +272,8 @@ describe("stress: integration — train-travel.yaml", () => {
     }
 
     const list = await mock.handle("GET", "/bookings");
-    expect(list.body).toHaveLength(5);
+    const listBody = list.body as Record<string, unknown>;
+    expect(listBody.data).toHaveLength(5);
   });
 });
 
@@ -1149,10 +1152,11 @@ describe("stress: scalar-galaxy.yaml — BREAD operations", () => {
       }),
     );
 
-    // BROWSE — list all 8 planets
+    // BROWSE — list all 8 planets (wrapped: { data: [...], meta: {...} })
     const allPlanets = await mock.handle("GET", "/planets");
     expect(allPlanets.status).toBe(200);
-    expect(allPlanets.body).toHaveLength(8);
+    const allPlanetsBody = allPlanets.body as Record<string, unknown>;
+    expect(allPlanetsBody.data).toHaveLength(8);
 
     // READ — each planet is coherent
     for (let i = 1; i <= 8; i++) {
@@ -1186,9 +1190,9 @@ describe("stress: scalar-galaxy.yaml — BREAD operations", () => {
     expect(newPlanet.name).toBe("Kepler-442b");
     expect(newPlanet.planetId).toBe(9); // auto-incremented past seed max (8)
 
-    // BROWSE after ADD — 9 planets
+    // BROWSE after ADD — 9 planets (wrapped)
     const afterAdd = await mock.handle("GET", "/planets");
-    expect(afterAdd.body).toHaveLength(9);
+    expect((afterAdd.body as Record<string, unknown>).data).toHaveLength(9);
 
     // EDIT — update Mars terraforming progress
     const edited = await mock.handle("PUT", "/planets/4", {
@@ -1203,9 +1207,9 @@ describe("stress: scalar-galaxy.yaml — BREAD operations", () => {
     const deleted = await mock.handle("DELETE", "/planets/9");
     expect(deleted.status).toBe(204);
 
-    // BROWSE after DELETE — back to 8
+    // BROWSE after DELETE — back to 8 (wrapped)
     const afterDelete = await mock.handle("GET", "/planets");
-    expect(afterDelete.body).toHaveLength(8);
+    expect((afterDelete.body as Record<string, unknown>).data).toHaveLength(8);
 
     // READ deleted — 404
     const gone = await mock.handle("GET", "/planets/9");
@@ -1495,13 +1499,16 @@ describe("stress: lifecycle and multi-instance flows", () => {
       }),
     );
 
-    expect((await mock.handle("GET", "/planets")).body).toHaveLength(8);
+    expect(
+      ((await mock.handle("GET", "/planets")).body as Record<string, unknown>)
+        .data,
+    ).toHaveLength(8);
 
     mock.resetState();
 
     // After reset, collection is empty — seeder runs again on next request
     const list = await mock.handle("GET", "/planets");
-    expect(list.body).toHaveLength(8); // re-seeded on access
+    expect((list.body as Record<string, unknown>).data).toHaveLength(8); // re-seeded on access
 
     // Can still create new items
     const created = await mock.handle("POST", "/planets", {
@@ -1572,7 +1579,8 @@ describe("stress: lifecycle and multi-instance flows", () => {
     await mock.handle("POST", "/planets", { body: { name: "Exo-2" } });
 
     const list = await mock.handle("GET", "/planets");
-    const items = list.body as Record<string, unknown>[];
+    const listBody = list.body as Record<string, unknown>;
+    const items = listBody.data as Record<string, unknown>[];
     expect(items).toHaveLength(4);
 
     // Seed items at IDs 1-2, runtime items at IDs 3-4
@@ -1595,10 +1603,16 @@ describe("stress: lifecycle and multi-instance flows", () => {
     await mock.handle("POST", "/pets", { body: { name: "Buddy" } });
     expect((await mock.handle("GET", "/pets")).body).toHaveLength(1);
 
-    // Galaxy CRUD — completely independent
-    expect((await mock.handle("GET", "/planets")).body).toHaveLength(8);
+    // Galaxy CRUD — completely independent (wrapped format)
+    expect(
+      ((await mock.handle("GET", "/planets")).body as Record<string, unknown>)
+        .data,
+    ).toHaveLength(8);
     await mock.handle("POST", "/planets", { body: { name: "Nibiru" } });
-    expect((await mock.handle("GET", "/planets")).body).toHaveLength(9);
+    expect(
+      ((await mock.handle("GET", "/planets")).body as Record<string, unknown>)
+        .data,
+    ).toHaveLength(9);
 
     // Petstore still has 1
     expect((await mock.handle("GET", "/pets")).body).toHaveLength(1);
@@ -1858,9 +1872,9 @@ describe("stress: realistic E2E flows", () => {
     const me = await mock.handle("GET", "/me");
     expect(me.status).toBe(200);
 
-    // 6. List planets
+    // 6. List planets (wrapped)
     const list = await mock.handle("GET", "/planets");
-    expect(list.body).toHaveLength(1);
+    expect((list.body as Record<string, unknown>).data).toHaveLength(1);
   });
 
   it("galaxy: populate solar system then explore", async () => {
@@ -1885,9 +1899,9 @@ describe("stress: realistic E2E flows", () => {
       expect(res.status).toBe(201);
     }
 
-    // Verify count
+    // Verify count (wrapped)
     const list = await mock.handle("GET", "/planets");
-    expect(list.body).toHaveLength(8);
+    expect((list.body as Record<string, unknown>).data).toHaveLength(8);
 
     // Read each by ID
     for (let i = 1; i <= 8; i++) {
@@ -2609,10 +2623,11 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
       custFixture.email,
     );
 
-    // List
+    // List (wrapped: { data: [...], has_more, object, url })
     const list = await mock.handle("GET", "/v1/customers");
     expect(list.status).toBe(200);
-    expect(list.body).toHaveLength(1);
+    const listBody = list.body as Record<string, unknown>;
+    expect(listBody.data).toHaveLength(1);
 
     // Delete
     const deleted = await mock.handle("DELETE", "/v1/customers/1");
@@ -2641,9 +2656,9 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
     expect(read.status).toBe(200);
     expect((read.body as Record<string, unknown>).name).toBe("Premium Plan");
 
-    // List
+    // List (wrapped)
     const list = await mock.handle("GET", "/v1/products");
-    expect(list.body).toHaveLength(1);
+    expect((list.body as Record<string, unknown>).data).toHaveLength(1);
 
     // Delete
     const del = await mock.handle("DELETE", "/v1/products/1");
@@ -2695,15 +2710,50 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
       body: { percent_off: 25 },
     });
 
-    // Each resource is independent
-    expect((await mock.handle("GET", "/v1/customers")).body).toHaveLength(2);
-    expect((await mock.handle("GET", "/v1/products")).body).toHaveLength(1);
-    expect((await mock.handle("GET", "/v1/coupons")).body).toHaveLength(1);
+    // Each resource is independent (all wrapped)
+    expect(
+      (
+        (await mock.handle("GET", "/v1/customers")).body as Record<
+          string,
+          unknown
+        >
+      ).data,
+    ).toHaveLength(2);
+    expect(
+      (
+        (await mock.handle("GET", "/v1/products")).body as Record<
+          string,
+          unknown
+        >
+      ).data,
+    ).toHaveLength(1);
+    expect(
+      (
+        (await mock.handle("GET", "/v1/coupons")).body as Record<
+          string,
+          unknown
+        >
+      ).data,
+    ).toHaveLength(1);
 
     // Delete a customer doesn't affect products
     await mock.handle("DELETE", "/v1/customers/1");
-    expect((await mock.handle("GET", "/v1/customers")).body).toHaveLength(1);
-    expect((await mock.handle("GET", "/v1/products")).body).toHaveLength(1);
+    expect(
+      (
+        (await mock.handle("GET", "/v1/customers")).body as Record<
+          string,
+          unknown
+        >
+      ).data,
+    ).toHaveLength(1);
+    expect(
+      (
+        (await mock.handle("GET", "/v1/products")).body as Record<
+          string,
+          unknown
+        >
+      ).data,
+    ).toHaveLength(1);
   }, 120_000);
 
   it("non-CRUD endpoints respond alongside CRUD", async () => {
@@ -2728,12 +2778,19 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
     await mock.handle("POST", "/v1/customers", {
       body: { email: "temp@stripe.com" },
     });
-    expect((await mock.handle("GET", "/v1/customers")).body).toHaveLength(1);
+    expect(
+      (
+        (await mock.handle("GET", "/v1/customers")).body as Record<
+          string,
+          unknown
+        >
+      ).data,
+    ).toHaveLength(1);
 
     mock.resetState();
 
     const list = await mock.handle("GET", "/v1/customers");
-    expect(list.body).toEqual([]);
+    expect((list.body as Record<string, unknown>).data).toEqual([]);
   }, 120_000);
 });
 
@@ -2770,7 +2827,7 @@ describe("stress: stripe spec — the confused Stripe developer", () => {
     }
 
     const list = await mock.handle("GET", "/v1/customers");
-    expect(list.body).toHaveLength(50);
+    expect((list.body as Record<string, unknown>).data).toHaveLength(50);
   }, 120_000);
 
   it("interleaved operations across Stripe resources", async () => {

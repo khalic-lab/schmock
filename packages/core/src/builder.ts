@@ -88,6 +88,7 @@ export class CallableMockInstance {
   private callableRef: Schmock.CallableMockInstance | undefined;
   private server: Server | undefined;
   private serverInfo: Schmock.ServerInfo | undefined;
+  private listeners = new Map<string, Set<(data: unknown) => void>>();
 
   constructor(private globalConfig: Schmock.GlobalConfig = {}) {
     this.logger = new DebugLogger(globalConfig.debug || false);
@@ -255,6 +256,46 @@ export class CallableMockInstance {
     return this.requestHistory[this.requestHistory.length - 1];
   }
 
+  // ===== Introspection =====
+
+  getRoutes(): Schmock.RouteInfo[] {
+    return this.routes.map((r) => ({
+      method: r.method,
+      path: r.path,
+      hasParams: r.params.length > 0,
+    }));
+  }
+
+  getState(): Record<string, unknown> {
+    return this.globalConfig.state || {};
+  }
+
+  // ===== Lifecycle Events =====
+
+  on(event: string, listener: (data: unknown) => void): this {
+    let set = this.listeners.get(event);
+    if (!set) {
+      set = new Set();
+      this.listeners.set(event, set);
+    }
+    set.add(listener);
+    return this;
+  }
+
+  off(event: string, listener: (data: unknown) => void): this {
+    this.listeners.get(event)?.delete(listener);
+    return this;
+  }
+
+  private emit(event: string, data: unknown): void {
+    const set = this.listeners.get(event);
+    if (set) {
+      for (const listener of set) {
+        listener(data);
+      }
+    }
+  }
+
   // ===== Reset / Lifecycle =====
 
   reset(): void {
@@ -263,6 +304,7 @@ export class CallableMockInstance {
     this.staticRoutes.clear();
     this.plugins = [];
     this.requestHistory = [];
+    this.listeners.clear();
     if (this.globalConfig.state) {
       for (const key of Object.keys(this.globalConfig.state)) {
         delete this.globalConfig.state[key];
@@ -386,12 +428,19 @@ export class CallableMockInstance {
     options?: Schmock.RequestOptions,
   ): Promise<Schmock.Response> {
     const requestId = crypto.randomUUID();
+    const handleStart = performance.now();
     this.logger.log("request", `[${requestId}] ${method} ${path}`, {
       headers: options?.headers,
       query: options?.query,
       bodyType: options?.body ? typeof options.body : "none",
     });
     this.logger.time(`request-${requestId}`);
+
+    this.emit("request:start", {
+      method,
+      path,
+      headers: options?.headers || {},
+    });
 
     try {
       // Apply namespace if configured
@@ -440,12 +489,19 @@ export class CallableMockInstance {
           "route",
           `[${requestId}] No route found for ${method} ${requestPath}`,
         );
+        this.emit("request:notfound", { method, path: requestPath });
         const error = new RouteNotFoundError(method, path);
         const response = {
           status: 404,
           body: { error: error.message, code: error.code },
           headers: {},
         };
+        this.emit("request:end", {
+          method,
+          path: requestPath,
+          status: 404,
+          duration: performance.now() - handleStart,
+        });
         this.logger.timeEnd(`request-${requestId}`);
         return response;
       }
@@ -457,6 +513,13 @@ export class CallableMockInstance {
 
       // Extract parameters from the matched route
       const params = this.extractParams(matchedRoute, requestPath);
+
+      this.emit("request:match", {
+        method,
+        path: requestPath,
+        routePath: matchedRoute.path,
+        params,
+      });
 
       // Generate initial response from route handler
       const context: Schmock.RequestContext = {
@@ -510,8 +573,8 @@ export class CallableMockInstance {
       // Parse and prepare response
       const response = this.parseResponse(result, matchedRoute.config);
 
-      // Apply global delay if configured
-      await this.applyDelay();
+      // Apply delay (route-level overrides global)
+      await this.applyDelay(matchedRoute.config.delay);
 
       // Record request in history
       this.requestHistory.push({
@@ -523,6 +586,13 @@ export class CallableMockInstance {
         body: options?.body,
         timestamp: Date.now(),
         response: { status: response.status, body: response.body },
+      });
+
+      this.emit("request:end", {
+        method,
+        path: requestPath,
+        status: response.status,
+        duration: performance.now() - handleStart,
       });
 
       // Log successful response
@@ -555,7 +625,7 @@ export class CallableMockInstance {
         headers: {},
       };
 
-      // Apply global delay if configured (even for error responses)
+      // Apply delay even for error responses
       await this.applyDelay();
 
       this.logger.log("error", `[${requestId}] Returning error response 500`);
@@ -569,18 +639,20 @@ export class CallableMockInstance {
    * Supports both fixed delays and random delays within a range
    * @private
    */
-  private async applyDelay(): Promise<void> {
-    if (!this.globalConfig.delay) {
+  private async applyDelay(
+    routeDelay?: number | [number, number],
+  ): Promise<void> {
+    const effectiveDelay = routeDelay ?? this.globalConfig.delay;
+    if (!effectiveDelay) {
       return;
     }
 
-    const delay = Array.isArray(this.globalConfig.delay)
-      ? Math.random() *
-          (this.globalConfig.delay[1] - this.globalConfig.delay[0]) +
-        this.globalConfig.delay[0]
-      : this.globalConfig.delay;
+    const ms = Array.isArray(effectiveDelay)
+      ? Math.random() * (effectiveDelay[1] - effectiveDelay[0]) +
+        effectiveDelay[0]
+      : effectiveDelay;
 
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**

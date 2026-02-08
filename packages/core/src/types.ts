@@ -19,3 +19,4 @@ export type PluginResult = Schmock.PluginResult;
 export type StaticData = Schmock.StaticData;
 export type RequestRecord = Schmock.RequestRecord;
 export type ServerInfo = Schmock.ServerInfo;
+export type RouteInfo = Schmock.RouteInfo;

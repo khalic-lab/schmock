@@ -1,6 +1,6 @@
 /// <reference path="../../../types/schmock.d.ts" />
 
-import { readFileSync } from "node:fs";
+import { readFileSync, watch } from "node:fs";
 import type { Server } from "node:http";
 import { createServer } from "node:http";
 import { parseArgs } from "node:util";
@@ -15,6 +15,10 @@ export interface CliOptions {
   seed?: string;
   cors?: boolean;
   debug?: boolean;
+  fakerSeed?: number;
+  errors?: boolean;
+  watch?: boolean;
+  admin?: boolean;
 }
 
 export interface CliServer {
@@ -55,11 +59,54 @@ function loadSeedFile(seedPath: string): SeedConfig {
   return result;
 }
 
+function handleAdminRequest(
+  method: string,
+  path: string,
+  mock: Schmock.CallableMockInstance,
+  res: import("node:http").ServerResponse,
+  headers: Record<string, string>,
+): void {
+  const route = path.replace("/schmock-admin/", "");
+
+  if (method === "GET" && route === "routes") {
+    res.writeHead(200, headers);
+    res.end(JSON.stringify(mock.getRoutes()));
+    return;
+  }
+
+  if (method === "GET" && route === "state") {
+    res.writeHead(200, headers);
+    res.end(JSON.stringify(mock.getState()));
+    return;
+  }
+
+  if (method === "POST" && route === "reset") {
+    mock.resetHistory();
+    mock.resetState();
+    res.writeHead(204, headers);
+    res.end();
+    return;
+  }
+
+  if (method === "GET" && route === "history") {
+    res.writeHead(200, headers);
+    res.end(JSON.stringify(mock.history()));
+    return;
+  }
+
+  res.writeHead(404, headers);
+  res.end(
+    JSON.stringify({ error: "Unknown admin endpoint", code: "NOT_FOUND" }),
+  );
+}
+
 export async function createCliServer(options: CliOptions): Promise<CliServer> {
   const mock = schmock({ debug: options.debug });
 
   const openapiOptions: Parameters<typeof openapi>[0] = {
     spec: options.spec,
+    fakerSeed: options.fakerSeed,
+    validateRequests: options.errors,
   };
 
   if (options.seed) {
@@ -73,6 +120,8 @@ export async function createCliServer(options: CliOptions): Promise<CliServer> {
   const port = options.port ?? 3000;
   const cors = options.cors ?? false;
 
+  const admin = options.admin ?? false;
+
   const httpServer = createServer((req, res) => {
     // Handle CORS preflight
     if (cors && req.method === "OPTIONS") {
@@ -82,8 +131,19 @@ export async function createCliServer(options: CliOptions): Promise<CliServer> {
     }
 
     const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-    const method = toHttpMethod(req.method ?? "GET");
     const path = url.pathname;
+
+    // Admin API intercept
+    if (admin && path.startsWith("/schmock-admin/")) {
+      const adminHeaders: Record<string, string> = {
+        "content-type": "application/json",
+        ...(cors ? CORS_HEADERS : {}),
+      };
+      handleAdminRequest(req.method ?? "GET", path, mock, res, adminHeaders);
+      return;
+    }
+
+    const method = toHttpMethod(req.method ?? "GET");
 
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(req.headers)) {
@@ -174,6 +234,10 @@ export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
       seed: { type: "string" },
       cors: { type: "boolean", default: false },
       debug: { type: "boolean", default: false },
+      errors: { type: "boolean", default: false },
+      watch: { type: "boolean", default: false },
+      admin: { type: "boolean", default: false },
+      "seed-random": { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
     strict: true,
@@ -189,6 +253,12 @@ export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
     seed: values.seed,
     cors: values.cors,
     debug: values.debug,
+    errors: values.errors,
+    watch: values.watch,
+    admin: values.admin,
+    fakerSeed: values["seed-random"]
+      ? Number(values["seed-random"])
+      : undefined,
     help: values.help ?? false,
   };
 }
@@ -203,8 +273,71 @@ Options:
   --seed <path>       JSON file with seed data
   --cors              Enable CORS for all responses
   --debug             Enable debug logging
+  --errors            Enable request body validation against spec
+  --watch             Watch spec file and hot-reload on changes
+  --admin             Enable /schmock-admin/* introspection endpoints
+  --seed-random <n>   Seed for deterministic random generation
   -h, --help          Show this help message
 `;
+
+const WATCH_DEBOUNCE_MS = 500;
+
+export interface WatchHandle {
+  close(): void;
+}
+
+/**
+ * Reload a CLI server: close the old one, create a new one on the same port.
+ */
+export async function reloadServer(
+  current: CliServer,
+  options: CliOptions,
+): Promise<CliServer> {
+  const port = current.port;
+  // Close existing connections and wait for the server to fully close
+  current.server.closeAllConnections();
+  await new Promise<void>((resolve) => {
+    current.server.close(() => resolve());
+  });
+  return createCliServer({ ...options, port });
+}
+
+/**
+ * Watch a spec file and hot-reload the server on changes.
+ */
+export function startWatch(
+  specPath: string,
+  options: CliOptions,
+  getCurrentServer: () => CliServer,
+  onReload: (server: CliServer) => void,
+): WatchHandle {
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const watcher = watch(specPath, () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(async () => {
+      process.stderr.write("\nSpec changed, reloading...\n");
+      try {
+        const newServer = await reloadServer(getCurrentServer(), options);
+        onReload(newServer);
+        process.stderr.write(
+          `Schmock server reloaded on http://${newServer.hostname}:${newServer.port}\n`,
+        );
+      } catch (err) {
+        process.stderr.write(
+          `Reload failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+    }, WATCH_DEBOUNCE_MS);
+  });
+
+  return {
+    close() {
+      watcher.close();
+      if (debounceTimer) clearTimeout(debounceTimer);
+    },
+  };
+}
 
 export async function run(args: string[]): Promise<void> {
   const options = parseCliArgs(args);
@@ -221,7 +354,7 @@ export async function run(args: string[]): Promise<void> {
     return;
   }
 
-  const cliServer = await createCliServer(options);
+  let cliServer = await createCliServer(options);
 
   process.stderr.write(
     `Schmock server running on http://${cliServer.hostname}:${cliServer.port}\n`,
@@ -230,9 +363,26 @@ export async function run(args: string[]): Promise<void> {
   if (options.cors) {
     process.stderr.write("CORS: enabled\n");
   }
+  if (options.admin) {
+    process.stderr.write("Admin: enabled (/schmock-admin/*)\n");
+  }
+
+  let watchHandle: WatchHandle | undefined;
+  if (options.watch) {
+    watchHandle = startWatch(
+      options.spec,
+      options,
+      () => cliServer,
+      (newServer) => {
+        cliServer = newServer;
+      },
+    );
+    process.stderr.write("Watch: enabled\n");
+  }
 
   const shutdown = () => {
     process.stderr.write("\nShutting down...\n");
+    watchHandle?.close();
     cliServer.close();
   };
 

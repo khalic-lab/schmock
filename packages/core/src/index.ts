@@ -52,6 +52,16 @@ export function schmock(
       reset: instance.reset.bind(instance),
       resetHistory: instance.resetHistory.bind(instance),
       resetState: instance.resetState.bind(instance),
+      on: ((event: string, listener: (data: unknown) => void) => {
+        instance.on(event, listener);
+        return callableInstance;
+      }) as Schmock.CallableMockInstance["on"],
+      off: ((event: string, listener: (data: unknown) => void) => {
+        instance.off(event, listener);
+        return callableInstance;
+      }) as Schmock.CallableMockInstance["off"],
+      getRoutes: instance.getRoutes.bind(instance),
+      getState: instance.getState.bind(instance),
       listen: instance.listen.bind(instance),
       close: instance.close.bind(instance),
     },
@@ -99,6 +109,7 @@ export type {
   ResponseBody,
   ResponseResult,
   RouteConfig,
+  RouteInfo,
   RouteKey,
   ServerInfo,
   StaticData,
