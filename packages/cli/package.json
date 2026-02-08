@@ -1,7 +1,7 @@
 {
   "name": "@schmock/cli",
   "description": "CLI for running Schmock mock servers from OpenAPI specs",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -22,7 +22,7 @@
   },
   "scripts": {
     "build": "bun build:lib && bun build:types",
-    "build:lib": "bun build --outdir=dist src/index.ts",
+    "build:lib": "bun build --target node --outdir=dist src/index.ts",
     "build:types": "tsc -p tsconfig.json",
     "test": "vitest",
     "test:watch": "vitest --watch",
