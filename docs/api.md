@@ -208,9 +208,54 @@ const last = mock.lastRequest('POST', '/users');
 console.log(last?.body);  // { name: 'John' }
 ```
 
+#### `.listen(port?, hostname?)`
+
+Start the mock as a standalone HTTP server.
+
+```typescript
+listen(port?: number, hostname?: string): Promise<ServerInfo>
+```
+
+**Parameters**:
+- `port?: number` — Port to listen on (default: `0` for random available port)
+- `hostname?: string` — Hostname to bind to (default: `'127.0.0.1'`)
+
+**Returns**: `Promise<ServerInfo>` — Resolves with the actual port and hostname once the server is listening.
+
+**Throws**: `SchmockError` with code `SERVER_ALREADY_RUNNING` if the server is already listening.
+
+**Example**:
+```typescript
+const mock = schmock();
+mock('GET /users', [{ id: 1, name: 'Alice' }]);
+
+const info = await mock.listen(3000);
+console.log(`Server running on http://${info.hostname}:${info.port}`);
+
+// Use port 0 for a random available port (useful in tests)
+const info = await mock.listen(0);
+const res = await fetch(`http://127.0.0.1:${info.port}/users`);
+```
+
+#### `.close()`
+
+Stop the standalone HTTP server. Idempotent — safe to call even if the server is not running.
+
+```typescript
+close(): void
+```
+
+**Example**:
+```typescript
+const info = await mock.listen(0);
+// ... use the server ...
+mock.close();  // Stop listening
+mock.close();  // No-op, safe to call again
+```
+
 #### `.reset()`
 
-Clear all routes, state, and history.
+Clear all routes, state, and history. Also stops the server if running.
 
 ```typescript
 reset(): void
@@ -218,7 +263,7 @@ reset(): void
 
 **Example**:
 ```typescript
-mock.reset();  // Full reset — removes all routes, clears state and history
+mock.reset();  // Full reset — removes all routes, clears state, history, and stops server
 ```
 
 #### `.resetHistory()`
@@ -317,6 +362,14 @@ interface Response {
   status: number;
   body: unknown;
   headers: Record<string, string>;
+}
+```
+
+### `ServerInfo`
+```typescript
+interface ServerInfo {
+  port: number;
+  hostname: string;
 }
 ```
 
@@ -921,6 +974,100 @@ seed: {
     { userId: 2, name: 'Bob' }
   ]
 }
+```
+
+## CLI (`@schmock/cli`)
+
+### `createCliServer(options)`
+
+Programmatically start a Schmock server from an OpenAPI spec. Useful for integration tests or custom tooling.
+
+```typescript
+async function createCliServer(options: CliOptions): Promise<CliServer>
+```
+
+```typescript
+interface CliOptions {
+  spec: string;           // Path to OpenAPI/Swagger spec file
+  port?: number;          // Port to listen on (default: 3000)
+  hostname?: string;      // Hostname to bind to (default: '127.0.0.1')
+  seed?: string;          // Path to JSON file with seed data
+  cors?: boolean;         // Enable CORS for all responses (default: false)
+  debug?: boolean;        // Enable debug logging (default: false)
+}
+
+interface CliServer {
+  server: Server;         // Node http.Server instance
+  port: number;           // Actual port (useful when port=0)
+  hostname: string;       // Bound hostname
+  close(): void;          // Stop the server
+}
+```
+
+**Example**:
+```typescript
+import { createCliServer } from '@schmock/cli';
+
+const server = await createCliServer({
+  spec: './petstore.yaml',
+  port: 8080,
+  cors: true,
+  seed: './seed.json'
+});
+
+console.log(`Mock server on port ${server.port}`);
+
+// Later...
+server.close();
+```
+
+### CLI Usage
+
+```bash
+schmock <spec> [options]
+schmock --spec <path> [options]
+```
+
+The spec file can be passed as a positional argument or via `--spec`. The positional form is the simplest way to start a server.
+
+**Options**:
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--spec <path>` | OpenAPI/Swagger spec file (or pass as first argument) | — |
+| `--port <number>` | Port to listen on | `3000` |
+| `--hostname <host>` | Hostname to bind to | `127.0.0.1` |
+| `--seed <path>` | JSON file with seed data | — |
+| `--cors` | Enable CORS for all responses | `false` |
+| `--debug` | Enable debug logging | `false` |
+| `-h, --help` | Show help message | — |
+
+**Example**:
+```bash
+# Simplest usage — just point at a spec
+schmock swagger.json
+
+# Custom port with CORS and seed data
+schmock ./api.yaml --port 8080 --cors --seed ./seed.json
+
+# Equivalent using --spec flag
+schmock --spec ./petstore.yaml --port 3000
+```
+
+### `parseCliArgs(args)`
+
+Parse CLI arguments into a `CliOptions` object.
+
+```typescript
+function parseCliArgs(args: string[]): CliOptions & { help: boolean }
+```
+
+### `run(args)`
+
+Entry point for the CLI binary. Parses args, starts the server, and handles graceful shutdown (SIGINT/SIGTERM).
+
+```typescript
+async function run(args: string[]): Promise<void>
 ```
 
 ## Error Handling

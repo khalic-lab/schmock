@@ -1,4 +1,6 @@
-import { isStatusTuple } from "./constants.js";
+import type { Server } from "node:http";
+import { createServer } from "node:http";
+import { isStatusTuple, toHttpMethod } from "./constants.js";
 import {
   PluginError,
   RouteDefinitionError,
@@ -84,6 +86,8 @@ export class CallableMockInstance {
   private logger: DebugLogger;
   private requestHistory: Schmock.RequestRecord[] = [];
   private callableRef: Schmock.CallableMockInstance | undefined;
+  private server: Server | undefined;
+  private serverInfo: Schmock.ServerInfo | undefined;
 
   constructor(private globalConfig: Schmock.GlobalConfig = {}) {
     this.logger = new DebugLogger(globalConfig.debug || false);
@@ -254,6 +258,7 @@ export class CallableMockInstance {
   // ===== Reset / Lifecycle =====
 
   reset(): void {
+    this.close();
     this.routes = [];
     this.staticRoutes.clear();
     this.plugins = [];
@@ -278,6 +283,101 @@ export class CallableMockInstance {
       }
     }
     this.logger.log("lifecycle", "State cleared");
+  }
+
+  // ===== Standalone Server =====
+
+  listen(port = 0, hostname = "127.0.0.1"): Promise<Schmock.ServerInfo> {
+    if (this.server) {
+      throw new SchmockError(
+        "Server is already running",
+        "SERVER_ALREADY_RUNNING",
+      );
+    }
+
+    const httpServer = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+      const method = toHttpMethod(req.method ?? "GET");
+      const path = url.pathname;
+
+      const headers: Record<string, string> = {};
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (typeof value === "string") {
+          headers[key] = value;
+        }
+      }
+
+      const query: Record<string, string> = {};
+      url.searchParams.forEach((value, key) => {
+        query[key] = value;
+      });
+
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        const raw = Buffer.concat(chunks).toString();
+        let body: unknown;
+        const contentType = headers["content-type"] ?? "";
+        if (raw && contentType.includes("json")) {
+          try {
+            body = JSON.parse(raw);
+          } catch {
+            body = raw;
+          }
+        } else if (raw) {
+          body = raw;
+        }
+
+        void this.handle(method, path, { headers, body, query }).then(
+          (schmockResponse) => {
+            const responseHeaders: Record<string, string> = {
+              ...schmockResponse.headers,
+            };
+            if (
+              !responseHeaders["content-type"] &&
+              schmockResponse.body !== undefined &&
+              typeof schmockResponse.body !== "string"
+            ) {
+              responseHeaders["content-type"] = "application/json";
+            }
+
+            const responseBody =
+              schmockResponse.body === undefined
+                ? undefined
+                : typeof schmockResponse.body === "string"
+                  ? schmockResponse.body
+                  : JSON.stringify(schmockResponse.body);
+
+            res.writeHead(schmockResponse.status, responseHeaders);
+            res.end(responseBody);
+          },
+        );
+      });
+    });
+
+    this.server = httpServer;
+
+    return new Promise((resolve, reject) => {
+      httpServer.on("error", reject);
+      httpServer.listen(port, hostname, () => {
+        const addr = httpServer.address();
+        const actualPort =
+          addr !== null && typeof addr === "object" ? addr.port : port;
+        this.serverInfo = { port: actualPort, hostname };
+        this.logger.log("server", `Listening on ${hostname}:${actualPort}`);
+        resolve(this.serverInfo);
+      });
+    });
+  }
+
+  close(): void {
+    if (!this.server) {
+      return;
+    }
+    this.server.close();
+    this.server = undefined;
+    this.serverInfo = undefined;
+    this.logger.log("server", "Server stopped");
   }
 
   async handle(

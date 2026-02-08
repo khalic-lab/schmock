@@ -22,6 +22,7 @@ Schmock is a TypeScript HTTP mocking library with a callable API, extensible plu
 | `@schmock/openapi` | Auto-register routes from OpenAPI/Swagger specs |
 | `@schmock/express` | Express middleware adapter |
 | `@schmock/angular` | Angular HTTP interceptor adapter |
+| `@schmock/cli` | Standalone CLI server from OpenAPI specs |
 
 ## Skills
 
