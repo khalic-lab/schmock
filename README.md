@@ -15,6 +15,7 @@ Schmock is a mock API generator that allows you to quickly create predictable, s
 - 🔄 **Stateful Mocks**: Maintain state between requests
 - 🔧 **Plugin Pipeline**: Extensible `.pipe()` architecture
 - 📄 **OpenAPI Auto-Mock**: Throw a swagger.json at it and let it manage the rest
+- ⚡ **Blazing Fast**: 1M+ ops/sec on `handle()` — near-zero overhead
 
 ## Packages
 
@@ -88,11 +89,9 @@ const mock = schmock({ debug: true })
 mock('GET /users', userSchema, { contentType: 'application/json' })
   .pipe(schemaPlugin())
   .pipe(validationPlugin())
-  .pipe(loggingPlugin())
 
-mock('POST /users', createUserGenerator, { contentType: 'application/json' })
+mock('POST /users', createUserHandler, { contentType: 'application/json' })
   .pipe(validationPlugin())
-  .pipe(persistencePlugin())
 ```
 
 ### Stateful Mocks
@@ -228,29 +227,38 @@ const response = await mock.handle('GET', '/users')
 // [{ id: 1, name: "John Doe", email: "john@example.com" }, ...]
 ```
 
-### Complex Plugin Pipelines
+### Request History & Spying
 
 ```typescript
-import { schmock } from '@schmock/core'
-import { schemaPlugin } from '@schmock/schema'
-import { validationPlugin } from '@schmock/validation'
-import { cachingPlugin } from '@schmock/caching'
+const mock = schmock()
 
-const mock = schmock({ 
-  debug: true,
-  namespace: '/api/v1'
-})
+mock('GET /users', () => [{ id: 1 }], { contentType: 'application/json' })
+mock('POST /users', ({ body }) => [201, body], { contentType: 'application/json' })
 
-// Complex pipeline: validation → schema generation → caching → response
-mock('GET /users', userListSchema, { contentType: 'application/json' })
-  .pipe(validationPlugin({ strict: true }))
-  .pipe(schemaPlugin({ count: 10 }))
-  .pipe(cachingPlugin({ ttl: 60000 }))
-  
-mock('POST /users', createUserHandler, { contentType: 'application/json' })
-  .pipe(validationPlugin({ validateBody: true }))
-  .pipe(persistencePlugin())
-  .pipe(notificationPlugin())
+await mock.handle('GET', '/users')
+await mock.handle('POST', '/users', { body: { name: 'Alice' } })
+await mock.handle('GET', '/users')
+
+// Check if a route was called
+mock.called('GET', '/users')        // true
+mock.callCount('GET', '/users')     // 2
+
+// Get the last request details
+mock.lastRequest('POST', '/users')  // { method: 'POST', path: '/users', body: { name: 'Alice' }, ... }
+
+// Full history
+mock.history()                      // all recorded requests
+mock.history('GET', '/users')       // filtered by method + path
+```
+
+### Reset & Lifecycle
+
+```typescript
+const mock = schmock({ state: { count: 0 } })
+
+mock.resetHistory()  // clear request history, keep routes and state
+mock.resetState()    // reset state to initial values, keep routes and history
+mock.reset()         // full reset: routes, history, and state
 ```
 
 ### Express Integration
@@ -446,10 +454,9 @@ Generator functions receive a context with:
 Chain plugins using `.pipe()`:
 
 ```typescript
-mock('GET /users', generator, config)
-  .pipe(plugin1())
-  .pipe(plugin2())
-  .pipe(plugin3())
+mock('GET /users', userSchema, { contentType: 'application/json' })
+  .pipe(schemaPlugin())
+  .pipe(validationPlugin())
 ```
 
 ## Development
@@ -564,7 +571,7 @@ See [CLAUDE.md](./CLAUDE.md) for detailed development guidelines and project arc
 
 ## Trivia
 
-This is a project developped to test LLM agents capabilities using BDD as framework and decided to release the result. It's used for development on a daily basis by me
+This is a project developed to test LLM agents capabilities using BDD as framework and decided to release the result. It's used for development on a daily basis by me
 
 ## Roadmap
 
@@ -583,7 +590,7 @@ This is a project developped to test LLM agents capabilities using BDD as framew
 - [x] Request/response validation plugin (`@schmock/validation`)
 - [x] Pagination, sorting, filtering plugin (`@schmock/query`)
 - [x] OpenAPI/Swagger auto-mock plugin (`@schmock/openapi`)
-- [ ] Response delays and error simulation
+- [x] Response delays and error simulation
 - [ ] GraphQL support
 - [ ] WebSocket support
 
