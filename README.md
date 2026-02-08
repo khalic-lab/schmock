@@ -15,7 +15,6 @@ Schmock is a mock API generator that allows you to quickly create predictable, s
 - 🔄 **Stateful Mocks**: Maintain state between requests
 - 🔧 **Plugin Pipeline**: Extensible `.pipe()` architecture
 - 📄 **OpenAPI Auto-Mock**: Throw a swagger.json at it and let it manage the rest
-- ⚡ **Blazing Fast**: 1M+ ops/sec on `handle()` — near-zero overhead
 
 ## Packages
 
