@@ -78,7 +78,7 @@ const DEFAULT_ARRAY_COUNT = 3; // Default items to generate when not specified
 const DEEP_NESTING_THRESHOLD = 3; // Depth at which to check for memory risks
 const LARGE_ARRAY_THRESHOLD = 100; // Array size considered "large"
 
-interface SchemaGenerationContext {
+export interface SchemaGenerationContext {
   schema: JSONSchema7;
   count?: number;
   overrides?: Record<string, any>;
@@ -88,19 +88,19 @@ interface SchemaGenerationContext {
   seed?: number;
 }
 
-interface SchemaPluginOptions {
+export interface FakerPluginOptions {
   schema: JSONSchema7;
   count?: number;
   overrides?: Record<string, any>;
   seed?: number;
 }
 
-export function schemaPlugin(options: SchemaPluginOptions): Plugin {
+export function fakerPlugin(options: FakerPluginOptions): Plugin {
   // Validate schema immediately when plugin is created
   validateSchema(options.schema);
 
   return {
-    name: "schema",
+    name: "faker",
     version: "1.0.1",
 
     process(context: PluginContext, response?: any) {

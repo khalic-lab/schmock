@@ -1,4 +1,4 @@
-/// <reference path="../types/schmock.d.ts" />
+/// <reference path="../packages/core/schmock.d.ts" />
 
 import { schmock } from "../packages/core/src/index";
 

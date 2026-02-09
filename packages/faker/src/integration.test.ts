@@ -1,7 +1,7 @@
 import { schmock } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
-import { generateFromSchema, schemaPlugin } from "./index";
+import { fakerPlugin, generateFromSchema } from "./index";
 import { generate, schemas, validators } from "./test-utils";
 
 describe("Schema Generator Integration Tests", () => {
@@ -88,7 +88,7 @@ describe("Schema Generator Integration Tests", () => {
     });
 
     it("generates consistent data across related fields", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: {
           type: "object",
           properties: {
@@ -267,7 +267,7 @@ describe("Schema Generator Integration Tests", () => {
   describe("State Management Integration", () => {
     it("maintains state across multiple generations", () => {
       const _callCount = 0;
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: {
           type: "object",
           properties: {
@@ -387,7 +387,7 @@ describe("Schema Generator Integration Tests", () => {
     });
 
     it("handles concurrent plugin processing", async () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.complex.user(),
       });
 
@@ -444,7 +444,7 @@ describe("Schema Generator Integration Tests", () => {
     });
 
     it("handles partial template failures", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: {
           type: "object",
           properties: {
@@ -512,7 +512,7 @@ describe("Schema Generator Integration Tests", () => {
         },
       };
 
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: paginatedSchema,
         overrides: {
           "pagination.page": "{{query.page}}",
@@ -612,7 +612,7 @@ describe("Schema Generator Integration Tests", () => {
       };
 
       mock("GET /profile", null).pipe(
-        schemaPlugin({
+        fakerPlugin({
           schema: responseSchema,
           overrides: {
             userId: "{{state.currentUser.id}}",

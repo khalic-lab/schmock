@@ -1,6 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
-import { generateFromSchema, schemaPlugin } from "./index";
+import { fakerPlugin, generateFromSchema } from "./index";
 import { schemas } from "./test-utils";
 
 describe("Schema Error Handling", () => {
@@ -207,7 +207,7 @@ describe("Schema Error Handling", () => {
     });
 
     it("includes context in generation errors", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: {
           type: "string",
           pattern: "[",
@@ -272,7 +272,7 @@ describe("Schema Error Handling", () => {
   describe("Plugin Error Handling", () => {
     it("validates schema at plugin creation", () => {
       try {
-        schemaPlugin({
+        fakerPlugin({
           schema: null as any,
         });
         expect.fail("Should have thrown");
@@ -283,7 +283,7 @@ describe("Schema Error Handling", () => {
     });
 
     it("handles null context gracefully", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({ id: schemas.simple.number() }),
       });
 
@@ -337,7 +337,7 @@ describe("Schema Error Handling", () => {
     });
 
     it("plugin continues to work after errors", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({ id: schemas.simple.number() }),
       });
 
@@ -417,7 +417,7 @@ describe("Schema Error Handling", () => {
 
     it("handles non-Error objects in catch blocks", () => {
       // This is more about the implementation being defensive
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({ id: schemas.simple.number() }),
       });
 

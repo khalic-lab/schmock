@@ -12,19 +12,20 @@ A lightweight, framework-agnostic tool that provides immediate callable mock API
 - **Framework agnostic**: Works everywhere JavaScript runs
 - **Type safe**: First-class TypeScript support with ambient types
 
-## Current Architecture (v1.2.x)
+## Current Architecture (v1.7.x)
 
 ### Packages
 
 | Package | Version | Description |
 |---------|---------|-------------|
-| `@schmock/core` | 1.2.0 | Core callable API with plugin pipeline |
-| `@schmock/schema` | 1.2.0 | JSON Schema-based data generation plugin |
-| `@schmock/express` | 1.2.0 | Express middleware adapter |
-| `@schmock/angular` | 1.5.0 | Angular HTTP interceptor adapter |
-| `@schmock/validation` | 1.2.0 | Request/response JSON Schema validation plugin |
-| `@schmock/query` | 1.2.0 | Pagination, filtering, sorting plugin |
-| `@schmock/openapi` | 1.1.0 | OpenAPI/Swagger auto-mock generation plugin |
+| `@schmock/core` | 1.7.0 | Core callable API with plugin pipeline |
+| `@schmock/faker` | 1.7.0 | Faker-powered automatic data generation plugin |
+| `@schmock/express` | 1.7.0 | Express middleware adapter |
+| `@schmock/angular` | 1.7.0 | Angular HTTP interceptor adapter |
+| `@schmock/validation` | 1.7.0 | Request/response JSON Schema validation plugin |
+| `@schmock/query` | 1.7.0 | Pagination, filtering, sorting plugin |
+| `@schmock/openapi` | 1.7.0 | OpenAPI/Swagger auto-mock generation plugin |
+| `@schmock/cli` | 1.7.0 | Standalone CLI server from OpenAPI specs |
 
 ### Package Structure
 ```

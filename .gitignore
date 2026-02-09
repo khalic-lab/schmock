@@ -16,6 +16,7 @@ coverage/
 # Prevent generated files in source directories
 packages/*/src/**/*.js
 packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map
 !packages/*/src/**/*.test.js
 !packages/*/src/**/*.spec.js
 
@@ -38,3 +39,6 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Local-only directories
+project/promotion/

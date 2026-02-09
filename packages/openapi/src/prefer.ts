@@ -1,6 +1,6 @@
-/// <reference path="../../../types/schmock.d.ts" />
+/// <reference path="../../core/schmock.d.ts" />
 
-export interface PreferDirectives {
+interface PreferDirectives {
   code?: number;
   example?: string;
   dynamic?: boolean;

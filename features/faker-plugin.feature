@@ -1,6 +1,6 @@
-Feature: Schema Plugin
+Feature: Faker Plugin
   As a developer using Schmock with JSON Schema
-  I want the schema plugin to generate valid mock data
+  I want the faker plugin to generate valid mock data
   So that my tests have realistic and type-safe data
 
   Scenario: Generate object from simple schema

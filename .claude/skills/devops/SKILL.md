@@ -23,7 +23,7 @@ End-to-end release flow:
 
 ## Version Management
 
-7 packages with independent versions, tracked in two places:
+8 packages with synchronized versions, tracked in two places:
 
 - `packages/*/package.json` — each package's own version
 - `.release-please-manifest.json` — central manifest for release-please
@@ -47,7 +47,23 @@ The bump script:
 2. Increments by the specified level
 3. Writes back to `package.json` files
 4. Updates `.release-please-manifest.json`
-5. Prints a before/after table
+5. Syncs cross-package `@schmock/*` dependency ranges (e.g., `"@schmock/core": "^1.7.0"`)
+6. Prints a before/after table
+
+### Publish Order
+
+Dependencies must be published before dependents:
+1. `core` (no deps)
+2. `faker` (depends on core)
+3. `express`, `angular`, `validation`, `query` (depend on core — parallel)
+4. `openapi` (depends on core + faker)
+5. `cli` (depends on core + openapi)
+
+### Known Pitfalls
+
+- **CLI shebang**: Must be `#!/usr/bin/env node` (not `bun`) or npm strips the `bin` entry
+- **release-please version drift**: If release-please bumps versions on `main` independently, `develop` branch versions can fall behind npm. Fix by bumping all packages past the highest npm version before publishing.
+- **Never use `workspace:*`** in dependencies — npm publishes it literally. Use `^version` ranges instead.
 
 ## Publishing Checklist
 

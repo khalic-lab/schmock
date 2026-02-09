@@ -21,7 +21,7 @@ Schmock is a mock API generator that allows you to quickly create predictable, s
 | Package | Description |
 |---------|-------------|
 | `@schmock/core` | Core mock builder, routing, and plugin pipeline |
-| `@schmock/schema` | JSON Schema-based response generation plugin |
+| `@schmock/faker` | JSON Schema-based response generation plugin |
 | `@schmock/validation` | Request/response validation via AJV |
 | `@schmock/query` | Pagination, sorting, and filtering for list endpoints |
 | `@schmock/openapi` | Auto-register routes from OpenAPI/Swagger specs |
@@ -79,14 +79,14 @@ console.log(userResponse.body) // { id: 1, name: 'John Doe', ... }
 
 ```typescript
 import { schmock } from '@schmock/core'
-import { schemaPlugin } from '@schmock/schema'
+import { fakerPlugin } from '@schmock/faker'
 import { validationPlugin } from '@schmock/validation'
 
 const mock = schmock({ debug: true })
 
 // Chain plugins with .pipe() - clean and expressive
 mock('GET /users', userSchema, { contentType: 'application/json' })
-  .pipe(schemaPlugin())
+  .pipe(fakerPlugin())
   .pipe(validationPlugin())
 
 mock('POST /users', createUserHandler, { contentType: 'application/json' })
@@ -203,7 +203,7 @@ console.log(me.body.authenticated) // true
 
 ```typescript
 import { schmock } from '@schmock/core'
-import { schemaPlugin } from '@schmock/schema'
+import { fakerPlugin } from '@schmock/faker'
 
 const mock = schmock()
 
@@ -219,7 +219,7 @@ mock('GET /users', {
     }
   }
 }, { contentType: 'application/json' })
-  .pipe(schemaPlugin())
+  .pipe(fakerPlugin())
 
 // Generates realistic data automatically
 const response = await mock.handle('GET', '/users')
@@ -454,7 +454,7 @@ Chain plugins using `.pipe()`:
 
 ```typescript
 mock('GET /users', userSchema, { contentType: 'application/json' })
-  .pipe(schemaPlugin())
+  .pipe(fakerPlugin())
   .pipe(validationPlugin())
 ```
 
@@ -581,7 +581,7 @@ This is a project developed to test LLM agents capabilities using BDD as framewo
 - [x] Direct callable API with zero boilerplate
 - [x] Custom status codes and headers
 - [x] Plugin pipeline with `.pipe()` chaining
-- [x] Schema-based data generation (`@schmock/schema`)
+- [x] Schema-based data generation (`@schmock/faker`)
 - [x] Express middleware adapter (`@schmock/express`)
 - [x] Angular HTTP interceptor adapter (`@schmock/angular`)
 - [x] Request spy/history tracking (`called()`, `callCount()`, `lastRequest()`)

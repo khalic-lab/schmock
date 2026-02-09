@@ -21,10 +21,10 @@ TypeScript strict mode is enabled project-wide. Never use `// @ts-ignore` or `//
 
 ### Type System
 
-**Ambient types** live in `/types/schmock.d.ts` and are the single source of truth. Packages re-export them via `types.ts`:
+**Ambient types** live in `packages/core/schmock.d.ts` and are the single source of truth. Packages re-export them via `types.ts`:
 
 ```typescript
-/// <reference path="../../../types/schmock.d.ts" />
+/// <reference path="../../core/schmock.d.ts" />
 export type HttpMethod = Schmock.HttpMethod;
 export type RouteKey = Schmock.RouteKey;
 ```
@@ -299,7 +299,7 @@ try {
 Validate at configuration time, not at request time:
 
 ```typescript
-export function schemaPlugin(options: SchemaPluginOptions): Plugin {
+export function fakerPlugin(options: FakerPluginOptions): Plugin {
   validateSchema(options.schema); // throws immediately if invalid
   return { /* plugin */ };
 }

@@ -675,7 +675,7 @@ describe('MyPlugin Integration', () => {
 
 Schmock includes four official plugins that serve as reference implementations for different plugin patterns:
 
-### `@schmock/schema`
+### `@schmock/faker`
 JSON Schema-based data generation using json-schema-faker. Demonstrates the **generator plugin pattern** where the plugin sets the response if none exists yet.
 
 ```typescript

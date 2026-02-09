@@ -5,10 +5,10 @@ set -euo pipefail
 #
 # Usage:
 #   bash publish.sh            # Publish all packages
-#   bash publish.sh <package>  # Publish a single package (core, schema, express, angular, query, validation, openapi)
+#   bash publish.sh <package>  # Publish a single package (core, faker, express, angular, query, validation, openapi, cli)
 
 TARGET="${1:-all}"
-VALID_PACKAGES="core schema express angular query validation openapi"
+VALID_PACKAGES="core faker express angular query validation openapi cli"
 
 publish_package() {
   local pkg="$1"

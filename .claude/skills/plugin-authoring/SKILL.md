@@ -10,7 +10,7 @@ argument-hint: "<plugin-name> <package>"
 
 ## Plugin Interface
 
-Defined in `types/schmock.d.ts`:
+Defined in `packages/core/schmock.d.ts`:
 
 ```typescript
 interface Plugin {
@@ -71,16 +71,16 @@ mock('GET /users', () => defaultData, {})
 - **Return `ResponseResult`** — suppress the error, use this as the response
 - **Return `void`/`undefined`** — error propagates unchanged
 
-## Reference Implementation: `schemaPlugin`
+## Reference Implementation: `fakerPlugin`
 
-See `packages/schema/src/index.ts` for the canonical plugin pattern:
+See `packages/faker/src/index.ts` for the canonical plugin pattern:
 
 ```typescript
-export function schemaPlugin(options: SchemaPluginOptions): Plugin {
+export function fakerPlugin(options: FakerPluginOptions): Plugin {
   validateSchema(options.schema);
 
   return {
-    name: "schema",
+    name: "faker",
     version: "1.0.1",
 
     process(context: PluginContext, response?: any) {

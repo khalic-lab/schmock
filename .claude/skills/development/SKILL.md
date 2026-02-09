@@ -14,14 +14,18 @@ allowed-tools:
 
 ## Project Structure
 
-Monorepo with 4 packages under `packages/`:
+Monorepo with 8 packages under `packages/`:
 
 | Package | Purpose | Peer Deps |
 |---------|---------|-----------|
 | `@schmock/core` | Callable mock API, routing, plugin pipeline | — |
-| `@schmock/schema` | JSON Schema-based data generation plugin | `@schmock/core` |
+| `@schmock/faker` | Faker-powered automatic data generation plugin | `@schmock/core` |
 | `@schmock/express` | Express middleware adapter | `@schmock/core`, `express` |
 | `@schmock/angular` | Angular HTTP interceptor adapter | `@schmock/core`, `@angular/core`, `@angular/common`, `rxjs` |
+| `@schmock/validation` | Request/response JSON Schema validation | `@schmock/core` |
+| `@schmock/query` | Pagination, sorting, filtering for arrays | `@schmock/core` |
+| `@schmock/openapi` | Auto-register routes from OpenAPI specs | `@schmock/core`, `@schmock/faker` |
+| `@schmock/cli` | Standalone CLI server from OpenAPI specs | `@schmock/core`, `@schmock/openapi` |
 
 Key locations:
 
@@ -29,7 +33,7 @@ Key locations:
 features/              # Gherkin .feature files (all packages share this)
 packages/*/src/        # Source code per package
 packages/*/src/steps/  # BDD step definitions per package
-types/schmock.d.ts     # Ambient type declarations
+packages/core/schmock.d.ts  # Ambient type declarations
 ```
 
 ## BDD Conventions

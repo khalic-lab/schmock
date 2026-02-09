@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
-/// <reference path="../../../types/schmock.d.ts" />
+/// <reference path="../../core/schmock.d.ts" />
 
 export type { CliOptions, CliServer } from "./cli.js";
 export { createCliServer, parseCliArgs, run } from "./cli.js";

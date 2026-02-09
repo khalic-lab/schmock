@@ -1,4 +1,4 @@
-/// <reference path="../../../types/schmock.d.ts" />
+/// <reference path="../../core/schmock.d.ts" />
 
 import { readFileSync, watch } from "node:fs";
 import type { Server } from "node:http";

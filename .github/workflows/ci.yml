@@ -67,7 +67,7 @@ jobs:
               echo "::group::Running type check"
               # Run in dependency order: core first, then others
               bun run --filter @schmock/core build:types
-              bun run --filter @schmock/schema build:types
+              bun run --filter @schmock/faker build:types
               bun run --filter @schmock/express build:types
               bun run --filter @schmock/angular build:types
               echo "::endgroup::"

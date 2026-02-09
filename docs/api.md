@@ -105,10 +105,10 @@ pipe(plugin: Plugin): CallableMockInstance
 
 **Example**:
 ```typescript
-import { schemaPlugin } from '@schmock/schema'
+import { fakerPlugin } from '@schmock/faker'
 
 mock('GET /users', userSchema, { contentType: 'application/json' })
-  .pipe(schemaPlugin({ schema: userSchema }))
+  .pipe(fakerPlugin({ schema: userSchema }))
 ```
 
 #### `.handle(method, path, options?)`
@@ -493,16 +493,16 @@ function errorHandlerPlugin(): Plugin {
 
 ## Schema Plugin
 
-### `schemaPlugin(options)`
+### `fakerPlugin(options)`
 
 Creates a schema plugin for JSON Schema-based data generation.
 
 ```typescript
-function schemaPlugin(options: SchemaPluginOptions): Plugin
+function fakerPlugin(options: FakerPluginOptions): Plugin
 ```
 
 ```typescript
-interface SchemaPluginOptions {
+interface FakerPluginOptions {
   schema: JSONSchema7;
   count?: number;                       // Number of items for array schemas
   overrides?: Record<string, any>;      // Field overrides (supports templates)
@@ -511,12 +511,12 @@ interface SchemaPluginOptions {
 
 **Example**:
 ```typescript
-import { schemaPlugin } from '@schmock/schema';
+import { fakerPlugin } from '@schmock/faker';
 
 const mock = schmock();
 
 mock('GET /users', null, { contentType: 'application/json' })
-  .pipe(schemaPlugin({
+  .pipe(fakerPlugin({
     schema: {
       type: 'array',
       items: {
@@ -1191,7 +1191,7 @@ if (response.status === 500) {
 
 // Schema plugin throws at creation time for invalid schemas
 try {
-  schemaPlugin({ schema: invalidSchema });
+  fakerPlugin({ schema: invalidSchema });
 } catch (error) {
   if (error instanceof SchemaValidationError) {
     console.log(error.context); // { schemaPath: "$.properties.name", issue: "...", suggestion: "..." }

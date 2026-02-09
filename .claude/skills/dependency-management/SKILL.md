@@ -31,7 +31,7 @@ Shared tooling installed at the workspace root:
 | Package | Key Deps |
 |---------|----------|
 | `@schmock/core` | None (zero deps) |
-| `@schmock/schema` | `json-schema-faker`, `@faker-js/faker` (dev) |
+| `@schmock/faker` | `json-schema-faker`, `@faker-js/faker` (dev) |
 | `@schmock/express` | None (express is peer dep) |
 | `@schmock/angular` | None (angular packages are peer deps) |
 
@@ -45,7 +45,7 @@ Critical compatibility ranges:
 | `@schmock/angular` | `@angular/core` | `>=15.0.0` |
 | `@schmock/angular` | `@angular/common` | `>=15.0.0` |
 | `@schmock/angular` | `rxjs` | `^7.0.0` |
-| `@schmock/schema`, `express`, `angular` | `@schmock/core` | `^1.0.0` |
+| `@schmock/faker`, `express`, `angular` | `@schmock/core` | `^1.0.0` |
 
 ## Update Workflow
 

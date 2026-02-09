@@ -1,4 +1,4 @@
-/// <reference path="../../../types/schmock.d.ts" />
+/// <reference path="../../core/schmock.d.ts" />
 
 import type { CallableMockInstance } from "@schmock/core";
 import {
