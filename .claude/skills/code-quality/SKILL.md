@@ -32,7 +32,7 @@ All 6 must pass before committing. The pre-commit hook enforces Lint + Typecheck
 | Failed stage | What to do |
 |-------------|------------|
 | **Lint** | Run `bun lint:fix` — most issues auto-fix. For remaining: check biome output for the rule name and fix manually. |
-| **Typecheck** | Run `bun typecheck` for full errors. Usually a missing import, wrong return type, or ambient type mismatch in `types/schmock.d.ts`. |
+| **Typecheck** | Run `bun typecheck` for full errors. Usually a missing import, wrong return type, or ambient type mismatch in `packages/core/schmock.d.ts`. |
 | **Knip** | Run `bun knip` to see unused exports/deps. Either delete the dead code or, if intentional, add to `knip.json` ignore. |
 | **ESLint** | Run `bun eslint` to see `as` casts. Replace with: `toHttpMethod()` for HttpMethod, `errorMessage()` for unknown errors, `"prop" in obj` narrowing, `FakerSchema` interface for jsf extensions. Never add `as` — use `satisfies` if needed. |
 | **Unit** | Run `bun test:unit` for full output. Read the failing assertion, fix the source or update the test expectation. |

@@ -1,6 +1,6 @@
 {
   "name": "@schmock/express",
-  "version": "1.4.0",
+  "version": "1.7.0",
   "description": "Express adapter for Schmock mock API generator",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,7 +9,8 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"
@@ -34,7 +35,7 @@
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "@schmock/core": "^1.0.0",
+    "@schmock/core": "^1.7.0",
     "express": "^4.18.0 || ^5.0.0"
   },
   "keywords": [

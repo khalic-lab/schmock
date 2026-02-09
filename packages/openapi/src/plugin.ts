@@ -1,6 +1,6 @@
-/// <reference path="../../../types/schmock.d.ts" />
+/// <reference path="../../core/schmock.d.ts" />
 
-import { generateFromSchema } from "@schmock/schema";
+import { generateFromSchema } from "@schmock/faker";
 import Ajv from "ajv";
 import type { JSONSchema7 } from "json-schema";
 import { negotiateContentType } from "./content-negotiation.js";

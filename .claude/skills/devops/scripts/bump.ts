@@ -49,23 +49,60 @@ const packages = readdirSync(packagesDir, { withFileTypes: true })
 
 const results: Array<{ name: string; from: string; to: string }> = [];
 
+// First pass: bump versions and collect new versions by package name
+const versionMap = new Map<string, string>();
+
 for (const pkg of packages) {
   const pkgJsonPath = join(packagesDir, pkg, "package.json");
   const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
   const oldVersion = pkgJson.version;
   const newVersion = bumpVersion(oldVersion, level);
 
-  // Update package.json
   pkgJson.version = newVersion;
   writeFileSync(pkgJsonPath, `${JSON.stringify(pkgJson, null, 2)}\n`);
 
-  // Update manifest
   const manifestKey = `packages/${pkg}`;
   if (manifestKey in manifest) {
     manifest[manifestKey] = newVersion;
   }
 
+  versionMap.set(pkgJson.name, newVersion);
   results.push({ name: pkgJson.name, from: oldVersion, to: newVersion });
+}
+
+// Second pass: sync cross-package @schmock/* dependency ranges
+let depsUpdated = 0;
+
+for (const pkg of packages) {
+  const pkgJsonPath = join(packagesDir, pkg, "package.json");
+  const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
+  let changed = false;
+
+  for (const depField of [
+    "dependencies",
+    "peerDependencies",
+    "devDependencies",
+  ]) {
+    const deps = pkgJson[depField];
+    if (!deps) continue;
+
+    for (const [depName, depRange] of Object.entries(deps)) {
+      if (!depName.startsWith("@schmock/")) continue;
+      const newVersion = versionMap.get(depName);
+      if (!newVersion) continue;
+
+      const newRange = `^${newVersion}`;
+      if (depRange !== newRange) {
+        deps[depName] = newRange;
+        changed = true;
+        depsUpdated++;
+      }
+    }
+  }
+
+  if (changed) {
+    writeFileSync(pkgJsonPath, `${JSON.stringify(pkgJson, null, 2)}\n`);
+  }
 }
 
 // Write manifest
@@ -82,3 +119,8 @@ for (const r of results) {
 }
 console.log("");
 console.log("Updated .release-please-manifest.json");
+if (depsUpdated > 0) {
+  console.log(
+    `Synced ${depsUpdated} cross-package @schmock/* dependency range(s)`,
+  );
+}

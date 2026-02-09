@@ -1,6 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
-import { generateFromSchema, schemaPlugin } from "./index";
+import { fakerPlugin, generateFromSchema } from "./index";
 import {
   generate,
   performance as perf,
@@ -760,11 +760,11 @@ describe("Schema Generator", () => {
 
   describe("Schema Plugin", () => {
     it("creates plugin with correct interface", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({ id: schemas.simple.number() }),
       });
 
-      expect(plugin).toHaveProperty("name", "schema");
+      expect(plugin).toHaveProperty("name", "faker");
       expect(plugin).toHaveProperty("version", "1.0.1");
       expect(plugin).toHaveProperty("process");
       expect(typeof plugin.process).toBe("function");
@@ -772,16 +772,16 @@ describe("Schema Generator", () => {
 
     it("validates schema at plugin creation time", () => {
       expect(() => {
-        schemaPlugin({ schema: {} as any });
+        fakerPlugin({ schema: {} as any });
       }).toThrow("Schema cannot be empty");
 
       expect(() => {
-        schemaPlugin({ schema: { type: "invalid" as any } });
+        fakerPlugin({ schema: { type: "invalid" as any } });
       }).toThrow("Invalid schema type");
     });
 
     it("generates data when processing context", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({
           id: schemas.simple.number(),
           name: schemas.simple.string(),
@@ -808,7 +808,7 @@ describe("Schema Generator", () => {
     });
 
     it("passes through existing responses", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({ id: schemas.simple.number() }),
       });
 
@@ -830,7 +830,7 @@ describe("Schema Generator", () => {
     });
 
     it("applies overrides with template processing", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({
           userId: schemas.simple.string(),
           timestamp: schemas.simple.string(),
@@ -860,7 +860,7 @@ describe("Schema Generator", () => {
     });
 
     it("handles errors gracefully", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({ id: schemas.simple.number() }),
       });
 
@@ -969,7 +969,7 @@ describe("Schema Generator", () => {
     });
 
     it("integrates with plugin pipeline", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.complex.apiResponse(),
         count: 5,
       });

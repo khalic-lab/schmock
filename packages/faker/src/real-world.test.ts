@@ -1,6 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
-import { generateFromSchema, schemaPlugin } from "./index";
+import { fakerPlugin, generateFromSchema } from "./index";
 import { validators } from "./test-utils";
 
 describe("Real-World Scenarios", () => {
@@ -535,7 +535,7 @@ describe("Real-World Scenarios", () => {
 
   describe("Integration with Schmock", () => {
     it("works with schmock route handlers", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: {
           type: "object",
           properties: {
@@ -591,7 +591,7 @@ describe("Real-World Scenarios", () => {
     });
 
     it("integrates with template overrides", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: {
           type: "object",
           properties: {

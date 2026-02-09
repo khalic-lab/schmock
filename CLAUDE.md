@@ -16,7 +16,7 @@ Schmock is a TypeScript HTTP mocking library with a callable API, extensible plu
 | Package | Description |
 |---------|-------------|
 | `@schmock/core` | Core mock builder, routing, and plugin pipeline |
-| `@schmock/schema` | JSON Schema-based response generation plugin |
+| `@schmock/faker` | Faker-powered automatic data generation plugin |
 | `@schmock/validation` | Request/response validation via AJV |
 | `@schmock/query` | Pagination, sorting, and filtering for list endpoints |
 | `@schmock/openapi` | Auto-register routes from OpenAPI/Swagger specs |
@@ -52,4 +52,4 @@ bun lint                       # Lint check
 - **Before committing**: Git hooks run lint + `test:all` automatically
 - **Conventional commits**, no Claude signatures in commit messages
 - **Features** in `/features/*.feature`, steps in `packages/*/src/steps/*.steps.ts`
-- **Ambient types** in `/types/schmock.d.ts` — single source of truth for shared types
+- **Ambient types** in `packages/core/schmock.d.ts` — single source of truth for shared types

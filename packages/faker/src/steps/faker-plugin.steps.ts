@@ -1,8 +1,8 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { generateFromSchema, schemaPlugin } from "../index";
+import { generateFromSchema, fakerPlugin } from "../index";
 
-const feature = await loadFeature("../../features/schema-plugin.feature");
+const feature = await loadFeature("../../features/faker-plugin.feature");
 
 describeFeature(feature, ({ Scenario }) => {
   let generated: any;
@@ -91,8 +91,8 @@ describeFeature(feature, ({ Scenario }) => {
         },
         required: ["name"],
       };
-      plugin1 = schemaPlugin({ schema });
-      plugin2 = schemaPlugin({ schema });
+      plugin1 = fakerPlugin({ schema });
+      plugin2 = fakerPlugin({ schema });
     });
 
     When("I generate data from both instances", async () => {
@@ -123,7 +123,7 @@ describeFeature(feature, ({ Scenario }) => {
     Given("I attempt to create a schema plugin with invalid schema", () => {
       error = null;
       try {
-        schemaPlugin({ schema: {} as any });
+        fakerPlugin({ schema: {} as any });
       } catch (e) {
         error = e as Error;
       }
@@ -145,7 +145,7 @@ describeFeature(feature, ({ Scenario }) => {
             field: { type: "string" as const, faker: fakerMethod },
           },
         };
-        schemaPlugin({ schema: schema as any });
+        fakerPlugin({ schema: schema as any });
       } catch (e) {
         error = e as Error;
       }

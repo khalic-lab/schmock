@@ -7,10 +7,10 @@
       "include-component-in-tag": true,
       "component": "core"
     },
-    "packages/schema": {
-      "package-name": "@schmock/schema",
+    "packages/faker": {
+      "package-name": "@schmock/faker",
       "include-component-in-tag": true,
-      "component": "schema"
+      "component": "faker"
     },
     "packages/express": {
       "package-name": "@schmock/express",
@@ -36,6 +36,11 @@
       "package-name": "@schmock/openapi",
       "include-component-in-tag": true,
       "component": "openapi"
+    },
+    "packages/cli": {
+      "package-name": "@schmock/cli",
+      "include-component-in-tag": true,
+      "component": "cli"
     }
   },
   "skip-github-release": false,

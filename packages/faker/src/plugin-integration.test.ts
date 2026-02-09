@@ -1,28 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { schemaPlugin } from "./index";
+import { fakerPlugin } from "./index";
 import { schemas, validators } from "./test-utils";
 
 describe("Schema Plugin Integration", () => {
   describe("Plugin Lifecycle", () => {
     it("validates schema during plugin creation", () => {
       // Valid schema should create plugin
-      const validPlugin = schemaPlugin({
+      const validPlugin = fakerPlugin({
         schema: schemas.complex.user(),
       });
       expect(validPlugin).toBeDefined();
-      expect(validPlugin.name).toBe("schema");
+      expect(validPlugin.name).toBe("faker");
       expect(validPlugin.version).toBe("1.0.1");
 
       // Invalid schema should throw immediately
       expect(() => {
-        schemaPlugin({
+        fakerPlugin({
           schema: { type: "invalid" as any },
         });
       }).toThrow("Invalid schema type");
     });
 
     it("processes context through plugin pipeline", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({
           requestId: { type: "string" },
           timestamp: { type: "string" },
@@ -52,7 +52,7 @@ describe("Schema Plugin Integration", () => {
     });
 
     it("preserves existing responses when present", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({ id: schemas.simple.number() }),
       });
 
@@ -82,7 +82,7 @@ describe("Schema Plugin Integration", () => {
 
   describe("Context Integration", () => {
     it("uses params in template overrides", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({
           userId: { type: "string" },
           postId: { type: "string" },
@@ -112,7 +112,7 @@ describe("Schema Plugin Integration", () => {
     });
 
     it("uses query parameters in templates", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({
           page: { type: "number" },
           limit: { type: "number" },
@@ -150,7 +150,7 @@ describe("Schema Plugin Integration", () => {
     });
 
     it("uses state in template processing", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({
           currentUser: { type: "string" },
           sessionId: { type: "string" },
@@ -184,7 +184,7 @@ describe("Schema Plugin Integration", () => {
     });
 
     it("handles missing template values gracefully", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({
           value1: { type: "string" },
           value2: { type: "string" },
@@ -218,7 +218,7 @@ describe("Schema Plugin Integration", () => {
 
   describe("Array Generation with Plugin", () => {
     it("generates arrays with count parameter", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.array(
           schemas.simple.object({
             id: { type: "number" },
@@ -248,7 +248,7 @@ describe("Schema Plugin Integration", () => {
     });
 
     it("applies overrides to array items", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.array(
           schemas.simple.object({
             index: { type: "number" },
@@ -282,7 +282,7 @@ describe("Schema Plugin Integration", () => {
 
   describe("Error Handling in Plugin", () => {
     it("wraps generation errors with context", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: {
           type: "string",
           pattern: "[", // Invalid regex
@@ -311,7 +311,7 @@ describe("Schema Plugin Integration", () => {
     });
 
     it("handles null or undefined context properties", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.simple.object({
           data: { type: "string" },
         }),
@@ -336,7 +336,7 @@ describe("Schema Plugin Integration", () => {
 
   describe("Complex Schema Scenarios", () => {
     it("handles conditional schemas in plugin", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: {
           type: "object",
           properties: {
@@ -363,7 +363,7 @@ describe("Schema Plugin Integration", () => {
     });
 
     it("generates nested data with references", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: {
           definitions: {
             timestamp: { type: "string", format: "date-time" },
@@ -413,7 +413,7 @@ describe("Schema Plugin Integration", () => {
 
   describe("Performance Characteristics", () => {
     it("maintains consistent performance across multiple calls", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: schemas.complex.user(),
       });
 
@@ -447,7 +447,7 @@ describe("Schema Plugin Integration", () => {
     });
 
     it("handles large schemas efficiently", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: {
           type: "object",
           properties: Object.fromEntries(
@@ -479,7 +479,7 @@ describe("Schema Plugin Integration", () => {
 
   describe("Real-world Plugin Usage", () => {
     it("generates mock API responses for testing", () => {
-      const plugin = schemaPlugin({
+      const plugin = fakerPlugin({
         schema: {
           type: "object",
           properties: {
@@ -531,7 +531,7 @@ describe("Schema Plugin Integration", () => {
     });
 
     it("works with schmock plugin pipeline", () => {
-      const schemaPlug = schemaPlugin({
+      const schemaPlug = fakerPlugin({
         schema: schemas.simple.object({
           message: { type: "string" },
           code: { type: "number" },

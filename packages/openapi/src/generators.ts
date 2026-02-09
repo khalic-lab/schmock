@@ -1,7 +1,7 @@
-/// <reference path="../../../types/schmock.d.ts" />
+/// <reference path="../../core/schmock.d.ts" />
 
 import { randomUUID } from "node:crypto";
-import { generateFromSchema } from "@schmock/schema";
+import { generateFromSchema } from "@schmock/faker";
 import type { JSONSchema7 } from "json-schema";
 import type { CrudResource } from "./crud-detector.js";
 import type { ParsedPath } from "./parser.js";

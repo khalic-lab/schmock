@@ -11,6 +11,6 @@
   "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.steps.ts"],
   "references": [
     { "path": "../core" },
-    { "path": "../schema" }
+    { "path": "../faker" }
   ]
 }

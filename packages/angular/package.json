@@ -9,7 +9,8 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"
@@ -30,7 +31,7 @@
   "peerDependencies": {
     "@angular/common": ">=15.0.0 <22.0.0",
     "@angular/core": ">=15.0.0 <22.0.0",
-    "@schmock/core": "^1.0.0",
+    "@schmock/core": "^1.7.0",
     "rxjs": "^7.0.0"
   },
   "devDependencies": {

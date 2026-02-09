@@ -1,4 +1,4 @@
-/// <reference path="../../../types/schmock.d.ts" />
+/// <reference path="../../core/schmock.d.ts" />
 
 interface PaginationOptions {
   /** Default items per page (default: 10) */

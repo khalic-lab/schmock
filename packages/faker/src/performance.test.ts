@@ -1,6 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
-import { generateFromSchema, schemaPlugin } from "./index";
+import { fakerPlugin, generateFromSchema } from "./index";
 import { generate, performance as perf, schemas } from "./test-utils";
 
 describe("Performance and Memory", () => {
@@ -186,14 +186,14 @@ describe("Performance and Memory", () => {
     it("plugin creation is fast", async () => {
       const schema = schemas.complex.user();
 
-      const { duration } = await perf.measure(() => schemaPlugin({ schema }));
+      const { duration } = await perf.measure(() => fakerPlugin({ schema }));
 
       expect(duration).toBeLessThan(10); // Plugin creation should be instant
     });
 
     it("plugin processing adds minimal overhead", async () => {
       const schema = schemas.complex.apiResponse();
-      const plugin = schemaPlugin({ schema });
+      const plugin = fakerPlugin({ schema });
 
       const context = {
         method: "GET",
@@ -368,7 +368,7 @@ describe("Performance and Memory", () => {
 
     it("reuses schema enhancement for repeated generations", async () => {
       const schema = schemas.complex.user();
-      const plugin = schemaPlugin({ schema });
+      const plugin = fakerPlugin({ schema });
 
       const context = {
         method: "GET",

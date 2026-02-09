@@ -1,4 +1,4 @@
-/// <reference path="../../../types/schmock.d.ts" />
+/// <reference path="../../core/schmock.d.ts" />
 
 import type { JSONSchema7 } from "json-schema";
 import { findArrayProperty } from "./generators.js";

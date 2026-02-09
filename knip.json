@@ -13,7 +13,7 @@
     "packages/core": {
       "ignore": ["src/steps/**"]
     },
-    "packages/schema": {
+    "packages/faker": {
       "ignore": ["src/steps/**"]
     },
     "packages/express": {

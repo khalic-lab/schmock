@@ -1,7 +1,7 @@
 {
   "name": "@schmock/cli",
   "description": "CLI for running Schmock mock servers from OpenAPI specs",
-  "version": "1.2.0",
+  "version": "1.7.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,8 +9,7 @@
     "schmock": "./dist/index.js"
   },
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "exports": {
     ".": {
@@ -33,8 +32,8 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@schmock/core": "^1.4.0",
-    "@schmock/openapi": "^1.3.0"
+    "@schmock/core": "^1.7.0",
+    "@schmock/openapi": "^1.7.0"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^6.2.0",

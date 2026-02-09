@@ -1,4 +1,4 @@
-/// <reference path="../../../types/schmock.d.ts" />
+/// <reference path="../../core/schmock.d.ts" />
 
 import SwaggerParser from "@apidevtools/swagger-parser";
 import { toHttpMethod } from "@schmock/core";

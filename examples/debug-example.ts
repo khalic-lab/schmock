@@ -6,7 +6,7 @@
  */
 
 import { schmock } from "../packages/core/src/index";
-import { schemaPlugin } from "../packages/schema/src/index";
+import { fakerPlugin } from "../packages/faker/src/index";
 
 // Example logging plugin
 function loggingPlugin() {
@@ -70,7 +70,7 @@ async function runDebugExample() {
   
   // Route with schema plugin for generated data
   mock("GET /api/users/random")
-    .pipe(schemaPlugin({
+    .pipe(fakerPlugin({
       schema: {
         type: "object", 
         properties: {
