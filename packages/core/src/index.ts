@@ -92,6 +92,13 @@ export {
   SchemaValidationError,
   SchmockError,
 } from "./errors.js";
+// Re-export HTTP server helpers
+export {
+  collectBody,
+  parseNodeHeaders,
+  parseNodeQuery,
+  writeSchmockResponse,
+} from "./http-helpers.js";
 // Re-export types
 export type {
   CallableMockInstance,

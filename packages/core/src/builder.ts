@@ -7,6 +7,12 @@ import {
   RouteNotFoundError,
   SchmockError,
 } from "./errors.js";
+import {
+  collectBody,
+  parseNodeHeaders,
+  parseNodeQuery,
+  writeSchmockResponse,
+} from "./http-helpers.js";
 import { parseRouteKey } from "./parser.js";
 
 function errorMessage(error: unknown): string {
@@ -341,60 +347,16 @@ export class CallableMockInstance {
       const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
       const method = toHttpMethod(req.method ?? "GET");
       const path = url.pathname;
+      const headers = parseNodeHeaders(req);
+      const query = parseNodeQuery(url);
 
-      const headers: Record<string, string> = {};
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (typeof value === "string") {
-          headers[key] = value;
-        }
-      }
-
-      const query: Record<string, string> = {};
-      url.searchParams.forEach((value, key) => {
-        query[key] = value;
-      });
-
-      const chunks: Buffer[] = [];
-      req.on("data", (chunk: Buffer) => chunks.push(chunk));
-      req.on("end", () => {
-        const raw = Buffer.concat(chunks).toString();
-        let body: unknown;
-        const contentType = headers["content-type"] ?? "";
-        if (raw && contentType.includes("json")) {
-          try {
-            body = JSON.parse(raw);
-          } catch {
-            body = raw;
-          }
-        } else if (raw) {
-          body = raw;
-        }
-
-        void this.handle(method, path, { headers, body, query }).then(
+      void collectBody(req, headers).then((body) =>
+        this.handle(method, path, { headers, body, query }).then(
           (schmockResponse) => {
-            const responseHeaders: Record<string, string> = {
-              ...schmockResponse.headers,
-            };
-            if (
-              !responseHeaders["content-type"] &&
-              schmockResponse.body !== undefined &&
-              typeof schmockResponse.body !== "string"
-            ) {
-              responseHeaders["content-type"] = "application/json";
-            }
-
-            const responseBody =
-              schmockResponse.body === undefined
-                ? undefined
-                : typeof schmockResponse.body === "string"
-                  ? schmockResponse.body
-                  : JSON.stringify(schmockResponse.body);
-
-            res.writeHead(schmockResponse.status, responseHeaders);
-            res.end(responseBody);
+            writeSchmockResponse(res, schmockResponse);
           },
-        );
-      });
+        ),
+      );
     });
 
     this.server = httpServer;

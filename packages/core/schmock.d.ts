@@ -460,4 +460,124 @@ declare namespace Schmock {
     errorSchemas?: Map<number, JSONSchema7>;
   }
 
+  // ===== Faker Plugin Types =====
+
+  /**
+   * Context for schema-based data generation
+   */
+  interface SchemaGenerationContext {
+    schema: JSONSchema7;
+    count?: number;
+    overrides?: Record<string, any>;
+    params?: Record<string, string>;
+    state?: any;
+    query?: Record<string, string>;
+    seed?: number;
+  }
+
+  /**
+   * Options for the faker plugin
+   */
+  interface FakerPluginOptions {
+    schema: JSONSchema7;
+    count?: number;
+    overrides?: Record<string, any>;
+    seed?: number;
+  }
+
+  // ===== Express Adapter Types =====
+
+  /**
+   * Configuration options for Express adapter
+   */
+  interface ExpressAdapterOptions {
+    errorFormatter?: (error: Error, req: any) => any;
+    passErrorsToNext?: boolean;
+    transformHeaders?: (headers: any) => Record<string, string>;
+    transformQuery?: (query: any) => Record<string, string>;
+    beforeRequest?: (req: any, res: any) => any;
+    beforeResponse?: (response: any, req: any, res: any) => any;
+  }
+
+  // ===== Angular Adapter Types =====
+
+  /**
+   * Configuration options for Angular adapter
+   */
+  interface AngularAdapterOptions {
+    baseUrl?: string;
+    passthrough?: boolean;
+    errorFormatter?: (error: Error, request: any) => any;
+    transformRequest?: (request: any) => {
+      method?: string;
+      path?: string;
+      headers?: Record<string, string>;
+      body?: any;
+      query?: Record<string, string>;
+    };
+    transformResponse?: (
+      response: { status: number; body: unknown; headers: Record<string, string> },
+      request: any,
+    ) => { status: number; body: unknown; headers: Record<string, string> };
+  }
+
+  // ===== OpenAPI Plugin Options =====
+
+  /**
+   * Options for the OpenAPI plugin
+   */
+  interface OpenApiOptions {
+    spec: string | object;
+    seed?: SeedConfig;
+    validateRequests?: boolean;
+    validateResponses?: boolean;
+    queryFeatures?: {
+      pagination?: boolean;
+      sorting?: boolean;
+      filtering?: boolean;
+    };
+    resources?: Record<string, ResourceOverride>;
+    debug?: boolean;
+    fakerSeed?: number;
+    security?: boolean;
+  }
+
+  /**
+   * Seed data source: inline array, file path, or auto-generate count
+   */
+  type SeedSource = unknown[] | string | { count: number };
+
+  /**
+   * Seed configuration mapping resource names to seed sources
+   */
+  type SeedConfig = Record<string, SeedSource>;
+
+  // ===== CLI Types =====
+
+  /**
+   * Options for the CLI server
+   */
+  interface CliOptions {
+    spec: string;
+    port?: number;
+    hostname?: string;
+    seed?: string;
+    cors?: boolean;
+    debug?: boolean;
+    fakerSeed?: number;
+    errors?: boolean;
+    watch?: boolean;
+    admin?: boolean;
+  }
+
+  /**
+   * Running CLI server instance
+   */
+  interface CliServer {
+    server: import("node:http").Server;
+    port: number;
+    hostname: string;
+    close(): void;
+  }
+
 }
