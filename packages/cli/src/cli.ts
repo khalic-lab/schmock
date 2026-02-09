@@ -4,8 +4,14 @@ import { readFileSync, watch } from "node:fs";
 import type { Server } from "node:http";
 import { createServer } from "node:http";
 import { parseArgs } from "node:util";
-import { schmock, toHttpMethod } from "@schmock/core";
-import type { SeedConfig } from "@schmock/openapi";
+import {
+  collectBody,
+  parseNodeHeaders,
+  parseNodeQuery,
+  schmock,
+  toHttpMethod,
+  writeSchmockResponse,
+} from "@schmock/core";
 import { openapi } from "@schmock/openapi";
 
 export interface CliOptions {
@@ -34,7 +40,7 @@ const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-headers": "Content-Type, Authorization",
 };
 
-function isSeedSource(value: unknown): value is SeedConfig[string] {
+function isSeedSource(value: unknown): value is Schmock.SeedConfig[string] {
   return (
     Array.isArray(value) ||
     typeof value === "string" ||
@@ -42,7 +48,7 @@ function isSeedSource(value: unknown): value is SeedConfig[string] {
   );
 }
 
-function loadSeedFile(seedPath: string): SeedConfig {
+function loadSeedFile(seedPath: string): Schmock.SeedConfig {
   const raw = readFileSync(seedPath, "utf-8");
   const parsed: unknown = JSON.parse(raw);
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
@@ -50,7 +56,7 @@ function loadSeedFile(seedPath: string): SeedConfig {
       `Seed file must contain a JSON object, got: ${typeof parsed}`,
     );
   }
-  const result: SeedConfig = {};
+  const result: Schmock.SeedConfig = {};
   for (const [key, value] of Object.entries(parsed)) {
     if (isSeedSource(value)) {
       result[key] = value;
@@ -144,65 +150,17 @@ export async function createCliServer(options: CliOptions): Promise<CliServer> {
     }
 
     const method = toHttpMethod(req.method ?? "GET");
+    const headers = parseNodeHeaders(req);
+    const query = parseNodeQuery(url);
 
-    const headers: Record<string, string> = {};
-    for (const [key, value] of Object.entries(req.headers)) {
-      if (typeof value === "string") {
-        headers[key] = value;
-      }
-    }
-
-    const query: Record<string, string> = {};
-    url.searchParams.forEach((value, key) => {
-      query[key] = value;
-    });
-
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => {
-      const raw = Buffer.concat(chunks).toString();
-      let body: unknown;
-      const contentType = headers["content-type"] ?? "";
-      if (raw && contentType.includes("json")) {
-        try {
-          body = JSON.parse(raw);
-        } catch {
-          body = raw;
-        }
-      } else if (raw) {
-        body = raw;
-      }
-
-      void mock
+    void collectBody(req, headers).then((body) =>
+      mock
         .handle(method, path, { headers, body, query })
         .then((schmockResponse) => {
-          const responseHeaders: Record<string, string> = {
-            ...schmockResponse.headers,
-          };
-
-          if (cors) {
-            Object.assign(responseHeaders, CORS_HEADERS);
-          }
-
-          if (
-            !responseHeaders["content-type"] &&
-            schmockResponse.body !== undefined &&
-            typeof schmockResponse.body !== "string"
-          ) {
-            responseHeaders["content-type"] = "application/json";
-          }
-
-          const responseBody =
-            schmockResponse.body === undefined
-              ? undefined
-              : typeof schmockResponse.body === "string"
-                ? schmockResponse.body
-                : JSON.stringify(schmockResponse.body);
-
-          res.writeHead(schmockResponse.status, responseHeaders);
-          res.end(responseBody);
-        });
-    });
+          const extra = cors ? CORS_HEADERS : undefined;
+          writeSchmockResponse(res, schmockResponse, extra);
+        }),
+    );
   });
 
   return new Promise((resolve, reject) => {

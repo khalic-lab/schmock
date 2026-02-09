@@ -11,7 +11,8 @@
       "entry": ["benchmarks/*.ts", "scripts/*.{js,ts}"]
     },
     "packages/core": {
-      "ignore": ["src/steps/**"]
+      "ignore": ["src/steps/**"],
+      "entry": ["src/types.ts!"]
     },
     "packages/faker": {
       "ignore": ["src/steps/**"]

@@ -1,3 +1,5 @@
+/// <reference path="../../core/schmock.d.ts" />
+
 import type {
   HttpEvent,
   HttpHandler,
@@ -11,15 +13,10 @@ import {
   HttpResponse,
 } from "@angular/common/http";
 import { Injectable } from "@angular/core";
-import type {
-  CallableMockInstance,
-  HttpMethod,
-  ResponseResult,
-} from "@schmock/core";
 import { isHttpMethod, ROUTE_NOT_FOUND_CODE } from "@schmock/core";
 import { Observable } from "rxjs";
 
-function toHttpMethod(method: string): HttpMethod {
+function toSafeHttpMethod(method: string): Schmock.HttpMethod {
   const upper = method.toUpperCase();
   if (isHttpMethod(upper)) {
     return upper;
@@ -177,7 +174,7 @@ function headersToObject(request: HttpRequest<any>): Record<string, string> {
  * Create an Angular HTTP interceptor from a Schmock instance
  */
 export function createSchmockInterceptor(
-  mock: CallableMockInstance,
+  mock: Schmock.CallableMockInstance,
   options: AngularAdapterOptions = {},
 ): new () => HttpInterceptor {
   const {
@@ -206,7 +203,7 @@ export function createSchmockInterceptor(
       const query = extractQueryParams(req);
 
       let requestData = {
-        method: toHttpMethod(req.method),
+        method: toSafeHttpMethod(req.method),
         path,
         headers: headersToObject(req),
         body: req.body,
@@ -219,7 +216,7 @@ export function createSchmockInterceptor(
         requestData = {
           ...requestData,
           ...transformed,
-          method: toHttpMethod(transformed.method ?? req.method),
+          method: toSafeHttpMethod(transformed.method ?? req.method),
         };
       }
 
@@ -234,7 +231,7 @@ export function createSchmockInterceptor(
             body: requestData.body,
             query: requestData.query,
           })
-          .then((schmockResponse: ResponseResult) => {
+          .then((schmockResponse: Schmock.Response) => {
             if (aborted) return;
 
             // Detect ROUTE_NOT_FOUND responses
@@ -368,7 +365,7 @@ export function createSchmockInterceptor(
  * Provider configuration for Angular module
  */
 export function provideSchmockInterceptor(
-  mock: CallableMockInstance,
+  mock: Schmock.CallableMockInstance,
   options?: AngularAdapterOptions,
 ) {
   return {

@@ -1,6 +1,5 @@
 /// <reference path="../../core/schmock.d.ts" />
 
-import type { CallableMockInstance } from "@schmock/core";
 import {
   ROUTE_NOT_FOUND_CODE,
   SchmockError,
@@ -158,7 +157,7 @@ function defaultTransformQuery(
  * Convert a Schmock mock instance to Express middleware
  */
 export function toExpress(
-  mock: CallableMockInstance,
+  mock: Schmock.CallableMockInstance,
   options: ExpressAdapterOptions = {},
 ): RequestHandler {
   const {

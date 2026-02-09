@@ -1,5 +1,6 @@
+/// <reference path="../../core/schmock.d.ts" />
+
 import { en, Faker } from "@faker-js/faker";
-import type { Plugin, PluginContext } from "@schmock/core";
 import {
   ResourceLimitError,
   SchemaGenerationError,
@@ -95,7 +96,7 @@ export interface FakerPluginOptions {
   seed?: number;
 }
 
-export function fakerPlugin(options: FakerPluginOptions): Plugin {
+export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
   // Validate schema immediately when plugin is created
   validateSchema(options.schema);
 
@@ -103,7 +104,7 @@ export function fakerPlugin(options: FakerPluginOptions): Plugin {
     name: "faker",
     version: "1.0.1",
 
-    process(context: PluginContext, response?: any) {
+    process(context: Schmock.PluginContext, response?: any) {
       // If response already exists, pass it through
       if (response !== undefined && response !== null) {
         return { context, response };
