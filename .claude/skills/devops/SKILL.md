@@ -23,16 +23,11 @@ End-to-end release flow:
 
 ## Version Management
 
-8 packages with synchronized versions, tracked in two places:
-
-- `packages/*/package.json` — each package's own version
-- `.release-please-manifest.json` — central manifest for release-please
-
-Both must stay in sync. The `bump` script handles this automatically.
+8 packages with synchronized versions tracked in `packages/*/package.json`.
 
 ### Current Versions
 
-Check `.release-please-manifest.json` for current versions.
+Check any `packages/*/package.json` for the current version (all are kept in sync).
 
 ### Bumping
 
@@ -46,9 +41,8 @@ The bump script:
 1. Reads all `packages/*/package.json` versions
 2. Increments by the specified level
 3. Writes back to `package.json` files
-4. Updates `.release-please-manifest.json`
-5. Syncs cross-package `@schmock/*` dependency ranges (e.g., `"@schmock/core": "^1.7.0"`)
-6. Prints a before/after table
+4. Syncs cross-package `@schmock/*` dependency ranges (e.g., `"@schmock/core": "^1.8.0"`)
+5. Prints a before/after table
 
 ### Publish Order
 
@@ -62,7 +56,6 @@ Dependencies must be published before dependents:
 ### Known Pitfalls
 
 - **CLI shebang**: Must be `#!/usr/bin/env node` (not `bun`) or npm strips the `bin` entry
-- **release-please version drift**: If release-please bumps versions on `main` independently, `develop` branch versions can fall behind npm. Fix by bumping all packages past the highest npm version before publishing.
 - **Never use `workspace:*`** in dependencies — npm publishes it literally. Use `^version` ranges instead.
 
 ## Publishing Checklist
@@ -88,7 +81,6 @@ After publishing:
 ### GitHub Actions Workflows
 
 - **develop.yml** — Runs on push to `develop` and PRs. Runs lint, typecheck, unit, BDD.
-- **release-please** — Automates version bumps and changelogs on `main`.
 
 ### Package Registry
 

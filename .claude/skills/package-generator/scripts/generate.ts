@@ -18,7 +18,6 @@
  *
  * Registers in:
  *   tsconfig.json (path alias)
- *   .release-please-manifest.json
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -90,16 +89,6 @@ if (!tsconfig.compilerOptions.paths[alias]) {
   tsconfig.compilerOptions.paths[alias] = [`packages/${name}/src`];
   writeFileSync(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`);
   console.log(`Registered path alias: ${alias} → packages/${name}/src`);
-}
-
-// Register in .release-please-manifest.json
-const manifestPath = join(root, ".release-please-manifest.json");
-const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
-const manifestKey = `packages/${name}`;
-if (!manifest[manifestKey]) {
-  manifest[manifestKey] = "1.0.0";
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  console.log(`Registered in .release-please-manifest.json: ${manifestKey}`);
 }
 
 console.log("");

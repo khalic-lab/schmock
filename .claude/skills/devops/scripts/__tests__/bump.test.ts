@@ -5,7 +5,6 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -14,14 +13,13 @@ const SCRIPT = join(__dirname, "..", "bump.ts");
 const ROOT = join(__dirname, "../../../../..");
 
 /**
- * bump.ts modifies real files (package.json + manifest), so we
+ * bump.ts modifies real files (package.json), so we
  * back them up before each test and restore after.
  */
 const backupDir = join(__dirname, "__backup__");
 const filesToBackup = [
-  join(ROOT, ".release-please-manifest.json"),
   join(ROOT, "packages/core/package.json"),
-  join(ROOT, "packages/schema/package.json"),
+  join(ROOT, "packages/faker/package.json"),
   join(ROOT, "packages/express/package.json"),
   join(ROOT, "packages/angular/package.json"),
 ];
@@ -93,19 +91,6 @@ describe("bump.ts", () => {
         join(ROOT, "packages/core/package.json"),
       ).version;
       expect(coreAfter).toBe(`${major}.${minor}.${patch + 1}`);
-    });
-
-    it("should update .release-please-manifest.json to match package.json", () => {
-      run("patch");
-
-      // After bump, manifest should match the bumped package.json version
-      const coreVersion = readJson(
-        join(ROOT, "packages/core/package.json"),
-      ).version;
-      const manifest = readJson(
-        join(ROOT, ".release-please-manifest.json"),
-      );
-      expect(manifest["packages/core"]).toBe(coreVersion);
     });
 
     it("should print a before/after table", () => {
