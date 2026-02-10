@@ -4,11 +4,15 @@
   "ignoreDependencies": [
     "@tsconfig/strictest",
     "@vitest/coverage-v8",
-    "bun-types"
+    "bun-types",
+    "supertest",
+    "@types/supertest"
   ],
+  "ignoreBinaries": ["vitest"],
   "workspaces": {
     ".": {
-      "entry": ["benchmarks/*.ts", "scripts/*.{js,ts}"]
+      "entry": ["benchmarks/*.ts", "scripts/*.{js,ts}"],
+      "ignore": ["tests/**"]
     },
     "packages/core": {
       "ignore": ["src/steps/**"],

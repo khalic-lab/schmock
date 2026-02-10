@@ -29,14 +29,11 @@ describe("generate.ts", () => {
   const testPkg = `test-gen-${Date.now()}`;
   const pkgDir = join(ROOT, "packages", testPkg);
   const tsconfigPath = join(ROOT, "tsconfig.json");
-  const manifestPath = join(ROOT, ".release-please-manifest.json");
 
   let tsconfigBackup: string;
-  let manifestBackup: string;
 
   beforeEach(() => {
     tsconfigBackup = readFileSync(tsconfigPath, "utf-8");
-    manifestBackup = readFileSync(manifestPath, "utf-8");
   });
 
   afterEach(() => {
@@ -44,7 +41,6 @@ describe("generate.ts", () => {
       rmSync(pkgDir, { recursive: true, force: true });
     }
     writeFileSync(tsconfigPath, tsconfigBackup);
-    writeFileSync(manifestPath, manifestBackup);
   });
 
   describe("argument validation", () => {
@@ -119,12 +115,6 @@ describe("generate.ts", () => {
       expect(tsconfig.compilerOptions.paths[`@schmock/${testPkg}`]).toEqual([
         `packages/${testPkg}/src`,
       ]);
-    });
-
-    it("should register in .release-please-manifest.json", () => {
-      run(testPkg);
-      const manifest = readJson(manifestPath);
-      expect(manifest[`packages/${testPkg}`]).toBe("1.0.0");
     });
 
     it("should fail if package directory already exists", () => {

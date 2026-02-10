@@ -1,6 +1,6 @@
 {
   "name": "@schmock/angular",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Angular HTTP interceptor adapter for Schmock",
   "type": "module",
   "main": "./dist/index.js",
@@ -31,7 +31,7 @@
   "peerDependencies": {
     "@angular/common": ">=15.0.0 <22.0.0",
     "@angular/core": ">=15.0.0 <22.0.0",
-    "@schmock/core": "^1.8.0",
+    "@schmock/core": "^1.8.1",
     "rxjs": "^7.0.0"
   },
   "devDependencies": {
