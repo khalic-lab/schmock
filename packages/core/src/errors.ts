@@ -1,3 +1,7 @@
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error";
+}
+
 /**
  * Base error class for all Schmock errors
  */
