@@ -1,8 +1,8 @@
 import type { Server } from "node:http";
 import { createServer } from "node:http";
-import { isStatusTuple, toHttpMethod } from "./constants.js";
+import { toHttpMethod } from "./constants.js";
 import {
-  PluginError,
+  errorMessage,
   RouteDefinitionError,
   RouteNotFoundError,
   SchmockError,
@@ -14,10 +14,14 @@ import {
   writeSchmockResponse,
 } from "./http-helpers.js";
 import { parseRouteKey } from "./parser.js";
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unknown error";
-}
+import { runPluginPipeline } from "./plugin-pipeline.js";
+import { parseResponse } from "./response-parser.js";
+import type { CompiledCallableRoute } from "./route-matcher.js";
+import {
+  extractParams,
+  findRoute,
+  isGeneratorFunction,
+} from "./route-matcher.js";
 
 /**
  * Debug logger that respects debug mode configuration
@@ -47,37 +51,6 @@ class DebugLogger {
     if (!this.enabled) return;
     console.timeEnd(`[SCHMOCK] ${label}`);
   }
-}
-
-/**
- * Compiled callable route with pattern matching
- */
-interface CompiledCallableRoute {
-  pattern: RegExp;
-  params: string[];
-  method: Schmock.HttpMethod;
-  path: string;
-  generator: Schmock.Generator;
-  config: Schmock.RouteConfig;
-}
-
-function isGeneratorFunction(
-  gen: Schmock.Generator,
-): gen is Schmock.GeneratorFunction {
-  return typeof gen === "function";
-}
-
-function isResponseObject(value: unknown): value is {
-  status: number;
-  body: unknown;
-  headers?: Record<string, string>;
-} {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "status" in value &&
-    "body" in value
-  );
 }
 
 /**
@@ -451,7 +424,12 @@ export class CallableMockInstance {
       }
 
       // Find matching route
-      const matchedRoute = this.findRoute(method, requestPath);
+      const matchedRoute = findRoute(
+        method,
+        requestPath,
+        this.staticRoutes,
+        this.routes,
+      );
 
       if (!matchedRoute) {
         this.logger.log(
@@ -481,7 +459,7 @@ export class CallableMockInstance {
       );
 
       // Extract parameters from the matched route
-      const params = this.extractParams(matchedRoute, requestPath);
+      const params = extractParams(matchedRoute, requestPath);
 
       this.emit("request:match", {
         method,
@@ -523,11 +501,11 @@ export class CallableMockInstance {
 
       // Run plugin pipeline to transform the response
       try {
-        const pipelineResult = await this.runPluginPipeline(
+        const pipelineResult = await runPluginPipeline(
+          this.plugins,
           pluginContext,
           result,
-          matchedRoute.config,
-          requestId,
+          this.logger,
         );
         pluginContext = pipelineResult.context;
         result = pipelineResult.response;
@@ -540,7 +518,7 @@ export class CallableMockInstance {
       }
 
       // Parse and prepare response
-      const response = this.parseResponse(result, matchedRoute.config);
+      const response = parseResponse(result, matchedRoute.config);
 
       // Apply delay (route-level overrides global)
       await this.applyDelay(matchedRoute.config.delay);
@@ -622,239 +600,5 @@ export class CallableMockInstance {
       : effectiveDelay;
 
     await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  /**
-   * Parse and normalize response result into Response object
-   * Handles tuple format [status, body, headers], direct values, and response objects
-   * @param result - Raw result from generator or plugin
-   * @param routeConfig - Route configuration for content-type defaults
-   * @returns Normalized Response object with status, body, and headers
-   * @private
-   */
-  private parseResponse(
-    result: unknown,
-    routeConfig: Schmock.RouteConfig,
-  ): Schmock.Response {
-    let status = 200;
-    let body: unknown = result;
-    let headers: Record<string, string> = {};
-
-    let tupleFormat = false;
-
-    // Handle already-formed response objects (from plugin error recovery)
-    if (isResponseObject(result)) {
-      return {
-        status: result.status,
-        body: result.body,
-        headers: result.headers || {},
-      };
-    }
-
-    // Handle tuple response format [status, body, headers?]
-    if (isStatusTuple(result)) {
-      [status, body, headers = {}] = result;
-      tupleFormat = true;
-    }
-
-    // Handle null/undefined responses with 204 No Content
-    // But don't auto-convert if tuple format was used (status was explicitly provided)
-    if (body === null || body === undefined) {
-      if (!tupleFormat) {
-        status = status === 200 ? 204 : status; // Only change to 204 if status wasn't explicitly set via tuple
-      }
-      body = undefined; // Ensure body is undefined for null responses
-    }
-
-    // Add content-type header from route config if it exists and headers don't already have it
-    // But only if this isn't a tuple response (where headers are explicitly controlled)
-    if (!headers["content-type"] && routeConfig.contentType && !tupleFormat) {
-      headers["content-type"] = routeConfig.contentType;
-
-      // Handle special conversion cases when contentType is explicitly set
-      if (routeConfig.contentType === "text/plain" && body !== undefined) {
-        if (typeof body === "object" && !Buffer.isBuffer(body)) {
-          body = JSON.stringify(body);
-        } else if (typeof body !== "string") {
-          body = String(body);
-        }
-      }
-    }
-
-    return {
-      status,
-      body,
-      headers,
-    };
-  }
-
-  /**
-   * Run all registered plugins in sequence
-   * First plugin to set response becomes generator, subsequent plugins transform
-   * Handles plugin errors via onError hooks
-   * @param context - Plugin context with request details
-   * @param initialResponse - Initial response from route generator
-   * @param _routeConfig - Route config (unused but kept for signature)
-   * @param _requestId - Request ID (unused but kept for signature)
-   * @returns Updated context and final response after all plugins
-   * @private
-   */
-  private async runPluginPipeline(
-    context: Schmock.PluginContext,
-    initialResponse?: unknown,
-    _routeConfig?: Schmock.RouteConfig,
-    _requestId?: string,
-  ): Promise<{ context: Schmock.PluginContext; response?: unknown }> {
-    let currentContext = context;
-    let response: unknown = initialResponse;
-
-    this.logger.log(
-      "pipeline",
-      `Running plugin pipeline for ${this.plugins.length} plugins`,
-    );
-
-    for (const plugin of this.plugins) {
-      this.logger.log("pipeline", `Processing plugin: ${plugin.name}`);
-
-      try {
-        const result = await plugin.process(currentContext, response);
-
-        if (!result || !result.context) {
-          throw new Error(`Plugin ${plugin.name} didn't return valid result`);
-        }
-
-        currentContext = result.context;
-
-        // First plugin to set response becomes the generator
-        if (
-          result.response !== undefined &&
-          (response === undefined || response === null)
-        ) {
-          this.logger.log(
-            "pipeline",
-            `Plugin ${plugin.name} generated response`,
-          );
-          response = result.response;
-        } else if (result.response !== undefined && response !== undefined) {
-          this.logger.log(
-            "pipeline",
-            `Plugin ${plugin.name} transformed response`,
-          );
-          response = result.response;
-        }
-      } catch (error) {
-        this.logger.log(
-          "pipeline",
-          `Plugin ${plugin.name} failed: ${errorMessage(error)}`,
-        );
-
-        // Try error handling if plugin has onError hook
-        if (plugin.onError) {
-          try {
-            const pluginError =
-              error instanceof Error ? error : new Error(errorMessage(error));
-            const errorResult = await plugin.onError(
-              pluginError,
-              currentContext,
-            );
-            if (errorResult) {
-              this.logger.log(
-                "pipeline",
-                `Plugin ${plugin.name} handled error`,
-              );
-
-              // Error return → transform the thrown error
-              if (errorResult instanceof Error) {
-                throw new PluginError(plugin.name, errorResult);
-              }
-
-              // ResponseResult return → recover, stop pipeline
-              if (
-                typeof errorResult === "object" &&
-                errorResult !== null &&
-                "status" in errorResult
-              ) {
-                response = errorResult;
-                break;
-              }
-            }
-            // void/falsy return → propagate original error below
-          } catch (hookError) {
-            // If the hook itself threw (including our PluginError above), re-throw it
-            if (hookError instanceof PluginError) {
-              throw hookError;
-            }
-            this.logger.log(
-              "pipeline",
-              `Plugin ${plugin.name} error handler failed: ${errorMessage(hookError)}`,
-            );
-          }
-        }
-
-        const cause =
-          error instanceof Error ? error : new Error(errorMessage(error));
-        throw new PluginError(plugin.name, cause);
-      }
-    }
-
-    return { context: currentContext, response };
-  }
-
-  /**
-   * Find a route that matches the given method and path
-   * Uses two-pass matching: static routes first, then parameterized routes
-   * Matches routes in registration order (first registered wins)
-   * @param method - HTTP method to match
-   * @param path - Request path to match
-   * @returns Matched compiled route or undefined if no match
-   * @private
-   */
-  private findRoute(
-    method: Schmock.HttpMethod,
-    path: string,
-  ): CompiledCallableRoute | undefined {
-    // O(1) lookup for static routes
-    const normalizedPath =
-      path.endsWith("/") && path !== "/" ? path.slice(0, -1) : path;
-    const staticMatch = this.staticRoutes.get(`${method} ${normalizedPath}`);
-    if (staticMatch) {
-      return staticMatch;
-    }
-
-    // Fall through to parameterized route scan
-    for (const route of this.routes) {
-      if (
-        route.method === method &&
-        route.params.length > 0 &&
-        route.pattern.test(path)
-      ) {
-        return route;
-      }
-    }
-
-    return undefined;
-  }
-
-  /**
-   * Extract parameter values from path based on route pattern
-   * Maps capture groups from regex match to parameter names
-   * @param route - Compiled route with pattern and param names
-   * @param path - Request path to extract values from
-   * @returns Object mapping parameter names to extracted values
-   * @private
-   */
-  private extractParams(
-    route: CompiledCallableRoute,
-    path: string,
-  ): Record<string, string> {
-    const match = path.match(route.pattern);
-    if (!match) return {};
-
-    const params: Record<string, string> = {};
-    route.params.forEach((param, index) => {
-      params[param] = match[index + 1];
-    });
-
-    return params;
   }
 }
