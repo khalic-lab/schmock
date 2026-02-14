@@ -1,7 +1,7 @@
 {
   "name": "@schmock/validation",
   "description": "Request/response validation plugin for Schmock",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -33,7 +33,7 @@
     "ajv": "^8.17.1"
   },
   "peerDependencies": {
-    "@schmock/core": "^1.8.1"
+    "@schmock/core": "^1.9.0"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^6.2.0",
