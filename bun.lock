@@ -29,7 +29,7 @@
         "@angular/core": "^21.1.3",
         "@angular/platform-browser": "^21.1.3",
         "@angular/platform-browser-dynamic": "^21.1.3",
-        "@types/node": "^25.2.1",
+        "@types/node": "^25.2.3",
         "typescript": "^5.9.3",
         "vitest": "^4.0.18",
         "zone.js": "^0.16.0",
@@ -37,7 +37,7 @@
       "peerDependencies": {
         "@angular/common": ">=15.0.0 <22.0.0",
         "@angular/core": ">=15.0.0 <22.0.0",
-        "@schmock/core": "^1.0.0",
+        "@schmock/core": "^1.8.0",
         "rxjs": "^7.0.0",
       },
     },
@@ -48,12 +48,12 @@
         "schmock": "./dist/index.js",
       },
       "dependencies": {
-        "@schmock/core": "workspace:*",
-        "@schmock/openapi": "workspace:*",
+        "@schmock/core": "^1.8.0",
+        "@schmock/openapi": "^1.8.0",
       },
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.2.0",
-        "@types/node": "^25.2.1",
+        "@types/node": "^25.2.3",
         "vitest": "^4.0.18",
       },
     },
@@ -62,7 +62,7 @@
       "version": "1.8.0",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.2.0",
-        "@types/node": "^25.2.1",
+        "@types/node": "^25.2.3",
         "@vitest/ui": "^4.0.18",
         "vitest": "^4.0.18",
       },
@@ -92,11 +92,11 @@
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.2.0",
         "@types/json-schema": "^7.0.15",
-        "@types/node": "^25.2.1",
+        "@types/node": "^25.2.3",
         "vitest": "^4.0.18",
       },
       "peerDependencies": {
-        "@schmock/core": "^1.0.0",
+        "@schmock/core": "^1.8.0",
       },
     },
     "packages/openapi": {
@@ -104,18 +104,18 @@
       "version": "1.8.0",
       "dependencies": {
         "@apidevtools/swagger-parser": "^12.0.0",
-        "@schmock/faker": "^1.4.0",
+        "@schmock/faker": "^1.8.0",
         "ajv": "^8.17.1",
       },
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.2.0",
         "@types/json-schema": "^7.0.15",
-        "@types/node": "^25.2.1",
+        "@types/node": "^25.2.3",
         "openapi-types": "^12.1.3",
         "vitest": "^4.0.18",
       },
       "peerDependencies": {
-        "@schmock/core": "^1.0.0",
+        "@schmock/core": "^1.8.0",
       },
     },
     "packages/query": {
@@ -123,11 +123,11 @@
       "version": "1.8.0",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.2.0",
-        "@types/node": "^25.2.1",
+        "@types/node": "^25.2.3",
         "vitest": "^4.0.18",
       },
       "peerDependencies": {
-        "@schmock/core": "^1.0.0",
+        "@schmock/core": "^1.8.0",
       },
     },
     "packages/validation": {
@@ -139,11 +139,11 @@
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.2.0",
         "@types/json-schema": "^7.0.15",
-        "@types/node": "^25.2.1",
+        "@types/node": "^25.2.3",
         "vitest": "^4.0.18",
       },
       "peerDependencies": {
-        "@schmock/core": "^1.0.0",
+        "@schmock/core": "^1.8.0",
       },
     },
   },
@@ -468,7 +468,7 @@
 
     "@types/mime": ["@types/mime@1.3.5", "", {}, "sha512-/pyBZWSLD2n0dcHE3hq8s8ZvcETHtEuF+3E7XVt0Ig2nvsVQXdghHVcEkIWjy9A0wKfTn97a/PSDYohKIlnP/w=="],
 
-    "@types/node": ["@types/node@25.2.1", "", { "dependencies": { "undici-types": "~7.16.0" } }, "sha512-CPrnr8voK8vC6eEtyRzvMpgp3VyVRhgclonE7qYi6P9sXwYb59ucfrnmFBTaP0yUi8Gk4yZg/LlTJULGxvTNsg=="],
+    "@types/node": ["@types/node@25.2.3", "", { "dependencies": { "undici-types": "~7.16.0" } }, "sha512-m0jEgYlYz+mDJZ2+F4v8D1AyQb+QzsNqRuI7xg1VQX/KlKS0qT9r1Mo16yo5F/MtifXFgaofIFsdFMox2SxIbQ=="],
 
     "@types/qs": ["@types/qs@6.14.0", "", {}, "sha512-eOunJqu0K1923aExK6y8p6fsihYEn/BYuQ4g0CxAAgFc4b/ZLN4CrsRZ55srTdqoiLzU2B2evC+apEIxprEzkQ=="],
 
@@ -1101,6 +1101,8 @@
     "@typescript-eslint/typescript-estree/semver": ["semver@7.7.4", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA=="],
 
     "@typescript-eslint/visitor-keys/eslint-visitor-keys": ["eslint-visitor-keys@4.2.1", "", {}, "sha512-Uhdk5sfqcee/9H/rCOJikYz67o0a2Tw2hGRPOG2Y1R2dg7brRe1uG0yaNQDHu+TO/uQPF/5eCapvYSmHUjt7JQ=="],
+
+    "bun-types/@types/node": ["@types/node@25.2.1", "", { "dependencies": { "undici-types": "~7.16.0" } }, "sha512-CPrnr8voK8vC6eEtyRzvMpgp3VyVRhgclonE7qYi6P9sXwYb59ucfrnmFBTaP0yUi8Gk4yZg/LlTJULGxvTNsg=="],
 
     "cli-highlight/parse5": ["parse5@5.1.1", "", {}, "sha512-ugq4DFI0Ptb+WWjAdOK16+u/nHfiIrcE+sh8kZMaM0WllQKLI9rOUq6c2b7cwPkXdzfQESqvoqK6ug7U/Yyzug=="],
 
