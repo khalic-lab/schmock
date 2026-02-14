@@ -94,7 +94,8 @@ export class CallableMockInstance {
   private callableRef: Schmock.CallableMockInstance | undefined;
   private server: Server | undefined;
   private serverInfo: Schmock.ServerInfo | undefined;
-  private listeners = new Map<string, Set<(data: unknown) => void>>();
+  // biome-ignore lint/complexity/noBannedTypes: internal storage for event listeners with varying signatures
+  private listeners = new Map<string, Set<Function>>();
 
   constructor(private globalConfig: Schmock.GlobalConfig = {}) {
     this.logger = new DebugLogger(globalConfig.debug || false);
@@ -278,7 +279,10 @@ export class CallableMockInstance {
 
   // ===== Lifecycle Events =====
 
-  on(event: string, listener: (data: unknown) => void): this {
+  on<E extends Schmock.SchmockEvent>(
+    event: E,
+    listener: (data: Schmock.SchmockEventMap[E]) => void,
+  ): this {
     let set = this.listeners.get(event);
     if (!set) {
       set = new Set();
@@ -288,7 +292,10 @@ export class CallableMockInstance {
     return this;
   }
 
-  off(event: string, listener: (data: unknown) => void): this {
+  off<E extends Schmock.SchmockEvent>(
+    event: E,
+    listener: (data: Schmock.SchmockEventMap[E]) => void,
+  ): this {
     this.listeners.get(event)?.delete(listener);
     return this;
   }

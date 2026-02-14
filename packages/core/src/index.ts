@@ -52,14 +52,20 @@ export function schmock(
       reset: instance.reset.bind(instance),
       resetHistory: instance.resetHistory.bind(instance),
       resetState: instance.resetState.bind(instance),
-      on: ((event: string, listener: (data: unknown) => void) => {
+      on<E extends Schmock.SchmockEvent>(
+        event: E,
+        listener: (data: Schmock.SchmockEventMap[E]) => void,
+      ) {
         instance.on(event, listener);
         return callableInstance;
-      }) as Schmock.CallableMockInstance["on"],
-      off: ((event: string, listener: (data: unknown) => void) => {
+      },
+      off<E extends Schmock.SchmockEvent>(
+        event: E,
+        listener: (data: Schmock.SchmockEventMap[E]) => void,
+      ) {
         instance.off(event, listener);
         return callableInstance;
-      }) as Schmock.CallableMockInstance["off"],
+      },
       getRoutes: instance.getRoutes.bind(instance),
       getState: instance.getState.bind(instance),
       listen: instance.listen.bind(instance),

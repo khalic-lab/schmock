@@ -107,7 +107,7 @@ function handleAdminRequest(
 }
 
 export async function createCliServer(options: CliOptions): Promise<CliServer> {
-  const mock = schmock({ debug: options.debug });
+  const mock = schmock({ debug: options.debug, state: {} });
 
   const openapiOptions: Parameters<typeof openapi>[0] = {
     spec: options.spec,

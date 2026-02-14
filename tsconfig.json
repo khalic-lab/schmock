@@ -24,6 +24,6 @@
       "@features/*": ["features/*"]
     }
   },
-  "include": ["packages/**/*.ts"],
+  "include": ["packages/**/*.ts", "tests/integration/**/*.ts"],
   "exclude": ["node_modules", "dist", "**/*.steps.ts"]
 }

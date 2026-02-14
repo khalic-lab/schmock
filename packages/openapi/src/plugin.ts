@@ -29,6 +29,33 @@ import { isRecord } from "./utils.js";
 
 export type { SeedConfig, SeedSource };
 
+// Type-safe route config accessors (avoid `as` casts on `[key: string]: unknown`)
+function getRouteCallbacks(
+  route: Schmock.RouteConfig,
+): ParsedCallback[] | undefined {
+  const value = route["openapi:callbacks"];
+  return Array.isArray(value) ? value : undefined;
+}
+
+function getRouteSecurity(route: Schmock.RouteConfig): string[][] | undefined {
+  const value = route["openapi:security"];
+  return Array.isArray(value) ? value : undefined;
+}
+
+function getRouteResponses(
+  route: Schmock.RouteConfig,
+): Map<number, ParsedResponseEntry> | undefined {
+  const value = route["openapi:responses"];
+  return value instanceof Map ? value : undefined;
+}
+
+function getRouteRequestBody(
+  route: Schmock.RouteConfig,
+): JSONSchema7 | undefined {
+  const value = route["openapi:requestBody"];
+  return isRecord(value) ? value : undefined;
+}
+
 export interface OpenApiOptions {
   /** File path or inline spec object */
   spec: string | object;
@@ -164,9 +191,7 @@ export async function openapi(
       const result = processPreferHeader(context, response, options.fakerSeed);
 
       // 5. Fire callbacks (fire-and-forget, after response is determined)
-      const callbacks = context.route["openapi:callbacks"] as
-        | ParsedCallback[]
-        | undefined;
+      const callbacks = getRouteCallbacks(context.route);
       if (callbacks && callbacks.length > 0) {
         fireCallbacks(callbacks, context, result.response);
       }
@@ -186,9 +211,7 @@ function validateSecurity(
   globalSecurity?: string[][],
 ): Schmock.PluginResult | undefined {
   // Determine applicable security: operation-level overrides global
-  const routeSecurity = context.route["openapi:security"] as
-    | string[][]
-    | undefined;
+  const routeSecurity = getRouteSecurity(context.route);
   const security = routeSecurity ?? globalSecurity;
 
   // No security requirements
@@ -297,9 +320,7 @@ function processContentNegotiation(
   const accept = context.headers.accept ?? context.headers.Accept;
   if (!accept || accept === "*/*") return undefined;
 
-  const responses = context.route["openapi:responses"] as
-    | Map<number, ParsedResponseEntry>
-    | undefined;
+  const responses = getRouteResponses(context.route);
   if (!responses) return undefined;
 
   // Collect all available content types across responses
@@ -347,9 +368,7 @@ function processPreferHeader(
   }
 
   const prefer = parsePreferHeader(preferValue);
-  const responses = context.route["openapi:responses"] as
-    | Map<number, ParsedResponseEntry>
-    | undefined;
+  const responses = getRouteResponses(context.route);
 
   if (!responses) {
     return { context, response };
@@ -400,9 +419,7 @@ const ajv = new Ajv({ allErrors: true });
 function validateRequestBody(
   context: Schmock.PluginContext,
 ): Schmock.PluginResult | undefined {
-  const requestBodySchema = context.route["openapi:requestBody"] as
-    | JSONSchema7
-    | undefined;
+  const requestBodySchema = getRouteRequestBody(context.route);
 
   if (!requestBodySchema || context.body === undefined) {
     return undefined;
