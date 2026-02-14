@@ -79,9 +79,8 @@ After generating the package, these files need updating:
 
 1. **Root `tsconfig.json`** — Add path alias: `"@schmock/<name>": ["packages/<name>/src"]`
 2. **Root `package.json`** — Add to `build` and `typecheck` scripts
-3. **`.release-please-manifest.json`** — Add `"packages/<name>": "1.0.0"`
 
-The generate script handles all of this automatically.
+The generate script handles tsconfig registration automatically.
 
 ## Conventions
 

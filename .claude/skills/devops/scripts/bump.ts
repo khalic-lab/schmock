@@ -21,7 +21,6 @@ if (!level || !["patch", "minor", "major"].includes(level)) {
 
 const root = join(import.meta.dir, "../../../..");
 const packagesDir = join(root, "packages");
-const manifestPath = join(root, ".release-please-manifest.json");
 
 function bumpVersion(version: string, level: string): string {
   const [major, minor, patch] = version.split(".").map(Number);
@@ -36,11 +35,6 @@ function bumpVersion(version: string, level: string): string {
       throw new Error(`Unknown level: ${level}`);
   }
 }
-
-// Read manifest
-const manifest: Record<string, string> = JSON.parse(
-  readFileSync(manifestPath, "utf-8"),
-);
 
 // Process each package
 const packages = readdirSync(packagesDir, { withFileTypes: true })
@@ -60,11 +54,6 @@ for (const pkg of packages) {
 
   pkgJson.version = newVersion;
   writeFileSync(pkgJsonPath, `${JSON.stringify(pkgJson, null, 2)}\n`);
-
-  const manifestKey = `packages/${pkg}`;
-  if (manifestKey in manifest) {
-    manifest[manifestKey] = newVersion;
-  }
 
   versionMap.set(pkgJson.name, newVersion);
   results.push({ name: pkgJson.name, from: oldVersion, to: newVersion });
@@ -105,9 +94,6 @@ for (const pkg of packages) {
   }
 }
 
-// Write manifest
-writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-
 // Print results
 console.log(`Bumped ${level} versions:\n`);
 console.log("Package                  Before    After");
@@ -117,10 +103,8 @@ for (const r of results) {
   const from = r.from.padEnd(8);
   console.log(`${name}  ${from}  ${r.to}`);
 }
-console.log("");
-console.log("Updated .release-please-manifest.json");
 if (depsUpdated > 0) {
   console.log(
-    `Synced ${depsUpdated} cross-package @schmock/* dependency range(s)`,
+    `\nSynced ${depsUpdated} cross-package @schmock/* dependency range(s)`,
   );
 }
