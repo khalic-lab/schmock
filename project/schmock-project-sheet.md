@@ -12,55 +12,55 @@ A lightweight, framework-agnostic tool that provides immediate callable mock API
 - **Framework agnostic**: Works everywhere JavaScript runs
 - **Type safe**: First-class TypeScript support with ambient types
 
-## Current Architecture (v1.7.x)
+## Architecture
 
 ### Packages
 
-| Package | Version | Description |
-|---------|---------|-------------|
-| `@schmock/core` | 1.7.0 | Core callable API with plugin pipeline |
-| `@schmock/faker` | 1.7.0 | Faker-powered automatic data generation plugin |
-| `@schmock/express` | 1.7.0 | Express middleware adapter |
-| `@schmock/angular` | 1.7.0 | Angular HTTP interceptor adapter |
-| `@schmock/validation` | 1.7.0 | Request/response JSON Schema validation plugin |
-| `@schmock/query` | 1.7.0 | Pagination, filtering, sorting plugin |
-| `@schmock/openapi` | 1.7.0 | OpenAPI/Swagger auto-mock generation plugin |
-| `@schmock/cli` | 1.7.0 | Standalone CLI server from OpenAPI specs |
+| Package | Description |
+|---------|-------------|
+| `@schmock/core` | Core callable API with plugin pipeline |
+| `@schmock/faker` | Faker-powered automatic data generation plugin |
+| `@schmock/express` | Express middleware adapter |
+| `@schmock/angular` | Angular HTTP interceptor adapter |
+| `@schmock/validation` | Request/response JSON Schema validation plugin |
+| `@schmock/query` | Pagination, filtering, sorting plugin |
+| `@schmock/openapi` | OpenAPI/Swagger auto-mock generation plugin |
+| `@schmock/cli` | Standalone CLI server from OpenAPI specs |
 
 ### Package Structure
 ```
 schmock/
 ├── packages/
 │   ├── core/           # Core callable API with plugin pipeline
-│   ├── schema/         # JSON Schema generation plugin
+│   ├── faker/          # Faker-powered data generation plugin
 │   ├── express/        # Express middleware adapter
 │   ├── angular/        # Angular HTTP interceptor adapter
 │   ├── validation/     # Request/response validation plugin
 │   ├── query/          # Pagination, filtering, sorting plugin
-│   └── openapi/        # OpenAPI/Swagger auto-mock generation plugin
+│   ├── openapi/        # OpenAPI/Swagger auto-mock generation plugin
+│   └── cli/            # Standalone CLI server
 ├── features/           # BDD test specifications
-├── types/              # Shared TypeScript ambient types
 ├── docs/               # API documentation
 └── benchmarks/         # Performance benchmarks
 ```
 
 ## Development Status
 
-### Phase 1 — Complete (v1.0.x)
+### Phase 1 — Complete
 - **Core callable API**: Direct mock instance creation and usage
 - **Plugin pipeline**: `.pipe()` chaining architecture
 - **Route handling**: All HTTP methods with path parameters
 - **State management**: Shared mutable state between requests
 - **Express adapter**: Full middleware integration
 - **Angular adapter**: HTTP interceptor implementation
-- **Schema plugin**: JSON Schema-based data generation with faker.js
+- **Faker plugin**: JSON Schema-based data generation with faker.js
 - **TypeScript support**: Full type safety with ambient types
 - **BDD testing**: Comprehensive test coverage with vitest-cucumber
 - **CI/CD**: GitHub Actions workflows
 - **Monorepo setup**: Bun workspaces with proper dependencies
 - **Developer experience**: Debug mode, auto content-type detection, delay simulation
 
-### Phase 2 — Complete (v1.2.x)
+### Phase 2 — Complete
 All critical gaps addressed for production readiness:
 
 #### 2.1 Request Spy / History API
@@ -99,7 +99,7 @@ Baseline metrics and monitoring:
 - Tree-shaking verification
 - Documented baseline metrics
 
-### Phase 3 — Complete (v1.1.x)
+### Phase 3 — Complete
 **North Star achieved**: throw a `swagger.json` at Schmock and let it manage the rest.
 
 #### 3.1 OpenAPI Plugin
@@ -114,12 +114,10 @@ Full OpenAPI/Swagger auto-mock generation:
 - One-liner: `schmock.pipe(openapi({ spec: './swagger.json', seedData }))`
 - Stress tested with Petstore, Train Travel, Scalar Galaxy, and Stripe (5.8MB, 415 endpoints)
 
-#### 3.2 Supporting Features
-Deferred to Phase 4:
-- **Network error simulation**: Timeouts, connection refused (beyond HTTP error codes)
-- **Sequence responses**: Declarative successive response patterns
-- **Caching plugin**: Response caching with TTL
-- **Persistence plugin**: Data persistence across sessions
+#### 3.2 Standalone Server & CLI
+- `.listen(port?, hostname?)` for running as HTTP server
+- `@schmock/cli` for starting a mock server from the command line
+- Seed file support for realistic initial data
 
 ### Phase 4 — Future
 - **Network error simulation**: Timeouts, connection refused (beyond HTTP error codes)
@@ -129,7 +127,6 @@ Deferred to Phase 4:
 - **GraphQL support**: Schema-driven GraphQL mocks
 - **WebSocket support**: Real-time mock endpoints
 - **Plugin marketplace**: Community plugin ecosystem
-- **CLI tools**: Project scaffolding and utilities
 - **VS Code extension**: Enhanced development experience
 
 ## Technical Highlights
