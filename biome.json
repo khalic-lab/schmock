@@ -26,7 +26,8 @@
       },
       "suspicious": {
         "noExplicitAny": "off",
-        "noEvolvingTypes": "warn"
+        "noEvolvingTypes": "warn",
+        "noImportCycles": "warn"
       },
       "correctness": {
         "noUnusedPrivateClassMembers": "warn",
@@ -35,8 +36,7 @@
       "nursery": {
         "noFloatingPromises": "warn",
         "noMisusedPromises": "warn",
-        "noShadow": "warn",
-        "noImportCycles": "warn"
+        "noShadow": "warn"
       }
     }
   },
