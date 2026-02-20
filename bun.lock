@@ -24,7 +24,7 @@
     },
     "packages/angular": {
       "name": "@schmock/angular",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "devDependencies": {
         "@angular/common": "^21.1.5",
         "@angular/compiler": "^21.1.5",
@@ -34,18 +34,18 @@
         "@types/node": "^25.2.3",
         "typescript": "^5.9.3",
         "vitest": "^4.0.18",
-        "zone.js": "^0.16.0",
+        "zone.js": "^0.16.1",
       },
       "peerDependencies": {
         "@angular/common": ">=15.0.0 <22.0.0",
         "@angular/core": ">=15.0.0 <22.0.0",
-        "@schmock/core": "^1.9.0",
+        "@schmock/core": "^1.9.1",
         "rxjs": "^7.0.0",
       },
     },
     "packages/cli": {
       "name": "@schmock/cli",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "bin": {
         "schmock": "./dist/index.js",
       },
@@ -61,7 +61,7 @@
     },
     "packages/core": {
       "name": "@schmock/core",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.2.0",
         "@types/node": "^25.2.3",
@@ -71,7 +71,7 @@
     },
     "packages/express": {
       "name": "@schmock/express",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.2.0",
         "@types/express": "^5.0.6",
@@ -86,7 +86,7 @@
     },
     "packages/faker": {
       "name": "@schmock/faker",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "dependencies": {
         "@faker-js/faker": "^10.3.0",
         "json-schema-faker": "^0.5.6",
@@ -103,7 +103,7 @@
     },
     "packages/openapi": {
       "name": "@schmock/openapi",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "dependencies": {
         "@apidevtools/swagger-parser": "^12.0.0",
         "@schmock/faker": "^1.9.0",
@@ -122,7 +122,7 @@
     },
     "packages/query": {
       "name": "@schmock/query",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.2.0",
         "@types/node": "^25.2.3",
@@ -134,7 +134,7 @@
     },
     "packages/validation": {
       "name": "@schmock/validation",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "dependencies": {
         "ajv": "^8.18.0",
       },
@@ -1118,7 +1118,7 @@
 
     "zod": ["zod@4.3.6", "", {}, "sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg=="],
 
-    "zone.js": ["zone.js@0.16.0", "", {}, "sha512-LqLPpIQANebrlxY6jKcYKdgN5DTXyyHAKnnWWjE5pPfEQ4n7j5zn7mOEEpwNZVKGqx3kKKmvplEmoBrvpgROTA=="],
+    "zone.js": ["zone.js@0.16.1", "", {}, "sha512-dpvY17vxYIW3+bNrP0ClUlaiY0CiIRK3tnoLaGoQsQcY9/I/NpzIWQ7tQNhbV7LacQMpCII6wVzuL3tuWOyfuA=="],
 
     "@apidevtools/swagger-parser/ajv": ["ajv@8.17.1", "", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha512-B/gBuNg5SiMTrPkC+A2+cW0RszwxYmn6VYxB/inlBStS5nx6xHIt/ehKRhIMhqusl7a8LjQoZnjCs5vhwxOQ1g=="],
 
