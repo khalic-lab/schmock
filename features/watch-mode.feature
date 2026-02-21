@@ -9,6 +9,7 @@ Feature: Watch Mode
     When the spec file is updated to include a new route
     And the server is reloaded
     Then the reloaded server is listening
+    And the new route responds successfully
 
   Scenario: Reload preserves the port
     Given a temp spec file with one route

@@ -533,18 +533,18 @@ describeFeature(feature, ({ Scenario }) => {
       responses = await Promise.all(promises);
     });
 
-    Then("the cache should maintain its size limit", () => {
+    Then("no response should report a cache size above 5", () => {
       responses.forEach(response => {
         expect((response.body as CacheResponseBody).cacheSize).toBeLessThanOrEqual(5);
       });
     });
 
-    And("old items should be evicted properly", () => {
+    And("the final cache size should be 5", () => {
       const finalCacheSize = Math.max(...responses.map(r => (r.body as CacheResponseBody).cacheSize));
       expect(finalCacheSize).toBe(5);
     });
 
-    And("cache size should remain consistent", () => {
+    And("each response should confirm the item was cached", () => {
       responses.forEach(response => {
         const body = response.body as CacheResponseBody;
         expect(body.cached).toBe(true);
@@ -617,7 +617,7 @@ describeFeature(feature, ({ Scenario }) => {
       expect(activityUpdates).toHaveLength(3);
     });
 
-    And("no cross-contamination should occur between user data", () => {
+    And("user 1 should have 4 updates and user 2 should have 2", () => {
       const user1Updates = responses.filter(r => (r.body as ProfileResponseBody).userId === "1");
       const user2Updates = responses.filter(r => (r.body as ProfileResponseBody).userId === "2");
 
@@ -625,13 +625,7 @@ describeFeature(feature, ({ Scenario }) => {
       expect(user2Updates).toHaveLength(2); // profile, activity
     });
 
-    And("nested state structure should remain intact", () => {
-      responses.forEach(response => {
-        const body = response.body as ProfileResponseBody;
-        expect(body.userId).toBeDefined();
-        expect(["1", "2"]).toContain(body.userId);
-      });
-
+    And("user 1 activity count should be 2", () => {
       const activityUpdates = responses.filter(r => (r.body as ProfileResponseBody).activityCount);
       const user1Activities = activityUpdates.filter(r => (r.body as ProfileResponseBody).userId === "1");
       expect(user1Activities.length).toBe(2);
@@ -733,7 +727,7 @@ describeFeature(feature, ({ Scenario }) => {
       }
     });
 
-    And("transaction history should be consistent", () => {
+    And("the transaction count should match the number of successful transactions", () => {
       const successfulTransactions = responses.filter(r => (r.body as TransactionResponseBody).success === true);
       if (successfulTransactions.length > 0) {
         const transactionCounts = successfulTransactions.map(r => (r.body as TransactionResponseBody).transactionCount);

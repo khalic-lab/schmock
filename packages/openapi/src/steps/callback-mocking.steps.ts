@@ -156,9 +156,8 @@ describeFeature(feature, ({ Scenario }) => {
       });
     });
 
-    Then("no error is raised", () => {
-      // Should not throw, and status should not be 500
-      expect(response.status).not.toBe(500);
+    Then("the response status is 200", () => {
+      expect(response.status).toBe(200);
     });
   });
 });

@@ -28,7 +28,7 @@ import {
 
 const feature = await loadFeature("../../features/angular-adapter.feature");
 
-describeFeature(feature, ({ Scenario }) => {
+describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   let mock: CallableMockInstance;
   let response: HttpResponse<any> | null = null;
   let errorResponse: HttpErrorResponse | null = null;
@@ -77,84 +77,33 @@ describeFeature(feature, ({ Scenario }) => {
 
   // Error Status Handling Scenarios
 
-  Scenario(
-    "Auto-convert 404 status to HttpErrorResponse",
-    ({ Given, When, Then, And }) => {
-      Given("I create an Angular mock with:", () => {
-        resetState();
-        mock("GET /api/users/999", [404, { message: "User not found" }]);
-      });
-
-      When(
-        "I make an Angular request to {string}",
-        async (_, request: string) => {
-          const [method, path] = request.split(" ");
-          await makeRequest(method, path);
+  ScenarioOutline(
+    "Auto-convert error status to HttpErrorResponse",
+    ({ Given, When, Then, And }, variables) => {
+      Given(
+        "I create an Angular error mock for {string} with status {string}",
+        () => {
+          resetState();
+          const [method, path] = variables.route.split(" ");
+          const status = Number(variables.status);
+          mock(`${method} ${path}` as any, [
+            status,
+            { error: `Error ${status}` },
+          ]);
         },
       );
+
+      When("I make an Angular request to {string}", async () => {
+        const [method, path] = variables.route.split(" ");
+        await makeRequest(method, path);
+      });
 
       Then("the response should be an HttpErrorResponse", () => {
         expect(errorResponse).toBeInstanceOf(HttpErrorResponse);
       });
 
-      And("the error status should be {int}", (_, status: number) => {
-        expect(errorResponse?.status).toBe(status);
-      });
-
-      And("the error body should contain {string}", (_, text: string) => {
-        expect(JSON.stringify(errorResponse?.error)).toContain(text);
-      });
-    },
-  );
-
-  Scenario(
-    "Auto-convert 400 status to HttpErrorResponse",
-    ({ Given, When, Then, And }) => {
-      Given("I create an Angular mock with:", () => {
-        resetState();
-        mock("GET /api/invalid", [400, { error: "Bad request" }]);
-      });
-
-      When(
-        "I make an Angular request to {string}",
-        async (_, request: string) => {
-          const [method, path] = request.split(" ");
-          await makeRequest(method, path);
-        },
-      );
-
-      Then("the response should be an HttpErrorResponse", () => {
-        expect(errorResponse).toBeInstanceOf(HttpErrorResponse);
-      });
-
-      And("the error status should be {int}", (_, status: number) => {
-        expect(errorResponse?.status).toBe(status);
-      });
-    },
-  );
-
-  Scenario(
-    "Auto-convert 500 status to HttpErrorResponse",
-    ({ Given, When, Then, And }) => {
-      Given("I create an Angular mock with:", () => {
-        resetState();
-        mock("GET /api/error", [500, { error: "Internal server error" }]);
-      });
-
-      When(
-        "I make an Angular request to {string}",
-        async (_, request: string) => {
-          const [method, path] = request.split(" ");
-          await makeRequest(method, path);
-        },
-      );
-
-      Then("the response should be an HttpErrorResponse", () => {
-        expect(errorResponse).toBeInstanceOf(HttpErrorResponse);
-      });
-
-      And("the error status should be {int}", (_, status: number) => {
-        expect(errorResponse?.status).toBe(status);
+      And("the error status should be {string}", () => {
+        expect(errorResponse?.status).toBe(Number(variables.status));
       });
     },
   );
@@ -285,6 +234,10 @@ describeFeature(feature, ({ Scenario }) => {
     And("the error status should be {int}", (_, status: number) => {
       expect(errorResponse?.status).toBe(status);
     });
+
+    And("the error body should contain {string}", (_, text: string) => {
+      expect(JSON.stringify(errorResponse?.error)).toContain(text);
+    });
   });
 
   Scenario("Use forbidden helper", ({ Given, When, Then, And }) => {
@@ -308,6 +261,10 @@ describeFeature(feature, ({ Scenario }) => {
     And("the error status should be {int}", (_, status: number) => {
       expect(errorResponse?.status).toBe(status);
     });
+
+    And("the error body should contain {string}", (_, text: string) => {
+      expect(JSON.stringify(errorResponse?.error)).toContain(text);
+    });
   });
 
   Scenario("Use serverError helper", ({ Given, When, Then, And }) => {
@@ -330,6 +287,10 @@ describeFeature(feature, ({ Scenario }) => {
 
     And("the error status should be {int}", (_, status: number) => {
       expect(errorResponse?.status).toBe(status);
+    });
+
+    And("the error body should contain {string}", (_, text: string) => {
+      expect(JSON.stringify(errorResponse?.error)).toContain(text);
     });
   });
 
@@ -423,36 +384,6 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   // Adapter Configuration Options Scenarios
-
-  Scenario(
-    "Use baseUrl to filter intercepted requests",
-    ({ Given, When, Then, And }) => {
-      Given(
-        "I create an Angular mock with baseUrl {string}:",
-        (_, baseUrl: string) => {
-          resetState();
-          interceptorOptions = { baseUrl };
-          mock("GET /api/users", [200, { users: [] }]);
-        },
-      );
-
-      When(
-        "I make an Angular request to {string}",
-        async (_, request: string) => {
-          const [method, path] = request.split(" ");
-          await makeRequest(method, path);
-        },
-      );
-
-      Then("the response should be an HttpResponse", () => {
-        expect(response).toBeInstanceOf(HttpResponse);
-      });
-
-      And("the status should be {int}", (_, status: number) => {
-        expect(response?.status).toBe(status);
-      });
-    },
-  );
 
   Scenario(
     "Requests outside baseUrl are passed through",

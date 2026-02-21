@@ -52,6 +52,6 @@ Feature: Plugin Pipeline Integration
   Scenario: Schema plugin in pipeline
     Given I create a mock with a metadata wrapper plugin
     When I request "GET /users"
-    Then the response should have a "users" array
-    And the response should have a "count" field
+    Then the response should have a "users" array with 2 items
+    And the response should have "count" equal to 2
     And the response should have a "generated_at" timestamp
