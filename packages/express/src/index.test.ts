@@ -406,7 +406,7 @@ describe("toExpress", () => {
       expect(res.set).toHaveBeenCalledTimes(1);
     });
 
-    it("transforms undefined header values to empty string", async () => {
+    it("drops undefined header values", async () => {
       const mock = createMock(() =>
         Promise.resolve({ status: 200, body: "ok", headers: {} }),
       );
@@ -422,7 +422,7 @@ describe("toExpress", () => {
         "GET",
         "/",
         expect.objectContaining({
-          headers: { "x-missing": "" },
+          headers: {},
         }),
       );
     });

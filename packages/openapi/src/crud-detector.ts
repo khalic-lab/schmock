@@ -127,11 +127,11 @@ function buildResource(
         }
 
         // Capture list operation metadata
-        const meta = buildOperationMeta(p, "list");
+        const meta = buildOperationMeta(p);
         operationMeta.set("list", meta);
       } else if (p.method === "POST") {
         operations.push("create");
-        const meta = buildOperationMeta(p, "create");
+        const meta = buildOperationMeta(p);
         operationMeta.set("create", meta);
       }
     } else if (isItem) {
@@ -150,17 +150,17 @@ function buildResource(
         if (p.method === "GET") {
           operations.push("read");
           schema = schema ?? getSuccessResponseSchema(p);
-          const meta = buildOperationMeta(p, "read");
+          const meta = buildOperationMeta(p);
           operationMeta.set("read", meta);
         } else if (p.method === "PUT" || p.method === "PATCH") {
           if (!operations.includes("update")) {
             operations.push("update");
-            const meta = buildOperationMeta(p, "update");
+            const meta = buildOperationMeta(p);
             operationMeta.set("update", meta);
           }
         } else if (p.method === "DELETE") {
           operations.push("delete");
-          const meta = buildOperationMeta(p, "delete");
+          const meta = buildOperationMeta(p);
           operationMeta.set("delete", meta);
         }
       }
@@ -203,10 +203,7 @@ function buildResource(
   };
 }
 
-function buildOperationMeta(
-  p: ParsedPath,
-  _operation: CrudOperation,
-): Schmock.CrudOperationMeta {
+function buildOperationMeta(p: ParsedPath): Schmock.CrudOperationMeta {
   const meta: Schmock.CrudOperationMeta = {};
 
   // Capture full success response schema

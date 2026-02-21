@@ -1,6 +1,6 @@
 import type { Server } from "node:http";
 import { createServer } from "node:http";
-import { toHttpMethod } from "./constants.js";
+import { normalizePath, toHttpMethod } from "./constants.js";
 import {
   errorMessage,
   RouteDefinitionError,
@@ -153,11 +153,7 @@ export class CallableMockInstance {
     // Store static routes (no params) in Map for O(1) lookup
     // Only store the first registration — "first registration wins" semantics
     if (parsed.params.length === 0) {
-      const normalizedPath =
-        parsed.path.endsWith("/") && parsed.path !== "/"
-          ? parsed.path.slice(0, -1)
-          : parsed.path;
-      const key = `${parsed.method} ${normalizedPath}`;
+      const key = `${parsed.method} ${normalizePath(parsed.path)}`;
       if (!this.staticRoutes.has(key)) {
         this.staticRoutes.set(key, compiledRoute);
       }
@@ -197,27 +193,27 @@ export class CallableMockInstance {
   // ===== Request Spy / History API =====
 
   history(method?: Schmock.HttpMethod, path?: string): Schmock.RequestRecord[] {
-    if (method && path) {
+    if (method || path) {
       return this.requestHistory.filter(
-        (r) => r.method === method && r.path === path,
+        (r) => (!method || r.method === method) && (!path || r.path === path),
       );
     }
     return [...this.requestHistory];
   }
 
   called(method?: Schmock.HttpMethod, path?: string): boolean {
-    if (method && path) {
+    if (method || path) {
       return this.requestHistory.some(
-        (r) => r.method === method && r.path === path,
+        (r) => (!method || r.method === method) && (!path || r.path === path),
       );
     }
     return this.requestHistory.length > 0;
   }
 
   callCount(method?: Schmock.HttpMethod, path?: string): number {
-    if (method && path) {
+    if (method || path) {
       return this.requestHistory.filter(
-        (r) => r.method === method && r.path === path,
+        (r) => (!method || r.method === method) && (!path || r.path === path),
       ).length;
     }
     return this.requestHistory.length;
@@ -227,9 +223,9 @@ export class CallableMockInstance {
     method?: Schmock.HttpMethod,
     path?: string,
   ): Schmock.RequestRecord | undefined {
-    if (method && path) {
+    if (method || path) {
       const filtered = this.requestHistory.filter(
-        (r) => r.method === method && r.path === path,
+        (r) => (!method || r.method === method) && (!path || r.path === path),
       );
       return filtered[filtered.length - 1];
     }
@@ -247,7 +243,7 @@ export class CallableMockInstance {
   }
 
   getState(): Record<string, unknown> {
-    return this.globalConfig.state || {};
+    return { ...(this.globalConfig.state || {}) };
   }
 
   // ===== Lifecycle Events =====
@@ -324,19 +320,33 @@ export class CallableMockInstance {
     }
 
     const httpServer = createServer((req, res) => {
-      const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-      const method = toHttpMethod(req.method ?? "GET");
-      const path = url.pathname;
-      const headers = parseNodeHeaders(req);
-      const query = parseNodeQuery(url);
+      const handleRequest = async () => {
+        const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+        const method = toHttpMethod(req.method ?? "GET");
+        const path = url.pathname;
+        const headers = parseNodeHeaders(req);
+        const query = parseNodeQuery(url);
+        const body = await collectBody(req, headers);
+        const schmockResponse = await this.handle(method, path, {
+          headers,
+          body,
+          query,
+        });
+        writeSchmockResponse(res, schmockResponse);
+      };
 
-      void collectBody(req, headers).then((body) =>
-        this.handle(method, path, { headers, body, query }).then(
-          (schmockResponse) => {
-            writeSchmockResponse(res, schmockResponse);
-          },
-        ),
-      );
+      handleRequest().catch((error) => {
+        if (!res.headersSent) {
+          res.writeHead(500, { "content-type": "application/json" });
+        }
+        res.end(
+          JSON.stringify({
+            error:
+              error instanceof Error ? error.message : "Internal Server Error",
+            code: "SERVER_ERROR",
+          }),
+        );
+      });
     });
 
     this.server = httpServer;
@@ -369,11 +379,13 @@ export class CallableMockInstance {
     path: string,
     options?: Schmock.RequestOptions,
   ): Promise<Schmock.Response> {
-    const requestId = crypto.randomUUID();
     const handleStart = performance.now();
+    const requestId = this.globalConfig.debug ? crypto.randomUUID() : "";
+    const reqQuery = options?.query || {};
+    const reqHeaders = options?.headers || {};
     this.logger.log("request", `[${requestId}] ${method} ${path}`, {
-      headers: options?.headers,
-      query: options?.query,
+      headers: reqHeaders,
+      query: reqQuery,
       bodyType: options?.body ? typeof options.body : "none",
     });
     this.logger.time(`request-${requestId}`);
@@ -381,7 +393,7 @@ export class CallableMockInstance {
     this.emit("request:start", {
       method,
       path,
-      headers: options?.headers || {},
+      headers: reqHeaders,
     });
 
     try {
@@ -414,6 +426,12 @@ export class CallableMockInstance {
             body: { error: error.message, code: error.code },
             headers: {},
           };
+          this.emit("request:end", {
+            method,
+            path,
+            status: 404,
+            duration: performance.now() - handleStart,
+          });
           this.logger.timeEnd(`request-${requestId}`);
           return response;
         }
@@ -473,8 +491,8 @@ export class CallableMockInstance {
         method,
         path: requestPath,
         params,
-        query: options?.query || {},
-        headers: options?.headers || {},
+        query: reqQuery,
+        headers: reqHeaders,
         body: options?.body,
         state: this.globalConfig.state || {},
       };
@@ -492,8 +510,8 @@ export class CallableMockInstance {
         route: matchedRoute.config,
         method,
         params,
-        query: options?.query || {},
-        headers: options?.headers || {},
+        query: reqQuery,
+        headers: reqHeaders,
         body: options?.body,
         state: new Map(),
         routeState: this.globalConfig.state || {},
@@ -528,8 +546,8 @@ export class CallableMockInstance {
         method,
         path: requestPath,
         params,
-        query: options?.query || {},
-        headers: options?.headers || {},
+        query: reqQuery,
+        headers: reqHeaders,
         body: options?.body,
         timestamp: Date.now(),
         response: { status: response.status, body: response.body },
@@ -574,6 +592,13 @@ export class CallableMockInstance {
 
       // Apply delay even for error responses
       await this.applyDelay();
+
+      this.emit("request:end", {
+        method,
+        path,
+        status: 500,
+        duration: performance.now() - handleStart,
+      });
 
       this.logger.log("error", `[${requestId}] Returning error response 500`);
       this.logger.timeEnd(`request-${requestId}`);

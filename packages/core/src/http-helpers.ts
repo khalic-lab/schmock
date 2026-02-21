@@ -25,18 +25,40 @@ export function parseNodeQuery(url: URL): Record<string, string> {
   return query;
 }
 
+/** Default body size limit: 10 MB */
+const DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024;
+
 /**
  * Collect and parse the request body from a Node.js IncomingMessage.
  * Returns parsed JSON if content-type includes "json", otherwise the raw string.
  * Returns undefined for empty bodies.
+ * @param req - Node.js IncomingMessage
+ * @param headers - Parsed request headers
+ * @param maxBodySize - Maximum body size in bytes (default: 10 MB)
  */
 export function collectBody(
   req: IncomingMessage,
   headers: Record<string, string>,
+  maxBodySize = DEFAULT_MAX_BODY_SIZE,
 ): Promise<unknown> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    let totalSize = 0;
+
+    req.on("error", reject);
+
+    req.on("data", (chunk: Buffer) => {
+      totalSize += chunk.length;
+      if (totalSize > maxBodySize) {
+        req.destroy();
+        reject(
+          Object.assign(new Error("Request body too large"), { status: 413 }),
+        );
+        return;
+      }
+      chunks.push(chunk);
+    });
+
     req.on("end", () => {
       const raw = Buffer.concat(chunks).toString();
       if (!raw) {

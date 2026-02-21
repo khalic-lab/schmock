@@ -182,6 +182,7 @@ export function processContentNegotiation(
 }
 
 const ajv = new Ajv({ allErrors: true });
+const schemaCache = new WeakMap<object, import("ajv").ValidateFunction>();
 
 /**
  * Validate request body against the spec's requestBody schema.
@@ -196,7 +197,11 @@ export function validateRequestBody(
     return undefined;
   }
 
-  const validate = ajv.compile(requestBodySchema);
+  let validate = schemaCache.get(requestBodySchema);
+  if (!validate) {
+    validate = ajv.compile(requestBodySchema);
+    schemaCache.set(requestBodySchema, validate);
+  }
   if (!validate(context.body)) {
     const errors =
       validate.errors?.map((e) => ({
