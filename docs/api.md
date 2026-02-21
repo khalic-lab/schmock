@@ -734,16 +734,24 @@ function validationPlugin(options: ValidationPluginOptions): Plugin
 
 ```typescript
 interface ValidationPluginOptions {
-  requestBody?: JSONSchema7;      // Validate request body
-  requestQuery?: JSONSchema7;     // Validate query parameters
-  requestHeaders?: JSONSchema7;   // Validate request headers
-  responseBody?: JSONSchema7;     // Validate response body
+  request?: {
+    body?: JSONSchema7;       // Validate request body
+    query?: JSONSchema7;      // Validate query parameters
+    headers?: JSONSchema7;    // Validate request headers
+  };
+  response?: {
+    body?: JSONSchema7;       // Validate response body
+  };
+  /** Custom status code for request validation failures (default: 400) */
+  requestErrorStatus?: number;
+  /** Custom status code for response validation failures (default: 500) */
+  responseErrorStatus?: number;
 }
 ```
 
 **Behavior**:
-- Returns `400 Bad Request` for invalid request data
-- Returns `500 Internal Server Error` for invalid response data
+- Returns `400 Bad Request` (or custom `requestErrorStatus`) for invalid request data
+- Returns `500 Internal Server Error` (or custom `responseErrorStatus`) for invalid response data
 - Validation errors include detailed AJV error messages
 
 **Example**:
@@ -757,21 +765,25 @@ mock('POST /users', ({ body, state }) => {
   return [201, body];
 }, { contentType: 'application/json' })
   .pipe(validationPlugin({
-    requestBody: {
-      type: 'object',
-      required: ['name', 'email'],
-      properties: {
-        name: { type: 'string', minLength: 1 },
-        email: { type: 'string', format: 'email' }
+    request: {
+      body: {
+        type: 'object',
+        required: ['name', 'email'],
+        properties: {
+          name: { type: 'string', minLength: 1 },
+          email: { type: 'string', format: 'email' }
+        }
       }
     },
-    responseBody: {
-      type: 'object',
-      required: ['id', 'name', 'email'],
-      properties: {
-        id: { type: 'integer' },
-        name: { type: 'string' },
-        email: { type: 'string' }
+    response: {
+      body: {
+        type: 'object',
+        required: ['id', 'name', 'email'],
+        properties: {
+          id: { type: 'integer' },
+          name: { type: 'string' },
+          email: { type: 'string' }
+        }
       }
     }
   }));
@@ -799,17 +811,35 @@ function queryPlugin(options?: QueryPluginOptions): Plugin
 
 ```typescript
 interface QueryPluginOptions {
-  pagination?: boolean;     // Enable pagination (?page=1&limit=10) — default: true
-  sorting?: boolean;        // Enable sorting (?sort=name) — default: true
-  filtering?: boolean;      // Enable filtering (?filter[role]=admin) — default: true
-  defaultLimit?: number;    // Default items per page — default: 10
-  maxLimit?: number;        // Maximum items per page — default: 100
+  pagination?: PaginationOptions;
+  sorting?: SortingOptions;
+  filtering?: FilteringOptions;
+}
+
+interface PaginationOptions {
+  defaultLimit?: number;    // Default items per page (default: 10)
+  maxLimit?: number;        // Maximum items per page (default: 100)
+  pageParam?: string;       // Query param name for page (default: "page")
+  limitParam?: string;      // Query param name for limit (default: "limit")
+}
+
+interface SortingOptions {
+  allowed: string[];        // Fields allowed for sorting (required)
+  default?: string;         // Default sort field
+  defaultOrder?: 'asc' | 'desc';  // Default sort order (default: "asc")
+  sortParam?: string;       // Query param name for sort (default: "sort")
+  orderParam?: string;      // Query param name for order (default: "order")
+}
+
+interface FilteringOptions {
+  allowed: string[];        // Fields allowed for filtering (required)
+  filterPrefix?: string;    // Query param prefix (default: "filter")
 }
 ```
 
 **Query Parameters**:
 - Pagination: `?page=1&limit=10`
-- Sorting: `?sort=name` or `?sort=-name` (descending)
+- Sorting: `?sort=name&order=desc`
 - Filtering: `?filter[field]=value` (exact match)
 
 **Example**:
@@ -831,11 +861,9 @@ mock('GET /users', ({ state }) => state.users, {
   contentType: 'application/json'
 })
   .pipe(queryPlugin({
-    pagination: true,
-    sorting: true,
-    filtering: true,
-    defaultLimit: 2,
-    maxLimit: 50
+    pagination: { defaultLimit: 2, maxLimit: 50 },
+    sorting: { allowed: ['name', 'id'] },
+    filtering: { allowed: ['role'] }
   }));
 
 // Pagination

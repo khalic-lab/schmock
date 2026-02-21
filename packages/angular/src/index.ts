@@ -21,23 +21,36 @@ function toSafeHttpMethod(method: string): Schmock.HttpMethod {
   if (isHttpMethod(upper)) {
     return upper;
   }
+  console.warn(
+    `[@schmock/angular] Unknown HTTP method "${method}", defaulting to GET`,
+  );
   return "GET";
 }
+
+const statusTexts: Record<number, string> = {
+  200: "OK",
+  201: "Created",
+  204: "No Content",
+  301: "Moved Permanently",
+  302: "Found",
+  304: "Not Modified",
+  400: "Bad Request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not Found",
+  405: "Method Not Allowed",
+  409: "Conflict",
+  422: "Unprocessable Entity",
+  429: "Too Many Requests",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+};
 
 /**
  * Get HTTP status text for a status code
  */
 function getStatusText(status: number): string {
-  const statusTexts: Record<number, string> = {
-    200: "OK",
-    201: "Created",
-    204: "No Content",
-    400: "Bad Request",
-    401: "Unauthorized",
-    403: "Forbidden",
-    404: "Not Found",
-    500: "Internal Server Error",
-  };
   return statusTexts[status] || "Unknown";
 }
 
@@ -263,7 +276,7 @@ export function createSchmockInterceptor(
                 response = transformResponse(response, req);
               }
 
-              const status = response.status || 200;
+              const status = response.status ?? 200;
 
               // Auto-convert error status codes (>= 400) to HttpErrorResponse
               if (status >= 400) {

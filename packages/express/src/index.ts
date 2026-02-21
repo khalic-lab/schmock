@@ -127,10 +127,11 @@ function defaultTransformHeaders(
   headers: Request["headers"],
 ): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => [
-      key,
-      Array.isArray(value) ? value[0] : value || "",
-    ]),
+    Object.entries(headers)
+      .map(([key, value]) => [key, Array.isArray(value) ? value[0] : value])
+      .filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
   );
 }
 

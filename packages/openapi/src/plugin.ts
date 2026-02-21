@@ -1,5 +1,6 @@
 /// <reference path="../../core/schmock.d.ts" />
 
+import { version as packageVersion } from "../package.json";
 import { fireCallbacks, getRouteCallbacks } from "./callbacks.js";
 import { detectCrudResources } from "./crud-detector.js";
 import {
@@ -79,7 +80,7 @@ export async function openapi(
 
   return {
     name: "@schmock/openapi",
-    version: "1.4.0",
+    version: packageVersion,
 
     install(instance: Schmock.CallableMockInstance) {
       if (options.debug) {

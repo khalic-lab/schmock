@@ -24,6 +24,15 @@ export function toHttpMethod(method: string): HttpMethod {
   return upper;
 }
 
+export function normalizePath(path: string): string {
+  return path.endsWith("/") && path !== "/" ? path.slice(0, -1) : path;
+}
+
+export function toRouteKey(method: HttpMethod, path: string): Schmock.RouteKey {
+  const key: `${HttpMethod} ${string}` = `${method} ${path}`;
+  return key;
+}
+
 /**
  * Check if a value is a status tuple: [status, body] or [status, body, headers]
  * Guards against misinterpreting numeric arrays like [1, 2, 3] as tuples.

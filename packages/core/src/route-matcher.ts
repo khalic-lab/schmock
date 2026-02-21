@@ -1,3 +1,5 @@
+import { normalizePath } from "./constants.js";
+
 /**
  * Compiled callable route with pattern matching
  */
@@ -28,9 +30,7 @@ export function findRoute(
   routes: CompiledCallableRoute[],
 ): CompiledCallableRoute | undefined {
   // O(1) lookup for static routes
-  const normalizedPath =
-    path.endsWith("/") && path !== "/" ? path.slice(0, -1) : path;
-  const staticMatch = staticRoutes.get(`${method} ${normalizedPath}`);
+  const staticMatch = staticRoutes.get(`${method} ${normalizePath(path)}`);
   if (staticMatch) {
     return staticMatch;
   }
