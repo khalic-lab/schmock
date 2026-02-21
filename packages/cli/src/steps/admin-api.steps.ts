@@ -48,7 +48,7 @@ describeFeature(feature, ({ Scenario }) => {
       expect(response.status).toBe(200);
     });
 
-    And("the response body is an array of route objects", () => {
+    And("the response body contains at least one route with method and path", () => {
       expect(Array.isArray(response.body)).toBe(true);
       const routes = response.body as Array<{ method: string; path: string }>;
       expect(routes.length).toBeGreaterThan(0);
@@ -74,7 +74,7 @@ describeFeature(feature, ({ Scenario }) => {
       expect(response.status).toBe(200);
     });
 
-    And("the response body is a state object", () => {
+    And("the response body is a non-null object", () => {
       expect(typeof response.body).toBe("object");
       expect(response.body).not.toBeNull();
     });
@@ -119,10 +119,12 @@ describeFeature(feature, ({ Scenario }) => {
       expect(response.status).toBe(200);
     });
 
-    And("the response body is an array", () => {
+    And("the response body contains the recorded request", () => {
       expect(Array.isArray(response.body)).toBe(true);
-      const history = response.body as unknown[];
+      const history = response.body as Array<{ method: string; path: string }>;
       expect(history.length).toBeGreaterThan(0);
+      expect(history[0]).toHaveProperty("method");
+      expect(history[0]).toHaveProperty("path");
     });
   });
 

@@ -259,13 +259,14 @@ describeFeature(feature, ({ Scenario }) => {
       requestResponses = [await mock.handle(method as any, path)];
     });
 
-    Then("the response should have a {string} array", (_, property: string) => {
+    Then("the response should have a {string} array with {int} items", (_, property: string, count: number) => {
       expect(requestResponses[0].body).toHaveProperty(property);
       expect(Array.isArray(requestResponses[0].body[property])).toBe(true);
+      expect(requestResponses[0].body[property]).toHaveLength(count);
     });
 
-    And("the response should have a {string} field", (_, property: string) => {
-      expect(requestResponses[0].body).toHaveProperty(property);
+    And("the response should have {string} equal to {int}", (_, property: string, value: number) => {
+      expect(requestResponses[0].body[property]).toBe(value);
     });
 
     And(

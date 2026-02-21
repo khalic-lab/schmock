@@ -365,9 +365,8 @@ describeFeature(feature, ({ Scenario }) => {
       responses = await Promise.all(promises);
     });
 
-    Then("all responses should have different processedAt timestamps", () => {
+    Then("all responses should have valid processedAt timestamps", () => {
       const timestamps = responses.map(r => r.body.processedAt);
-      // In fast test environments, timestamps might be the same, so just check they exist
       expect(timestamps).toHaveLength(3);
       timestamps.forEach((timestamp: number) => expect(timestamp).toBeGreaterThan(0));
     });
@@ -378,8 +377,7 @@ describeFeature(feature, ({ Scenario }) => {
       expect(responses[2].body.id).toBe("3");
     });
 
-    And("the responses should complete in expected order", () => {
-      // All responses should be successful regardless of timing
+    And("all responses should complete with status 200", () => {
       for (const response of responses) {
         expect(response.status).toBe(200);
         expect(response.body).toHaveProperty("id");

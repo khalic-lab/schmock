@@ -46,16 +46,16 @@ Feature: State Management and Concurrency
   Scenario: State cleanup and memory management
     Given I create a mock with LRU cache state
     When I add items to cache beyond the size limit concurrently
-    Then the cache should maintain its size limit
-    And old items should be evicted properly
-    And cache size should remain consistent
+    Then no response should report a cache size above 5
+    And the final cache size should be 5
+    And each response should confirm the item was cached
 
   Scenario: Nested state object concurrent access
     Given I create a mock with deeply nested user state
     When I make concurrent updates to different nested state sections
     Then each nested section should be updated independently
-    And no cross-contamination should occur between user data
-    And nested state structure should remain intact
+    And user 1 should have 4 updates and user 2 should have 2
+    And user 1 activity count should be 2
 
   Scenario: State rollback on plugin errors
     Given I create a mock with an error-prone transaction plugin
@@ -63,4 +63,4 @@ Feature: State Management and Concurrency
     Then successful transactions should update state correctly
     And failed transactions should not modify state
     And final balance should reflect only successful transactions
-    And transaction history should be consistent
+    And the transaction count should match the number of successful transactions

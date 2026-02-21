@@ -16,7 +16,7 @@ Feature: Response Delay
     Given a mock with no global delay
     And a route "GET /random" with delay range 10 to 30
     When I request "GET /random"
-    Then the response took at least 10ms
+    Then the response took at least 8ms
 
   Scenario: No route delay inherits global delay
     Given a mock with global delay of 50ms

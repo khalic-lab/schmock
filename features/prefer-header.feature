@@ -16,5 +16,5 @@ Feature: Prefer Header
   Scenario: Prefer dynamic regenerates from schema
     Given a mock with an OpenAPI spec with a response schema
     When I request with Prefer header "dynamic=true"
-    Then the response body has a "name" property
-    And the response body has an "id" property
+    Then the response body "id" is a number
+    And the response body "name" is a string

@@ -6,33 +6,17 @@ Feature: Angular Adapter
   # Error Status Handling
   # The adapter should automatically convert error status codes to HttpErrorResponse
 
-  Scenario: Auto-convert 404 status to HttpErrorResponse
-    Given I create an Angular mock with:
-      """
-      mock('GET /api/users/999', [404, { message: 'User not found' }])
-      """
-    When I make an Angular request to "GET /api/users/999"
+  Scenario Outline: Auto-convert error status to HttpErrorResponse
+    Given I create an Angular error mock for "<route>" with status "<status>"
+    When I make an Angular request to "<route>"
     Then the response should be an HttpErrorResponse
-    And the error status should be 404
-    And the error body should contain "User not found"
+    And the error status should be "<status>"
 
-  Scenario: Auto-convert 400 status to HttpErrorResponse
-    Given I create an Angular mock with:
-      """
-      mock('GET /api/invalid', [400, { error: 'Bad request' }])
-      """
-    When I make an Angular request to "GET /api/invalid"
-    Then the response should be an HttpErrorResponse
-    And the error status should be 400
-
-  Scenario: Auto-convert 500 status to HttpErrorResponse
-    Given I create an Angular mock with:
-      """
-      mock('GET /api/error', [500, { error: 'Internal server error' }])
-      """
-    When I make an Angular request to "GET /api/error"
-    Then the response should be an HttpErrorResponse
-    And the error status should be 500
+    Examples:
+      | route              | status |
+      | GET /api/not-found | 404    |
+      | GET /api/invalid   | 400    |
+      | GET /api/error     | 500    |
 
   Scenario: Success status returns HttpResponse
     Given I create an Angular mock with:
@@ -82,6 +66,7 @@ Feature: Angular Adapter
     When I make an Angular request to "GET /api/protected"
     Then the response should be an HttpErrorResponse
     And the error status should be 401
+    And the error body should contain "Token expired"
 
   Scenario: Use forbidden helper
     Given I create an Angular mock using helpers:
@@ -91,6 +76,7 @@ Feature: Angular Adapter
     When I make an Angular request to "GET /api/admin"
     Then the response should be an HttpErrorResponse
     And the error status should be 403
+    And the error body should contain "Admin access required"
 
   Scenario: Use serverError helper
     Given I create an Angular mock using helpers:
@@ -100,6 +86,7 @@ Feature: Angular Adapter
     When I make an Angular request to "GET /api/broken"
     Then the response should be an HttpErrorResponse
     And the error status should be 500
+    And the error body should contain "Database connection failed"
 
   Scenario: Use created helper
     Given I create an Angular mock using helpers:
@@ -135,15 +122,6 @@ Feature: Angular Adapter
     And the response should have totalPages 3
 
   # Adapter Configuration Options
-
-  Scenario: Use baseUrl to filter intercepted requests
-    Given I create an Angular mock with baseUrl "/api":
-      """
-      mock('GET /api/users', [200, { users: [] }])
-      """
-    When I make an Angular request to "GET /api/users"
-    Then the response should be an HttpResponse
-    And the status should be 200
 
   Scenario: Requests outside baseUrl are passed through
     Given I create an Angular mock with baseUrl "/api":

@@ -58,8 +58,8 @@ describeFeature(feature, ({ Scenario }) => {
       elapsed = performance.now() - start;
     });
 
-    Then("the response took at least 10ms", () => {
-      expect(elapsed).toBeGreaterThanOrEqual(8); // small tolerance
+    Then("the response took at least 8ms", () => {
+      expect(elapsed).toBeGreaterThanOrEqual(8);
     });
   });
 
