@@ -1,3 +1,4 @@
+import type { Faker } from "@faker-js/faker";
 import { ResourceLimitError, SchemaValidationError } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import {
@@ -8,6 +9,8 @@ import {
   MAX_NESTING_DEPTH,
 } from "./constants.js";
 import { createFakerInstance } from "./jsf-config.js";
+
+let validationFaker: Faker | undefined;
 
 export function isJSONSchema7(value: unknown): value is JSONSchema7 {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -153,7 +156,7 @@ export function validateSchema(schema: JSONSchema7, path = "$"): void {
   }
 
   // Check for dangerous combination of deep nesting + large arrays
-  if (depth >= 4) {
+  if (depth >= DEEP_NESTING_THRESHOLD) {
     checkForDeepNestingWithArrays(schema, path);
   }
 
@@ -271,7 +274,7 @@ function checkForDeepNestingWithArrays(
   function findArraysInDeepNesting(
     node: JSONSchema7,
     currentDepth: number,
-  ): boolean {
+  ): void {
     const schemaType = node.type;
     const isArray = Array.isArray(schemaType)
       ? schemaType.includes("array")
@@ -296,27 +299,20 @@ function checkForDeepNestingWithArrays(
         const items = Array.isArray(node.items) ? node.items : [node.items];
         for (const item of items) {
           if (isJSONSchema7(item)) {
-            if (findArraysInDeepNesting(item, currentDepth + 1)) {
-              return true;
-            }
+            findArraysInDeepNesting(item, currentDepth + 1);
           }
         }
       }
-
-      return true;
+      return;
     }
 
     if (schemaType === "object" && node.properties) {
       for (const prop of Object.values(node.properties)) {
         if (isJSONSchema7(prop)) {
-          if (findArraysInDeepNesting(prop, currentDepth + 1)) {
-            return true;
-          }
+          findArraysInDeepNesting(prop, currentDepth + 1);
         }
       }
     }
-
-    return false;
   }
 
   findArraysInDeepNesting(schema, 0);
@@ -391,8 +387,11 @@ export function validateFakerMethod(fakerMethod: string): void {
     );
   }
 
-  // Validate by resolving the method path on a real faker instance
-  const faker = createFakerInstance();
+  // Validate by resolving the method path on a cached faker instance
+  if (!validationFaker) {
+    validationFaker = createFakerInstance();
+  }
+  const faker = validationFaker;
   let current: any = faker;
   for (const part of parts) {
     if (current && typeof current === "object" && part in current) {

@@ -5,7 +5,7 @@ import { generateFromSchema } from "@schmock/faker";
 import type { JSONSchema7 } from "json-schema";
 import type { CrudResource } from "./crud-detector.js";
 import type { ParsedPath } from "./parser.js";
-import { isRecord } from "./utils.js";
+import { isRecord, toJsonSchema } from "./utils.js";
 
 const COLLECTION_STATE_PREFIX = "openapi:collections:";
 
@@ -30,7 +30,7 @@ export function findArrayProperty(schema: JSONSchema7): ArrayPropertyInfo {
   // Case 1: flat array
   if (schema.type === "array") {
     const items = Array.isArray(schema.items) ? schema.items[0] : schema.items;
-    const itemSchema = isRecord(items) ? (items as JSONSchema7) : undefined;
+    const itemSchema = isRecord(items) ? toJsonSchema(items) : undefined;
     return { itemSchema };
   }
 
@@ -46,7 +46,7 @@ export function findArrayProperty(schema: JSONSchema7): ArrayPropertyInfo {
       if (isRecord(branch) && isRecord(branch.properties)) {
         for (const [key, value] of Object.entries(branch.properties)) {
           if (isRecord(value)) {
-            merged[key] = value as JSONSchema7;
+            merged[key] = toJsonSchema(value);
           }
         }
       }
@@ -62,7 +62,7 @@ export function findArrayProperty(schema: JSONSchema7): ArrayPropertyInfo {
     if (Array.isArray(branches) && branches.length > 0) {
       const first = branches[0];
       if (isRecord(first)) {
-        return findArrayProperty(first as JSONSchema7);
+        return findArrayProperty(toJsonSchema(first));
       }
     }
   }
@@ -75,10 +75,10 @@ function findArrayInProperties(
 ): ArrayPropertyInfo {
   for (const [key, value] of Object.entries(properties)) {
     if (!isRecord(value)) continue;
-    const prop = value as JSONSchema7;
+    const prop = toJsonSchema(value);
     if (prop.type === "array" && prop.items) {
       const items = Array.isArray(prop.items) ? prop.items[0] : prop.items;
-      const itemSchema = isRecord(items) ? (items as JSONSchema7) : undefined;
+      const itemSchema = isRecord(items) ? toJsonSchema(items) : undefined;
       return { property: key, itemSchema };
     }
   }
@@ -342,7 +342,8 @@ export function generateSeedItems(
 ): unknown[] {
   const items: unknown[] = [];
   for (let i = 0; i < count; i++) {
-    const generated = generateFromSchema({ schema, seed });
+    const iterationSeed = seed !== undefined ? seed + i : undefined;
+    const generated = generateFromSchema({ schema, seed: iterationSeed });
     const item: Record<string, unknown> = isRecord(generated)
       ? generated
       : { value: generated };
@@ -407,7 +408,8 @@ function addHeaders(
   // If already a tuple [status, body] or [status, body, headers]
   if (Array.isArray(value) && value.length >= 2) {
     const status = typeof value[0] === "number" ? value[0] : 200;
-    return [status, value[1], headers];
+    const existingHeaders = isRecord(value[2]) ? value[2] : {};
+    return [status, value[1], { ...existingHeaders, ...headers }];
   }
 
   // Plain value → [200, body, headers]

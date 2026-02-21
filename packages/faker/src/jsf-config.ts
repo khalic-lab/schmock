@@ -51,6 +51,8 @@ export function getJsf(seed?: number): typeof jsf {
   if (seed !== undefined) {
     jsf.option({ random: createSeededRandom(seed) });
     jsf.extend("faker", () => createFakerInstance(seed));
+  } else {
+    jsf.option({ random: Math.random });
   }
   return jsf;
 }

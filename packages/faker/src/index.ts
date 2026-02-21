@@ -30,7 +30,7 @@ export interface FakerPluginOptions {
 }
 
 export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
-  // Validate schema immediately when plugin is created
+  // Validate schema immediately when plugin is created (fail-fast)
   validateSchema(options.schema);
 
   return {
@@ -81,7 +81,6 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
 export function generateFromSchema(options: SchemaGenerationContext): any {
   const { schema, count, overrides, params, state, query, seed } = options;
 
-  // Validate schema
   validateSchema(schema);
 
   let generated: any;

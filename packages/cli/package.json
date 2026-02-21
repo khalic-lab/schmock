@@ -1,12 +1,12 @@
 {
   "name": "@schmock/cli",
   "description": "CLI for running Schmock mock servers from OpenAPI specs",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "schmock": "./dist/index.js"
+    "schmock": "./dist/bin.js"
   },
   "files": [
     "dist"
@@ -21,7 +21,7 @@
   },
   "scripts": {
     "build": "bun build:lib && bun build:types",
-    "build:lib": "bun build --target node --outdir=dist src/index.ts",
+    "build:lib": "bun build --target node --outdir=dist src/index.ts src/bin.ts",
     "build:types": "tsc -p tsconfig.json",
     "test": "vitest",
     "test:watch": "vitest --watch",
@@ -32,8 +32,8 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@schmock/core": "^1.9.1",
-    "@schmock/openapi": "^1.9.1"
+    "@schmock/core": "^1.9.2",
+    "@schmock/openapi": "^1.9.2"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^6.2.0",

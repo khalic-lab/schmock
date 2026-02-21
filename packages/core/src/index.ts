@@ -85,6 +85,7 @@ export {
   isStatusTuple,
   ROUTE_NOT_FOUND_CODE,
   toHttpMethod,
+  toRouteKey,
 } from "./constants.js";
 // Re-export errors
 export {
