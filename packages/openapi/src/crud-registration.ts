@@ -1,5 +1,6 @@
 /// <reference path="../../core/schmock.d.ts" />
 
+import { toRouteKey } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import type { CrudOperation, CrudResource } from "./crud-detector.js";
 import {
@@ -52,8 +53,7 @@ export function registerNonCrudRoutes(
   fakerSeed?: number,
 ): void {
   for (const parsedPath of nonCrudPaths) {
-    const routeKey =
-      `${parsedPath.method} ${parsedPath.path}` as Schmock.RouteKey;
+    const routeKey = toRouteKey(parsedPath.method, parsedPath.path);
     const config: Schmock.RouteConfig = {
       "openapi:responses": parsedPath.responses,
       "openapi:path": parsedPath.path,
@@ -78,39 +78,39 @@ function getCrudRouteEntries(
     case "list":
       return [
         {
-          routeKey: `GET ${resource.basePath}` as Schmock.RouteKey,
+          routeKey: toRouteKey("GET", resource.basePath),
           method: "GET",
         },
       ];
     case "create":
       return [
         {
-          routeKey: `POST ${resource.basePath}` as Schmock.RouteKey,
+          routeKey: toRouteKey("POST", resource.basePath),
           method: "POST",
         },
       ];
     case "read":
       return [
         {
-          routeKey: `GET ${resource.itemPath}` as Schmock.RouteKey,
+          routeKey: toRouteKey("GET", resource.itemPath),
           method: "GET",
         },
       ];
     case "update":
       return [
         {
-          routeKey: `PUT ${resource.itemPath}` as Schmock.RouteKey,
+          routeKey: toRouteKey("PUT", resource.itemPath),
           method: "PUT",
         },
         {
-          routeKey: `PATCH ${resource.itemPath}` as Schmock.RouteKey,
+          routeKey: toRouteKey("PATCH", resource.itemPath),
           method: "PATCH",
         },
       ];
     case "delete":
       return [
         {
-          routeKey: `DELETE ${resource.itemPath}` as Schmock.RouteKey,
+          routeKey: toRouteKey("DELETE", resource.itemPath),
           method: "DELETE",
         },
       ];
@@ -238,7 +238,8 @@ export function applyOverrides(
     errorSchemaMap.set(400, override.errorSchema);
     errorSchemaMap.set(409, override.errorSchema);
 
-    for (const op of ["read", "update", "delete"] as CrudOperation[]) {
+    const errorOps: CrudOperation[] = ["read", "update", "delete"];
+    for (const op of errorOps) {
       const meta = resource.operationMeta.get(op) ?? {};
       meta.errorSchemas = errorSchemaMap;
       resource.operationMeta.set(op, meta);

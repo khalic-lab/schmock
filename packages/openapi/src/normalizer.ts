@@ -48,7 +48,6 @@ function normalizeNode(
     delete node.nullable;
     // Only wrap if not already a composition with null
     const copy = { ...node };
-    delete copy.nullable;
     return {
       oneOf: [normalizeNode(copy, direction, visited), { type: "null" }],
     };

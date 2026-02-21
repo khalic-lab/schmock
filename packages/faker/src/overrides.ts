@@ -1,6 +1,8 @@
 import type { JSONSchema7 } from "json-schema";
 import { DEFAULT_ARRAY_COUNT } from "./constants.js";
 
+const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 /**
  * Determine number of items to generate for array schema
  * Prefers explicit count, then schema minItems/maxItems, with sane defaults
@@ -11,6 +13,7 @@ import { DEFAULT_ARRAY_COUNT } from "./constants.js";
 export function determineArrayCount(
   schema: JSONSchema7,
   explicitCount?: number,
+  random: () => number = Math.random,
 ): number {
   if (explicitCount !== undefined) {
     // Handle negative or invalid counts
@@ -22,7 +25,7 @@ export function determineArrayCount(
 
   if (schema.minItems !== undefined && schema.maxItems !== undefined) {
     return (
-      Math.floor(Math.random() * (schema.maxItems - schema.minItems + 1)) +
+      Math.floor(random() * (schema.maxItems - schema.minItems + 1)) +
       schema.minItems
     );
   }
@@ -60,6 +63,7 @@ export function applyOverrides(
   const result = structuredClone(data);
 
   for (const [key, value] of Object.entries(overrides)) {
+    if (DANGEROUS_KEYS.has(key)) continue;
     // Handle nested paths like "data.id" or "pagination.page"
     if (key.includes(".")) {
       setNestedProperty(result, key, value, { params, state, query });
@@ -110,6 +114,7 @@ function setNestedProperty(
   // Navigate to the parent of the target property
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i];
+    if (DANGEROUS_KEYS.has(part)) return;
     if (
       !(part in current) ||
       typeof current[part] !== "object" ||
@@ -122,6 +127,7 @@ function setNestedProperty(
 
   // Set the final property
   const finalKey = parts[parts.length - 1];
+  if (DANGEROUS_KEYS.has(finalKey)) return;
   if (typeof value === "string" && value.includes("{{")) {
     current[finalKey] = processTemplate(value, context);
   } else {
