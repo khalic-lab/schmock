@@ -127,14 +127,14 @@ describeFeature(feature, ({ Scenario }) => {
       });
     });
 
-    Then('the response body has a "name" property', () => {
+    Then('the response body "id" is a number', () => {
       const body = response.body as Record<string, unknown>;
-      expect(body.name).toBeDefined();
+      expect(typeof body.id).toBe("number");
     });
 
-    And('the response body has an "id" property', () => {
+    And('the response body "name" is a string', () => {
       const body = response.body as Record<string, unknown>;
-      expect(body.id).toBeDefined();
+      expect(typeof body.name).toBe("string");
     });
   });
 });

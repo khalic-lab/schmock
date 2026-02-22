@@ -12,4 +12,4 @@ Feature: Callback/Webhook Mocking
   Scenario: Missing callback URL is silently skipped
     Given a mock with a spec defining a callback on POST
     When I create a resource without a callback URL
-    Then no error is raised
+    Then the response status is 200
