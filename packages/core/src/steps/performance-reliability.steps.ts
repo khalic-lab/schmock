@@ -180,8 +180,7 @@ describeFeature(feature, ({ Scenario }) => {
       }
     });
 
-    And("the mock should handle the load gracefully", () => {
-      // If we got here without throwing, the mock handled the load
+    And("each response should confirm large payload processing", () => {
       expect(responses.every(r => r.body.size === 'large')).toBe(true);
     });
 
@@ -202,8 +201,7 @@ describeFeature(feature, ({ Scenario }) => {
       }
     });
 
-    And("the memory usage should remain stable", () => {
-      // Memory stability is tested by not crashing during multiple large requests
+    And("all accumulation requests should complete successfully", () => {
       expect(responses).toHaveLength(5);
     });
   });
@@ -262,13 +260,12 @@ describeFeature(feature, ({ Scenario }) => {
       expect(successCount + errorCount).toBe(responses.length);
     });
 
-    And("the success rate should be approximately {int}%", (_, expectedRate: number) => {
+    And("the success rate should be between {int}% and {int}%", (_, low: number, high: number) => {
       const successCount = responses.filter(r => r.status === 200).length;
       const actualRate = (successCount / responses.length) * 100;
 
-      // Allow for some variance due to randomness
-      expect(actualRate).toBeGreaterThan(expectedRate - 10);
-      expect(actualRate).toBeLessThan(expectedRate + 10);
+      expect(actualRate).toBeGreaterThanOrEqual(low);
+      expect(actualRate).toBeLessThanOrEqual(high);
     });
 
     And("error responses should have appropriate status codes", () => {
@@ -298,7 +295,7 @@ describeFeature(feature, ({ Scenario }) => {
       }
     });
 
-    Then("each error should have a specific, helpful error message", () => {
+    Then("each error response should have a non-empty error message", () => {
       for (const response of responses) {
         expect(response.status).toBeGreaterThanOrEqual(400);
         expect(response.body.error).toBeDefined();
@@ -307,7 +304,7 @@ describeFeature(feature, ({ Scenario }) => {
       }
     });
 
-    And("the error codes should correctly identify the validation issue", () => {
+    And("each error response should have the correct status code", () => {
       expect(responses[0].status).toBe(400); // No content-type
       expect(responses[1].status).toBe(400); // No body
       expect(responses[2].status).toBe(400); // Invalid body type

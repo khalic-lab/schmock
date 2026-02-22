@@ -66,6 +66,11 @@ describeFeature(feature, ({ Scenario }) => {
     Then("the reloaded server is listening", () => {
       expect(server.server.listening).toBe(true);
       expect(server.port).toBe(originalPort);
+    });
+
+    And("the new route responds successfully", async () => {
+      const res = await fetch(`http://${server.hostname}:${server.port}/users`);
+      expect(res.status).toBe(200);
       server.close();
     });
   });

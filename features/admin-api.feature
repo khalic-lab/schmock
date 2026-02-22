@@ -7,13 +7,13 @@ Feature: Admin API
     Given a CLI server with admin enabled and a simple spec
     When I request "GET /schmock-admin/routes"
     Then the response status is 200
-    And the response body is an array of route objects
+    And the response body contains at least one route with method and path
 
   Scenario: Inspect server state
     Given a CLI server with admin enabled and a simple spec
     When I request "GET /schmock-admin/state"
     Then the response status is 200
-    And the response body is a state object
+    And the response body is a non-null object
 
   Scenario: Reset the mock via admin
     Given a CLI server with admin enabled and a simple spec
@@ -25,7 +25,7 @@ Feature: Admin API
     When I make a request to the mock API
     And I request "GET /schmock-admin/history"
     Then the response status is 200
-    And the response body is an array
+    And the response body contains the recorded request
 
   Scenario: Admin routes are 404 without flag
     Given a CLI server without admin enabled
