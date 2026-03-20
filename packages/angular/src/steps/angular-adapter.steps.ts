@@ -18,6 +18,7 @@ import {
   badRequest,
   created,
   createSchmockInterceptor,
+  createSchmockInterceptorFromSpec,
   forbidden,
   noContent,
   notFound,
@@ -638,6 +639,240 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       And("the response body should contain both query parameters", () => {
         expect(response?.body).toHaveProperty("q", "typescript");
         expect(response?.body).toHaveProperty("page", "2");
+      });
+    },
+  );
+
+  // Auto Route Creation from OpenAPI Spec
+
+  const inlineSpec = {
+    openapi: "3.0.3",
+    info: { title: "Test", version: "1.0.0" },
+    paths: {
+      "/items": {
+        get: {
+          responses: {
+            "200": {
+              description: "OK",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        id: { type: "integer" },
+                        name: { type: "string" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          requestBody: {
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { name: { type: "string" } },
+                },
+              },
+            },
+          },
+          responses: {
+            "201": {
+              description: "Created",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      id: { type: "integer" },
+                      name: { type: "string" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/items/{itemId}": {
+        get: {
+          parameters: [
+            {
+              name: "itemId",
+              in: "path",
+              required: true,
+              schema: { type: "integer" },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "OK",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      id: { type: "integer" },
+                      name: { type: "string" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  async function makeRequestFromSpec(
+    interceptorClass: new () => any,
+    method: string,
+    url: string,
+    body?: any,
+  ) {
+    const interceptor = new interceptorClass();
+    const request = new HttpRequest(method, url, body);
+
+    return new Promise<void>((resolve) => {
+      interceptor.intercept(request, mockNext).subscribe({
+        next: (res: any) => {
+          response = res;
+          resolve();
+        },
+        error: (err: any) => {
+          errorResponse = err;
+          resolve();
+        },
+      });
+    });
+  }
+
+  Scenario(
+    "Auto-create interceptor from inline OpenAPI spec",
+    ({ Given, When, Then, And }) => {
+      let InterceptorClass: new () => any;
+
+      Given(
+        "I create an Angular interceptor from an inline OpenAPI spec",
+        async () => {
+          response = null;
+          errorResponse = null;
+          InterceptorClass = await createSchmockInterceptorFromSpec({
+            spec: inlineSpec,
+          });
+        },
+      );
+
+      When(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          await makeRequestFromSpec(InterceptorClass, method, path);
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And("the status should be {int}", (_, status: number) => {
+        expect(response?.status).toBe(status);
+      });
+    },
+  );
+
+  Scenario(
+    "Auto-created interceptor supports full CRUD lifecycle",
+    ({ Given, When, Then, And }) => {
+      let InterceptorClass: new () => any;
+
+      Given(
+        "I create an Angular interceptor from an inline OpenAPI spec with CRUD",
+        async () => {
+          response = null;
+          errorResponse = null;
+          InterceptorClass = await createSchmockInterceptorFromSpec({
+            spec: inlineSpec,
+          });
+        },
+      );
+
+      When(
+        "I create an item via {string} with body {string}",
+        async (_, request: string, bodyStr: string) => {
+          const [method, path] = request.split(" ");
+          const body = JSON.parse(bodyStr);
+          await makeRequestFromSpec(InterceptorClass, method, path, body);
+        },
+      );
+
+      And(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          response = null;
+          const [method, path] = request.split(" ");
+          await makeRequestFromSpec(InterceptorClass, method, path);
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And("the response body should be a non-empty array", () => {
+        expect(Array.isArray(response?.body)).toBe(true);
+        expect(response?.body.length).toBeGreaterThan(0);
+      });
+    },
+  );
+
+  Scenario(
+    "Auto-created interceptor respects baseUrl option",
+    ({ Given, When, Then }) => {
+      let InterceptorClass: new () => any;
+
+      Given(
+        "I create an Angular interceptor from spec with baseUrl {string}",
+        async (_, baseUrl: string) => {
+          response = null;
+          errorResponse = null;
+          InterceptorClass = await createSchmockInterceptorFromSpec(
+            { spec: inlineSpec },
+            { baseUrl },
+          );
+        },
+      );
+
+      When(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          const interceptor = new InterceptorClass();
+          const req = new HttpRequest(method, path);
+          await new Promise<void>((resolve) => {
+            interceptor.intercept(req, mockNext).subscribe({
+              next: (res: any) => {
+                response = res;
+                resolve();
+              },
+              error: (err: any) => {
+                errorResponse = err;
+                resolve();
+              },
+            });
+          });
+        },
+      );
+
+      Then("the request should pass through to the real backend", () => {
+        expect(response?.body).toBe("passthrough");
       });
     },
   );

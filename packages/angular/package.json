@@ -19,7 +19,7 @@
     "dev": "bun build:lib --watch",
     "clean": "rm -rf dist",
     "build": "bun run clean && bun run build:lib && bun run build:types",
-    "build:lib": "bun build --minify src/index.ts --outdir dist --target node --format esm --external @angular/common --external @angular/core --external @schmock/core --external rxjs",
+    "build:lib": "bun build --minify src/index.ts --outdir dist --target node --format esm --external @angular/common --external @angular/core --external @schmock/core --external @schmock/openapi --external rxjs",
     "build:types": "rm -f tsconfig.tsbuildinfo && tsc --build",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -32,7 +32,13 @@
     "@angular/common": ">=15.0.0 <22.0.0",
     "@angular/core": ">=15.0.0 <22.0.0",
     "@schmock/core": "^1.9.4",
+    "@schmock/openapi": "^1.9.4",
     "rxjs": "^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@schmock/openapi": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@angular/common": "^21.1.5",
@@ -40,6 +46,7 @@
     "@angular/core": "^21.1.5",
     "@angular/platform-browser": "^21.1.5",
     "@angular/platform-browser-dynamic": "^21.1.5",
+    "@schmock/openapi": "^1.9.4",
     "@types/node": "^25.3.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18",
