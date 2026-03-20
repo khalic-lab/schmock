@@ -65,7 +65,7 @@ export async function openapi(
   const spec = await parseSpec(options.spec);
   const { resources, nonCrudPaths } = detectCrudResources(spec.paths);
   const seedData = options.seed
-    ? loadSeed(options.seed, resources)
+    ? await loadSeed(options.seed, resources)
     : new Map<string, unknown[]>();
 
   // Build a lookup of all parsed paths for process() to reference
