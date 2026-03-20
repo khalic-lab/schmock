@@ -388,6 +388,64 @@ export function provideSchmockInterceptor(
   };
 }
 
+/**
+ * Create an Angular HTTP interceptor from an OpenAPI spec.
+ * Auto-registers all routes from the spec with full CRUD support.
+ *
+ * Requires `@schmock/openapi` to be installed.
+ *
+ * @example
+ * ```typescript
+ * const Interceptor = await createSchmockInterceptorFromSpec(
+ *   { spec: './assets/api.yaml', seed: { pets: { count: 10 } } },
+ *   { baseUrl: '/api' },
+ * );
+ * ```
+ */
+export async function createSchmockInterceptorFromSpec(
+  openapiOptions: Schmock.OpenApiOptions,
+  adapterOptions?: AngularAdapterOptions,
+): Promise<new () => HttpInterceptor> {
+  // Dynamic imports keep @schmock/openapi optional — string indirection
+  // prevents TypeScript from resolving the module at build time.
+  const coreMod = "@schmock/core";
+  const openapiMod = "@schmock/openapi";
+  const { schmock } = await (import(coreMod) as Promise<typeof import("@schmock/core")>);
+  const { openapi } = await (import(openapiMod) as Promise<{ openapi: (opts: Schmock.OpenApiOptions) => Promise<Schmock.Plugin> }>);
+  const mock = schmock({ debug: openapiOptions.debug, state: {} });
+  mock.pipe(await openapi(openapiOptions));
+  return createSchmockInterceptor(mock, adapterOptions);
+}
+
+/**
+ * Angular provider that creates a Schmock interceptor from an OpenAPI spec.
+ *
+ * Requires `@schmock/openapi` to be installed.
+ *
+ * @example
+ * ```typescript
+ * providers: [
+ *   await provideSchmockInterceptorFromSpec(
+ *     { spec: mySpec, fakerSeed: 42 },
+ *     { baseUrl: '/api' },
+ *   ),
+ * ]
+ * ```
+ */
+export async function provideSchmockInterceptorFromSpec(
+  openapiOptions: Schmock.OpenApiOptions,
+  adapterOptions?: AngularAdapterOptions,
+) {
+  return {
+    provide: HTTP_INTERCEPTORS,
+    useClass: await createSchmockInterceptorFromSpec(
+      openapiOptions,
+      adapterOptions,
+    ),
+    multi: true,
+  };
+}
+
 // ============================================================================
 // Response Helpers
 // ============================================================================

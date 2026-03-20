@@ -196,3 +196,23 @@ Feature: Angular Adapter
     When I make an Angular request to "GET /api/search?q=typescript&page=2"
     Then the response should be an HttpResponse
     And the response body should contain both query parameters
+
+  # Auto Route Creation from OpenAPI Spec
+
+  Scenario: Auto-create interceptor from inline OpenAPI spec
+    Given I create an Angular interceptor from an inline OpenAPI spec
+    When I make an Angular request to "GET /items"
+    Then the response should be an HttpResponse
+    And the status should be 200
+
+  Scenario: Auto-created interceptor supports full CRUD lifecycle
+    Given I create an Angular interceptor from an inline OpenAPI spec with CRUD
+    When I create an item via "POST /items" with body '{"name":"Widget"}'
+    And I make an Angular request to "GET /items"
+    Then the response should be an HttpResponse
+    And the response body should be a non-empty array
+
+  Scenario: Auto-created interceptor respects baseUrl option
+    Given I create an Angular interceptor from spec with baseUrl "/api"
+    When I make an Angular request to "GET /external/data"
+    Then the request should pass through to the real backend
