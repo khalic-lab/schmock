@@ -19,7 +19,7 @@
   },
   "scripts": {
     "build": "bun build:lib && bun build:types",
-    "build:lib": "bun build --minify --target node --outdir=dist src/index.ts",
+    "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts --external @apidevtools/swagger-parser --external @schmock/faker --external ajv --external @schmock/core",
     "build:types": "tsc -p tsconfig.json",
     "test": "vitest",
     "test:watch": "vitest --watch",

@@ -125,7 +125,12 @@ export async function parseSpec(source: string | object): Promise<ParsedSpec> {
     const copy = structuredClone(source);
     stripRootExtensions(copy);
     ensurePathsKey(copy);
-    api = await SwaggerParser.dereference(copy);
+    const hasRefs = JSON.stringify(copy).includes('"$ref"');
+    if (hasRefs) {
+      api = await SwaggerParser.dereference(copy);
+    } else {
+      api = copy as OpenAPI.Document;
+    }
   } else {
     throw new Error(
       "Invalid OpenAPI spec: must be a string path or an OpenAPI document object",

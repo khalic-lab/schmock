@@ -1,6 +1,5 @@
 /// <reference path="../../core/schmock.d.ts" />
 
-import { readFileSync } from "node:fs";
 import type { CrudResource } from "./crud-detector.js";
 import { generateSeedItems } from "./generators.js";
 
@@ -16,10 +15,10 @@ export type SeedConfig = Record<string, SeedSource>;
  * - string: file path to a JSON array
  * - { count: number }: auto-generate N items from resource schema
  */
-export function loadSeed(
+export async function loadSeed(
   config: SeedConfig,
   resources: CrudResource[],
-): Map<string, unknown[]> {
+): Promise<Map<string, unknown[]>> {
   const result = new Map<string, unknown[]>();
 
   for (const [resourceName, source] of Object.entries(config)) {
@@ -30,6 +29,7 @@ export function loadSeed(
       result.set(resourceName, [...source]);
     } else if (typeof source === "string") {
       // File path
+      const { readFileSync } = await import("node:fs");
       const content = readFileSync(source, "utf-8");
       let parsed: unknown;
       try {
