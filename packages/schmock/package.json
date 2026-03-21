@@ -1,6 +1,6 @@
 {
   "name": "@schmock/schmock",
-  "version": "1.9.5",
+  "version": "1.10.0",
   "description": "All-in-one Schmock package — installs core, faker, validation, query, openapi, express, angular, and CLI",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,14 +24,14 @@
     "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
   "dependencies": {
-    "@schmock/core": "^1.9.5",
-    "@schmock/faker": "^1.9.5",
-    "@schmock/validation": "^1.9.5",
-    "@schmock/query": "^1.9.5",
-    "@schmock/openapi": "^1.9.5",
-    "@schmock/express": "^1.9.5",
-    "@schmock/angular": "^1.9.5",
-    "@schmock/cli": "^1.9.5"
+    "@schmock/core": "^1.10.0",
+    "@schmock/faker": "^1.10.0",
+    "@schmock/validation": "^1.10.0",
+    "@schmock/query": "^1.10.0",
+    "@schmock/openapi": "^1.10.0",
+    "@schmock/express": "^1.10.0",
+    "@schmock/angular": "^1.10.0",
+    "@schmock/cli": "^1.10.0"
   },
   "keywords": [
     "mock",
