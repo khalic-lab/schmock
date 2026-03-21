@@ -1,9 +1,12 @@
 import type { JSONSchema7 } from "json-schema";
+import { findBestMapping } from "./field-name-matcher.js";
 import { isJSONSchema7, validateFakerMethod } from "./validation.js";
 
-/** JSONSchema7 extended with json-schema-faker's `faker` property */
+/** JSONSchema7 extended with json-schema-faker's `faker` property and schmock markers */
 interface FakerSchema extends JSONSchema7 {
   faker?: string;
+  schmockNullable?: boolean;
+  schmockTrueProbability?: number;
 }
 
 export function enhanceSchemaWithSmartMapping(
@@ -13,10 +16,10 @@ export function enhanceSchemaWithSmartMapping(
     return schema;
   }
 
-  const enhanced = { ...schema };
+  const enhanced = { ...schema } as FakerSchema;
 
   // Handle object properties
-  if (enhanced.type === "object" && enhanced.properties) {
+  if (enhanced.properties) {
     enhanced.properties = { ...enhanced.properties };
 
     for (const [fieldName, fieldSchema] of Object.entries(
@@ -29,6 +32,38 @@ export function enhanceSchemaWithSmartMapping(
         );
       }
     }
+  }
+
+  // Recurse into composition keywords
+  for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
+    const branches = enhanced[keyword];
+    if (Array.isArray(branches)) {
+      (enhanced as Record<string, unknown>)[keyword] = branches.map((branch) =>
+        isJSONSchema7(branch) ? enhanceSchemaWithSmartMapping(branch) : branch,
+      );
+    }
+  }
+
+  // Recurse into array items
+  if (enhanced.items) {
+    if (Array.isArray(enhanced.items)) {
+      enhanced.items = enhanced.items.map((item) =>
+        isJSONSchema7(item) ? enhanceSchemaWithSmartMapping(item) : item,
+      );
+    } else if (isJSONSchema7(enhanced.items)) {
+      enhanced.items = enhanceSchemaWithSmartMapping(enhanced.items);
+    }
+  }
+
+  // Recurse into additionalProperties
+  if (
+    enhanced.additionalProperties &&
+    typeof enhanced.additionalProperties === "object" &&
+    !Array.isArray(enhanced.additionalProperties)
+  ) {
+    enhanced.additionalProperties = enhanceSchemaWithSmartMapping(
+      enhanced.additionalProperties as JSONSchema7,
+    );
   }
 
   return enhanced;
@@ -46,60 +81,28 @@ function enhanceFieldSchema(
     return enhanced;
   }
 
-  // Apply smart field name mapping
-  const lowerFieldName = fieldName.toLowerCase();
+  // Recursively enhance nested schemas first
+  const hasComposition = enhanced.allOf || enhanced.anyOf || enhanced.oneOf;
+  if (enhanced.properties || hasComposition || enhanced.items) {
+    const recursed = enhanceSchemaWithSmartMapping(enhanced);
+    Object.assign(enhanced, recursed);
+  }
 
-  // Email fields
-  if (lowerFieldName.includes("email")) {
-    enhanced.format = "email";
-    enhanced.faker = "internet.email";
+  // Don't apply field-level faker mapping to composition schemas — the branches define their own types
+  if (hasComposition) {
+    return enhanced;
   }
-  // Name fields
-  else if (lowerFieldName === "firstname" || lowerFieldName === "first_name") {
-    enhanced.faker = "person.firstName";
-  } else if (lowerFieldName === "lastname" || lowerFieldName === "last_name") {
-    enhanced.faker = "person.lastName";
-  } else if (lowerFieldName === "name" || lowerFieldName === "fullname") {
-    enhanced.faker = "person.fullName";
-  }
-  // Phone fields
-  else if (lowerFieldName.includes("phone") || lowerFieldName === "mobile") {
-    enhanced.faker = "phone.number";
-  }
-  // Address fields
-  else if (lowerFieldName === "street" || lowerFieldName === "address") {
-    enhanced.faker = "location.streetAddress";
-  } else if (lowerFieldName === "city") {
-    enhanced.faker = "location.city";
-  } else if (lowerFieldName === "zipcode" || lowerFieldName === "zip") {
-    enhanced.faker = "location.zipCode";
-  }
-  // UUID fields
-  else if (
-    lowerFieldName === "uuid" ||
-    (lowerFieldName === "id" && enhanced.format === "uuid")
-  ) {
-    enhanced.faker = "string.uuid";
-  }
-  // Date fields
-  else if (
-    lowerFieldName.includes("createdat") ||
-    lowerFieldName.includes("created_at") ||
-    lowerFieldName.includes("updatedat") ||
-    lowerFieldName.includes("updated_at")
-  ) {
-    enhanced.format = "date-time";
-    enhanced.faker = "date.recent";
-  }
-  // Company fields
-  else if (lowerFieldName.includes("company")) {
-    enhanced.faker = "company.name";
-  } else if (lowerFieldName === "position" || lowerFieldName === "jobtitle") {
-    enhanced.faker = "person.jobTitle";
-  }
-  // Price/money fields
-  else if (lowerFieldName === "price" || lowerFieldName === "amount") {
-    enhanced.faker = "commerce.price";
+
+  // Apply smart field name mapping via the scoring matcher
+  const match = findBestMapping(fieldName, enhanced);
+  if (match) {
+    enhanced.faker = match.mapping.fakerMethod;
+    if (match.mapping.format) {
+      enhanced.format = match.mapping.format;
+    }
+    if (match.mapping.trueProbability !== undefined) {
+      enhanced.schmockTrueProbability = match.mapping.trueProbability;
+    }
   }
 
   return enhanced;

@@ -3,8 +3,8 @@ import { resolve } from "node:path";
 import { schmock } from "@schmock/core";
 import { describe, expect, it } from "vitest";
 import { parseSpec } from "./parser";
-import { loadSeed } from "./seed";
 import { openapi } from "./plugin";
+import { loadSeed } from "./seed";
 
 const fixturesDir = resolve(import.meta.dirname, "__fixtures__");
 const packageRoot = resolve(import.meta.dirname, "..");
@@ -29,15 +29,17 @@ describe("browser compatibility fixes", () => {
 
     it("faker build has no top-level node: protocol imports", () => {
       const content = readDist("../faker/dist/index.js");
-      const staticNodeImports = [...content.matchAll(/\bimport\s*\{[^}]+\}\s*from\s*"(node:[^"]+)"/g)]
-        .map((m) => m[1]);
+      const staticNodeImports = [
+        ...content.matchAll(/\bimport\s*\{[^}]+\}\s*from\s*"(node:[^"]+)"/g),
+      ].map((m) => m[1]);
       expect(staticNodeImports).toEqual([]);
     });
 
     it("openapi build has no static node:module or node:fs imports", () => {
       const content = readDist("dist/index.js");
-      const staticNodeImports = [...content.matchAll(/\bimport\s*\{[^}]+\}\s*from\s*"(node:[^"]+)"/g)]
-        .map((m) => m[1]);
+      const staticNodeImports = [
+        ...content.matchAll(/\bimport\s*\{[^}]+\}\s*from\s*"(node:[^"]+)"/g),
+      ].map((m) => m[1]);
       expect(staticNodeImports).not.toContain("node:module");
       expect(staticNodeImports).not.toContain("node:fs");
     });
@@ -46,7 +48,7 @@ describe("browser compatibility fixes", () => {
       const content = readDist("dist/index.js");
       const nodefsRefs = [...content.matchAll(/["']node:fs["']/g)];
       for (const match of nodefsRefs) {
-        const idx = match.index!;
+        const idx = match.index ?? 0;
         const preceding = content.slice(Math.max(0, idx - 30), idx);
         expect(preceding).toContain("import(");
       }
@@ -68,7 +70,10 @@ describe("browser compatibility fixes", () => {
                     "application/json": {
                       schema: {
                         type: "array",
-                        items: { type: "object", properties: { id: { type: "integer" } } },
+                        items: {
+                          type: "object",
+                          properties: { id: { type: "integer" } },
+                        },
                       },
                     },
                   },
@@ -90,7 +95,9 @@ describe("browser compatibility fixes", () => {
       expect(spec.title).toBe("Petstore");
       expect(spec.paths.length).toBeGreaterThan(0);
 
-      const listPets = spec.paths.find((p) => p.method === "GET" && p.path === "/pets");
+      const listPets = spec.paths.find(
+        (p) => p.method === "GET" && p.path === "/pets",
+      );
       expect(listPets).toBeDefined();
       const responseSchema = listPets?.responses.get(200)?.schema;
       expect(responseSchema).toBeDefined();
@@ -135,7 +142,9 @@ describe("browser compatibility fixes", () => {
       });
 
       expect(spec.title).toBe("With Refs");
-      const getItems = spec.paths.find((p) => p.method === "GET" && p.path === "/items");
+      const getItems = spec.paths.find(
+        (p) => p.method === "GET" && p.path === "/items",
+      );
       expect(getItems).toBeDefined();
       const responseSchema = getItems?.responses.get(200)?.schema;
       expect(responseSchema).toBeDefined();
@@ -152,7 +161,7 @@ describe("browser compatibility fixes", () => {
             get: {
               responses: {
                 "200": {
-                  description: 'Use $ref to reference other schemas',
+                  description: "Use $ref to reference other schemas",
                   content: {
                     "application/json": {
                       schema: { type: "string" },
@@ -248,10 +257,15 @@ describe("browser compatibility fixes", () => {
 
     it("throws when auto-generating without schema", async () => {
       await expect(
-        loadSeed(
-          { items: { count: 5 } },
-          [{ name: "items", basePath: "/items", itemPath: "/items/:id", idParam: "id", operations: ["list"] }],
-        ),
+        loadSeed({ items: { count: 5 } }, [
+          {
+            name: "items",
+            basePath: "/items",
+            itemPath: "/items/:id",
+            idParam: "id",
+            operations: ["list"],
+          },
+        ]),
       ).rejects.toThrow("no schema found");
     });
   });
@@ -276,7 +290,10 @@ describe("browser compatibility fixes", () => {
                             type: "array",
                             items: {
                               type: "object",
-                              properties: { id: { type: "integer" }, name: { type: "string" } },
+                              properties: {
+                                id: { type: "integer" },
+                                name: { type: "string" },
+                              },
                             },
                           },
                         },
@@ -302,7 +319,10 @@ describe("browser compatibility fixes", () => {
                         "application/json": {
                           schema: {
                             type: "object",
-                            properties: { id: { type: "integer" }, name: { type: "string" } },
+                            properties: {
+                              id: { type: "integer" },
+                              name: { type: "string" },
+                            },
                           },
                         },
                       },
@@ -312,7 +332,14 @@ describe("browser compatibility fixes", () => {
               },
               "/widgets/{widgetId}": {
                 get: {
-                  parameters: [{ name: "widgetId", in: "path", required: true, schema: { type: "integer" } }],
+                  parameters: [
+                    {
+                      name: "widgetId",
+                      in: "path",
+                      required: true,
+                      schema: { type: "integer" },
+                    },
+                  ],
                   responses: {
                     "200": {
                       description: "OK",
@@ -320,7 +347,10 @@ describe("browser compatibility fixes", () => {
                         "application/json": {
                           schema: {
                             type: "object",
-                            properties: { id: { type: "integer" }, name: { type: "string" } },
+                            properties: {
+                              id: { type: "integer" },
+                              name: { type: "string" },
+                            },
                           },
                         },
                       },
@@ -328,7 +358,14 @@ describe("browser compatibility fixes", () => {
                   },
                 },
                 put: {
-                  parameters: [{ name: "widgetId", in: "path", required: true, schema: { type: "integer" } }],
+                  parameters: [
+                    {
+                      name: "widgetId",
+                      in: "path",
+                      required: true,
+                      schema: { type: "integer" },
+                    },
+                  ],
                   requestBody: {
                     content: {
                       "application/json": {
@@ -346,7 +383,10 @@ describe("browser compatibility fixes", () => {
                         "application/json": {
                           schema: {
                             type: "object",
-                            properties: { id: { type: "integer" }, name: { type: "string" } },
+                            properties: {
+                              id: { type: "integer" },
+                              name: { type: "string" },
+                            },
                           },
                         },
                       },
@@ -354,7 +394,14 @@ describe("browser compatibility fixes", () => {
                   },
                 },
                 delete: {
-                  parameters: [{ name: "widgetId", in: "path", required: true, schema: { type: "integer" } }],
+                  parameters: [
+                    {
+                      name: "widgetId",
+                      in: "path",
+                      required: true,
+                      schema: { type: "integer" },
+                    },
+                  ],
                   responses: { "204": { description: "Deleted" } },
                 },
               },
@@ -369,7 +416,9 @@ describe("browser compatibility fixes", () => {
       expect(list.body).toEqual([]);
 
       // Create
-      const created = await mock.handle("POST", "/widgets", { body: { name: "Sprocket" } });
+      const created = await mock.handle("POST", "/widgets", {
+        body: { name: "Sprocket" },
+      });
       expect(created.status).toBe(201);
       expect(created.body).toHaveProperty("name", "Sprocket");
       const id = (created.body as any).widgetId;
@@ -380,7 +429,9 @@ describe("browser compatibility fixes", () => {
       expect(read.body).toHaveProperty("name", "Sprocket");
 
       // Update
-      const updated = await mock.handle("PUT", `/widgets/${id}`, { body: { name: "Gear" } });
+      const updated = await mock.handle("PUT", `/widgets/${id}`, {
+        body: { name: "Gear" },
+      });
       expect(updated.status).toBe(200);
       expect(updated.body).toHaveProperty("name", "Gear");
 
@@ -413,7 +464,10 @@ describe("browser compatibility fixes", () => {
                             type: "array",
                             items: {
                               type: "object",
-                              properties: { id: { type: "integer" }, label: { type: "string" } },
+                              properties: {
+                                id: { type: "integer" },
+                                label: { type: "string" },
+                              },
                             },
                           },
                         },
@@ -429,7 +483,10 @@ describe("browser compatibility fixes", () => {
                         "application/json": {
                           schema: {
                             type: "object",
-                            properties: { id: { type: "integer" }, label: { type: "string" } },
+                            properties: {
+                              id: { type: "integer" },
+                              label: { type: "string" },
+                            },
                           },
                         },
                       },
@@ -439,7 +496,14 @@ describe("browser compatibility fixes", () => {
               },
               "/items/{itemId}": {
                 get: {
-                  parameters: [{ name: "itemId", in: "path", required: true, schema: { type: "integer" } }],
+                  parameters: [
+                    {
+                      name: "itemId",
+                      in: "path",
+                      required: true,
+                      schema: { type: "integer" },
+                    },
+                  ],
                   responses: {
                     "200": {
                       description: "OK",
@@ -447,7 +511,10 @@ describe("browser compatibility fixes", () => {
                         "application/json": {
                           schema: {
                             type: "object",
-                            properties: { id: { type: "integer" }, label: { type: "string" } },
+                            properties: {
+                              id: { type: "integer" },
+                              label: { type: "string" },
+                            },
                           },
                         },
                       },

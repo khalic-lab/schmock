@@ -43,14 +43,13 @@ function normalizeNode(
     }
   }
 
-  // Handle nullable: true -> oneOf with null
+  // Handle nullable: true — mark for post-processing instead of wrapping in oneOf.
+  // This avoids JSF picking null 50% of the time; the faker plugin applies ~5% null probability.
   if (node.nullable === true) {
     delete node.nullable;
-    // Only wrap if not already a composition with null
-    const copy = { ...node };
-    return {
-      oneOf: [normalizeNode(copy, direction, visited), { type: "null" }],
-    };
+    const normalized = normalizeNode({ ...node }, direction, visited);
+    (normalized as Record<string, unknown>).schmockNullable = true;
+    return normalized;
   }
   delete node.nullable;
 

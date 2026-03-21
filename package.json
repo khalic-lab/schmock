@@ -19,6 +19,8 @@
     "test:bdd:quiet": "bash -c 'set -o pipefail; bun run --filter \"*\" test:bdd --reporter=dot 2>&1 | grep -E \"^[·.F]+$|Test Files|Tests |Duration\"'",
     "test:integration": "vitest run --config tests/integration/vitest.config.ts",
     "test:integration:quiet": "bash -c 'set -o pipefail; vitest run --config tests/integration/vitest.config.ts --reporter=dot 2>&1 | grep -E \"^[·.F]+$|Test Files|Tests |Duration\"'",
+    "test:e2e": "vitest run --config tests/e2e/vitest.config.ts",
+    "test:e2e:quiet": "bash -c 'set -o pipefail; vitest run --config tests/e2e/vitest.config.ts --reporter=dot 2>&1 | grep -E \"^[·.F]+$|Test Files|Tests |Duration\"'",
     "test:quiet": "bun run test:all:quiet",
     "test:silent": "bun run test:unit:silent && bun run test:bdd:silent",
     "test:all:silent": "bun run typecheck:silent && bun run test:unit:silent && bun run test:bdd:silent",

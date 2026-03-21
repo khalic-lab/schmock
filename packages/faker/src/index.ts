@@ -6,11 +6,11 @@ import {
   SchemaValidationError,
 } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
-import { MAX_ARRAY_SIZE } from "./constants.js";
+import { MAX_ARRAY_SIZE, NULLABLE_NULL_PROBABILITY } from "./constants.js";
 import { getJsf } from "./jsf-config.js";
 import { applyOverrides, determineArrayCount } from "./overrides.js";
 import { enhanceSchemaWithSmartMapping } from "./schema-enhancement.js";
-import { validateSchema } from "./validation.js";
+import { isJSONSchema7, validateSchema } from "./validation.js";
 
 export interface SchemaGenerationContext {
   schema: JSONSchema7;
@@ -106,12 +106,12 @@ export function generateFromSchema(options: SchemaGenerationContext): any {
     }
 
     const itemSchema = rawItemSchema;
+    const enhancedItemSchema = enhanceSchemaWithSmartMapping(itemSchema);
 
     generated = [];
     for (let i = 0; i < itemCount; i++) {
-      let item = getJsf(seed).generate(
-        enhanceSchemaWithSmartMapping(itemSchema),
-      );
+      let item = getJsf(seed).generate(enhancedItemSchema);
+      item = postProcessGenerated(item, enhancedItemSchema);
       item = applyOverrides(item, overrides, params, state, query);
       generated.push(item);
     }
@@ -119,8 +119,61 @@ export function generateFromSchema(options: SchemaGenerationContext): any {
     // Handle object schemas
     const enhancedSchema = enhanceSchemaWithSmartMapping(schema);
     generated = getJsf(seed).generate(enhancedSchema);
+    generated = postProcessGenerated(generated, enhancedSchema);
     generated = applyOverrides(generated, overrides, params, state, query);
   }
 
   return generated;
+}
+
+/**
+ * Post-process generated data to apply nullable probability and boolean weighting.
+ * Walks the schema and generated data in parallel, applying:
+ * - schmockNullable: ~5% chance of null
+ * - schmockTrueProbability: weighted boolean generation
+ */
+function postProcessGenerated(data: any, schema: JSONSchema7): any {
+  if (
+    data === null ||
+    data === undefined ||
+    !schema ||
+    typeof schema !== "object"
+  ) {
+    return data;
+  }
+
+  const schemaAny = schema as Record<string, unknown>;
+
+  // Apply nullable probability at this level
+  if (schemaAny.schmockNullable === true) {
+    if (Math.random() < NULLABLE_NULL_PROBABILITY) {
+      return null;
+    }
+  }
+
+  // Apply boolean weighting at this level
+  if (
+    schema.type === "boolean" &&
+    typeof schemaAny.schmockTrueProbability === "number"
+  ) {
+    return Math.random() < schemaAny.schmockTrueProbability;
+  }
+
+  // Recurse into object properties
+  if (typeof data === "object" && !Array.isArray(data) && schema.properties) {
+    for (const [key, propSchema] of Object.entries(schema.properties)) {
+      if (key in data && isJSONSchema7(propSchema)) {
+        data[key] = postProcessGenerated(data[key], propSchema);
+      }
+    }
+  }
+
+  // Recurse into array items
+  if (Array.isArray(data) && schema.items && isJSONSchema7(schema.items)) {
+    for (let i = 0; i < data.length; i++) {
+      data[i] = postProcessGenerated(data[i], schema.items);
+    }
+  }
+
+  return data;
 }
