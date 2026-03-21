@@ -1,5 +1,6 @@
 /// <reference path="../../core/schmock.d.ts" />
 
+import type { JSONSchema7 } from "json-schema";
 import { version as packageVersion } from "../package.json";
 import { fireCallbacks, getRouteCallbacks } from "./callbacks.js";
 import { detectCrudResources } from "./crud-detector.js";
@@ -21,6 +22,17 @@ import type { SeedConfig, SeedSource } from "./seed.js";
 import { loadSeed } from "./seed.js";
 
 export type { SeedConfig, SeedSource };
+
+export type OnSchemaCallback = (
+  schema: JSONSchema7,
+  context: {
+    method: string;
+    path: string;
+    params: Record<string, string>;
+    query: Record<string, string>;
+    headers: Record<string, string>;
+  },
+) => JSONSchema7 | undefined;
 
 export interface OpenApiOptions {
   /** File path or inline spec object */
@@ -45,6 +57,10 @@ export interface OpenApiOptions {
   fakerSeed?: number;
   /** Validate security schemes (API key, Bearer, Basic) (default: false) */
   security?: boolean;
+  /** Replace response schemas for specific routes. Key: "METHOD /path" or "METHOD /path STATUS" */
+  schemas?: Record<string, JSONSchema7>;
+  /** Called before generating a response body. Return a schema to replace the original, or void to keep it. */
+  onSchema?: OnSchemaCallback;
 }
 
 /**
@@ -83,6 +99,41 @@ export async function openapi(
     version: packageVersion,
 
     install(instance: Schmock.CallableMockInstance) {
+      // Apply user-provided schema overrides
+      if (options.schemas) {
+        for (const [key, schema] of Object.entries(options.schemas)) {
+          const parts = key.split(" ");
+          const method = parts[0];
+          const path = parts[1];
+          const status = parts[2] ? Number.parseInt(parts[2], 10) : undefined;
+          const routeKey = `${method} ${path}`;
+
+          const parsedPath = allParsedPaths.get(routeKey);
+          if (!parsedPath) continue;
+
+          if (status !== undefined) {
+            const entry = parsedPath.responses.get(status);
+            if (entry) {
+              entry.schema = schema;
+            } else {
+              parsedPath.responses.set(status, { schema, description: "" });
+            }
+          } else {
+            let patched = false;
+            for (const [code, entry] of parsedPath.responses) {
+              if (code >= 200 && code < 300) {
+                entry.schema = schema;
+                patched = true;
+                break;
+              }
+            }
+            if (!patched) {
+              parsedPath.responses.set(200, { schema, description: "" });
+            }
+          }
+        }
+      }
+
       if (options.debug) {
         console.log(
           `[@schmock/openapi] Detected ${resources.length} CRUD resources, ${nonCrudPaths.length} static routes`,
@@ -109,7 +160,12 @@ export async function openapi(
       }
 
       // Register non-CRUD routes with static generators
-      registerNonCrudRoutes(instance, nonCrudPaths, options.fakerSeed);
+      registerNonCrudRoutes(
+        instance,
+        nonCrudPaths,
+        options.fakerSeed,
+        options.onSchema,
+      );
     },
 
     process(
@@ -139,7 +195,12 @@ export async function openapi(
       }
 
       // 4. Prefer header handling
-      const result = processPreferHeader(context, response, options.fakerSeed);
+      const result = processPreferHeader(
+        context,
+        response,
+        options.fakerSeed,
+        options.onSchema,
+      );
 
       // 5. Fire callbacks (fire-and-forget, after response is determined)
       const callbacks = getRouteCallbacks(context.route);

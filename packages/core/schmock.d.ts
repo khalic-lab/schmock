@@ -540,6 +540,13 @@ declare namespace Schmock {
     debug?: boolean;
     fakerSeed?: number;
     security?: boolean;
+    /** Replace response schemas for specific routes. Key format: "METHOD /path" or "METHOD /path STATUS" */
+    schemas?: Record<string, import("json-schema").JSONSchema7>;
+    /** Called before generating a response body. Return a schema to replace the original, or void to keep it. */
+    onSchema?: (
+      schema: import("json-schema").JSONSchema7,
+      context: { method: string; path: string; params: Record<string, string>; query: Record<string, string>; headers: Record<string, string> },
+    ) => import("json-schema").JSONSchema7 | undefined;
   }
 
   /**

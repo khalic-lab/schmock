@@ -1,568 +1,448 @@
-# API Documentation
+# API Reference
 
-Complete API reference for the Schmock framework.
-
-## Core API
+## Core (`@schmock/core`)
 
 ### `schmock(config?)`
 
-Creates a new callable Schmock mock instance.
+Creates a callable mock instance.
 
 ```typescript
 function schmock(config?: GlobalConfig): CallableMockInstance
 ```
 
-**Parameters**:
-- `config?: GlobalConfig` — Optional global configuration
-
 ```typescript
 interface GlobalConfig {
-  namespace?: string;                  // Base path prefix for all routes
-  delay?: number | [number, number];   // Response delay in ms, or [min, max] range
-  debug?: boolean;                     // Enable debug logging
-  state?: Record<string, unknown>;     // Initial shared state object
+  namespace?: string                   // base path prefix for all routes
+  delay?: number | [number, number]    // response delay in ms, or [min, max] range
+  debug?: boolean                      // enable debug logging
+  state?: Record<string, unknown>      // initial shared state
 }
-```
-
-**Returns**: `CallableMockInstance`
-
-**Example**:
-```typescript
-import { schmock } from '@schmock/core';
-
-const mock = schmock();
-
-const mock = schmock({
-  debug: true,
-  namespace: '/api/v1',
-  state: { users: [], posts: [] },
-  delay: [100, 500]
-});
 ```
 
 ### `CallableMockInstance`
 
-The main interface for defining routes and handling requests. The instance itself is callable for route definition.
-
-#### Route Definition (Callable)
+#### Route definition (callable)
 
 ```typescript
 mock(route: RouteKey, generator: Generator, config?: RouteConfig): CallableMockInstance
 ```
 
-**Parameters**:
-- `route: RouteKey` — Route pattern in format `'METHOD /path'` (e.g., `'GET /users/:id'`)
-- `generator: Generator` — Response generator (function, static data, or schema)
-- `config?: RouteConfig` — Optional route-specific configuration
+- `route` — `"METHOD /path"` format (e.g. `"GET /users/:id"`)
+- `generator` — function, static data, or JSON schema
+- `config` — optional route-specific config
 
 ```typescript
+type RouteKey = `${HttpMethod} ${string}`
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS'
+
+type Generator = GeneratorFunction | StaticData | JSONSchema7
+type GeneratorFunction = (ctx: RequestContext) => ResponseResult | Promise<ResponseResult>
+type StaticData = string | number | boolean | null | undefined | Record<string, unknown> | unknown[]
+
 interface RouteConfig {
-  contentType?: string;   // MIME type (e.g., 'application/json', 'text/plain')
-  [key: string]: any;     // Additional route-specific options
+  contentType?: string         // MIME type (auto-detected if omitted)
+  delay?: number | [number, number]  // per-route delay override
+  [key: string]: unknown       // custom route-specific data
 }
 ```
 
-**Generator Types**:
-- **Function**: `(context: RequestContext) => ResponseResult` — Called on each request
-- **Static Data**: `any` — Returned as-is (detected when not a function)
-- **JSON Schema**: `JSONSchema7` — Used with schema plugin for data generation
+#### `.handle(method, path, options?)`
 
-**Examples**:
+Handle a request. Never throws — errors become response objects.
+
 ```typescript
-// Generator function
-mock('GET /users', ({ state }) => state.users, {
-  contentType: 'application/json'
-})
+handle(method: HttpMethod, path: string, options?: RequestOptions): Promise<Response>
 
-// Static data
-mock('GET /config', {
-  version: '1.0.0',
-  features: ['auth', 'api']
-}, { contentType: 'application/json' })
+interface RequestOptions {
+  headers?: Record<string, string>
+  body?: unknown
+  query?: Record<string, string>
+}
 
-// JSON Schema (with schema plugin)
-mock('GET /users', {
-  type: 'array',
-  items: {
-    type: 'object',
-    properties: {
-      id: { type: 'integer' },
-      name: { type: 'string', faker: 'person.fullName' }
-    }
-  }
-}, { contentType: 'application/json' })
+interface Response {
+  status: number
+  body: unknown
+  headers: Record<string, string>
+}
 ```
 
 #### `.pipe(plugin)`
 
-Chain plugins using the pipeline:
+Add a plugin to the pipeline. Returns the instance for chaining.
 
 ```typescript
 pipe(plugin: Plugin): CallableMockInstance
 ```
 
-**Returns**: The same instance for method chaining.
-
-**Example**:
-```typescript
-import { fakerPlugin } from '@schmock/faker'
-
-mock('GET /users', userSchema, { contentType: 'application/json' })
-  .pipe(fakerPlugin({ schema: userSchema }))
-```
-
-#### `.handle(method, path, options?)`
-
-Handle a request and return a response.
-
-```typescript
-handle(method: HttpMethod, path: string, options?: RequestOptions): Promise<Response>
-```
-
-**Parameters**:
-- `method: HttpMethod` — HTTP method
-- `path: string` — Request path
-- `options?: RequestOptions` — Request options
-
-**Returns**: `Promise<Response>` — Always returns a response, never throws.
-
-**Example**:
-```typescript
-const response = await mock.handle('GET', '/users/123', {
-  headers: { 'Authorization': 'Bearer token' },
-  query: { include: 'profile' }
-});
-
-console.log(response.status);  // 200
-console.log(response.body);    // { id: 123, name: "John Doe", ... }
-console.log(response.headers); // { "content-type": "application/json" }
-```
-
-#### `.history(method?, path?)`
-
-Get recorded request history, optionally filtered by method and path.
+#### Request spying
 
 ```typescript
 history(method?: HttpMethod, path?: string): RequestRecord[]
-```
-
-**Parameters**:
-- `method?: HttpMethod` — Filter by HTTP method
-- `path?: string` — Filter by path (exact match)
-
-**Returns**: Array of `RequestRecord` objects.
-
-**Example**:
-```typescript
-await mock.handle('GET', '/users');
-await mock.handle('POST', '/users', { body: { name: 'John' } });
-
-const allRequests = mock.history();           // All requests
-const getRequests = mock.history('GET');      // Only GET requests
-const userPosts = mock.history('POST', '/users');  // POST /users only
-```
-
-#### `.called(method?, path?)`
-
-Check if any matching requests were recorded. Returns boolean.
-
-```typescript
 called(method?: HttpMethod, path?: string): boolean
-```
-
-**Example**:
-```typescript
-mock.called('GET', '/users');     // true if GET /users was called
-mock.called('POST');              // true if any POST request was made
-mock.called();                    // true if any request was made
-```
-
-#### `.callCount(method?, path?)`
-
-Get the count of matching recorded requests.
-
-```typescript
 callCount(method?: HttpMethod, path?: string): number
-```
-
-**Example**:
-```typescript
-mock.callCount('GET', '/users');  // Number of GET /users requests
-mock.callCount('DELETE');         // Number of DELETE requests
-mock.callCount();                 // Total request count
-```
-
-#### `.lastRequest(method?, path?)`
-
-Get the most recent matching request record.
-
-```typescript
 lastRequest(method?: HttpMethod, path?: string): RequestRecord | undefined
+
+interface RequestRecord {
+  method: HttpMethod
+  path: string
+  params: Record<string, string>
+  query: Record<string, string>
+  headers: Record<string, string>
+  body: unknown
+  timestamp: number
+  response: { status: number; body: unknown }
+}
 ```
 
-**Returns**: Most recent `RequestRecord` or `undefined` if no match.
-
-**Example**:
-```typescript
-const last = mock.lastRequest('POST', '/users');
-console.log(last?.body);  // { name: 'John' }
-```
-
-#### `.listen(port?, hostname?)`
-
-Start the mock as a standalone HTTP server.
-
-```typescript
-listen(port?: number, hostname?: string): Promise<ServerInfo>
-```
-
-**Parameters**:
-- `port?: number` — Port to listen on (default: `0` for random available port)
-- `hostname?: string` — Hostname to bind to (default: `'127.0.0.1'`)
-
-**Returns**: `Promise<ServerInfo>` — Resolves with the actual port and hostname once the server is listening.
-
-**Throws**: `SchmockError` with code `SERVER_ALREADY_RUNNING` if the server is already listening.
-
-**Example**:
-```typescript
-const mock = schmock();
-mock('GET /users', [{ id: 1, name: 'Alice' }]);
-
-const info = await mock.listen(3000);
-console.log(`Server running on http://${info.hostname}:${info.port}`);
-
-// Use port 0 for a random available port (useful in tests)
-const info = await mock.listen(0);
-const res = await fetch(`http://127.0.0.1:${info.port}/users`);
-```
-
-#### `.close()`
-
-Stop the standalone HTTP server. Idempotent — safe to call even if the server is not running.
+#### Lifecycle
 
 ```typescript
-close(): void
+reset(): void           // clear routes, state, history, plugins; stop server
+resetHistory(): void    // clear request history only
+resetState(): void      // reset state to initial config values
+getState(): Record<string, unknown>
+getRoutes(): RouteInfo[]  // [{ method, path, hasParams }]
 ```
 
-**Example**:
-```typescript
-const info = await mock.listen(0);
-// ... use the server ...
-mock.close();  // Stop listening
-mock.close();  // No-op, safe to call again
-```
-
-#### `.reset()`
-
-Clear all routes, state, and history. Also stops the server if running.
+#### Events
 
 ```typescript
-reset(): void
+on<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => void): void
+off<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => void): void
 ```
 
-**Example**:
-```typescript
-mock.reset();  // Full reset — removes all routes, clears state, history, and stops server
-```
+| Event | Data |
+|-------|------|
+| `request:start` | `{ method, path, headers }` |
+| `request:match` | `{ method, path, routePath, params }` |
+| `request:notfound` | `{ method, path }` |
+| `request:end` | `{ method, path, status, duration }` |
 
-#### `.resetHistory()`
-
-Clear only request history.
-
-```typescript
-resetHistory(): void
-```
-
-**Example**:
-```typescript
-mock.resetHistory();  // Clear history but keep routes and state
-```
-
-#### `.resetState()`
-
-Clear only state, keep routes and history.
+#### HTTP server
 
 ```typescript
-resetState(): void
+listen(port?: number, hostname?: string): Promise<ServerInfo>  // default: port 0, hostname '127.0.0.1'
+close(): void  // idempotent
+
+interface ServerInfo { port: number; hostname: string }
 ```
 
-**Example**:
-```typescript
-mock.resetState();  // Reset state to initial config, keep routes and history
-```
+### Request Context
 
-## Types
-
-### `HttpMethod`
-```typescript
-type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD'
-```
-
-### `RouteKey`
-```typescript
-type RouteKey = `${HttpMethod} ${string}`
-// e.g., 'GET /users', 'POST /users/:id'
-```
-
-### `Generator`
-```typescript
-type Generator = GeneratorFunction | StaticData | JSONSchema7
-```
-
-### `GeneratorFunction`
-```typescript
-type GeneratorFunction = (context: RequestContext) => ResponseResult | Promise<ResponseResult>
-```
-
-### `StaticData`
-```typescript
-type StaticData = string | number | boolean | null | undefined | Record<string, unknown> | unknown[]
-```
-
-### `RequestContext`
-
-Context passed to generator functions:
+Passed to generator functions:
 
 ```typescript
 interface RequestContext {
-  method: HttpMethod;
-  path: string;
-  params: Record<string, string>;      // Route parameters (:id, :slug, etc.)
-  query: Record<string, string>;       // Query string parameters
-  headers: Record<string, string>;     // Request headers
-  body?: unknown;                      // Request body (POST, PUT, PATCH)
-  state: Record<string, unknown>;      // Shared mutable state
+  method: HttpMethod
+  path: string
+  params: Record<string, string>
+  query: Record<string, string>
+  headers: Record<string, string>
+  body?: unknown
+  state: Record<string, unknown>     // mutable shared state
 }
 ```
 
-### `ResponseResult`
+### Response Result
 
-Generator functions can return any of these formats:
+Generator functions can return:
 
 ```typescript
 type ResponseResult =
-  | ResponseBody                                     // Direct value (200 OK)
-  | [number, unknown]                                // [status, body]
-  | [number, unknown, Record<string, string>]        // [status, body, headers]
+  | ResponseBody                                    // plain value → 200
+  | [number, unknown]                               // [status, body]
+  | [number, unknown, Record<string, string>]       // [status, body, headers]
 ```
 
-### `RequestOptions`
-```typescript
-interface RequestOptions {
-  headers?: Record<string, string>;
-  body?: any;
-  query?: Record<string, string>;
-}
-```
-
-### `Response`
-```typescript
-interface Response {
-  status: number;
-  body: unknown;
-  headers: Record<string, string>;
-}
-```
-
-### `ServerInfo`
-```typescript
-interface ServerInfo {
-  port: number;
-  hostname: string;
-}
-```
-
-## Plugin System
-
-### `Plugin` Interface
+### Plugin Interface
 
 ```typescript
 interface Plugin {
-  name: string;
-  version?: string;
-
-  install?(instance: CallableMockInstance): void;  // Register routes at pipe() time
-
-  process(
-    context: PluginContext,
-    response?: unknown
-  ): PluginResult | Promise<PluginResult>;
-
-  onError?(
-    error: Error,
-    context: PluginContext
-  ): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
+  name: string
+  version?: string
+  install?(instance: CallableMockInstance): void
+  process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
+  onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
 }
-```
 
-### `PluginResult`
-```typescript
-interface PluginResult {
-  context: PluginContext;
-  response?: unknown;
-}
-```
-
-### `PluginContext`
-```typescript
 interface PluginContext {
-  path: string;
-  route: RouteConfig;
-  method: HttpMethod;
-  params: Record<string, string>;
-  query: Record<string, string>;
-  headers: Record<string, string>;
-  body?: unknown;
-  state: Map<string, unknown>;              // Shared state between plugins (per request)
-  routeState?: Record<string, unknown>;     // Route-specific persistent state
+  path: string
+  route: RouteConfig
+  method: HttpMethod
+  params: Record<string, string>
+  query: Record<string, string>
+  headers: Record<string, string>
+  body?: unknown
+  state: Map<string, unknown>              // shared across plugins per request
+  routeState?: Record<string, unknown>     // route-level persistent state
+}
+
+interface PluginResult {
+  context: PluginContext
+  response?: unknown
 }
 ```
 
-### Plugin Pipeline Execution
+### Error Classes
 
-Plugins execute in `.pipe()` order:
-
-1. **First Plugin**: Receives context with no response
-2. **Subsequent Plugins**: Receive context + response from previous plugin
-3. **Response Generation**: First plugin to set response becomes the generator
-4. **Response Transformation**: Later plugins can modify the response
-
-### Writing Plugins
+All extend `SchmockError`:
 
 ```typescript
-// Logging plugin — passes through unchanged
-function loggingPlugin(): Plugin {
-  return {
-    name: 'logging',
-    version: '1.0.0',
-    process(context, response) {
-      console.log(`${context.method} ${context.path}`);
-      return { context, response };
-    }
-  };
-}
-
-// Generator plugin — produces response if none exists
-function staticDataPlugin(data: unknown): Plugin {
-  return {
-    name: 'static-data',
-    process(context, response) {
-      if (!response) {
-        return { context, response: data };
-      }
-      return { context, response };
-    }
-  };
-}
-
-// Transformer plugin — modifies existing response
-function headerPlugin(headers: Record<string, string>): Plugin {
-  return {
-    name: 'headers',
-    process(context, response) {
-      if (response && Array.isArray(response)) {
-        const [status, body, existingHeaders = {}] = response;
-        return {
-          context,
-          response: [status, body, { ...existingHeaders, ...headers }]
-        };
-      }
-      return { context, response };
-    }
-  };
-}
-
-// Error handler plugin
-function errorHandlerPlugin(): Plugin {
-  return {
-    name: 'error-handler',
-    process(context, response) {
-      return { context, response };
-    },
-    onError(error, context) {
-      return {
-        status: 500,
-        body: { error: 'Internal server error', code: 'PLUGIN_ERROR' },
-        headers: { 'Content-Type': 'application/json' }
-      };
-    }
-  };
+class SchmockError extends Error {
+  readonly code: string
+  readonly context?: unknown
 }
 ```
 
-## Schema Plugin
+| Class | Code | Context |
+|-------|------|---------|
+| `RouteNotFoundError` | `ROUTE_NOT_FOUND` | `{ method, path }` |
+| `RouteParseError` | `ROUTE_PARSE_ERROR` | `{ routeKey, reason }` |
+| `RouteDefinitionError` | `ROUTE_DEFINITION_ERROR` | `{ routeKey, reason }` |
+| `ResponseGenerationError` | `RESPONSE_GENERATION_ERROR` | `{ route, originalError }` |
+| `PluginError` | `PLUGIN_ERROR` | `{ pluginName, originalError }` |
+| `SchemaValidationError` | `SCHEMA_VALIDATION_ERROR` | `{ schemaPath, issue, suggestion }` |
+| `SchemaGenerationError` | `SCHEMA_GENERATION_ERROR` | `{ route, originalError, schema }` |
+| `ResourceLimitError` | `RESOURCE_LIMIT_ERROR` | `{ resource, limit, actual }` |
+
+### Constants
+
+```typescript
+HTTP_METHODS          // readonly ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
+ROUTE_NOT_FOUND_CODE  // 'ROUTE_NOT_FOUND'
+isHttpMethod(s)       // type guard → HttpMethod
+toHttpMethod(s)       // normalize → HttpMethod (throws on invalid)
+```
+
+---
+
+## Faker Plugin (`@schmock/faker`)
 
 ### `fakerPlugin(options)`
 
-Creates a schema plugin for JSON Schema-based data generation.
+Generate data from JSON schemas using faker.js.
 
 ```typescript
 function fakerPlugin(options: FakerPluginOptions): Plugin
-```
 
-```typescript
 interface FakerPluginOptions {
-  schema: JSONSchema7;
-  count?: number;                       // Number of items for array schemas
-  overrides?: Record<string, any>;      // Field overrides (supports templates)
+  schema: JSONSchema7
+  count?: number                    // items for array schemas
+  overrides?: Record<string, any>   // field overrides (supports templates)
+  seed?: number                     // deterministic generation
 }
-```
-
-**Example**:
-```typescript
-import { fakerPlugin } from '@schmock/faker';
-
-const mock = schmock();
-
-mock('GET /users', null, { contentType: 'application/json' })
-  .pipe(fakerPlugin({
-    schema: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'integer' },
-          name: { type: 'string', faker: 'person.fullName' },
-          email: { type: 'string', format: 'email' }
-        }
-      }
-    },
-    count: 5,
-    overrides: { id: '{{params.id}}' }
-  }))
 ```
 
 ### `generateFromSchema(options)`
 
-Generate data from a JSON Schema directly (used internally by schema plugin).
+Direct schema-to-data generation (used internally and available for standalone use).
 
 ```typescript
-function generateFromSchema(options: SchemaGenerationContext): any
-```
+function generateFromSchema(options: SchemaGenerationContext): unknown
 
-```typescript
 interface SchemaGenerationContext {
-  schema: JSONSchema7;
-  count?: number;
-  overrides?: Record<string, any>;
-  params?: Record<string, string>;
-  state?: any;
-  query?: Record<string, string>;
+  schema: JSONSchema7
+  count?: number
+  overrides?: Record<string, any>
+  params?: Record<string, string>
+  state?: any
+  query?: Record<string, string>
+  seed?: number
 }
 ```
 
-### Template Syntax
+### Template syntax
 
-Override values support templates that resolve from request context:
+Override values support templates:
 
-- `{{params.id}}` — Route parameters
-- `{{state.user.name}}` — State values (supports nested access)
-- `{{query.filter}}` — Query parameters
+```typescript
+overrides: {
+  id: '{{params.id}}',          // route parameter
+  owner: '{{state.user.name}}', // state value (nested access)
+  q: '{{query.search}}',        // query parameter
+}
+```
 
-Single-template values preserve the original type. Mixed templates return strings.
+### Smart field name mapping
 
-## Express Adapter
+The faker plugin maps property names to appropriate faker methods automatically. Examples:
+
+| Field name | Generated as |
+|-----------|--------------|
+| `email`, `user_email` | Realistic email address |
+| `name`, `full_name`, `display_name` | Person's full name |
+| `phone`, `mobile`, `tel` | Phone number |
+| `url`, `website`, `href` | URL |
+| `avatar`, `photo_url`, `profile_image` | Image URL |
+| `city`, `state`, `country` | Location data |
+| `price`, `amount`, `salary` | Currency amount |
+| `created_at`, `updated_at` | ISO datetime |
+| `is_active`, `enabled` | Boolean (90% true) |
+| `is_deleted` | Boolean (5% true) |
+| `uuid`, `guid` | UUID v4 |
+| `description`, `summary`, `bio` | Paragraph of text |
+| `age` | Integer 18–80 |
+| `rating`, `score`, `stars` | Integer 1–5 |
+
+200+ field names are mapped. See `packages/faker/src/field-mappings.ts` for the complete list.
+
+### Schema extensions
+
+```typescript
+{
+  type: 'boolean',
+  schmockTrueProbability: 0.8,   // 80% chance of true
+}
+
+{
+  type: 'string',
+  schmockNullable: true,         // ~5% chance of null
+}
+```
+
+---
+
+## Validation Plugin (`@schmock/validation`)
+
+### `validationPlugin(options)`
+
+Validate requests and responses using AJV.
+
+```typescript
+function validationPlugin(options: ValidationPluginOptions): Plugin
+
+interface ValidationPluginOptions {
+  request?: {
+    body?: JSONSchema7
+    query?: JSONSchema7
+    headers?: JSONSchema7
+  }
+  response?: {
+    body?: JSONSchema7
+  }
+  requestErrorStatus?: number    // default: 400
+  responseErrorStatus?: number   // default: 500
+}
+```
+
+Error response format:
+
+```typescript
+{
+  error: "Request validation failed",
+  code: "REQUEST_VALIDATION_ERROR",  // or QUERY_, HEADER_, RESPONSE_
+  details: [{ path: "/name", message: "must be string", keyword: "type" }]
+}
+```
+
+---
+
+## Query Plugin (`@schmock/query`)
+
+### `queryPlugin(options?)`
+
+Pagination, sorting, and filtering for array responses.
+
+```typescript
+function queryPlugin(options?: QueryPluginOptions): Plugin
+
+interface QueryPluginOptions {
+  pagination?: {
+    defaultLimit?: number       // default: 10
+    maxLimit?: number           // default: 100
+    pageParam?: string          // default: "page"
+    limitParam?: string         // default: "limit"
+  }
+  sorting?: {
+    allowed: string[]           // required: fields allowed for sorting
+    default?: string
+    defaultOrder?: 'asc' | 'desc'  // default: "asc"
+    sortParam?: string          // default: "sort"
+    orderParam?: string         // default: "order"
+  }
+  filtering?: {
+    allowed: string[]           // required: fields allowed for filtering
+    filterPrefix?: string       // default: "filter"
+  }
+}
+```
+
+Query parameters:
+
+| Feature | Format | Example |
+|---------|--------|---------|
+| Pagination | `?page=N&limit=N` | `?page=2&limit=10` |
+| Sorting | `?sort=field&order=asc\|desc` | `?sort=name&order=desc` |
+| Filtering | `?filter[field]=value` | `?filter[role]=admin` |
+
+Pagination response format:
+
+```typescript
+{
+  data: [...],
+  pagination: { page: 2, limit: 10, total: 50, totalPages: 5 }
+}
+```
+
+---
+
+## OpenAPI Plugin (`@schmock/openapi`)
+
+### `openapi(options)`
+
+Auto-register routes from an OpenAPI/Swagger spec.
+
+```typescript
+async function openapi(options: OpenApiOptions): Promise<Plugin>
+```
+
+```typescript
+interface OpenApiOptions {
+  spec: string | object              // file path or inline spec
+  seed?: SeedConfig                  // seed data per resource
+  validateRequests?: boolean         // validate request bodies (default: false)
+  validateResponses?: boolean        // validate responses (default: false)
+  security?: boolean                 // enforce security schemes (default: false)
+  fakerSeed?: number                 // deterministic generation
+  debug?: boolean                    // log CRUD detection (default: false)
+  schemas?: Record<string, JSONSchema7>   // replace response schemas
+  onSchema?: OnSchemaCallback        // dynamic schema modification
+  resources?: Record<string, ResourceOverride>  // override CRUD detection
+  queryFeatures?: {
+    pagination?: boolean
+    sorting?: boolean
+    filtering?: boolean
+  }
+}
+
+type SeedConfig = Record<string, SeedSource>
+type SeedSource = unknown[] | string | { count: number }
+
+type OnSchemaCallback = (
+  schema: JSONSchema7,
+  context: {
+    method: string
+    path: string
+    params: Record<string, string>
+    query: Record<string, string>
+    headers: Record<string, string>
+  },
+) => JSONSchema7 | undefined
+
+interface ResourceOverride {
+  listWrapProperty?: string       // property holding items (e.g. "data")
+  listFlat?: boolean              // force flat array response
+  errorSchema?: JSONSchema7       // custom error response format
+}
+```
+
+Supports Swagger 2.0, OpenAPI 3.0, and OpenAPI 3.1.
+
+See the [OpenAPI guide](./openapi.md) for detailed usage.
+
+---
+
+## Express Adapter (`@schmock/express`)
 
 ### `toExpress(mock, options?)`
 
@@ -570,521 +450,119 @@ Convert a Schmock instance to Express middleware.
 
 ```typescript
 function toExpress(mock: CallableMockInstance, options?: ExpressAdapterOptions): RequestHandler
-```
 
-```typescript
 interface ExpressAdapterOptions {
-  errorFormatter?: (error: Error, req: Request) => any;
-
-  /** Pass non-Schmock errors to Express error handler. @default true */
-  passErrorsToNext?: boolean;
-
-  /** Custom header transformation from Express headers to Record<string, string> */
-  transformHeaders?: (headers: Request['headers']) => Record<string, string>;
-
-  /** Custom query transformation from Express query to Record<string, string> */
-  transformQuery?: (query: Request['query']) => Record<string, string>;
-
-  /** Request interceptor — modify request data before Schmock handles it */
+  passErrorsToNext?: boolean     // default: true
+  errorFormatter?: (error: Error, req: Request) => any
+  transformHeaders?: (headers: Request['headers']) => Record<string, string>
+  transformQuery?: (query: Request['query']) => Record<string, string>
   beforeRequest?: (req: Request, res: Response) =>
     | { method?: string; path?: string; headers?: Record<string, string>; body?: any; query?: Record<string, string> }
-    | undefined
-    | Promise<any>;
-
-  /** Response interceptor — modify response before sending to client */
-  beforeResponse?: (
-    schmockResponse: { status: number; body: any; headers: Record<string, string> },
-    req: Request,
-    res: Response,
-  ) =>
+    | undefined | Promise<any>
+  beforeResponse?: (response: Schmock.Response, req: Request, res: Response) =>
     | { status: number; body: any; headers: Record<string, string> }
-    | undefined
-    | Promise<{ status: number; body: any; headers: Record<string, string> } | undefined>;
+    | undefined | Promise<any>
 }
 ```
 
-Routes not matched by Schmock automatically call `next()` to pass through to subsequent Express middleware.
+See the [Express guide](./express.md) for detailed usage.
 
-**Example**:
-```typescript
-import express from 'express';
-import { toExpress } from '@schmock/express';
+---
 
-const app = express();
-const mock = schmock();
-
-mock('GET /users', () => [{ id: 1, name: 'John' }], {
-  contentType: 'application/json'
-});
-
-app.use('/api', toExpress(mock));
-app.listen(3000);
-```
-
-**With options**:
-```typescript
-app.use('/api', toExpress(mock, {
-  passErrorsToNext: false,
-  beforeRequest: (req) => ({
-    headers: { 'x-request-id': req.get('x-request-id') || 'none' }
-  }),
-  beforeResponse: (response) => ({
-    ...response,
-    headers: { ...response.headers, 'x-powered-by': 'schmock' }
-  }),
-  errorFormatter: (error) => ({
-    message: error.message,
-    timestamp: new Date().toISOString()
-  })
-}));
-```
-
-## Angular Adapter
+## Angular Adapter (`@schmock/angular`)
 
 ### `createSchmockInterceptor(mock, options?)`
 
-Create an Angular HTTP interceptor class from a Schmock instance.
+Create an Angular HTTP interceptor class.
 
 ```typescript
 function createSchmockInterceptor(
   mock: CallableMockInstance,
-  options?: AngularAdapterOptions
+  options?: AngularAdapterOptions,
 ): new () => HttpInterceptor
-```
-
-```typescript
-interface AngularAdapterOptions {
-  /** Base URL to intercept (e.g., '/api'). If omitted, intercepts all requests. */
-  baseUrl?: string;
-
-  /** Pass through requests that don't match any route. @default true */
-  passthrough?: boolean;
-
-  /** Custom error formatter */
-  errorFormatter?: (error: Error, request: HttpRequest<any>) => any;
-
-  /** Modify request data before passing to Schmock */
-  transformRequest?: (request: HttpRequest<any>) => {
-    method?: string;
-    path?: string;
-    headers?: Record<string, string>;
-    body?: any;
-    query?: Record<string, string>;
-  };
-
-  /** Modify Schmock response before returning to Angular */
-  transformResponse?: (response: Schmock.Response, request: HttpRequest<any>) => Schmock.Response;
-}
-```
-
-**Example**:
-```typescript
-import { createSchmockInterceptor } from '@schmock/angular';
-
-const mock = schmock();
-mock('GET /users', () => [{ id: 1, name: 'John' }], {
-  contentType: 'application/json'
-});
-
-const InterceptorClass = createSchmockInterceptor(mock, {
-  baseUrl: '/api',
-  passthrough: false
-});
-
-// Register as provider
-providers: [
-  {
-    provide: HTTP_INTERCEPTORS,
-    useClass: InterceptorClass,
-    multi: true
-  }
-]
 ```
 
 ### `provideSchmockInterceptor(mock, options?)`
 
-Convenience function that returns a ready-to-use Angular provider configuration.
+Returns a ready-to-use Angular provider.
 
 ```typescript
 function provideSchmockInterceptor(
   mock: CallableMockInstance,
-  options?: AngularAdapterOptions
+  options?: AngularAdapterOptions,
 ): { provide: InjectionToken; useClass: new () => HttpInterceptor; multi: true }
 ```
 
-**Example**:
-```typescript
-import { provideSchmockInterceptor } from '@schmock/angular';
+### `createSchmockInterceptorFromSpec(openapiOptions, adapterOptions?)`
 
-// In module providers or bootstrapApplication:
-providers: [
-  provideSchmockInterceptor(mock, { baseUrl: '/api' })
-]
-```
+Create interceptor from an OpenAPI spec.
 
-## Validation Plugin
+### `provideSchmockInterceptorFromSpec(openapiOptions, adapterOptions?)`
 
-### `validationPlugin(options)`
-
-Creates a validation plugin for JSON Schema-based request and response validation using AJV.
+Create provider from an OpenAPI spec.
 
 ```typescript
-function validationPlugin(options: ValidationPluginOptions): Plugin
-```
-
-```typescript
-interface ValidationPluginOptions {
-  request?: {
-    body?: JSONSchema7;       // Validate request body
-    query?: JSONSchema7;      // Validate query parameters
-    headers?: JSONSchema7;    // Validate request headers
-  };
-  response?: {
-    body?: JSONSchema7;       // Validate response body
-  };
-  /** Custom status code for request validation failures (default: 400) */
-  requestErrorStatus?: number;
-  /** Custom status code for response validation failures (default: 500) */
-  responseErrorStatus?: number;
-}
-```
-
-**Behavior**:
-- Returns `400 Bad Request` (or custom `requestErrorStatus`) for invalid request data
-- Returns `500 Internal Server Error` (or custom `responseErrorStatus`) for invalid response data
-- Validation errors include detailed AJV error messages
-
-**Example**:
-```typescript
-import { validationPlugin } from '@schmock/validation';
-
-const mock = schmock();
-
-mock('POST /users', ({ body, state }) => {
-  state.users.push(body);
-  return [201, body];
-}, { contentType: 'application/json' })
-  .pipe(validationPlugin({
-    request: {
-      body: {
-        type: 'object',
-        required: ['name', 'email'],
-        properties: {
-          name: { type: 'string', minLength: 1 },
-          email: { type: 'string', format: 'email' }
-        }
-      }
-    },
-    response: {
-      body: {
-        type: 'object',
-        required: ['id', 'name', 'email'],
-        properties: {
-          id: { type: 'integer' },
-          name: { type: 'string' },
-          email: { type: 'string' }
-        }
-      }
-    }
-  }));
-
-// Valid request
-await mock.handle('POST', '/users', {
-  body: { name: 'John', email: 'john@example.com' }
-}); // 201
-
-// Invalid request
-await mock.handle('POST', '/users', {
-  body: { name: 'John' }  // Missing email
-}); // 400 with validation errors
-```
-
-## Query Plugin
-
-### `queryPlugin(options?)`
-
-Creates a query plugin that adds pagination, sorting, and filtering capabilities to array responses.
-
-```typescript
-function queryPlugin(options?: QueryPluginOptions): Plugin
-```
-
-```typescript
-interface QueryPluginOptions {
-  pagination?: PaginationOptions;
-  sorting?: SortingOptions;
-  filtering?: FilteringOptions;
-}
-
-interface PaginationOptions {
-  defaultLimit?: number;    // Default items per page (default: 10)
-  maxLimit?: number;        // Maximum items per page (default: 100)
-  pageParam?: string;       // Query param name for page (default: "page")
-  limitParam?: string;      // Query param name for limit (default: "limit")
-}
-
-interface SortingOptions {
-  allowed: string[];        // Fields allowed for sorting (required)
-  default?: string;         // Default sort field
-  defaultOrder?: 'asc' | 'desc';  // Default sort order (default: "asc")
-  sortParam?: string;       // Query param name for sort (default: "sort")
-  orderParam?: string;      // Query param name for order (default: "order")
-}
-
-interface FilteringOptions {
-  allowed: string[];        // Fields allowed for filtering (required)
-  filterPrefix?: string;    // Query param prefix (default: "filter")
-}
-```
-
-**Query Parameters**:
-- Pagination: `?page=1&limit=10`
-- Sorting: `?sort=name&order=desc`
-- Filtering: `?filter[field]=value` (exact match)
-
-**Example**:
-```typescript
-import { queryPlugin } from '@schmock/query';
-
-const mock = schmock({
-  state: {
-    users: [
-      { id: 1, name: 'Alice', role: 'admin' },
-      { id: 2, name: 'Bob', role: 'user' },
-      { id: 3, name: 'Charlie', role: 'user' },
-      { id: 4, name: 'Diana', role: 'admin' }
-    ]
+interface AngularAdapterOptions {
+  baseUrl?: string              // only intercept requests starting with this URL
+  passthrough?: boolean         // pass unmatched requests to real backend (default: true)
+  errorFormatter?: (error: Error, request: HttpRequest<any>) => any
+  transformRequest?: (request: HttpRequest<any>) => {
+    method?: string; path?: string; headers?: Record<string, string>; body?: any; query?: Record<string, string>
   }
-});
-
-mock('GET /users', ({ state }) => state.users, {
-  contentType: 'application/json'
-})
-  .pipe(queryPlugin({
-    pagination: { defaultLimit: 2, maxLimit: 50 },
-    sorting: { allowed: ['name', 'id'] },
-    filtering: { allowed: ['role'] }
-  }));
-
-// Pagination
-await mock.handle('GET', '/users?page=1&limit=2');
-// Returns first 2 users
-
-// Sorting
-await mock.handle('GET', '/users?sort=name');
-// Returns users sorted by name ascending
-
-await mock.handle('GET', '/users?sort=-name');
-// Returns users sorted by name descending
-
-// Filtering
-await mock.handle('GET', '/users?filter[role]=admin');
-// Returns only admin users
-
-// Combined
-await mock.handle('GET', '/users?filter[role]=user&sort=name&page=1&limit=2');
-// Returns first 2 users with role=user, sorted by name
-```
-
-## OpenAPI Plugin
-
-### `openapi(options)`
-
-Creates an OpenAPI plugin that automatically registers routes from an OpenAPI/Swagger specification.
-
-```typescript
-async function openapi(options: OpenApiOptions): Promise<Plugin>
-```
-
-**Note**: This is an async factory function that returns a Promise resolving to a Plugin with an `install()` hook.
-
-```typescript
-interface OpenApiOptions {
-  spec: string | object;    // File path to spec or inline spec object
-  seed?: SeedConfig;        // Optional seed data for CRUD resources
-}
-
-type SeedConfig = {
-  [resourceName: string]: unknown[] | string | { count: number }
-};
-```
-
-**Seed Configuration**:
-- `unknown[]` — Inline array of seed data
-- `string` — File path to JSON file containing seed data
-- `{ count: number }` — Auto-generate N items using schema
-
-**Features**:
-- Supports Swagger 2.0, OpenAPI 3.0, and OpenAPI 3.1
-- Auto-detects CRUD resources from path patterns (e.g., `/users`, `/users/{id}`)
-- Registers CRUD routes with in-memory stateful collections
-- Non-CRUD endpoints get schema-generated static responses
-- Handles discriminators, circular references, and complex schemas
-- Supports polymorphic responses (oneOf, anyOf, allOf)
-
-**Example**:
-```typescript
-import { openapi } from '@schmock/openapi';
-
-const mock = schmock();
-
-// Load from file with seed data
-await mock.pipe(await openapi({
-  spec: './openapi.yaml',
-  seed: {
-    users: [
-      { userId: 1, name: 'Alice', email: 'alice@example.com' },
-      { userId: 2, name: 'Bob', email: 'bob@example.com' }
-    ],
-    posts: { count: 10 },  // Auto-generate 10 posts from schema
-    tags: './seed/tags.json'  // Load from file
-  }
-}));
-
-// Or load inline spec
-await mock.pipe(await openapi({
-  spec: {
-    openapi: '3.0.0',
-    paths: {
-      '/users': {
-        get: {
-          responses: {
-            '200': {
-              description: 'List users',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      properties: {
-                        id: { type: 'integer' },
-                        name: { type: 'string' }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}));
-
-// CRUD operations work automatically
-await mock.handle('GET', '/users');           // List all users
-await mock.handle('GET', '/users/1');         // Get user by ID
-await mock.handle('POST', '/users', {         // Create user
-  body: { name: 'Charlie', email: 'charlie@example.com' }
-});
-await mock.handle('PUT', '/users/1', {        // Update user
-  body: { name: 'Alice Updated', email: 'alice@example.com' }
-});
-await mock.handle('DELETE', '/users/1');      // Delete user
-```
-
-**CRUD Detection**:
-The plugin automatically detects CRUD resources by analyzing path patterns. For example:
-- `/users` + `/users/{id}` → Detected as "users" CRUD resource
-- `/posts` + `/posts/{postId}` → Detected as "posts" CRUD resource
-
-Detected CRUD resources get full in-memory collection behavior with create, read, update, delete operations.
-
-**Seed Data Matching**:
-Seed data objects must include an ID field that matches the path parameter name from your OpenAPI spec:
-```typescript
-// If your spec defines /users/{userId}, seed data needs userId field:
-seed: {
-  users: [
-    { userId: 1, name: 'Alice' },  // Matches path param {userId}
-    { userId: 2, name: 'Bob' }
-  ]
+  transformResponse?: (response: Schmock.Response, request: HttpRequest<any>) => Schmock.Response
 }
 ```
+
+### Helper functions
+
+```typescript
+notFound(message?: string | object): [404, object]
+badRequest(message?: string | object): [400, object]
+unauthorized(message?: string | object): [401, object]
+forbidden(message?: string | object): [403, object]
+serverError(message?: string | object): [500, object]
+created(body: object): [201, object]
+noContent(): [204, null]
+paginate<T>(items: T[], options?: { page?: number; pageSize?: number }): PaginatedResponse<T>
+```
+
+See the [Angular guide](./angular.md) for detailed usage.
+
+---
 
 ## CLI (`@schmock/cli`)
 
 ### `createCliServer(options)`
 
-Programmatically start a Schmock server from an OpenAPI spec. Useful for integration tests or custom tooling.
+Start a mock server programmatically.
 
 ```typescript
 async function createCliServer(options: CliOptions): Promise<CliServer>
-```
 
-```typescript
 interface CliOptions {
-  spec: string;           // Path to OpenAPI/Swagger spec file
-  port?: number;          // Port to listen on (default: 3000)
-  hostname?: string;      // Hostname to bind to (default: '127.0.0.1')
-  seed?: string;          // Path to JSON file with seed data
-  cors?: boolean;         // Enable CORS for all responses (default: false)
-  debug?: boolean;        // Enable debug logging (default: false)
+  spec: string
+  port?: number              // default: 3000
+  hostname?: string          // default: '127.0.0.1'
+  seed?: string              // path to JSON seed file
+  cors?: boolean             // default: false
+  debug?: boolean            // default: false
+  fakerSeed?: number
+  errors?: boolean           // enable request validation
+  watch?: boolean            // watch spec for changes
+  admin?: boolean            // enable admin API
 }
 
 interface CliServer {
-  server: Server;         // Node http.Server instance
-  port: number;           // Actual port (useful when port=0)
-  hostname: string;       // Bound hostname
-  close(): void;          // Stop the server
+  server: http.Server
+  port: number
+  hostname: string
+  close(): void
 }
-```
-
-**Example**:
-```typescript
-import { createCliServer } from '@schmock/cli';
-
-const server = await createCliServer({
-  spec: './petstore.yaml',
-  port: 8080,
-  cors: true,
-  seed: './seed.json'
-});
-
-console.log(`Mock server on port ${server.port}`);
-
-// Later...
-server.close();
-```
-
-### CLI Usage
-
-```bash
-schmock <spec> [options]
-schmock --spec <path> [options]
-```
-
-The spec file can be passed as a positional argument or via `--spec`. The positional form is the simplest way to start a server.
-
-**Options**:
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--spec <path>` | OpenAPI/Swagger spec file (or pass as first argument) | — |
-| `--port <number>` | Port to listen on | `3000` |
-| `--hostname <host>` | Hostname to bind to | `127.0.0.1` |
-| `--seed <path>` | JSON file with seed data | — |
-| `--cors` | Enable CORS for all responses | `false` |
-| `--debug` | Enable debug logging | `false` |
-| `-h, --help` | Show help message | — |
-
-**Example**:
-```bash
-# Simplest usage — just point at a spec
-schmock swagger.json
-
-# Custom port with CORS and seed data
-schmock ./api.yaml --port 8080 --cors --seed ./seed.json
-
-# Equivalent using --spec flag
-schmock --spec ./petstore.yaml --port 3000
 ```
 
 ### `parseCliArgs(args)`
 
-Parse CLI arguments into a `CliOptions` object.
+Parse CLI arguments.
 
 ```typescript
 function parseCliArgs(args: string[]): CliOptions & { help: boolean }
@@ -1092,148 +570,10 @@ function parseCliArgs(args: string[]): CliOptions & { help: boolean }
 
 ### `run(args)`
 
-Entry point for the CLI binary. Parses args, starts the server, and handles graceful shutdown (SIGINT/SIGTERM).
+Entry point for the CLI binary. Parses args, starts server, handles SIGINT/SIGTERM.
 
 ```typescript
 async function run(args: string[]): Promise<void>
 ```
 
-## Error Handling
-
-### Error Hierarchy
-
-All errors extend `SchmockError`:
-
-```
-SchmockError (base)
-├── RouteNotFoundError
-├── RouteParseError
-├── RouteDefinitionError
-├── ResponseGenerationError
-├── PluginError
-├── SchemaValidationError
-├── SchemaGenerationError
-└── ResourceLimitError
-```
-
-### `SchmockError`
-
-Base class for all Schmock errors. Includes a machine-readable `code` and structured `context`.
-
-```typescript
-class SchmockError extends Error {
-  readonly code: string;
-  readonly context?: unknown;
-  constructor(message: string, code: string, context?: unknown)
-}
-```
-
-### `RouteNotFoundError`
-```typescript
-class RouteNotFoundError extends SchmockError {
-  // code: "ROUTE_NOT_FOUND"
-  // context: { method, path }
-  constructor(method: string, path: string)
-}
-```
-
-### `RouteParseError`
-```typescript
-class RouteParseError extends SchmockError {
-  // code: "ROUTE_PARSE_ERROR"
-  // context: { routeKey, reason }
-  constructor(routeKey: string, reason: string)
-}
-```
-
-### `RouteDefinitionError`
-```typescript
-class RouteDefinitionError extends SchmockError {
-  // code: "ROUTE_DEFINITION_ERROR"
-  // context: { routeKey, reason }
-  constructor(routeKey: string, reason: string)
-}
-```
-
-### `ResponseGenerationError`
-```typescript
-class ResponseGenerationError extends SchmockError {
-  // code: "RESPONSE_GENERATION_ERROR"
-  // context: { route, originalError }
-  constructor(route: string, error: Error)
-}
-```
-
-### `PluginError`
-```typescript
-class PluginError extends SchmockError {
-  // code: "PLUGIN_ERROR"
-  // context: { pluginName, originalError }
-  constructor(pluginName: string, error: Error)
-}
-```
-
-### `SchemaValidationError`
-```typescript
-class SchemaValidationError extends SchmockError {
-  // code: "SCHEMA_VALIDATION_ERROR"
-  // context: { schemaPath, issue, suggestion }
-  constructor(schemaPath: string, issue: string, suggestion?: string)
-}
-```
-
-### `SchemaGenerationError`
-```typescript
-class SchemaGenerationError extends SchmockError {
-  // code: "SCHEMA_GENERATION_ERROR"
-  // context: { route, originalError, schema }
-  constructor(route: string, error: Error, schema?: unknown)
-}
-```
-
-### `ResourceLimitError`
-```typescript
-class ResourceLimitError extends SchmockError {
-  // code: "RESOURCE_LIMIT_ERROR"
-  // context: { resource, limit, actual }
-  constructor(resource: string, limit: number, actual?: number)
-}
-```
-
-### Error Usage
-
-```typescript
-import {
-  SchmockError,
-  RouteNotFoundError,
-  SchemaValidationError,
-  ResourceLimitError
-} from '@schmock/core';
-
-const response = await mock.handle('GET', '/api/users');
-
-// handle() never throws — check response status instead
-if (response.status === 500) {
-  console.log(response.body.code);  // e.g., "PLUGIN_ERROR"
-}
-
-// Schema plugin throws at creation time for invalid schemas
-try {
-  fakerPlugin({ schema: invalidSchema });
-} catch (error) {
-  if (error instanceof SchemaValidationError) {
-    console.log(error.context); // { schemaPath: "$.properties.name", issue: "...", suggestion: "..." }
-  }
-}
-```
-
-## Constants
-
-```typescript
-import { HTTP_METHODS, ROUTE_NOT_FOUND_CODE, isHttpMethod, toHttpMethod } from '@schmock/core';
-
-HTTP_METHODS          // readonly ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
-ROUTE_NOT_FOUND_CODE  // 'ROUTE_NOT_FOUND'
-isHttpMethod('GET')   // true (type guard: narrows to HttpMethod)
-toHttpMethod('get')   // 'GET' (throws on invalid input)
-```
+See the [CLI guide](./cli.md) for detailed usage.

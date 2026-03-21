@@ -6,9 +6,16 @@ Schmock is a TypeScript HTTP mocking library with a callable API, extensible plu
 
 | Resource | Path |
 |----------|------|
+| Getting started | `docs/getting-started.md` |
+| OpenAPI guide | `docs/openapi.md` |
+| Testing patterns | `docs/testing.md` |
+| API reference | `docs/api.md` |
+| Plugin development | `docs/plugins.md` |
+| Express adapter | `docs/express.md` |
+| Angular adapter | `docs/angular.md` |
+| CLI guide | `docs/cli.md` |
+| Debug mode | `docs/debug-mode.md` |
 | Coding standards | `docs/coding-standards.md` |
-| API documentation | `docs/api.md` |
-| Plugin development | `docs/plugin-development.md` |
 | Project roadmap | `project/schmock-project-sheet.md` |
 
 ## Packages

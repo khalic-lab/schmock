@@ -5,6 +5,7 @@ import Ajv from "ajv";
 import type { JSONSchema7 } from "json-schema";
 import { negotiateContentType } from "./content-negotiation.js";
 import type { ParsedResponseEntry, SecurityScheme } from "./parser.js";
+import type { OnSchemaCallback } from "./plugin.js";
 import { parsePreferHeader } from "./prefer.js";
 import { isRecord } from "./utils.js";
 
@@ -233,6 +234,7 @@ export function processPreferHeader(
   context: Schmock.PluginContext,
   response: unknown,
   fakerSeed?: number,
+  onSchema?: OnSchemaCallback,
 ): Schmock.PluginResult {
   const preferValue = context.headers.prefer ?? context.headers.Prefer;
   if (!preferValue) {
@@ -251,7 +253,7 @@ export function processPreferHeader(
     const entry = responses.get(prefer.code);
     if (entry) {
       const body = entry.schema
-        ? generateResponseBody(entry.schema, fakerSeed)
+        ? generateResponseBody(entry.schema, fakerSeed, onSchema, context)
         : {};
       return { context, response: [prefer.code, body] };
     }
@@ -273,7 +275,12 @@ export function processPreferHeader(
   if (prefer.dynamic) {
     for (const [code, entry] of responses) {
       if (code >= 200 && code < 300 && entry.schema) {
-        const body = generateResponseBody(entry.schema, fakerSeed);
+        const body = generateResponseBody(
+          entry.schema,
+          fakerSeed,
+          onSchema,
+          context,
+        );
         return { context, response: [code, body] };
       }
     }
@@ -282,9 +289,19 @@ export function processPreferHeader(
   return { context, response };
 }
 
-function generateResponseBody(schema: JSONSchema7, seed?: number): unknown {
+function generateResponseBody(
+  schema: JSONSchema7,
+  seed?: number,
+  onSchema?: OnSchemaCallback,
+  context?: Schmock.PluginContext,
+): unknown {
+  let finalSchema = schema;
+  if (onSchema && context) {
+    const patched = onSchema(finalSchema, context);
+    if (patched) finalSchema = patched;
+  }
   try {
-    return generateFromSchema({ schema, seed });
+    return generateFromSchema({ schema: finalSchema, seed });
   } catch {
     return {};
   }

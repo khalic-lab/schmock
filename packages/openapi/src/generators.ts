@@ -5,6 +5,7 @@ import { generateFromSchema } from "@schmock/faker";
 import type { JSONSchema7 } from "json-schema";
 import type { CrudResource } from "./crud-detector.js";
 import type { ParsedPath } from "./parser.js";
+import type { OnSchemaCallback } from "./plugin.js";
 import { isRecord, toJsonSchema } from "./utils.js";
 
 const COLLECTION_STATE_PREFIX = "openapi:collections:";
@@ -296,6 +297,7 @@ export function createDeleteGenerator(
 export function createStaticGenerator(
   parsedPath: ParsedPath,
   seed?: number,
+  onSchema?: OnSchemaCallback,
 ): Schmock.GeneratorFunction {
   // Get the success response schema
   let responseSchema: JSONSchema7 | undefined;
@@ -315,10 +317,21 @@ export function createStaticGenerator(
     }
   }
 
-  return () => {
+  return (ctx: Schmock.RequestContext) => {
     if (responseSchema) {
+      let schema = responseSchema;
+      if (onSchema) {
+        const patched = onSchema(schema, {
+          method: parsedPath.method,
+          path: parsedPath.path,
+          params: ctx.params,
+          query: ctx.query,
+          headers: ctx.headers,
+        });
+        if (patched) schema = patched;
+      }
       try {
-        return generateFromSchema({ schema: responseSchema, seed });
+        return generateFromSchema({ schema, seed });
       } catch (error) {
         console.warn(
           `[@schmock/openapi] Schema generation failed for ${parsedPath.method} ${parsedPath.path}:`,

@@ -28,10 +28,23 @@ async function probe(
   method: string,
   path: string,
   body?: unknown,
+  openapiOpts?: Partial<import("./plugin").OpenApiOptions>,
 ) {
   const mock = schmock({ state: {} });
-  mock.pipe(await openapi({ spec: specObj }));
+  mock.pipe(await openapi({ spec: specObj, ...openapiOpts }));
   return mock.handle(method as Schmock.HttpMethod, path, { body });
+}
+
+async function probeWithHeaders(
+  specObj: object,
+  method: string,
+  path: string,
+  headers: Record<string, string>,
+  openapiOpts?: Partial<import("./plugin").OpenApiOptions>,
+) {
+  const mock = schmock({ state: {} });
+  mock.pipe(await openapi({ spec: specObj, ...openapiOpts }));
+  return mock.handle(method as Schmock.HttpMethod, path, { headers });
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -739,5 +752,423 @@ describe("Incomplete specs: CRUD edge cases", () => {
       "/items",
     );
     expect(res.status).toBe(200);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// 6. schemas option (runtime schema patching)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("schemas option", () => {
+  it("patches response schema for route with empty schema", async () => {
+    const res = await probe(
+      spec3({
+        "/items": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                content: { "application/json": { schema: {} } },
+              },
+            },
+          },
+        },
+      }),
+      "GET",
+      "/items",
+      undefined,
+      {
+        schemas: {
+          "GET /items": {
+            type: "object",
+            properties: { id: { type: "integer" }, name: { type: "string" } },
+          },
+        },
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("id");
+    expect(res.body).toHaveProperty("name");
+  });
+
+  it("patches specific status code response", async () => {
+    const res = await probeWithHeaders(
+      spec3({
+        "/items": {
+          post: {
+            responses: {
+              "201": {
+                description: "Created",
+                content: { "application/json": { schema: {} } },
+              },
+            },
+          },
+        },
+      }),
+      "POST",
+      "/items",
+      { prefer: "code=201" },
+      {
+        schemas: {
+          "POST /items 201": {
+            type: "object",
+            properties: {
+              id: { type: "integer" },
+              created: { type: "boolean" },
+            },
+          },
+        },
+      },
+    );
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveProperty("id");
+    expect(res.body).toHaveProperty("created");
+  });
+
+  it("creates 200 response entry when route has no 2xx responses", async () => {
+    const res = await probe(
+      spec3({
+        "/health": {
+          get: {
+            responses: {
+              "500": { description: "Error" },
+            },
+          },
+        },
+      }),
+      "GET",
+      "/health",
+      undefined,
+      {
+        schemas: {
+          "GET /health": {
+            type: "object",
+            properties: { status: { type: "string" } },
+          },
+        },
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("status");
+  });
+
+  it("user schema replaces parsed schema entirely", async () => {
+    const res = await probe(
+      spec3({
+        "/items": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { old: { type: "string" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      "GET",
+      "/items",
+      undefined,
+      {
+        schemas: {
+          "GET /items": {
+            type: "object",
+            properties: { replaced: { type: "boolean" } },
+          },
+        },
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("replaced");
+    expect(res.body).not.toHaveProperty("old");
+  });
+
+  it("works with Prefer: dynamic=true after patching", async () => {
+    const res = await probeWithHeaders(
+      spec3({
+        "/items": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                content: { "application/json": { schema: {} } },
+              },
+            },
+          },
+        },
+      }),
+      "GET",
+      "/items",
+      { prefer: "dynamic=true" },
+      {
+        schemas: {
+          "GET /items": {
+            type: "object",
+            properties: { fresh: { type: "integer" } },
+          },
+        },
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("fresh");
+  });
+
+  it("ignores schemas for routes not in the spec", async () => {
+    const res = await probe(
+      spec3({
+        "/items": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { a: { type: "string" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      "GET",
+      "/items",
+      undefined,
+      {
+        schemas: {
+          "GET /nonexistent": {
+            type: "object",
+            properties: { x: { type: "string" } },
+          },
+        },
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("a");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// 7. onSchema callback (runtime schema hook)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("onSchema callback", () => {
+  it("returned schema replaces original for generation", async () => {
+    const res = await probe(
+      spec3({
+        "/items": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { old: { type: "string" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      "GET",
+      "/items",
+      undefined,
+      {
+        onSchema: () => ({
+          type: "object",
+          properties: { patched: { type: "boolean" } },
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("patched");
+    expect(res.body).not.toHaveProperty("old");
+  });
+
+  it("void return keeps original schema", async () => {
+    const res = await probe(
+      spec3({
+        "/items": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { original: { type: "string" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      "GET",
+      "/items",
+      undefined,
+      {
+        onSchema: () => undefined,
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("original");
+  });
+
+  it("receives correct path and method in context", async () => {
+    let capturedCtx: { method: string; path: string } | undefined;
+    await probe(
+      spec3({
+        "/users": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { id: { type: "integer" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      "GET",
+      "/users",
+      undefined,
+      {
+        onSchema: (_schema, ctx) => {
+          capturedCtx = ctx;
+        },
+      },
+    );
+    expect(capturedCtx).toBeDefined();
+    expect(capturedCtx?.method).toBe("GET");
+    expect(capturedCtx?.path).toBe("/users");
+  });
+
+  it("works with Prefer: dynamic=true", async () => {
+    const res = await probeWithHeaders(
+      spec3({
+        "/items": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { old: { type: "string" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      "GET",
+      "/items",
+      { prefer: "dynamic=true" },
+      {
+        onSchema: () => ({
+          type: "object",
+          properties: { dynamic_patched: { type: "integer" } },
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("dynamic_patched");
+  });
+
+  it("works with Prefer: code=N", async () => {
+    const res = await probeWithHeaders(
+      spec3({
+        "/items": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { old: { type: "string" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      "GET",
+      "/items",
+      { prefer: "code=200" },
+      {
+        onSchema: () => ({
+          type: "object",
+          properties: { code_patched: { type: "boolean" } },
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("code_patched");
+  });
+
+  it("works with static (non-Prefer) responses", async () => {
+    const res = await probe(
+      spec3({
+        "/items": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { old: { type: "string" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      "GET",
+      "/items",
+      undefined,
+      {
+        onSchema: () => ({
+          type: "object",
+          properties: { static_patched: { type: "number" } },
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("static_patched");
   });
 });
