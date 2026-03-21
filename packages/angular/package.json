@@ -43,7 +43,7 @@
   "devDependencies": {
     "@angular/common": "^21.1.5",
     "@angular/compiler": "^21.1.5",
-    "@angular/core": "^21.1.5",
+    "@angular/core": "^21.2.5",
     "@angular/platform-browser": "^21.1.5",
     "@angular/platform-browser-dynamic": "^21.1.5",
     "@schmock/openapi": "^1.9.5",
