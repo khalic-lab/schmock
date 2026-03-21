@@ -292,12 +292,10 @@ describe("stress: normalizer", () => {
       },
       "response",
     );
-    expect(result.oneOf).toBeDefined();
-    const branches = result.oneOf;
-    expect(branches).toHaveLength(2);
-    const numericBranch = (branches as Record<string, unknown>[])[0];
-    expect(numericBranch.exclusiveMinimum).toBe(0);
-    expect(numericBranch).not.toHaveProperty("minimum");
+    // nullable → schmockNullable marker, exclusiveMinimum boolean → number
+    expect((result as Record<string, unknown>).schmockNullable).toBe(true);
+    expect(result.exclusiveMinimum).toBe(0);
+    expect(result).not.toHaveProperty("minimum");
   });
 
   it("handles exclusiveMaximum: true (boolean → number)", () => {
@@ -449,7 +447,9 @@ describe("stress: normalizer", () => {
       "response",
     );
     const ap = result.additionalProperties;
-    expect(typeof ap === "object" && ap !== null && "oneOf" in ap).toBe(true);
+    expect(
+      typeof ap === "object" && ap !== null && "schmockNullable" in ap,
+    ).toBe(true);
   });
 
   it("does not mutate the input schema", () => {
@@ -506,10 +506,11 @@ describe("stress: normalizer", () => {
     const cardProps = branches[0].properties as Record<string, unknown>;
     expect(cardProps).not.toHaveProperty("cvc");
 
-    // nullable sortCode → oneOf
+    // nullable sortCode → schmockNullable marker
     const bankProps = branches[1].properties as Record<string, unknown>;
     const sortCode = bankProps.sortCode as Record<string, unknown>;
-    expect(sortCode.oneOf).toBeDefined();
+    expect(sortCode.schmockNullable).toBe(true);
+    expect(sortCode.type).toBe("string");
   });
 });
 

@@ -3,17 +3,18 @@ import { normalizeSchema } from "./normalizer";
 
 describe("normalizeSchema", () => {
   describe("nullable", () => {
-    it("converts nullable: true to oneOf with null type", () => {
+    it("converts nullable: true to schmockNullable marker", () => {
       const result = normalizeSchema(
         { type: "string", nullable: true },
         "response",
       );
       expect(result).toEqual({
-        oneOf: [{ type: "string" }, { type: "null" }],
+        type: "string",
+        schmockNullable: true,
       });
     });
 
-    it("removes nullable: false without adding null type", () => {
+    it("removes nullable: false without adding marker", () => {
       const result = normalizeSchema(
         { type: "string", nullable: false },
         "response",
@@ -175,8 +176,9 @@ describe("normalizeSchema", () => {
       const itemSchema = arraySchema.items as Record<string, unknown>;
       const branches = itemSchema.oneOf as Record<string, unknown>[];
       expect(branches).toHaveLength(2);
-      // First branch: nullable string → oneOf
-      expect(branches[0]).toHaveProperty("oneOf");
+      // First branch: nullable string → schmockNullable marker
+      expect(branches[0]).toHaveProperty("schmockNullable", true);
+      expect(branches[0]).toHaveProperty("type", "string");
       // Second branch: example → default
       expect(branches[1]).toHaveProperty("default", 42);
     });

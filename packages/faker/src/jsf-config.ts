@@ -1,4 +1,4 @@
-import { en, Faker } from "@faker-js/faker";
+import { base, en, Faker } from "@faker-js/faker";
 import jsf from "json-schema-faker";
 
 /**
@@ -7,7 +7,7 @@ import jsf from "json-schema-faker";
  * @returns Fresh Faker instance with English locale
  */
 export function createFakerInstance(seed?: number) {
-  const faker = new Faker({ locale: [en] });
+  const faker = new Faker({ locale: [en, base] });
   if (seed !== undefined) {
     faker.seed(seed);
   }

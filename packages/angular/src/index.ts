@@ -410,8 +410,12 @@ export async function createSchmockInterceptorFromSpec(
   // prevents TypeScript from resolving the module at build time.
   const coreMod = "@schmock/core";
   const openapiMod = "@schmock/openapi";
-  const { schmock } = await (import(coreMod) as Promise<typeof import("@schmock/core")>);
-  const { openapi } = await (import(openapiMod) as Promise<{ openapi: (opts: Schmock.OpenApiOptions) => Promise<Schmock.Plugin> }>);
+  const { schmock } = await (import(coreMod) as Promise<
+    typeof import("@schmock/core")
+  >);
+  const { openapi } = await (import(openapiMod) as Promise<{
+    openapi: (opts: Schmock.OpenApiOptions) => Promise<Schmock.Plugin>;
+  }>);
   const mock = schmock({ debug: openapiOptions.debug, state: {} });
   mock.pipe(await openapi(openapiOptions));
   return createSchmockInterceptor(mock, adapterOptions);
