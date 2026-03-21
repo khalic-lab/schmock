@@ -13,6 +13,7 @@ import {
   findArrayProperty,
 } from "./generators.js";
 import type { ParsedPath } from "./parser.js";
+import type { OnSchemaCallback } from "./plugin.js";
 import { isRecord } from "./utils.js";
 
 export function registerCrudRoutes(
@@ -51,6 +52,7 @@ export function registerNonCrudRoutes(
   instance: Schmock.CallableMockInstance,
   nonCrudPaths: ParsedPath[],
   fakerSeed?: number,
+  onSchema?: OnSchemaCallback,
 ): void {
   for (const parsedPath of nonCrudPaths) {
     const routeKey = toRouteKey(parsedPath.method, parsedPath.path);
@@ -61,7 +63,11 @@ export function registerNonCrudRoutes(
       "openapi:security": parsedPath.security,
       "openapi:callbacks": parsedPath.callbacks,
     };
-    instance(routeKey, createStaticGenerator(parsedPath, fakerSeed), config);
+    instance(
+      routeKey,
+      createStaticGenerator(parsedPath, fakerSeed, onSchema),
+      config,
+    );
   }
 }
 
