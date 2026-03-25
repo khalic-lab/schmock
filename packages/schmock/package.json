@@ -23,6 +23,9 @@
     "lint:fix": "biome check --write --unsafe src/",
     "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
+  "devDependencies": {
+    "@types/node": "^25.5.0"
+  },
   "dependencies": {
     "@schmock/core": "^1.11.0",
     "@schmock/faker": "^1.11.0",
