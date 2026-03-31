@@ -5,7 +5,7 @@ import { validators } from "./test-utils";
 
 describe("Real-World Scenarios", () => {
   describe("API Response Schemas", () => {
-    it("generates REST API list responses", () => {
+    it("generates REST API list responses", async () => {
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -53,7 +53,7 @@ describe("Real-World Scenarios", () => {
         required: ["data", "meta"],
       };
 
-      const result = generateFromSchema({ schema });
+      const result = await generateFromSchema({ schema });
 
       expect(result).toHaveProperty("data");
       expect(result).toHaveProperty("meta");
@@ -78,7 +78,7 @@ describe("Real-World Scenarios", () => {
       expect(result.meta.total).toBeGreaterThanOrEqual(0);
     });
 
-    it("generates GraphQL-style responses", () => {
+    it("generates GraphQL-style responses", async () => {
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -128,7 +128,7 @@ describe("Real-World Scenarios", () => {
         },
       };
 
-      const result = generateFromSchema({ schema });
+      const result = await generateFromSchema({ schema });
 
       if (result.data?.user) {
         expect(result.data.user).toHaveProperty("id");
@@ -145,7 +145,7 @@ describe("Real-World Scenarios", () => {
       }
     });
 
-    it("generates webhook payloads", () => {
+    it("generates webhook payloads", async () => {
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -179,7 +179,7 @@ describe("Real-World Scenarios", () => {
         required: ["event", "timestamp", "data", "signature"],
       };
 
-      const result = generateFromSchema({ schema });
+      const result = await generateFromSchema({ schema });
 
       expect(["order.created", "order.updated", "order.cancelled"]).toContain(
         result.event,
@@ -191,7 +191,7 @@ describe("Real-World Scenarios", () => {
   });
 
   describe("Database Model Schemas", () => {
-    it("generates user model data", () => {
+    it("generates user model data", async () => {
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -237,7 +237,7 @@ describe("Real-World Scenarios", () => {
         ],
       };
 
-      const result = generateFromSchema({ schema });
+      const result = await generateFromSchema({ schema });
 
       expect(result.id).toBeGreaterThanOrEqual(1);
       expect(result.username).toMatch(/^[a-zA-Z0-9_]{3,20}$/);
@@ -253,7 +253,7 @@ describe("Real-World Scenarios", () => {
       expect(updated.getTime()).not.toBeNaN();
     });
 
-    it("generates product catalog data", () => {
+    it("generates product catalog data", async () => {
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -289,7 +289,7 @@ describe("Real-World Scenarios", () => {
         },
       };
 
-      const result = generateFromSchema({ schema });
+      const result = await generateFromSchema({ schema });
 
       expect(result.sku).toMatch(/^[A-Z]{3}-[0-9]{6}$/);
       expect(result.name.length).toBeGreaterThan(0);
@@ -304,7 +304,7 @@ describe("Real-World Scenarios", () => {
   });
 
   describe("Configuration Schemas", () => {
-    it("generates application config", () => {
+    it("generates application config", async () => {
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -355,7 +355,7 @@ describe("Real-World Scenarios", () => {
         },
       };
 
-      const result = generateFromSchema({ schema });
+      const result = await generateFromSchema({ schema });
 
       if (result.app) {
         expect(result.app.version).toMatch(/^\d+\.\d+\.\d+$/);
@@ -370,7 +370,7 @@ describe("Real-World Scenarios", () => {
       }
     });
 
-    it("generates OpenAPI schema definitions", () => {
+    it("generates OpenAPI schema definitions", async () => {
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -411,7 +411,7 @@ describe("Real-World Scenarios", () => {
         required: ["openapi", "info", "paths"],
       };
 
-      const result = generateFromSchema({ schema });
+      const result = await generateFromSchema({ schema });
 
       expect(result.openapi).toBe("3.0.0");
       expect(result.info).toHaveProperty("title");
@@ -421,7 +421,7 @@ describe("Real-World Scenarios", () => {
   });
 
   describe("Form Data Schemas", () => {
-    it("generates user registration form data", () => {
+    it("generates user registration form data", async () => {
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -466,7 +466,7 @@ describe("Real-World Scenarios", () => {
         ],
       };
 
-      const result = generateFromSchema({ schema });
+      const result = await generateFromSchema({ schema });
 
       expect(result.username).toMatch(/^[a-zA-Z0-9_]+$/);
       expect(result.username.length).toBeGreaterThanOrEqual(3);
@@ -477,7 +477,7 @@ describe("Real-World Scenarios", () => {
       expect(result.termsAccepted).toBe(true);
     });
 
-    it("generates complex survey responses", () => {
+    it("generates complex survey responses", async () => {
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -515,7 +515,7 @@ describe("Real-World Scenarios", () => {
         },
       };
 
-      const result = generateFromSchema({ schema });
+      const result = await generateFromSchema({ schema });
 
       expect(
         validators.appearsToBeFromCategory([result.respondentId], "uuid"),
@@ -534,7 +534,7 @@ describe("Real-World Scenarios", () => {
   });
 
   describe("Integration with Schmock", () => {
-    it("works with schmock route handlers", () => {
+    it("works with schmock route handlers", async () => {
       const plugin = fakerPlugin({
         schema: {
           type: "object",
@@ -574,7 +574,7 @@ describe("Real-World Scenarios", () => {
         route: {},
       };
 
-      const result = plugin.process(context);
+      const result = await plugin.process(context);
 
       expect(result.response).toHaveProperty("users");
       expect(Array.isArray(result.response.users)).toBe(true);
@@ -590,7 +590,7 @@ describe("Real-World Scenarios", () => {
       }
     });
 
-    it("integrates with template overrides", () => {
+    it("integrates with template overrides", async () => {
       const plugin = fakerPlugin({
         schema: {
           type: "object",
@@ -625,7 +625,7 @@ describe("Real-World Scenarios", () => {
         route: {},
       };
 
-      const result = plugin.process(context);
+      const result = await plugin.process(context);
 
       expect(result.response.orderId).toBe("order-123");
       expect(result.response.customerId).toBe("customer-456");

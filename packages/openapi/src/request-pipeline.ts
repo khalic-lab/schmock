@@ -230,12 +230,12 @@ export function validateRequestBody(
 /**
  * Handle Prefer header directives: code=N, example=name, dynamic=true
  */
-export function processPreferHeader(
+export async function processPreferHeader(
   context: Schmock.PluginContext,
   response: unknown,
   fakerSeed?: number,
   onSchema?: OnSchemaCallback,
-): Schmock.PluginResult {
+): Promise<Schmock.PluginResult> {
   const preferValue = context.headers.prefer ?? context.headers.Prefer;
   if (!preferValue) {
     return { context, response };
@@ -253,7 +253,7 @@ export function processPreferHeader(
     const entry = responses.get(prefer.code);
     if (entry) {
       const body = entry.schema
-        ? generateResponseBody(entry.schema, fakerSeed, onSchema, context)
+        ? await generateResponseBody(entry.schema, fakerSeed, onSchema, context)
         : {};
       return { context, response: [prefer.code, body] };
     }
@@ -275,7 +275,7 @@ export function processPreferHeader(
   if (prefer.dynamic) {
     for (const [code, entry] of responses) {
       if (code >= 200 && code < 300 && entry.schema) {
-        const body = generateResponseBody(
+        const body = await generateResponseBody(
           entry.schema,
           fakerSeed,
           onSchema,
@@ -289,19 +289,19 @@ export function processPreferHeader(
   return { context, response };
 }
 
-function generateResponseBody(
+async function generateResponseBody(
   schema: JSONSchema7,
   seed?: number,
   onSchema?: OnSchemaCallback,
   context?: Schmock.PluginContext,
-): unknown {
+): Promise<unknown> {
   let finalSchema = schema;
   if (onSchema && context) {
     const patched = onSchema(finalSchema, context);
     if (patched) finalSchema = patched;
   }
   try {
-    return generateFromSchema({ schema: finalSchema, seed });
+    return await generateFromSchema({ schema: finalSchema, seed });
   } catch {
     return {};
   }

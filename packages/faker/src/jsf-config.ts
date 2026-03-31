@@ -1,10 +1,10 @@
 import { base, en, Faker } from "@faker-js/faker";
-import jsf from "json-schema-faker";
+import type { JSONSchema7 } from "json-schema";
+import { generate } from "json-schema-faker";
 
 /**
- * Create isolated faker instance to avoid race conditions
- * Each generation gets its own faker instance to ensure thread-safety
- * @returns Fresh Faker instance with English locale
+ * Create isolated faker instance to avoid race conditions.
+ * Each generation gets its own faker instance to ensure thread-safety.
  */
 export function createFakerInstance(seed?: number) {
   const faker = new Faker({ locale: [en, base] });
@@ -14,45 +14,29 @@ export function createFakerInstance(seed?: number) {
   return faker;
 }
 
-let jsfConfigured = false;
-let currentSeed: number | undefined;
-
 /**
- * Create a seeded PRNG using the mulberry32 algorithm.
- * Returns a function that produces deterministic values in [0, 1).
+ * Generate data from a JSON schema using json-schema-faker 0.6.0 async API.
+ * Stateless — each call is self-contained with its own faker instance and options.
  */
-function createSeededRandom(seed: number): () => number {
-  let state = seed | 0;
-  return () => {
-    state = (state + 0x6d2b79f5) | 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+export async function generateWithJsf(
+  schema: JSONSchema7,
+  seed?: number,
+): Promise<unknown> {
+  // When no seed is specified, generate a random seed to ensure different
+  // results on each call. JSF 0.6.0 treats seed=undefined as deterministic.
+  const effectiveSeed = seed ?? Math.floor(Math.random() * 2147483647);
 
-export function getJsf(seed?: number): typeof jsf {
-  const seedChanged = seed !== currentSeed;
-  if (!jsfConfigured || seedChanged) {
-    currentSeed = seed;
-    jsf.extend("faker", () => createFakerInstance(seed));
-    jsf.option({
-      requiredOnly: false,
+  return generate(
+    schema as any,
+    {
+      seed: effectiveSeed,
+      optionalsProbability: 1.0,
       alwaysFakeOptionals: true,
       useDefaultValue: true,
       ignoreMissingRefs: true,
       failOnInvalidTypes: false,
       failOnInvalidFormat: false,
-    });
-    jsfConfigured = true;
-  }
-  // Always reset PRNG for deterministic output per call
-  if (seed !== undefined) {
-    jsf.option({ random: createSeededRandom(seed) });
-    jsf.extend("faker", () => createFakerInstance(seed));
-  } else {
-    jsf.option({ random: Math.random });
-  }
-  return jsf;
+      extensions: { faker: createFakerInstance(seed) },
+    } as any,
+  );
 }

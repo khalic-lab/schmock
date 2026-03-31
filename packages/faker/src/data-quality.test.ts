@@ -3,12 +3,12 @@ import { generate, schemas, stats, validators } from "./test-utils";
 
 describe("Data Quality and Statistical Properties", () => {
   describe("Randomness and Distribution", () => {
-    it("generates diverse values for string fields", () => {
+    it("generates diverse values for string fields", async () => {
       const schema = schemas.simple.object({
         text: schemas.simple.string(),
       });
 
-      const samples = generate.samples<any>(schema, 100);
+      const samples = await generate.samples<any>(schema, 100);
       const values = samples.map((s) => s.text);
 
       // Should have high uniqueness
@@ -20,7 +20,7 @@ describe("Data Quality and Statistical Properties", () => {
       expect(entropy).toBeGreaterThan(4); // High randomness
     });
 
-    it("generates well-distributed numeric values", () => {
+    it("generates well-distributed numeric values", async () => {
       const schema = schemas.simple.object({
         value: {
           type: "number",
@@ -29,7 +29,7 @@ describe("Data Quality and Statistical Properties", () => {
         },
       });
 
-      const samples = generate.samples<any>(schema, 200);
+      const samples = await generate.samples<any>(schema, 200);
       const values = samples.map((s) => s.value);
 
       // Check distribution
@@ -48,7 +48,7 @@ describe("Data Quality and Statistical Properties", () => {
       expect(variance).toBeGreaterThan(100); // Good spread of values
     });
 
-    it("generates diverse enum selections", () => {
+    it("generates diverse enum selections", async () => {
       const schema = schemas.simple.object({
         status: {
           type: "string",
@@ -56,7 +56,7 @@ describe("Data Quality and Statistical Properties", () => {
         },
       });
 
-      const samples = generate.samples<any>(schema, 100);
+      const samples = await generate.samples<any>(schema, 100);
       const distribution = stats.distribution(samples.map((s) => s.status));
 
       // All enum values should be used
@@ -71,12 +71,12 @@ describe("Data Quality and Statistical Properties", () => {
       expect(maxCount / minCount).toBeLessThan(5);
     });
 
-    it("generates diverse boolean values", () => {
+    it("generates diverse boolean values", async () => {
       const schema = schemas.simple.object({
         flag: { type: "boolean" },
       });
 
-      const samples = generate.samples<any>(schema, 100);
+      const samples = await generate.samples<any>(schema, 100);
       const trueCount = samples.filter((s) => s.flag === true).length;
       const falseCount = samples.filter((s) => s.flag === false).length;
 
@@ -88,12 +88,12 @@ describe("Data Quality and Statistical Properties", () => {
   });
 
   describe("Format Compliance", () => {
-    it("generates valid email formats consistently", () => {
+    it("generates valid email formats consistently", async () => {
       const schema = schemas.simple.object({
         email: { type: "string", format: "email" },
       });
 
-      const samples = generate.samples<any>(schema, 50);
+      const samples = await generate.samples<any>(schema, 50);
 
       samples.forEach((sample) => {
         // RFC 5322 simplified regex
@@ -115,12 +115,12 @@ describe("Data Quality and Statistical Properties", () => {
       expect(uniqueness).toBeGreaterThan(0.8);
     });
 
-    it("generates valid UUIDs consistently", () => {
+    it("generates valid UUIDs consistently", async () => {
       const schema = schemas.simple.object({
         id: { type: "string", format: "uuid" },
       });
 
-      const samples = generate.samples<any>(schema, 50);
+      const samples = await generate.samples<any>(schema, 50);
       const uuidRegex =
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -134,12 +134,12 @@ describe("Data Quality and Statistical Properties", () => {
       expect(uniqueness).toBe(1);
     });
 
-    it("generates valid dates with reasonable ranges", () => {
+    it("generates valid dates with reasonable ranges", async () => {
       const schema = schemas.simple.object({
         created: { type: "string", format: "date-time" },
       });
 
-      const samples = generate.samples<any>(schema, 50);
+      const samples = await generate.samples<any>(schema, 50);
 
       samples.forEach((sample) => {
         const date = new Date(sample.created);
@@ -156,12 +156,12 @@ describe("Data Quality and Statistical Properties", () => {
       });
     });
 
-    it("generates valid URLs when specified", () => {
+    it("generates valid URLs when specified", async () => {
       const schema = schemas.simple.object({
         website: { type: "string", format: "uri" },
       });
 
-      const samples = generate.samples<any>(schema, 20);
+      const samples = await generate.samples<any>(schema, 20);
 
       samples.forEach((sample) => {
         if (sample.website) {
@@ -175,29 +175,29 @@ describe("Data Quality and Statistical Properties", () => {
   });
 
   describe("Constraint Satisfaction", () => {
-    it("respects string length constraints consistently", () => {
+    it("respects string length constraints consistently", async () => {
       const schema = schemas.simple.object({
-        username: {
+        xyzField: {
           type: "string",
           minLength: 5,
           maxLength: 15,
         },
       });
 
-      const samples = generate.samples<any>(schema, 100);
+      const samples = await generate.samples<any>(schema, 100);
 
       samples.forEach((sample) => {
-        expect(sample.username.length).toBeGreaterThanOrEqual(5);
-        expect(sample.username.length).toBeLessThanOrEqual(15);
+        expect(sample.xyzField.length).toBeGreaterThanOrEqual(5);
+        expect(sample.xyzField.length).toBeLessThanOrEqual(15);
       });
 
       // Should use various lengths, not always min or max
-      const lengths = samples.map((s) => s.username.length);
+      const lengths = samples.map((s) => s.xyzField.length);
       const uniqueLengths = new Set(lengths);
       expect(uniqueLengths.size).toBeGreaterThan(3);
     });
 
-    it("respects numeric ranges with good distribution", () => {
+    it("respects numeric ranges with good distribution", async () => {
       const schema = schemas.simple.object({
         age: {
           type: "integer",
@@ -206,7 +206,7 @@ describe("Data Quality and Statistical Properties", () => {
         },
       });
 
-      const samples = generate.samples<any>(schema, 100);
+      const samples = await generate.samples<any>(schema, 100);
       const ages = samples.map((s) => s.age);
 
       // All should be in range
@@ -225,7 +225,7 @@ describe("Data Quality and Statistical Properties", () => {
       expect(ages.some((age) => age >= 58)).toBe(true);
     });
 
-    it("maintains array uniqueness when specified", () => {
+    it("maintains array uniqueness when specified", async () => {
       const schema = schemas.simple.object({
         tags: {
           type: "array",
@@ -236,7 +236,7 @@ describe("Data Quality and Statistical Properties", () => {
         },
       });
 
-      const samples = generate.samples<any>(schema, 20);
+      const samples = await generate.samples<any>(schema, 20);
 
       samples.forEach((sample) => {
         expect(sample.tags).toHaveLength(5);
@@ -254,14 +254,14 @@ describe("Data Quality and Statistical Properties", () => {
   });
 
   describe("Realistic Data Generation", () => {
-    it("generates realistic person names", () => {
+    it("generates realistic person names", async () => {
       const schema = schemas.simple.object({
         firstName: { type: "string" },
         lastName: { type: "string" },
         fullName: { type: "string" },
       });
 
-      const samples = generate.samples<any>(schema, 50);
+      const samples = await generate.samples<any>(schema, 50);
 
       samples.forEach((sample) => {
         // First names should be properly capitalized and reasonable length
@@ -286,14 +286,14 @@ describe("Data Quality and Statistical Properties", () => {
       expect(validators.uniquenessRatio(firstNames)).toBeGreaterThan(0.5); // Slightly more forgiving
     });
 
-    it("generates realistic addresses", () => {
+    it("generates realistic addresses", async () => {
       const schema = schemas.simple.object({
         street: { type: "string" },
         city: { type: "string" },
         zipcode: { type: "string" },
       });
 
-      const samples = generate.samples<any>(schema, 30);
+      const samples = await generate.samples<any>(schema, 30);
 
       samples.forEach((sample) => {
         // Street addresses should have numbers and street names
@@ -310,7 +310,7 @@ describe("Data Quality and Statistical Properties", () => {
       });
     });
 
-    it("generates consistent related data", () => {
+    it("generates consistent related data", async () => {
       const schema = schemas.simple.object({
         user: {
           type: "object",
@@ -323,7 +323,7 @@ describe("Data Quality and Statistical Properties", () => {
         },
       });
 
-      const samples = generate.samples<any>(schema, 20);
+      const samples = await generate.samples<any>(schema, 20);
 
       samples.forEach((sample) => {
         // All fields should be present and be strings
@@ -340,7 +340,7 @@ describe("Data Quality and Statistical Properties", () => {
   });
 
   describe("Edge Cases and Boundaries", () => {
-    it("handles empty strings when allowed", () => {
+    it("handles empty strings when allowed", async () => {
       const schema = schemas.simple.object({
         optional: {
           type: "string",
@@ -348,7 +348,7 @@ describe("Data Quality and Statistical Properties", () => {
         },
       });
 
-      const samples = generate.samples<any>(schema, 50);
+      const samples = await generate.samples<any>(schema, 50);
 
       // All should be valid strings respecting minLength constraint
       samples.forEach((sample) => {
@@ -362,7 +362,7 @@ describe("Data Quality and Statistical Properties", () => {
       expect(uniqueLengths.size).toBeGreaterThan(1);
     });
 
-    it("handles zero and negative numbers appropriately", () => {
+    it("handles zero and negative numbers appropriately", async () => {
       const schema = schemas.simple.object({
         balance: {
           type: "number",
@@ -371,7 +371,7 @@ describe("Data Quality and Statistical Properties", () => {
         },
       });
 
-      const samples = generate.samples<any>(schema, 100);
+      const samples = await generate.samples<any>(schema, 100);
       const balances = samples.map((s) => s.balance);
 
       // Should include negative and positive values
@@ -387,7 +387,7 @@ describe("Data Quality and Statistical Properties", () => {
       });
     });
 
-    it("generates boundary values occasionally", () => {
+    it("generates boundary values occasionally", async () => {
       const schema = schemas.simple.object({
         score: {
           type: "integer",
@@ -396,7 +396,7 @@ describe("Data Quality and Statistical Properties", () => {
         },
       });
 
-      const samples = generate.samples<any>(schema, 200);
+      const samples = await generate.samples<any>(schema, 200);
       const scores = samples.map((s) => s.score);
 
       // Should respect the boundaries and generate diverse values

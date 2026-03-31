@@ -5,9 +5,9 @@ import { schemas } from "./test-utils";
 
 describe("Schema Error Handling", () => {
   describe("Validation Error Messages", () => {
-    it("provides clear error for empty schemas", () => {
+    it("provides clear error for empty schemas", async () => {
       try {
-        generateFromSchema({ schema: {} as any });
+        await generateFromSchema({ schema: {} as any });
         expect.fail("Should have thrown");
       } catch (error: any) {
         expect(error.name).toBe("SchemaValidationError");
@@ -16,9 +16,9 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("provides clear error for invalid types", () => {
+    it("provides clear error for invalid types", async () => {
       try {
-        generateFromSchema({ schema: { type: "invalid" as any } });
+        await generateFromSchema({ schema: { type: "invalid" as any } });
         expect.fail("Should have thrown");
       } catch (error: any) {
         expect(error.name).toBe("SchemaValidationError");
@@ -28,9 +28,9 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("provides helpful suggestions for common mistakes", () => {
+    it("provides helpful suggestions for common mistakes", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "object",
             properties: "should be object" as any,
@@ -45,9 +45,9 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("includes schema path in error messages", () => {
+    it("includes schema path in error messages", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "object",
             properties: {
@@ -69,9 +69,9 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("validates faker method namespaces with helpful errors", () => {
+    it("validates faker method namespaces with helpful errors", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "object",
             properties: {
@@ -89,9 +89,9 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("validates array schemas must have items", () => {
+    it("validates array schemas must have items", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "array",
             items: null as any,
@@ -108,9 +108,9 @@ describe("Schema Error Handling", () => {
   });
 
   describe("Resource Limit Errors", () => {
-    it("provides clear error for array size limits", () => {
+    it("provides clear error for array size limits", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "array",
             items: { type: "string" },
@@ -125,10 +125,10 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("provides clear error for nesting depth", () => {
+    it("provides clear error for nesting depth", async () => {
       try {
         const deepSchema = schemas.nested.deep(15);
-        generateFromSchema({ schema: deepSchema });
+        await generateFromSchema({ schema: deepSchema });
         expect.fail("Should have thrown");
       } catch (error: any) {
         // Should throw some kind of error for nesting depth
@@ -137,9 +137,9 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("detects memory risks from nested arrays", () => {
+    it("detects memory risks from nested arrays", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "object",
             properties: {
@@ -171,9 +171,9 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("provides actionable error messages for limits", () => {
+    it("provides actionable error messages for limits", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "array",
             items: { type: "string" },
@@ -190,9 +190,9 @@ describe("Schema Error Handling", () => {
   });
 
   describe("Schema Generation Errors", () => {
-    it("wraps json-schema-faker errors appropriately", () => {
+    it("wraps json-schema-faker errors appropriately", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "string",
             pattern: "[", // Invalid regex
@@ -206,7 +206,7 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("includes context in generation errors", () => {
+    it("includes context in generation errors", async () => {
       const plugin = fakerPlugin({
         schema: {
           type: "string",
@@ -226,7 +226,7 @@ describe("Schema Error Handling", () => {
       };
 
       try {
-        plugin.process(context);
+        await plugin.process(context);
         expect.fail("Should have thrown");
       } catch (error: any) {
         // Should throw some kind of error
@@ -234,9 +234,9 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("handles circular reference errors", () => {
+    it("handles circular reference errors", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "object",
             properties: {
@@ -251,9 +251,9 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("handles missing reference errors", () => {
+    it("handles missing reference errors", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "object",
             properties: {
@@ -264,7 +264,7 @@ describe("Schema Error Handling", () => {
         expect.fail("Should have thrown");
       } catch (error: any) {
         // json-schema-faker throws its own error
-        expect(error.message).toContain("not found");
+        expect(error.message).toContain("Unresolved $ref");
       }
     });
   });
@@ -282,13 +282,13 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("handles null context gracefully", () => {
+    it("handles null context gracefully", async () => {
       const plugin = fakerPlugin({
         schema: schemas.simple.object({ id: schemas.simple.number() }),
       });
 
       // Should not crash with null params
-      const result = plugin.process({
+      const result = await plugin.process({
         method: "GET",
         path: "/test",
         params: null as any,
@@ -302,9 +302,9 @@ describe("Schema Error Handling", () => {
       expect(result.response).toHaveProperty("id");
     });
 
-    it("preserves original error stack traces", () => {
+    it("preserves original error stack traces", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "string",
             pattern: "[",
@@ -320,23 +320,23 @@ describe("Schema Error Handling", () => {
   });
 
   describe("Error Recovery", () => {
-    it("can generate after validation errors", () => {
+    it("can generate after validation errors", async () => {
       // First attempt with invalid schema
       try {
-        generateFromSchema({ schema: { type: "invalid" as any } });
+        await generateFromSchema({ schema: { type: "invalid" as any } });
       } catch (_error) {
         // Expected
       }
 
       // Should be able to generate with valid schema
-      const result = generateFromSchema({
+      const result = await generateFromSchema({
         schema: schemas.simple.object({ id: schemas.simple.number() }),
       });
 
       expect(result).toHaveProperty("id");
     });
 
-    it("plugin continues to work after errors", () => {
+    it("plugin continues to work after errors", async () => {
       const plugin = fakerPlugin({
         schema: schemas.simple.object({ id: schemas.simple.number() }),
       });
@@ -353,8 +353,8 @@ describe("Schema Error Handling", () => {
       };
 
       // Multiple calls should work
-      const result1 = plugin.process(context);
-      const result2 = plugin.process(context);
+      const result1 = await plugin.process(context);
+      const result2 = await plugin.process(context);
 
       expect(result1.response).toHaveProperty("id");
       expect(result2.response).toHaveProperty("id");
@@ -362,9 +362,9 @@ describe("Schema Error Handling", () => {
   });
 
   describe("Edge Case Error Handling", () => {
-    it("handles deeply nested validation errors", () => {
+    it("handles deeply nested validation errors", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "object",
             properties: {
@@ -399,9 +399,9 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("handles multiple validation errors (reports first)", () => {
+    it("handles multiple validation errors (reports first)", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "invalid" as any,
             properties: "also invalid" as any,
@@ -415,19 +415,17 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("handles non-Error objects in catch blocks", () => {
+    it("handles non-Error objects in catch blocks", async () => {
       // This is more about the implementation being defensive
       const plugin = fakerPlugin({
         schema: schemas.simple.object({ id: schemas.simple.number() }),
       });
 
       // Even with weird inputs, should handle gracefully
-      expect(() => {
-        plugin.process({} as any);
-      }).not.toThrow();
+      await expect(plugin.process({} as any)).resolves.not.toThrow();
     });
 
-    it("handles schemas that generate invalid JSON", () => {
+    it("handles schemas that generate invalid JSON", async () => {
       // Some edge cases might generate circular structures
       const schema: JSONSchema7 = {
         type: "object",
@@ -436,7 +434,7 @@ describe("Schema Error Handling", () => {
         },
       };
 
-      const result = generateFromSchema({ schema });
+      const result = await generateFromSchema({ schema });
 
       // Should be serializable
       expect(() => JSON.stringify(result)).not.toThrow();
@@ -444,18 +442,18 @@ describe("Schema Error Handling", () => {
   });
 
   describe("Error Message Quality", () => {
-    it("uses consistent error message format", () => {
+    it("uses consistent error message format", async () => {
       const errors: any[] = [];
 
       // Collect various errors
       try {
-        generateFromSchema({ schema: {} as any });
+        await generateFromSchema({ schema: {} as any });
       } catch (e) {
         errors.push(e);
       }
 
       try {
-        generateFromSchema({ schema: { type: "invalid" as any } });
+        await generateFromSchema({ schema: { type: "invalid" as any } });
       } catch (e) {
         errors.push(e);
       }
@@ -469,9 +467,9 @@ describe("Schema Error Handling", () => {
       });
     });
 
-    it("avoids exposing internal implementation details", () => {
+    it("avoids exposing internal implementation details", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "string",
             pattern: "[",
@@ -487,9 +485,9 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("provides actionable error messages", () => {
+    it("provides actionable error messages", async () => {
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "object",
             properties: [] as any, // Wrong type

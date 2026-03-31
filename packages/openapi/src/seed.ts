@@ -66,7 +66,7 @@ export async function loadSeed(
           `Cannot auto-generate seed for "${resourceName}": no schema found in spec`,
         );
       }
-      const items = generateSeedItems(
+      const items = await generateSeedItems(
         resource.schema,
         rawCount,
         resource.idParam,

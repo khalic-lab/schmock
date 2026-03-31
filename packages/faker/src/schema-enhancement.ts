@@ -93,6 +93,11 @@ function enhanceFieldSchema(
     return enhanced;
   }
 
+  // Don't apply smart mapping when const or enum is defined — these have fixed values
+  if (enhanced.const !== undefined || enhanced.enum) {
+    return enhanced;
+  }
+
   // Apply smart field name mapping via the scoring matcher
   const match = findBestMapping(fieldName, enhanced);
   if (match) {

@@ -109,8 +109,13 @@ export function findBestMapping(
     };
   }
 
-  // Skip if schema already has pattern, enum, or faker constraint
-  if (schemaAny.pattern || schemaAny.enum || schemaAny.faker) {
+  // Skip if schema already has pattern, enum, faker, or $ref constraint
+  if (
+    schemaAny.pattern ||
+    schemaAny.enum ||
+    schemaAny.faker ||
+    schemaAny.$ref
+  ) {
     return undefined;
   }
 
@@ -131,6 +136,11 @@ export function findBestMapping(
       hasNumericConstraints &&
       (mapping.schemaType === "number" || mapping.schemaType === "integer")
     ) {
+      continue;
+    }
+
+    // Skip faker mappings for object/array schemas — they generate primitive values
+    if (schemaType === "object" || schemaType === "array") {
       continue;
     }
 

@@ -14,8 +14,8 @@ describe("Performance and Memory", () => {
 
       const times: number[] = [];
       for (let i = 0; i < 10; i++) {
-        const { duration } = await perf.measure(() =>
-          generateFromSchema({ schema }),
+        const { duration } = await perf.measure(
+          async () => await generateFromSchema({ schema }),
         );
         times.push(duration);
       }
@@ -33,8 +33,8 @@ describe("Performance and Memory", () => {
         }),
       );
 
-      const { duration } = await perf.measure(() =>
-        generateFromSchema({ schema }),
+      const { duration } = await perf.measure(
+        async () => await generateFromSchema({ schema }),
       );
 
       expect(duration).toBeLessThan(100); // Reasonable for nested structure
@@ -49,8 +49,8 @@ describe("Performance and Memory", () => {
         { minItems: 50, maxItems: 50 },
       );
 
-      const { duration } = await perf.measure(() =>
-        generateFromSchema({ schema }),
+      const { duration } = await perf.measure(
+        async () => await generateFromSchema({ schema }),
       );
 
       expect(duration).toBeLessThan(200); // Should handle 50 items quickly
@@ -82,8 +82,8 @@ describe("Performance and Memory", () => {
         },
       };
 
-      const { duration } = await perf.measure(() =>
-        generateFromSchema({ schema }),
+      const { duration } = await perf.measure(
+        async () => await generateFromSchema({ schema }),
       );
 
       expect(duration).toBeLessThan(300); // Complex but still reasonable
@@ -104,8 +104,8 @@ describe("Performance and Memory", () => {
 
       // Warmup runs to stabilize JIT
       for (let i = 0; i < 3; i++) {
-        generateFromSchema({ schema: smallSchema });
-        generateFromSchema({ schema: largeSchema });
+        await generateFromSchema({ schema: smallSchema });
+        await generateFromSchema({ schema: largeSchema });
       }
 
       // Multiple measurement runs for statistical stability
@@ -114,12 +114,12 @@ describe("Performance and Memory", () => {
 
       for (let i = 0; i < 10; i++) {
         const start1 = performance.now();
-        generateFromSchema({ schema: smallSchema });
+        await generateFromSchema({ schema: smallSchema });
         const small = performance.now() - start1;
         smallTimes.push(small);
 
         const start2 = performance.now();
-        generateFromSchema({ schema: largeSchema });
+        await generateFromSchema({ schema: largeSchema });
         const large = performance.now() - start2;
         largeTimes.push(large);
       }
@@ -148,8 +148,8 @@ describe("Performance and Memory", () => {
 
       // Warmup
       for (let i = 0; i < 3; i++) {
-        generateFromSchema({ schema: narrowSchema });
-        generateFromSchema({ schema: wideSchema });
+        await generateFromSchema({ schema: narrowSchema });
+        await generateFromSchema({ schema: wideSchema });
       }
 
       // Measure with multiple runs, dropping outliers
@@ -158,11 +158,11 @@ describe("Performance and Memory", () => {
 
       for (let i = 0; i < 10; i++) {
         const start1 = performance.now();
-        generateFromSchema({ schema: narrowSchema });
+        await generateFromSchema({ schema: narrowSchema });
         narrowTimes.push(performance.now() - start1);
 
         const start2 = performance.now();
-        generateFromSchema({ schema: wideSchema });
+        await generateFromSchema({ schema: wideSchema });
         wideTimes.push(performance.now() - start2);
       }
 
@@ -231,16 +231,17 @@ describe("Performance and Memory", () => {
         message: "User {{params.id}} at {{state.timestamp}}",
       };
 
-      const { duration } = await perf.measure(() =>
-        generateFromSchema({
-          schema,
-          overrides,
-          params: { id: "123" },
-          state: {
-            user: { id: "user-456" },
-            timestamp: new Date().toISOString(),
-          },
-        }),
+      const { duration } = await perf.measure(
+        async () =>
+          await generateFromSchema({
+            schema,
+            overrides,
+            params: { id: "123" },
+            state: {
+              user: { id: "user-456" },
+              timestamp: new Date().toISOString(),
+            },
+          }),
       );
 
       expect(duration).toBeLessThan(50); // Template processing should be fast
@@ -252,8 +253,9 @@ describe("Performance and Memory", () => {
       const schema = schemas.complex.user();
 
       const { duration } = await perf.measure(async () => {
-        const promises = Array.from({ length: 20 }, () =>
-          generateFromSchema({ schema }),
+        const promises = Array.from(
+          { length: 20 },
+          async () => await generateFromSchema({ schema }),
         );
         await Promise.all(promises);
       });
@@ -268,13 +270,13 @@ describe("Performance and Memory", () => {
       });
 
       // Warm up
-      generateFromSchema({ schema });
+      await generateFromSchema({ schema });
 
       // Test under load
       const iterations = 100;
       const { duration } = await perf.measure(async () => {
         for (let i = 0; i < iterations; i++) {
-          generateFromSchema({ schema });
+          await generateFromSchema({ schema });
         }
       });
 
@@ -284,7 +286,7 @@ describe("Performance and Memory", () => {
   });
 
   describe("Memory Efficiency", () => {
-    it("doesn't leak memory on repeated generation", () => {
+    it("doesn't leak memory on repeated generation", async () => {
       const schema = schemas.simple.object({
         id: schemas.simple.number(),
         name: schemas.simple.string(),
@@ -292,7 +294,7 @@ describe("Performance and Memory", () => {
 
       // Generate many times
       for (let i = 0; i < 1000; i++) {
-        const result = generateFromSchema({ schema });
+        const result = await generateFromSchema({ schema });
         // Result should be garbage collectable
         expect(result).toBeDefined();
       }
@@ -301,7 +303,7 @@ describe("Performance and Memory", () => {
       expect(true).toBe(true);
     });
 
-    it("handles large data structures without excessive memory", () => {
+    it("handles large data structures without excessive memory", async () => {
       const schema = schemas.simple.array(
         schemas.simple.object({
           id: schemas.simple.string(),
@@ -311,15 +313,15 @@ describe("Performance and Memory", () => {
       );
 
       // Should be able to generate without memory issues
-      const result = generateFromSchema({ schema });
+      const result = await generateFromSchema({ schema });
       expect(result).toHaveLength(1000);
     });
 
-    it("cleans up after schema validation errors", () => {
+    it("cleans up after schema validation errors", async () => {
       // Generate errors repeatedly
       for (let i = 0; i < 100; i++) {
         try {
-          generateFromSchema({ schema: { type: "invalid" as any } });
+          await generateFromSchema({ schema: { type: "invalid" as any } });
         } catch (_e) {
           // Expected
         }
@@ -341,7 +343,7 @@ describe("Performance and Memory", () => {
       // Generate multiple times to ensure consistent behavior
       const results: any[] = [];
       for (let i = 0; i < 10; i++) {
-        const result = generateFromSchema({ schema });
+        const result = await generateFromSchema({ schema });
         results.push(result);
       }
 
@@ -414,8 +416,8 @@ describe("Performance and Memory", () => {
     it("handles empty schemas efficiently", async () => {
       const schema = schemas.simple.object({});
 
-      const { duration } = await perf.measure(() =>
-        generateFromSchema({ schema }),
+      const { duration } = await perf.measure(
+        async () => await generateFromSchema({ schema }),
       );
 
       expect(duration).toBeLessThan(10); // Empty should be instant
@@ -429,8 +431,8 @@ describe("Performance and Memory", () => {
         },
       });
 
-      const { duration } = await perf.measure(() =>
-        generateFromSchema({ schema }),
+      const { duration } = await perf.measure(
+        async () => await generateFromSchema({ schema }),
       );
 
       expect(duration).toBeLessThan(50); // Large enum shouldn't be slow
@@ -473,8 +475,8 @@ describe("Performance and Memory", () => {
         ],
       };
 
-      const { duration } = await perf.measure(() =>
-        generateFromSchema({ schema }),
+      const { duration } = await perf.measure(
+        async () => await generateFromSchema({ schema }),
       );
 
       expect(duration).toBeLessThan(200); // Complex but manageable
