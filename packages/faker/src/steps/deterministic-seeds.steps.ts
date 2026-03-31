@@ -22,9 +22,9 @@ describeFeature(feature, ({ Scenario }) => {
       // seed will be passed during generation
     });
 
-    When("I generate data twice with the same seed", () => {
-      result1 = generateFromSchema({ schema: testSchema, seed: 42 });
-      result2 = generateFromSchema({ schema: testSchema, seed: 42 });
+    When("I generate data twice with the same seed", async () => {
+      result1 = await generateFromSchema({ schema: testSchema, seed: 42 });
+      result2 = await generateFromSchema({ schema: testSchema, seed: 42 });
     });
 
     Then("both outputs are identical", () => {
@@ -32,22 +32,25 @@ describeFeature(feature, ({ Scenario }) => {
     });
   });
 
-  Scenario("Different seeds produce different output", ({ Given, And, When, Then }) => {
-    Given("a schema plugin with seed 42", () => {
-      // setup done during generation
-    });
+  Scenario(
+    "Different seeds produce different output",
+    ({ Given, And, When, Then }) => {
+      Given("a schema plugin with seed 42", () => {
+        // setup done during generation
+      });
 
-    And("a schema plugin with seed 99", () => {
-      // setup done during generation
-    });
+      And("a schema plugin with seed 99", () => {
+        // setup done during generation
+      });
 
-    When("I generate data from each", () => {
-      result1 = generateFromSchema({ schema: testSchema, seed: 42 });
-      result2 = generateFromSchema({ schema: testSchema, seed: 99 });
-    });
+      When("I generate data from each", async () => {
+        result1 = await generateFromSchema({ schema: testSchema, seed: 42 });
+        result2 = await generateFromSchema({ schema: testSchema, seed: 99 });
+      });
 
-    Then("the outputs are different", () => {
-      expect(result1).not.toEqual(result2);
-    });
-  });
+      Then("the outputs are different", () => {
+        expect(result1).not.toEqual(result2);
+      });
+    },
+  );
 });

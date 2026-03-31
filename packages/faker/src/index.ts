@@ -7,7 +7,7 @@ import {
 } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { MAX_ARRAY_SIZE, NULLABLE_NULL_PROBABILITY } from "./constants.js";
-import { getJsf } from "./jsf-config.js";
+import { generateWithJsf } from "./jsf-config.js";
 import { applyOverrides, determineArrayCount } from "./overrides.js";
 import { enhanceSchemaWithSmartMapping } from "./schema-enhancement.js";
 import { isJSONSchema7, validateSchema } from "./validation.js";
@@ -37,14 +37,14 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
     name: "faker",
     version: "1.0.1",
 
-    process(context: Schmock.PluginContext, response?: any) {
+    async process(context: Schmock.PluginContext, response?: any) {
       // If response already exists, pass it through
       if (response !== undefined && response !== null) {
         return { context, response };
       }
 
       try {
-        const generatedResponse = generateFromSchema({
+        const generatedResponse = await generateFromSchema({
           schema: options.schema,
           count: options.count,
           overrides: options.overrides,
@@ -78,7 +78,9 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
   };
 }
 
-export function generateFromSchema(options: SchemaGenerationContext): any {
+export async function generateFromSchema(
+  options: SchemaGenerationContext,
+): Promise<any> {
   const { schema, count, overrides, params, state, query, seed } = options;
 
   validateSchema(schema);
@@ -110,7 +112,7 @@ export function generateFromSchema(options: SchemaGenerationContext): any {
 
     generated = [];
     for (let i = 0; i < itemCount; i++) {
-      let item = getJsf(seed).generate(enhancedItemSchema);
+      let item = await generateWithJsf(enhancedItemSchema, seed);
       item = postProcessGenerated(item, enhancedItemSchema);
       item = applyOverrides(item, overrides, params, state, query);
       generated.push(item);
@@ -118,7 +120,7 @@ export function generateFromSchema(options: SchemaGenerationContext): any {
   } else {
     // Handle object schemas
     const enhancedSchema = enhanceSchemaWithSmartMapping(schema);
-    generated = getJsf(seed).generate(enhancedSchema);
+    generated = await generateWithJsf(enhancedSchema, seed);
     generated = postProcessGenerated(generated, enhancedSchema);
     generated = applyOverrides(generated, overrides, params, state, query);
   }

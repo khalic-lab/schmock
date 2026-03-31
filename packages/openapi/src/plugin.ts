@@ -168,10 +168,10 @@ export async function openapi(
       );
     },
 
-    process(
+    async process(
       context: Schmock.PluginContext,
       response?: unknown,
-    ): Schmock.PluginResult {
+    ): Promise<Schmock.PluginResult> {
       // 1. Security validation (if enabled)
       if (options.security && securitySchemes) {
         const securityResult = validateSecurity(
@@ -195,7 +195,7 @@ export async function openapi(
       }
 
       // 4. Prefer header handling
-      const result = processPreferHeader(
+      const result = await processPreferHeader(
         context,
         response,
         options.fakerSeed,

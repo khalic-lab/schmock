@@ -185,7 +185,7 @@ export function createListGenerator(
     : undefined;
   const headerDefs = meta?.responseHeaders;
 
-  return (ctx: Schmock.RequestContext) => {
+  return async (ctx: Schmock.RequestContext) => {
     const collection = getCollection(ctx.state, resource.name);
     const items = [...collection];
 
@@ -195,7 +195,7 @@ export function createListGenerator(
     }
 
     // Generate the full wrapper skeleton from schema, then inject live data
-    const skeleton = generateWrapperSkeleton(meta.responseSchema);
+    const skeleton = await generateWrapperSkeleton(meta.responseSchema);
     if (isRecord(skeleton)) {
       skeleton[wrapperInfo.property] = items;
       return addHeaders(skeleton, headerDefs);
@@ -236,13 +236,13 @@ export function createReadGenerator(
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
 
-  return (ctx: Schmock.RequestContext) => {
+  return async (ctx: Schmock.RequestContext) => {
     const collection = getCollection(ctx.state, resource.name);
     const idValue = ctx.params[resource.idParam];
     const item = findById(collection, resource.idParam, idValue);
 
     if (!item) {
-      return generateErrorResponse(404, meta);
+      return await generateErrorResponse(404, meta);
     }
 
     return addHeaders(item, headerDefs);
@@ -255,13 +255,13 @@ export function createUpdateGenerator(
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
 
-  return (ctx: Schmock.RequestContext) => {
+  return async (ctx: Schmock.RequestContext) => {
     const collection = getCollection(ctx.state, resource.name);
     const idValue = ctx.params[resource.idParam];
     const index = findIndexById(collection, resource.idParam, idValue);
 
     if (index === -1) {
-      return generateErrorResponse(404, meta);
+      return await generateErrorResponse(404, meta);
     }
 
     const existingRaw = collection[index];
@@ -280,13 +280,13 @@ export function createDeleteGenerator(
   resource: CrudResource,
   meta?: Schmock.CrudOperationMeta,
 ): Schmock.GeneratorFunction {
-  return (ctx: Schmock.RequestContext) => {
+  return async (ctx: Schmock.RequestContext) => {
     const collection = getCollection(ctx.state, resource.name);
     const idValue = ctx.params[resource.idParam];
     const index = findIndexById(collection, resource.idParam, idValue);
 
     if (index === -1) {
-      return generateErrorResponse(404, meta);
+      return await generateErrorResponse(404, meta);
     }
 
     collection.splice(index, 1);
@@ -317,7 +317,7 @@ export function createStaticGenerator(
     }
   }
 
-  return (ctx: Schmock.RequestContext) => {
+  return async (ctx: Schmock.RequestContext) => {
     if (responseSchema) {
       let schema = responseSchema;
       if (onSchema) {
@@ -331,7 +331,7 @@ export function createStaticGenerator(
         if (patched) schema = patched;
       }
       try {
-        return generateFromSchema({ schema, seed });
+        return await generateFromSchema({ schema, seed });
       } catch (error) {
         console.warn(
           `[@schmock/openapi] Schema generation failed for ${parsedPath.method} ${parsedPath.path}:`,
@@ -347,16 +347,16 @@ export function createStaticGenerator(
 /**
  * Generate seed items for a resource using its schema.
  */
-export function generateSeedItems(
+export async function generateSeedItems(
   schema: JSONSchema7,
   count: number,
   idParam: string,
   seed?: number,
-): unknown[] {
+): Promise<unknown[]> {
   const items: unknown[] = [];
   for (let i = 0; i < count; i++) {
     const iterationSeed = seed !== undefined ? seed + i : undefined;
-    const generated = generateFromSchema({ schema, seed: iterationSeed });
+    const generated = await generateFromSchema({ schema, seed: iterationSeed });
     const item: Record<string, unknown> = isRecord(generated)
       ? generated
       : { value: generated };
@@ -370,14 +370,14 @@ export function generateSeedItems(
  * Generate an error response using the spec's error schema if available,
  * or fall back to the default { error, code } format.
  */
-function generateErrorResponse(
+async function generateErrorResponse(
   status: number,
   meta?: Schmock.CrudOperationMeta,
-): [number, unknown] | [number, unknown, Record<string, string>] {
+): Promise<[number, unknown] | [number, unknown, Record<string, string>]> {
   const errorSchema = meta?.errorSchemas?.get(status);
   if (errorSchema) {
     try {
-      const body = generateFromSchema({ schema: errorSchema });
+      const body = await generateFromSchema({ schema: errorSchema });
       return toTuple(status, body);
     } catch {
       // Fall through to default
@@ -397,9 +397,9 @@ function generateErrorResponse(
  * Generate a skeleton object from a response schema.
  * Used to create wrapper objects (e.g. { data: [], has_more: false, object: "list" })
  */
-function generateWrapperSkeleton(schema: JSONSchema7): unknown {
+async function generateWrapperSkeleton(schema: JSONSchema7): Promise<unknown> {
   try {
-    return generateFromSchema({ schema });
+    return await generateFromSchema({ schema });
   } catch {
     return {};
   }

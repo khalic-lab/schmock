@@ -117,16 +117,17 @@ export const validators = {
     };
 
     // Generate multiple samples to check for patterns
-    const mappedSamples = Array.from(
-      { length: 10 },
-      () => generateFromSchema({ schema: mappedSchema })[fieldName],
-    );
+    const mappedSamples: any[] = [];
+    for (let i = 0; i < 10; i++) {
+      const result = await generateFromSchema({ schema: mappedSchema });
+      mappedSamples.push(result[fieldName]);
+    }
 
-    const unmappedSamples = Array.from(
-      { length: 10 },
-      () =>
-        generateFromSchema({ schema: unmappedSchema }).unmappedRandomField12345,
-    );
+    const unmappedSamples: any[] = [];
+    for (let i = 0; i < 10; i++) {
+      const result = await generateFromSchema({ schema: unmappedSchema });
+      unmappedSamples.push(result.unmappedRandomField12345);
+    }
 
     // If field is mapped to a specific faker method, it should have different characteristics
     // than the generic unmapped field
@@ -246,16 +247,22 @@ export const performance = {
 
 // Test Data Generators
 export const generate = {
-  samples: <T>(schema: JSONSchema7, count = 10, options?: any): T[] => {
-    return Array.from({ length: count }, () =>
-      generateFromSchema({ schema, ...options }),
-    );
+  samples: async <T>(
+    schema: JSONSchema7,
+    count = 10,
+    options?: any,
+  ): Promise<T[]> => {
+    const results: T[] = [];
+    for (let i = 0; i < count; i++) {
+      results.push(await generateFromSchema({ schema, ...options }));
+    }
+    return results;
   },
 
-  withSeed: (schema: JSONSchema7, _seed?: number): any => {
+  withSeed: async (schema: JSONSchema7, _seed?: number): Promise<any> => {
     // Note: faker.js doesn't support seeding in the same way,
     // but we can at least ensure consistent test behavior
-    return generateFromSchema({ schema });
+    return await generateFromSchema({ schema });
   },
 };
 
@@ -288,21 +295,30 @@ export const stats = {
 
 // Schema Validation Test Helpers
 export const schemaTests = {
-  expectValid: (schema: JSONSchema7): void => {
-    expect(() => generateFromSchema({ schema })).not.toThrow();
+  expectValid: async (schema: JSONSchema7): Promise<void> => {
+    await expect(generateFromSchema({ schema })).resolves.not.toThrow();
   },
 
-  expectInvalid: (schema: any, errorMessage?: string | RegExp): void => {
+  expectInvalid: async (
+    schema: any,
+    errorMessage?: string | RegExp,
+  ): Promise<void> => {
     if (errorMessage) {
-      expect(() => generateFromSchema({ schema })).toThrow(errorMessage);
+      await expect(generateFromSchema({ schema })).rejects.toThrow(
+        errorMessage,
+      );
     } else {
-      expect(() => generateFromSchema({ schema })).toThrow();
+      await expect(generateFromSchema({ schema })).rejects.toThrow();
     }
   },
 
-  expectSchemaError: (schema: any, path: string, issue?: string): void => {
+  expectSchemaError: async (
+    schema: any,
+    path: string,
+    issue?: string,
+  ): Promise<void> => {
     try {
-      generateFromSchema({ schema });
+      await generateFromSchema({ schema });
       throw new Error("Expected schema validation to fail");
     } catch (error: any) {
       expect(error.name).toBe("SchemaValidationError");

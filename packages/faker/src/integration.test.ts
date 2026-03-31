@@ -6,7 +6,7 @@ import { generate, schemas, validators } from "./test-utils";
 
 describe("Schema Generator Integration Tests", () => {
   describe("End-to-End Scenarios", () => {
-    it("generates complete mock API response with relationships", () => {
+    it("generates complete mock API response with relationships", async () => {
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -59,7 +59,7 @@ describe("Schema Generator Integration Tests", () => {
         },
       };
 
-      const result = generateFromSchema({ schema });
+      const result = await generateFromSchema({ schema });
 
       // Verify complete structure
       expect(result.user).toBeDefined();
@@ -87,7 +87,7 @@ describe("Schema Generator Integration Tests", () => {
       }
     });
 
-    it("generates consistent data across related fields", () => {
+    it("generates consistent data across related fields", async () => {
       const plugin = fakerPlugin({
         schema: {
           type: "object",
@@ -137,7 +137,7 @@ describe("Schema Generator Integration Tests", () => {
         route: {},
       };
 
-      const result = plugin.process(context);
+      const result = await plugin.process(context);
 
       expect(result.response.order.customerId).toBe("customer-456");
       expect(result.response.order.createdAt).toBe("2024-01-01T10:00:00Z");
@@ -164,7 +164,7 @@ describe("Schema Generator Integration Tests", () => {
   });
 
   describe("Cross-Package Integration", () => {
-    it("works with complex nested schemas from multiple sources", () => {
+    it("works with complex nested schemas from multiple sources", async () => {
       const addressSchema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -190,7 +190,7 @@ describe("Schema Generator Integration Tests", () => {
         },
       };
 
-      const result = generateFromSchema({ schema: customerSchema });
+      const result = await generateFromSchema({ schema: customerSchema });
 
       // Both addresses should be valid structures
       expect(result.billingAddress.street).toBeDefined();
@@ -203,7 +203,7 @@ describe("Schema Generator Integration Tests", () => {
       expect(["US", "CA", "MX"]).toContain(result.shippingAddress.country);
     });
 
-    it("handles schema composition with allOf, anyOf, oneOf", () => {
+    it("handles schema composition with allOf, anyOf, oneOf", async () => {
       const baseSchema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -245,7 +245,7 @@ describe("Schema Generator Integration Tests", () => {
         ],
       };
 
-      const results = generate.samples<any>(documentSchema, 10);
+      const results = await generate.samples<any>(documentSchema, 10);
 
       results.forEach((result) => {
         // Should have base properties
@@ -265,7 +265,7 @@ describe("Schema Generator Integration Tests", () => {
   });
 
   describe("State Management Integration", () => {
-    it("maintains state across multiple generations", () => {
+    it("maintains state across multiple generations", async () => {
       const _callCount = 0;
       const plugin = fakerPlugin({
         schema: {
@@ -293,7 +293,8 @@ describe("Schema Generator Integration Tests", () => {
       };
 
       // Simulate multiple requests with evolving state
-      const results = Array.from({ length: 5 }, (_, i) => {
+      const results: any[] = [];
+      for (let i = 0; i < 5; i++) {
         const context = {
           ...baseContext,
           state: new Map(),
@@ -302,8 +303,9 @@ describe("Schema Generator Integration Tests", () => {
             sessionId: "session-123",
           },
         };
-        return plugin.process(context).response;
-      });
+        const r = await plugin.process(context);
+        results.push(r.response);
+      }
 
       // Request numbers should increment
       results.forEach((result, i) => {
@@ -312,7 +314,7 @@ describe("Schema Generator Integration Tests", () => {
       });
     });
 
-    it("generates stateful mock data", () => {
+    it("generates stateful mock data", async () => {
       const cartSchema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -334,10 +336,10 @@ describe("Schema Generator Integration Tests", () => {
       };
 
       // Generate initial cart
-      const cart1 = generateFromSchema({ schema: cartSchema });
+      const cart1 = await generateFromSchema({ schema: cartSchema });
 
       // Simulate adding items (would be done through state in real usage)
-      const cart2 = generateFromSchema({
+      const cart2 = await generateFromSchema({
         schema: cartSchema,
         overrides: {
           id: cart1.id, // Keep same cart ID
@@ -352,7 +354,7 @@ describe("Schema Generator Integration Tests", () => {
   });
 
   describe("Performance at Scale", () => {
-    it("generates large datasets efficiently", () => {
+    it("generates large datasets efficiently", async () => {
       const schema: JSONSchema7 = {
         type: "array",
         items: {
@@ -374,7 +376,7 @@ describe("Schema Generator Integration Tests", () => {
       };
 
       const startTime = Date.now();
-      const result = generateFromSchema({ schema, count: 100 });
+      const result = await generateFromSchema({ schema, count: 100 });
       const duration = Date.now() - startTime;
 
       expect(result).toHaveLength(100);
@@ -404,7 +406,7 @@ describe("Schema Generator Integration Tests", () => {
 
       // Simulate concurrent requests
       const promises = Array.from({ length: 20 }, () =>
-        Promise.resolve(plugin.process(context)),
+        plugin.process(context),
       );
 
       const results = await Promise.all(promises);
@@ -420,10 +422,10 @@ describe("Schema Generator Integration Tests", () => {
   });
 
   describe("Error Recovery and Resilience", () => {
-    it("recovers from validation errors gracefully", () => {
+    it("recovers from validation errors gracefully", async () => {
       // First, try invalid schema
       try {
-        generateFromSchema({
+        await generateFromSchema({
           schema: {
             type: "object",
             properties: {
@@ -436,14 +438,14 @@ describe("Schema Generator Integration Tests", () => {
       }
 
       // Should still work with valid schema
-      const result = generateFromSchema({
+      const result = await generateFromSchema({
         schema: schemas.simple.object({ id: schemas.simple.number() }),
       });
 
       expect(result).toHaveProperty("id");
     });
 
-    it("handles partial template failures", () => {
+    it("handles partial template failures", async () => {
       const plugin = fakerPlugin({
         schema: {
           type: "object",
@@ -462,7 +464,7 @@ describe("Schema Generator Integration Tests", () => {
         },
       });
 
-      const result = plugin.process({
+      const result = await plugin.process({
         method: "GET",
         path: "/test",
         params: { value1: "success" },
@@ -485,7 +487,7 @@ describe("Schema Generator Integration Tests", () => {
   });
 
   describe("Advanced Integration Patterns", () => {
-    it("supports pagination patterns", () => {
+    it("supports pagination patterns", async () => {
       const paginatedSchema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -523,7 +525,7 @@ describe("Schema Generator Integration Tests", () => {
         },
       });
 
-      const result = plugin.process({
+      const result = await plugin.process({
         method: "GET",
         path: "/api/items",
         params: {},
@@ -541,7 +543,7 @@ describe("Schema Generator Integration Tests", () => {
       expect(result.response.pagination.hasNext).toBe(true);
     });
 
-    it("supports versioned API responses", () => {
+    it("supports versioned API responses", async () => {
       const v1Schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -571,8 +573,8 @@ describe("Schema Generator Integration Tests", () => {
         },
       };
 
-      const v1Result = generateFromSchema({ schema: v1Schema });
-      const v2Result = generateFromSchema({ schema: v2Schema });
+      const v1Result = await generateFromSchema({ schema: v1Schema });
+      const v2Result = await generateFromSchema({ schema: v2Schema });
 
       expect(v1Result.version).toBe("1.0");
       expect(typeof v1Result.data.id).toBe("number");

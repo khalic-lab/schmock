@@ -46,7 +46,7 @@ function makeContext(
 
 describe("generators", () => {
   describe("CRUD lifecycle", () => {
-    it("creates, reads, updates, lists, and deletes", () => {
+    it("creates, reads, updates, lists, and deletes", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {};
 
@@ -61,7 +61,7 @@ describe("generators", () => {
       const del = createDeleteGenerator(resource);
 
       // Create
-      const createResult = create(
+      const createResult = await create(
         makeContext({
           method: "POST",
           path: "/pets",
@@ -72,7 +72,7 @@ describe("generators", () => {
       expect(createResult).toEqual([201, { name: "Buddy", petId: 1 }]);
 
       // Read
-      const readResult = read(
+      const readResult = await read(
         makeContext({
           path: "/pets/1",
           params: { petId: "1" },
@@ -82,7 +82,7 @@ describe("generators", () => {
       expect(readResult).toEqual({ name: "Buddy", petId: 1 });
 
       // Update
-      const updateResult = update(
+      const updateResult = await update(
         makeContext({
           method: "PUT",
           path: "/pets/1",
@@ -94,11 +94,11 @@ describe("generators", () => {
       expect(updateResult).toEqual({ name: "Max", petId: 1 });
 
       // List
-      const listResult = list(makeContext({ state }));
+      const listResult = await list(makeContext({ state }));
       expect(listResult).toEqual([{ name: "Max", petId: 1 }]);
 
       // Delete
-      const deleteResult = del(
+      const deleteResult = await del(
         makeContext({
           method: "DELETE",
           path: "/pets/1",
@@ -109,20 +109,20 @@ describe("generators", () => {
       expect(deleteResult).toEqual([204, undefined]);
 
       // Verify deletion
-      const afterDelete = list(makeContext({ state }));
+      const afterDelete = await list(makeContext({ state }));
       expect(afterDelete).toEqual([]);
     });
   });
 
   describe("read generator", () => {
-    it("returns 404 for missing resources", () => {
+    it("returns 404 for missing resources", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
         "openapi:collections:pets": [],
       };
 
       const read = createReadGenerator(resource);
-      const result = read(
+      const result = await read(
         makeContext({
           path: "/pets/999",
           params: { petId: "999" },
@@ -134,14 +134,14 @@ describe("generators", () => {
   });
 
   describe("update generator", () => {
-    it("returns 404 for missing resources", () => {
+    it("returns 404 for missing resources", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
         "openapi:collections:pets": [],
       };
 
       const update = createUpdateGenerator(resource);
-      const result = update(
+      const result = await update(
         makeContext({
           method: "PUT",
           path: "/pets/999",
@@ -155,14 +155,14 @@ describe("generators", () => {
   });
 
   describe("delete generator", () => {
-    it("returns 404 for missing resources", () => {
+    it("returns 404 for missing resources", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
         "openapi:collections:pets": [],
       };
 
       const del = createDeleteGenerator(resource);
-      const result = del(
+      const result = await del(
         makeContext({
           method: "DELETE",
           path: "/pets/999",
@@ -175,7 +175,7 @@ describe("generators", () => {
   });
 
   describe("create generator", () => {
-    it("auto-increments IDs", () => {
+    it("auto-increments IDs", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
         "openapi:collections:pets": [],
@@ -183,8 +183,8 @@ describe("generators", () => {
       };
 
       const create = createCreateGenerator(resource);
-      create(makeContext({ method: "POST", body: { name: "A" }, state }));
-      create(makeContext({ method: "POST", body: { name: "B" }, state }));
+      await create(makeContext({ method: "POST", body: { name: "A" }, state }));
+      await create(makeContext({ method: "POST", body: { name: "B" }, state }));
 
       const collection = state["openapi:collections:pets"] as Record<
         string,
@@ -196,7 +196,7 @@ describe("generators", () => {
   });
 
   describe("generateSeedItems", () => {
-    it("generates items with auto-assigned IDs", () => {
+    it("generates items with auto-assigned IDs", async () => {
       const schema = {
         type: "object" as const,
         properties: {
@@ -205,7 +205,7 @@ describe("generators", () => {
         required: ["name" as const],
       };
 
-      const items = generateSeedItems(schema, 3, "petId");
+      const items = await generateSeedItems(schema, 3, "petId");
       expect(items).toHaveLength(3);
       for (let i = 0; i < 3; i++) {
         const item = items[i] as Record<string, unknown>;
@@ -392,7 +392,7 @@ describe("generators", () => {
   });
 
   describe("list generator with meta (wrapped response)", () => {
-    it("wraps list in schema-defined object when wrapper detected", () => {
+    it("wraps list in schema-defined object when wrapper detected", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
         "openapi:collections:pets": [
@@ -418,26 +418,26 @@ describe("generators", () => {
       };
 
       const list = createListGenerator(resource, meta);
-      const result = list(makeContext({ state }));
+      const result = await list(makeContext({ state }));
       const body = result as Record<string, unknown>;
       expect(body.data).toHaveLength(2);
       expect(body.total).toBeDefined();
     });
 
-    it("returns flat array when no meta provided", () => {
+    it("returns flat array when no meta provided", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
         "openapi:collections:pets": [{ petId: 1, name: "Buddy" }],
       };
 
       const list = createListGenerator(resource);
-      const result = list(makeContext({ state }));
+      const result = await list(makeContext({ state }));
       expect(Array.isArray(result)).toBe(true);
     });
   });
 
   describe("error generator with meta (spec-defined errors)", () => {
-    it("uses error schema from meta when available", () => {
+    it("uses error schema from meta when available", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
         "openapi:collections:pets": [],
@@ -455,7 +455,7 @@ describe("generators", () => {
 
       const meta: Schmock.CrudOperationMeta = { errorSchemas };
       const read = createReadGenerator(resource, meta);
-      const result = read(
+      const result = await read(
         makeContext({ path: "/pets/999", params: { petId: "999" }, state }),
       );
 
@@ -467,14 +467,14 @@ describe("generators", () => {
       expect(body.status).toBeDefined();
     });
 
-    it("falls back to default error when no meta", () => {
+    it("falls back to default error when no meta", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
         "openapi:collections:pets": [],
       };
 
       const read = createReadGenerator(resource);
-      const result = read(
+      const result = await read(
         makeContext({ path: "/pets/999", params: { petId: "999" }, state }),
       );
 
