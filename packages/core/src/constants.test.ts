@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   HTTP_METHODS,
   isHttpMethod,
+  isRouteNotFound,
   ROUTE_NOT_FOUND_CODE,
   toHttpMethod,
 } from "./constants";
@@ -55,5 +56,44 @@ describe("toHttpMethod", () => {
       'Invalid HTTP method: "INVALID"',
     );
     expect(() => toHttpMethod("")).toThrow('Invalid HTTP method: ""');
+  });
+});
+
+describe("isRouteNotFound", () => {
+  it("returns true for a route-not-found response", () => {
+    const response = {
+      status: 404,
+      body: { error: "Route not found", code: ROUTE_NOT_FOUND_CODE },
+      headers: {},
+    };
+    expect(isRouteNotFound(response)).toBe(true);
+  });
+
+  it("returns false for a regular 404 response", () => {
+    const response = {
+      status: 404,
+      body: { message: "User not found" },
+      headers: {},
+    };
+    expect(isRouteNotFound(response)).toBe(false);
+  });
+
+  it("returns false for a non-404 response", () => {
+    const response = {
+      status: 200,
+      body: { code: ROUTE_NOT_FOUND_CODE },
+      headers: {},
+    };
+    expect(isRouteNotFound(response)).toBe(false);
+  });
+
+  it("returns false when body is null", () => {
+    const response = { status: 404, body: null, headers: {} };
+    expect(isRouteNotFound(response)).toBe(false);
+  });
+
+  it("returns false when body is a string", () => {
+    const response = { status: 404, body: "not found", headers: {} };
+    expect(isRouteNotFound(response)).toBe(false);
   });
 });

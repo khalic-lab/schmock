@@ -13,6 +13,7 @@ import {
   parseNodeQuery,
   writeSchmockResponse,
 } from "./http-helpers.js";
+import { createFetchInterceptor } from "./interceptor.js";
 import { parseRouteKey } from "./parser.js";
 import { runPluginPipeline } from "./plugin-pipeline.js";
 import { parseResponse } from "./response-parser.js";
@@ -67,6 +68,7 @@ export class CallableMockInstance {
   private callableRef: Schmock.CallableMockInstance | undefined;
   private server: Server | undefined;
   private serverInfo: Schmock.ServerInfo | undefined;
+  private interceptHandle: Schmock.InterceptHandle | null = null;
   // biome-ignore lint/complexity/noBannedTypes: internal storage for event listeners with varying signatures
   private listeners = new Map<string, Set<Function>>();
 
@@ -372,6 +374,24 @@ export class CallableMockInstance {
     this.server = undefined;
     this.serverInfo = undefined;
     this.logger.log("server", "Server stopped");
+  }
+
+  // ===== Fetch Interceptor =====
+
+  intercept(options?: Schmock.InterceptOptions): Schmock.InterceptHandle {
+    if (this.interceptHandle?.active) {
+      throw new SchmockError(
+        "Already intercepting. Call restore() first.",
+        "ALREADY_INTERCEPTING",
+      );
+    }
+
+    this.interceptHandle = createFetchInterceptor(
+      (method, path, opts) => this.handle(method, path, opts),
+      options,
+    );
+
+    return this.interceptHandle;
   }
 
   async handle(

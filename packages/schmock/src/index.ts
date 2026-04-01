@@ -5,18 +5,31 @@
  *   bun install @schmock/schmock
  *
  * This gives you access to all @schmock/* packages:
- *   - @schmock/core — Core mock builder
+ *   - @schmock/core — Core mock builder + fetch interceptor
  *   - @schmock/faker — Faker-powered data generation
  *   - @schmock/validation — Request/response validation
  *   - @schmock/query — Pagination, sorting, filtering
  *   - @schmock/openapi — Auto-register routes from OpenAPI specs
- *   - @schmock/express — Express middleware adapter
- *   - @schmock/angular — Angular HTTP interceptor adapter
  *   - @schmock/cli — Standalone CLI server
+ *
+ * Framework adapters (install separately):
+ *   - @schmock/react — React Provider + hooks
+ *   - @schmock/vue — Vue Plugin + composables
+ *   - @schmock/express — Express middleware
+ *   - @schmock/angular — Angular HTTP interceptor
  *
  * Import from individual packages:
  *   import { schmock } from "@schmock/core";
  *   import { openapi } from "@schmock/openapi";
- *   import { toExpress } from "@schmock/express";
  */
-export { schmock } from "@schmock/core";
+export {
+  badRequest,
+  created,
+  forbidden,
+  noContent,
+  notFound,
+  paginate,
+  schmock,
+  serverError,
+  unauthorized,
+} from "@schmock/core";

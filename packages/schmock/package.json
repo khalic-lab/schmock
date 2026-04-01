@@ -1,7 +1,7 @@
 {
   "name": "@schmock/schmock",
   "version": "1.13.0",
-  "description": "All-in-one Schmock package — installs core, faker, validation, query, openapi, express, angular, and CLI",
+  "description": "All-in-one Schmock package — installs core, faker, validation, query, openapi, and CLI",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "build": "bun build:lib && bun build:types",
-    "build:lib": "bun build --minify --target node --outdir=dist src/index.ts --external @schmock/core --external @schmock/faker --external @schmock/validation --external @schmock/query --external @schmock/openapi --external @schmock/express --external @schmock/angular --external @schmock/cli",
+    "build:lib": "bun build --minify --target node --outdir=dist src/index.ts --external @schmock/core --external @schmock/faker --external @schmock/validation --external @schmock/query --external @schmock/openapi --external @schmock/cli",
     "build:types": "tsc -p tsconfig.json",
     "lint": "biome check src/",
     "lint:fix": "biome check --write --unsafe src/",
@@ -32,8 +32,6 @@
     "@schmock/validation": "^1.13.0",
     "@schmock/query": "^1.13.0",
     "@schmock/openapi": "^1.13.0",
-    "@schmock/express": "^1.13.0",
-    "@schmock/angular": "^1.13.0",
     "@schmock/cli": "^1.13.0"
   },
   "keywords": [
@@ -42,9 +40,7 @@
     "openapi",
     "swagger",
     "testing",
-    "development",
-    "express",
-    "angular"
+    "development"
   ],
   "author": "Khalic Lab",
   "license": "MIT"
