@@ -382,6 +382,21 @@ declare namespace Schmock {
     hostname: string;
   }
 
+  // ===== Response Helpers =====
+
+  interface PaginateOptions {
+    page?: number;
+    pageSize?: number;
+  }
+
+  interface PaginatedResponse<T> {
+    data: T[];
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  }
+
   // ===== Lifecycle Events =====
 
   interface RequestStartEvent {
