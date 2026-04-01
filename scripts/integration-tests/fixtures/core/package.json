@@ -1,0 +1,10 @@
+{
+  "name": "integration-core",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "vitest run --reporter=verbose" },
+  "dependencies": {
+    "@schmock/core": "^2.0.0",
+    "vitest": "^4.1.2"
+  }
+}

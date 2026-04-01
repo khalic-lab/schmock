@@ -1,0 +1,14 @@
+{
+  "name": "integration-vue",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "vitest run --reporter=verbose" },
+  "dependencies": {
+    "@schmock/core": "^2.0.0",
+    "@schmock/vue": "^2.0.0",
+    "vue": "^3.5.0",
+    "@vue/test-utils": "^2.4.0",
+    "jsdom": "^26.0.0",
+    "vitest": "^4.1.2"
+  }
+}
