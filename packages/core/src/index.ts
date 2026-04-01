@@ -106,6 +106,17 @@ export {
   parseNodeQuery,
   writeSchmockResponse,
 } from "./http-helpers.js";
+// Re-export response helpers
+export {
+  badRequest,
+  created,
+  forbidden,
+  noContent,
+  notFound,
+  paginate,
+  serverError,
+  unauthorized,
+} from "./helpers.js";
 // Re-export types
 export type {
   CallableMockInstance,
