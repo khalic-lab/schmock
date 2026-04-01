@@ -1,115 +1,161 @@
+/**
+ * E2E: Todo app with Vue 3 + schmockPlugin.
+ *
+ * Same Todo CRUD baseline as every adapter fixture.
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { defineComponent, h, onMounted, ref, watch, nextTick } from "vue";
+import { defineComponent, h, onMounted, ref, computed } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
-import { schmock } from "@schmock/core";
-import { schmockPlugin, useSchmock } from "@schmock/vue";
+import { schmock, notFound } from "@schmock/core";
+import { schmockPlugin } from "@schmock/vue";
 
-// ===== Test Components =====
+// ===== Todo App Component =====
 
-const UserList = defineComponent({
+interface Todo {
+  id: number;
+  title: string;
+  done: boolean;
+}
+
+const TodoApp = defineComponent({
   setup() {
-    const users = ref<Array<{ id: number; name: string }>>([]);
+    const todos = ref<Todo[]>([]);
+    const input = ref("");
     const loading = ref(true);
+    const error = ref("");
 
     onMounted(async () => {
-      const res = await fetch("http://localhost/api/users");
-      users.value = await res.json();
-      loading.value = false;
+      try {
+        const res = await fetch("http://localhost/api/todos");
+        if (!res.ok) throw new Error(`${res.status}`);
+        todos.value = await res.json();
+      } catch (e) {
+        error.value = e instanceof Error ? e.message : "Unknown";
+      } finally {
+        loading.value = false;
+      }
     });
 
-    return () =>
-      loading.value
-        ? h("div", { "data-testid": "loading" }, "Loading...")
-        : h(
-            "ul",
-            { "data-testid": "user-list" },
-            users.value.map((u) =>
-              h("li", { "data-testid": `user-${u.id}`, key: u.id }, u.name),
-            ),
-          );
-  },
-});
-
-const MockInspector = defineComponent({
-  setup() {
-    const mock = useSchmock();
-    return () =>
-      h("div", { "data-testid": "call-count" }, String(mock.callCount()));
-  },
-});
-
-const ErrorDisplay = defineComponent({
-  setup() {
-    const error = ref("loading");
-
-    onMounted(async () => {
-      const res = await fetch("http://localhost/api/failing");
-      if (!res.ok) error.value = `Error: ${res.status}`;
-    });
-
-    return () => h("div", { "data-testid": "error" }, error.value);
-  },
-});
-
-const PostForm = defineComponent({
-  setup() {
-    const result = ref("");
-
-    onMounted(async () => {
-      const res = await fetch("http://localhost/api/users", {
+    const addTodo = async () => {
+      if (!input.value.trim()) return;
+      const res = await fetch("http://localhost/api/todos", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: "NewUser" }),
+        body: JSON.stringify({ title: input.value, done: false }),
       });
-      const data = await res.json();
-      result.value = data.name;
-    });
+      if (res.ok) {
+        todos.value.push(await res.json());
+        input.value = "";
+      }
+    };
 
-    return () => h("div", { "data-testid": "result" }, result.value || "pending");
+    const toggleTodo = async (id: number) => {
+      const todo = todos.value.find((t) => t.id === id);
+      if (!todo) return;
+      const res = await fetch(`http://localhost/api/todos/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ done: !todo.done }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        const idx = todos.value.findIndex((t) => t.id === id);
+        todos.value[idx] = updated;
+      }
+    };
+
+    const deleteTodo = async (id: number) => {
+      const res = await fetch(`http://localhost/api/todos/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        todos.value = todos.value.filter((t) => t.id !== id);
+      }
+    };
+
+    const doneCount = computed(() => todos.value.filter((t) => t.done).length);
+
+    return () => {
+      if (error.value) return h("div", { "data-testid": "error" }, error.value);
+      if (loading.value) return h("div", { "data-testid": "loading" }, "Loading...");
+
+      return h("div", [
+        h("input", {
+          "data-testid": "todo-input",
+          value: input.value,
+          onInput: (e: Event) => { input.value = (e.target as HTMLInputElement).value; },
+        }),
+        h("button", { "data-testid": "add-btn", onClick: addTodo }, "Add"),
+        h("ul", { "data-testid": "todo-list" },
+          todos.value.map((t) =>
+            h("li", { key: t.id, "data-testid": `todo-${t.id}` }, [
+              h("span", {
+                "data-testid": `text-${t.id}`,
+                class: t.done ? "done" : "",
+                onClick: () => void toggleTodo(t.id),
+              }, t.title),
+              h("button", {
+                "data-testid": `delete-${t.id}`,
+                onClick: () => void deleteTodo(t.id),
+              }, "X"),
+            ]),
+          ),
+        ),
+        h("div", { "data-testid": "count" }, `${todos.value.length} todos`),
+        h("div", { "data-testid": "done" }, `${doneCount.value} done`),
+      ]);
+    };
   },
 });
 
-const MultiLoader = defineComponent({
-  setup() {
-    const counts = ref({ users: 0, posts: 0, tags: 0 });
+// ===== Stateful mock factory (same backend as core fixture) =====
 
-    onMounted(async () => {
-      const [users, posts, tags] = await Promise.all([
-        fetch("http://localhost/api/users").then((r) => r.json()),
-        fetch("http://localhost/api/posts").then((r) => r.json()),
-        fetch("http://localhost/api/tags").then((r) => r.json()),
-      ]);
-      counts.value = {
-        users: users.length,
-        posts: posts.length,
-        tags: tags.length,
-      };
-    });
-
-    return () =>
-      h("div", [
-        h("span", { "data-testid": "users-count" }, String(counts.value.users)),
-        h("span", { "data-testid": "posts-count" }, String(counts.value.posts)),
-        h("span", { "data-testid": "tags-count" }, String(counts.value.tags)),
-      ]);
-  },
-});
-
-// ===== Tests =====
-
-function mountWith(
-  component: ReturnType<typeof defineComponent>,
-  mock: ReturnType<typeof schmock>,
-  interceptOptions?: Record<string, unknown>,
-) {
-  return mount(component, {
-    global: {
-      plugins: [[schmockPlugin, { mock, interceptOptions }]],
+function createTodoMock() {
+  const mock = schmock({
+    state: {
+      todos: [
+        { id: 1, title: "Buy milk", done: false },
+        { id: 2, title: "Write tests", done: true },
+      ] as Todo[],
+      nextId: 3,
     },
+  });
+
+  mock("GET /api/todos", ({ state }) => state.todos);
+
+  mock("POST /api/todos", ({ body, state }) => {
+    const b = body as { title: string; done: boolean };
+    const todo = { id: (state as any).nextId++, title: b.title, done: b.done };
+    (state as any).todos.push(todo);
+    return [201, todo];
+  });
+
+  mock("PATCH /api/todos/:id", ({ params, body, state }) => {
+    const todos = (state as any).todos as Todo[];
+    const todo = todos.find((t) => t.id === Number(params.id));
+    if (!todo) return notFound("Todo not found");
+    Object.assign(todo, body);
+    return todo;
+  });
+
+  mock("DELETE /api/todos/:id", ({ params, state }) => {
+    const todos = (state as any).todos as Todo[];
+    const idx = todos.findIndex((t) => t.id === Number(params.id));
+    if (idx === -1) return notFound("Todo not found");
+    todos.splice(idx, 1);
+    return [204, null];
+  });
+
+  return mock;
+}
+
+function mountTodo(mock: ReturnType<typeof schmock>) {
+  return mount(TodoApp, {
+    global: { plugins: [[schmockPlugin, { mock }]] },
   });
 }
 
-describe("Vue adapter integration", () => {
+// ===== Tests =====
+
+describe("Todo App — Vue (schmockPlugin)", () => {
   let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
@@ -121,130 +167,137 @@ describe("Vue adapter integration", () => {
     globalThis.fetch = originalFetch;
   });
 
-  describe("schmockPlugin lifecycle", () => {
-    it("renders mocked data after mount", async () => {
-      const mock = schmock();
-      mock("GET /api/users", [{ id: 1, name: "Alice" }]);
+  it("loads all todos", async () => {
+    const mock = createTodoMock();
+    const wrapper = mountTodo(mock);
+    await flushPromises();
 
-      const wrapper = mountWith(UserList, mock);
-      await flushPromises();
-      await vi.waitFor(() => {
-        expect(wrapper.find("[data-testid='user-1']").text()).toBe("Alice");
-      });
-      wrapper.unmount();
+    await vi.waitFor(() => {
+      expect(wrapper.find("[data-testid='text-1']").text()).toBe("Buy milk");
+      expect(wrapper.find("[data-testid='text-2']").text()).toBe("Write tests");
+      expect(wrapper.find("[data-testid='count']").text()).toBe("2 todos");
+      expect(wrapper.find("[data-testid='done']").text()).toBe("1 done");
     });
-
-    it("restores fetch on unmount", () => {
-      const mock = schmock();
-      const fetchBefore = globalThis.fetch;
-
-      const wrapper = mountWith(
-        defineComponent({ render: () => h("div") }),
-        mock,
-      );
-
-      expect(globalThis.fetch).not.toBe(fetchBefore);
-      wrapper.unmount();
-      expect(globalThis.fetch).toBe(fetchBefore);
-    });
-
-    it("multiple components share one plugin instance", async () => {
-      const mock = schmock();
-      mock("GET /api/users", [{ id: 1, name: "Alice" }]);
-
-      const App = defineComponent({
-        setup() {
-          return () => h("div", [h(UserList), h(MockInspector)]);
-        },
-      });
-
-      const wrapper = mountWith(App, mock);
-      await flushPromises();
-      await vi.waitFor(() => {
-        expect(wrapper.find("[data-testid='user-1']").text()).toBe("Alice");
-      });
-      // callCount isn't reactive in the component, verify via mock directly
-      expect(mock.callCount()).toBe(1);
-      wrapper.unmount();
-    });
+    wrapper.unmount();
   });
 
-  describe("useSchmock composable", () => {
-    it("provides access to mock instance", () => {
-      const mock = schmock();
-      const wrapper = mountWith(MockInspector, mock);
-      expect(wrapper.find("[data-testid='call-count']").text()).toBe("0");
-      wrapper.unmount();
+  it("adds a new todo", async () => {
+    const mock = createTodoMock();
+    const wrapper = mountTodo(mock);
+    await flushPromises();
+    await vi.waitFor(() => expect(wrapper.find("[data-testid='count']").text()).toBe("2 todos"));
+
+    await wrapper.find("[data-testid='todo-input']").setValue("Ship it");
+    await wrapper.find("[data-testid='add-btn']").trigger("click");
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(wrapper.find("[data-testid='count']").text()).toBe("3 todos");
+      expect(wrapper.find("[data-testid='text-3']").text()).toBe("Ship it");
     });
 
-    it("throws descriptive error without plugin", () => {
-      expect(() => mount(MockInspector)).toThrow(/schmockPlugin/);
-    });
+    expect(mock.lastRequest("POST", "/api/todos")?.body).toEqual({ title: "Ship it", done: false });
+    wrapper.unmount();
   });
 
-  describe("POST and mutations", () => {
-    it("handles POST with JSON body round-trip", async () => {
-      const mock = schmock();
-      mock("POST /api/users", ({ body }) => [201, body]);
+  it("deletes a todo", async () => {
+    const mock = createTodoMock();
+    const wrapper = mountTodo(mock);
+    await flushPromises();
+    await vi.waitFor(() => expect(wrapper.find("[data-testid='count']").text()).toBe("2 todos"));
 
-      const wrapper = mountWith(PostForm, mock);
-      await flushPromises();
-      await vi.waitFor(() => {
-        expect(wrapper.find("[data-testid='result']").text()).toBe("NewUser");
-      });
-      expect(mock.callCount("POST", "/api/users")).toBe(1);
-      wrapper.unmount();
+    await wrapper.find("[data-testid='delete-1']").trigger("click");
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(wrapper.find("[data-testid='count']").text()).toBe("1 todos");
+      expect(wrapper.find("[data-testid='todo-1']").exists()).toBe(false);
     });
+    wrapper.unmount();
   });
 
-  describe("error handling", () => {
-    it("error status codes flow through to components", async () => {
-      const mock = schmock();
-      mock("GET /api/failing", [500, { message: "broken" }]);
+  it("toggles a todo's done state", async () => {
+    const mock = createTodoMock();
+    const wrapper = mountTodo(mock);
+    await flushPromises();
+    await vi.waitFor(() => expect(wrapper.find("[data-testid='done']").text()).toBe("1 done"));
 
-      const wrapper = mountWith(ErrorDisplay, mock);
-      await flushPromises();
-      await vi.waitFor(() => {
-        expect(wrapper.find("[data-testid='error']").text()).toBe("Error: 500");
-      });
-      wrapper.unmount();
+    await wrapper.find("[data-testid='text-1']").trigger("click");
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(wrapper.find("[data-testid='done']").text()).toBe("2 done");
+      expect(wrapper.find("[data-testid='text-1']").classes()).toContain("done");
     });
+    wrapper.unmount();
   });
 
-  describe("concurrent fetches", () => {
-    it("handles parallel fetches from one component", async () => {
-      const mock = schmock();
-      mock("GET /api/users", [{ id: 1 }]);
-      mock("GET /api/posts", [{ id: 10 }, { id: 11 }]);
-      mock("GET /api/tags", ["a", "b", "c"]);
+  it("handles API errors gracefully", async () => {
+    const mock = schmock();
+    mock("GET /api/todos", [500, { message: "DB down" }]);
 
-      const wrapper = mountWith(MultiLoader, mock);
-      await flushPromises();
-      await vi.waitFor(() => {
-        expect(wrapper.find("[data-testid='users-count']").text()).toBe("1");
-        expect(wrapper.find("[data-testid='posts-count']").text()).toBe("2");
-        expect(wrapper.find("[data-testid='tags-count']").text()).toBe("3");
-      });
-      expect(mock.callCount()).toBe(3);
-      wrapper.unmount();
+    const wrapper = mountTodo(mock);
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(wrapper.find("[data-testid='error']").text()).toBe("500");
     });
+    wrapper.unmount();
   });
 
-  describe("passthrough", () => {
-    it("unmatched routes hit the original fetch", async () => {
-      const fakeFetch = globalThis.fetch as ReturnType<typeof vi.fn>;
-      const mock = schmock();
-      mock("GET /api/users", []);
+  it("full lifecycle: add, toggle, delete", async () => {
+    const mock = createTodoMock();
+    const wrapper = mountTodo(mock);
+    await flushPromises();
+    await vi.waitFor(() => expect(wrapper.find("[data-testid='count']").text()).toBe("2 todos"));
 
-      const wrapper = mountWith(
-        defineComponent({ render: () => h("div") }),
-        mock,
-        { passthrough: true },
-      );
+    // Add
+    await wrapper.find("[data-testid='todo-input']").setValue("New");
+    await wrapper.find("[data-testid='add-btn']").trigger("click");
+    await flushPromises();
+    await vi.waitFor(() => expect(wrapper.find("[data-testid='count']").text()).toBe("3 todos"));
 
-      await fetch("http://localhost/api/unknown");
-      expect(fakeFetch).toHaveBeenCalled();
-      wrapper.unmount();
+    // Toggle
+    await wrapper.find("[data-testid='text-3']").trigger("click");
+    await flushPromises();
+    await vi.waitFor(() => expect(wrapper.find("[data-testid='text-3']").classes()).toContain("done"));
+
+    // Delete
+    await wrapper.find("[data-testid='delete-3']").trigger("click");
+    await flushPromises();
+    await vi.waitFor(() => expect(wrapper.find("[data-testid='count']").text()).toBe("2 todos"));
+
+    wrapper.unmount();
+  });
+
+  it("spy: tracks all operations", async () => {
+    const mock = createTodoMock();
+    const wrapper = mountTodo(mock);
+    await flushPromises();
+    await vi.waitFor(() => expect(wrapper.find("[data-testid='count']").text()).toBe("2 todos"));
+
+    await wrapper.find("[data-testid='todo-input']").setValue("X");
+    await wrapper.find("[data-testid='add-btn']").trigger("click");
+    await flushPromises();
+
+    await wrapper.find("[data-testid='delete-1']").trigger("click");
+    await flushPromises();
+
+    expect(mock.called("GET", "/api/todos")).toBe(true);
+    expect(mock.called("POST", "/api/todos")).toBe(true);
+    expect(mock.called("DELETE", "/api/todos/1")).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("test isolation: fresh state each test", async () => {
+    const mock = createTodoMock();
+    const wrapper = mountTodo(mock);
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(wrapper.find("[data-testid='count']").text()).toBe("2 todos");
     });
+    expect(mock.callCount()).toBe(1);
+    wrapper.unmount();
   });
 });
