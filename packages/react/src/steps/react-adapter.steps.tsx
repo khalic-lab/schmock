@@ -4,7 +4,7 @@ import { loadFeature, describeFeature } from "@amiceli/vitest-cucumber";
 import { expect, vi } from "vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import React, { useEffect, useState } from "react";
-import { schmock } from "@schmock/core";
+import { schmock, notFound } from "@schmock/core";
 import { SchmockProvider, useSchmock } from "../index.js";
 import { renderWithSchmock } from "../testing.js";
 
@@ -31,6 +31,34 @@ function UserList() {
 function MockConsumer() {
   const mock = useSchmock();
   return <div data-testid="has-mock">{mock ? "yes" : "no"}</div>;
+}
+
+function ErrorFetcher() {
+  const [status, setStatus] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch("http://localhost/api/missing").then((res) => {
+      setStatus(res.status);
+    });
+  }, []);
+
+  return <div data-testid="status">{status ?? "loading"}</div>;
+}
+
+function PostForm() {
+  const [result, setResult] = useState<string>("");
+
+  useEffect(() => {
+    fetch("http://localhost/api/items", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Widget" }),
+    })
+      .then((res) => res.json())
+      .then((data) => setResult(data.name));
+  }, []);
+
+  return <div data-testid="result">{result || "loading"}</div>;
 }
 
 describeFeature(feature, ({ Scenario }) => {
@@ -199,6 +227,100 @@ describeFeature(feature, ({ Scenario }) => {
         cleanup();
         globalThis.fetch = originalFetch;
       });
+    },
+  );
+
+  Scenario(
+    "Error status codes flow through correctly",
+    ({ Given, When, Then }) => {
+      Given("a Schmock instance with a route returning status 404", () => {
+        originalFetch = globalThis.fetch;
+        mock = schmock();
+        mock("GET /api/missing", notFound("Not here"));
+      });
+
+      When(
+        "I render a component that fetches that route inside SchmockProvider",
+        () => {
+          render(
+            <SchmockProvider mock={mock}>
+              <ErrorFetcher />
+            </SchmockProvider>,
+          );
+        },
+      );
+
+      Then("the component should receive the error status", async () => {
+        await waitFor(() => {
+          expect(screen.getByTestId("status").textContent).toBe("404");
+        });
+        cleanup();
+        globalThis.fetch = originalFetch;
+      });
+    },
+  );
+
+  Scenario(
+    "POST with JSON body works through the provider",
+    ({ Given, When, Then }) => {
+      Given(
+        "a Schmock instance with a POST route that echoes the body",
+        () => {
+          originalFetch = globalThis.fetch;
+          mock = schmock();
+          mock("POST /api/items", ({ body }) => [201, body]);
+        },
+      );
+
+      When(
+        "I render a component that posts data inside SchmockProvider",
+        () => {
+          render(
+            <SchmockProvider mock={mock}>
+              <PostForm />
+            </SchmockProvider>,
+          );
+        },
+      );
+
+      Then("the component should display the echoed data", async () => {
+        await waitFor(() => {
+          expect(screen.getByTestId("result").textContent).toBe("Widget");
+        });
+        cleanup();
+        globalThis.fetch = originalFetch;
+      });
+    },
+  );
+
+  Scenario(
+    "useSchmock throws outside SchmockProvider",
+    ({ Given, When, Then }) => {
+      let error: Error | undefined;
+
+      Given(
+        "a component that calls useSchmock without a provider",
+        () => {
+          originalFetch = globalThis.fetch;
+        },
+      );
+
+      When("I try to render it", () => {
+        try {
+          render(<MockConsumer />);
+        } catch (e) {
+          error = e as Error;
+        }
+      });
+
+      Then(
+        "it should throw an error mentioning SchmockProvider",
+        () => {
+          expect(error?.message).toMatch(/SchmockProvider/);
+          cleanup();
+          globalThis.fetch = originalFetch;
+        },
+      );
     },
   );
 });
