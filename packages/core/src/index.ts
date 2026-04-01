@@ -82,6 +82,7 @@ export function schmock(
 export {
   HTTP_METHODS,
   isHttpMethod,
+  isRouteNotFound,
   isStatusTuple,
   ROUTE_NOT_FOUND_CODE,
   toHttpMethod,
