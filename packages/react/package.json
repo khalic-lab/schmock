@@ -1,0 +1,62 @@
+{
+  "name": "@schmock/react",
+  "version": "1.13.0",
+  "description": "React adapter for Schmock — Provider, hooks, and test utilities",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "bun build:lib && bun build:types",
+    "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts src/testing.ts --external @schmock/core --external react --external @testing-library/react",
+    "build:types": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest --watch",
+    "test:bdd": "vitest run --config vitest.config.bdd.ts",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write --unsafe src/",
+    "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
+  },
+  "license": "MIT",
+  "dependencies": {},
+  "peerDependencies": {
+    "@schmock/core": "^1.13.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "@testing-library/react": "^16.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@testing-library/react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@amiceli/vitest-cucumber": "^6.3.0",
+    "@testing-library/react": "^16.0.0",
+    "@types/react": "^19.0.0",
+    "jsdom": "^26.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "vitest": "^4.1.2"
+  },
+  "keywords": [
+    "schmock",
+    "mock",
+    "react",
+    "testing",
+    "api"
+  ],
+  "author": "Khalic Lab"
+}
