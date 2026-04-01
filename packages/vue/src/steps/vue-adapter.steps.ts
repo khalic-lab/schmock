@@ -4,7 +4,7 @@ import { loadFeature, describeFeature } from "@amiceli/vitest-cucumber";
 import { expect, vi } from "vitest";
 import { defineComponent, h, onMounted, ref } from "vue";
 import { mount } from "@vue/test-utils";
-import { schmock } from "@schmock/core";
+import { schmock, notFound } from "@schmock/core";
 import { schmockPlugin, useSchmock } from "../index.js";
 
 const feature = await loadFeature("../../features/vue-adapter.feature");
@@ -30,6 +30,37 @@ const MockConsumer = defineComponent({
   setup() {
     const mock = useSchmock();
     return () => h("div", { "data-testid": "has-mock" }, mock ? "yes" : "no");
+  },
+});
+
+const ErrorFetcher = defineComponent({
+  setup() {
+    const status = ref<number | null>(null);
+
+    onMounted(async () => {
+      const res = await fetch("http://localhost/api/missing");
+      status.value = res.status;
+    });
+
+    return () => h("div", { "data-testid": "status" }, String(status.value ?? "loading"));
+  },
+});
+
+const PostForm = defineComponent({
+  setup() {
+    const result = ref("");
+
+    onMounted(async () => {
+      const res = await fetch("http://localhost/api/items", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Widget" }),
+      });
+      const data = await res.json();
+      result.value = data.name;
+    });
+
+    return () => h("div", { "data-testid": "result" }, result.value || "loading");
   },
 });
 
@@ -167,6 +198,96 @@ describeFeature(feature, ({ Scenario }) => {
 
       Then("the request should pass through to the original fetch", () => {
         expect(fakeFetch).toHaveBeenCalled();
+        globalThis.fetch = originalFetch;
+      });
+    },
+  );
+
+  Scenario(
+    "Error status codes flow through correctly",
+    ({ Given, When, Then }) => {
+      let wrapper: ReturnType<typeof mount>;
+
+      Given("a Schmock instance with a route returning status 404", () => {
+        originalFetch = globalThis.fetch;
+        mock = schmock();
+        mock("GET /api/missing", notFound("Not here"));
+      });
+
+      When(
+        "I mount a component that fetches that route with the Schmock plugin",
+        () => {
+          wrapper = mount(ErrorFetcher, {
+            global: { plugins: [[schmockPlugin, { mock }]] },
+          });
+        },
+      );
+
+      Then("the component should receive the error status", async () => {
+        await vi.waitFor(() => {
+          expect(wrapper.find("[data-testid='status']").text()).toBe("404");
+        });
+        wrapper.unmount();
+        globalThis.fetch = originalFetch;
+      });
+    },
+  );
+
+  Scenario(
+    "POST with JSON body works through the plugin",
+    ({ Given, When, Then }) => {
+      let wrapper: ReturnType<typeof mount>;
+
+      Given(
+        "a Schmock instance with a POST route that echoes the body",
+        () => {
+          originalFetch = globalThis.fetch;
+          mock = schmock();
+          mock("POST /api/items", ({ body }) => [201, body]);
+        },
+      );
+
+      When(
+        "I mount a component that posts data with the Schmock plugin",
+        () => {
+          wrapper = mount(PostForm, {
+            global: { plugins: [[schmockPlugin, { mock }]] },
+          });
+        },
+      );
+
+      Then("the component should display the echoed data", async () => {
+        await vi.waitFor(() => {
+          expect(wrapper.find("[data-testid='result']").text()).toBe("Widget");
+        });
+        wrapper.unmount();
+        globalThis.fetch = originalFetch;
+      });
+    },
+  );
+
+  Scenario(
+    "useSchmock throws without the plugin",
+    ({ Given, When, Then }) => {
+      let error: Error | undefined;
+
+      Given(
+        "a component that calls useSchmock without the plugin",
+        () => {
+          originalFetch = globalThis.fetch;
+        },
+      );
+
+      When("I try to mount it", () => {
+        try {
+          mount(MockConsumer);
+        } catch (e) {
+          error = e as Error;
+        }
+      });
+
+      Then("it should throw an error mentioning schmockPlugin", () => {
+        expect(error?.message).toMatch(/schmockPlugin/);
         globalThis.fetch = originalFetch;
       });
     },
