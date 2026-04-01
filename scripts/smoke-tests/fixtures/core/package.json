@@ -1,0 +1,8 @@
+{
+  "name": "smoke-core",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@schmock/core": "^2.0.0"
+  }
+}

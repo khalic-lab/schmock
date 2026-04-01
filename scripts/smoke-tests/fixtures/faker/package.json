@@ -1,0 +1,9 @@
+{
+  "name": "smoke-faker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@schmock/core": "^2.0.0",
+    "@schmock/faker": "^2.0.0"
+  }
+}
