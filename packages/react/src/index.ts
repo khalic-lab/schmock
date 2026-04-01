@@ -3,17 +3,16 @@
 import {
   createContext,
   createElement,
+  type ReactNode,
   useContext,
   useEffect,
   useRef,
-  type ReactNode,
 } from "react";
 
 // ===== Context =====
 
-export const SchmockContext = createContext<Schmock.CallableMockInstance | null>(
-  null,
-);
+export const SchmockContext =
+  createContext<Schmock.CallableMockInstance | null>(null);
 
 // ===== Provider =====
 
@@ -39,7 +38,7 @@ export function SchmockProvider({
       handleRef.current?.restore();
       handleRef.current = null;
     };
-  }, [mock, options]);
+  }, []);
 
   return createElement(SchmockContext.Provider, { value: mock }, children);
 }

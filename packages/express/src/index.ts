@@ -1,10 +1,6 @@
 /// <reference path="../../core/schmock.d.ts" />
 
-import {
-  SchmockError,
-  isRouteNotFound,
-  toHttpMethod,
-} from "@schmock/core";
+import { isRouteNotFound, SchmockError, toHttpMethod } from "@schmock/core";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 /**

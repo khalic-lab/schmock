@@ -1,9 +1,9 @@
 /// <reference path="../../core/schmock.d.ts" />
 
+import { schmock } from "@schmock/core";
+import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, onMounted, ref } from "vue";
-import { mount } from "@vue/test-utils";
-import { schmock } from "@schmock/core";
 import { schmockPlugin, useSchmock } from "./index.js";
 
 const UserList = defineComponent({
@@ -61,10 +61,9 @@ describe("schmockPlugin", () => {
     const mock = schmock();
     const savedFetch = globalThis.fetch;
 
-    const wrapper = mount(
-      defineComponent({ render: () => h("div") }),
-      { global: { plugins: [[schmockPlugin, { mock }]] } },
-    );
+    const wrapper = mount(defineComponent({ render: () => h("div") }), {
+      global: { plugins: [[schmockPlugin, { mock }]] },
+    });
 
     expect(globalThis.fetch).not.toBe(savedFetch);
     wrapper.unmount();

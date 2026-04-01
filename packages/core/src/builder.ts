@@ -7,13 +7,13 @@ import {
   RouteNotFoundError,
   SchmockError,
 } from "./errors.js";
-import { createFetchInterceptor } from "./interceptor.js";
 import {
   collectBody,
   parseNodeHeaders,
   parseNodeQuery,
   writeSchmockResponse,
 } from "./http-helpers.js";
+import { createFetchInterceptor } from "./interceptor.js";
 import { parseRouteKey } from "./parser.js";
 import { runPluginPipeline } from "./plugin-pipeline.js";
 import { parseResponse } from "./response-parser.js";

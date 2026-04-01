@@ -1,7 +1,7 @@
 /// <reference path="../../core/schmock.d.ts" />
 
 import { schmock } from "@schmock/core";
-import { render, type RenderResult } from "@testing-library/react";
+import { type RenderResult, render } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { SchmockProvider } from "./index.js";
 
@@ -23,13 +23,13 @@ export function renderWithSchmock(
     }
   }
 
-  const result = render(
-    createElement(SchmockProvider, {
-      mock,
-      options: options.interceptOptions,
-      children: ui,
-    }),
-  );
+  const props = {
+    mock,
+    options: options.interceptOptions,
+    // biome-ignore lint/correctness/noChildrenProp: createElement requires children in props
+    children: ui,
+  };
+  const result = render(createElement(SchmockProvider, props));
 
   return {
     ...result,

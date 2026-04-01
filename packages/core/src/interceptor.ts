@@ -109,7 +109,7 @@ export function createFetchInterceptor(
   handle: (
     method: Schmock.HttpMethod,
     path: string,
-    options?: Schmock.RequestOptions,
+    requestOptions?: Schmock.RequestOptions,
   ) => Promise<Schmock.Response>,
   options: Schmock.InterceptOptions = {},
 ): Schmock.InterceptHandle {
@@ -145,7 +145,7 @@ export function createFetchInterceptor(
 
     // Build adapter request
     const method =
-      input instanceof Request ? input.method : init?.method ?? "GET";
+      input instanceof Request ? input.method : (init?.method ?? "GET");
     const headers = extractHeaders(input, init);
     const query = extractQuery(urlString);
     const body = await extractBody(input, init);
