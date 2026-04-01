@@ -1,6 +1,6 @@
 {
   "name": "@schmock/vue",
-  "version": "1.13.0",
+  "version": "2.0.0",
   "description": "Vue adapter for Schmock — Plugin and composables",
   "type": "module",
   "main": "./dist/index.js",
@@ -29,7 +29,7 @@
   "license": "MIT",
   "dependencies": {},
   "peerDependencies": {
-    "@schmock/core": "^1.13.0",
+    "@schmock/core": "^2.0.0",
     "vue": "^3.3.0"
   },
   "devDependencies": {
