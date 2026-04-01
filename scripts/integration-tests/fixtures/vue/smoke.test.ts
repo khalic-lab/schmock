@@ -162,8 +162,9 @@ describe("Vue adapter integration", () => {
       await flushPromises();
       await vi.waitFor(() => {
         expect(wrapper.find("[data-testid='user-1']").text()).toBe("Alice");
-        expect(wrapper.find("[data-testid='call-count']").text()).toBe("1");
       });
+      // callCount isn't reactive in the component, verify via mock directly
+      expect(mock.callCount()).toBe(1);
       wrapper.unmount();
     });
   });
