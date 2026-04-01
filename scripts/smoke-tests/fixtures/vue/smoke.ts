@@ -11,6 +11,7 @@ Object.assign(globalThis, {
   HTMLElement: dom.window.HTMLElement,
   SVGElement: dom.window.SVGElement,
   Node: dom.window.Node,
+  Element: dom.window.Element,
   MutationObserver: dom.window.MutationObserver,
 });
 
