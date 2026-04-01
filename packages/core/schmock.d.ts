@@ -370,6 +370,18 @@ declare namespace Schmock {
      * Stop the standalone server (idempotent, no-op if not running)
      */
     close(): void;
+
+    // ===== Fetch Interceptor =====
+
+    /**
+     * Intercept globalThis.fetch and route requests through this mock.
+     * Client-side equivalent of listen().
+     *
+     * @param options - Intercept configuration
+     * @returns Handle with restore() to stop intercepting
+     * @throws If already intercepting (call restore() first)
+     */
+    intercept(options?: InterceptOptions): InterceptHandle;
   }
 
   /**
@@ -395,6 +407,47 @@ declare namespace Schmock {
     pageSize: number;
     total: number;
     totalPages: number;
+  }
+
+  // ===== Adapter Types =====
+
+  interface AdapterRequest {
+    method: string;
+    path: string;
+    headers: Record<string, string>;
+    body?: unknown;
+    query: Record<string, string>;
+  }
+
+  interface AdapterResponse {
+    status: number;
+    body: unknown;
+    headers: Record<string, string>;
+  }
+
+  interface InterceptOptions {
+    /** Only intercept URLs whose pathname starts with this prefix */
+    baseUrl?: string;
+    /** Pass unmatched routes to real fetch (default: true) */
+    passthrough?: boolean;
+    /** Modify request before Schmock handles it */
+    beforeRequest?: (
+      request: AdapterRequest,
+    ) => AdapterRequest | void | Promise<AdapterRequest | void>;
+    /** Modify response before returning to caller */
+    beforeResponse?: (
+      response: AdapterResponse,
+      request: AdapterRequest,
+    ) => AdapterResponse | void | Promise<AdapterResponse | void>;
+    /** Format errors into custom response bodies */
+    errorFormatter?: (error: Error) => unknown;
+  }
+
+  interface InterceptHandle {
+    /** Stop intercepting and restore original fetch */
+    restore(): void;
+    /** Whether this interceptor is currently active */
+    readonly active: boolean;
   }
 
   // ===== Lifecycle Events =====
