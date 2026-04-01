@@ -1,0 +1,13 @@
+{
+  "name": "e2e-express-dev-proxy",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "vitest run --reporter=verbose" },
+  "dependencies": {
+    "@schmock/core": "^2.0.0",
+    "@schmock/express": "^2.0.0",
+    "@schmock/openapi": "^2.0.0",
+    "express": "^5.0.0",
+    "vitest": "^4.1.2"
+  }
+}

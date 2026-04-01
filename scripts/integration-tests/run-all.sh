@@ -59,7 +59,7 @@ run_test() {
 }
 
 # All testable packages
-ALL_PACKAGES=(core react vue express)
+ALL_PACKAGES=(core react vue express react-app vue-app express-dev-proxy testing-patterns)
 
 # Filter by args or run all
 if [[ $# -gt 0 ]]; then
