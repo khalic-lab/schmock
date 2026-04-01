@@ -13,7 +13,7 @@ import {
   HttpResponse,
 } from "@angular/common/http";
 import { Injectable } from "@angular/core";
-import { isHttpMethod, ROUTE_NOT_FOUND_CODE } from "@schmock/core";
+import { isHttpMethod, isRouteNotFound } from "@schmock/core";
 import { Observable } from "rxjs";
 
 function toSafeHttpMethod(method: string): Schmock.HttpMethod {
@@ -248,18 +248,12 @@ export function createSchmockInterceptor(
             if (aborted) return;
 
             // Detect ROUTE_NOT_FOUND responses
-            const body = schmockResponse.body;
-            const isRouteNotFound =
-              schmockResponse.status === 404 &&
-              body !== null &&
-              typeof body === "object" &&
-              "code" in body &&
-              body.code === ROUTE_NOT_FOUND_CODE;
+            const routeNotFound = isRouteNotFound(schmockResponse);
 
-            if (isRouteNotFound && passthrough) {
+            if (routeNotFound && passthrough) {
               // No matching route, pass to real backend
               innerSub = next.handle(req).subscribe(observer);
-            } else if (isRouteNotFound) {
+            } else if (routeNotFound) {
               // No matching route and passthrough disabled
               observer.error(
                 new HttpErrorResponse({
@@ -450,126 +444,14 @@ export async function provideSchmockInterceptorFromSpec(
   };
 }
 
-// ============================================================================
-// Response Helpers
-// ============================================================================
-
-/**
- * Helper to create a 404 Not Found response
- * @example mock('GET /api/users/999', notFound('User not found'))
- */
-export function notFound(
-  message: string | object = "Not Found",
-): [number, object] {
-  const body = typeof message === "string" ? { message } : message;
-  return [404, body];
-}
-
-/**
- * Helper to create a 400 Bad Request response
- * @example mock('POST /api/users', badRequest('Invalid email format'))
- */
-export function badRequest(
-  message: string | object = "Bad Request",
-): [number, object] {
-  const body = typeof message === "string" ? { message } : message;
-  return [400, body];
-}
-
-/**
- * Helper to create a 401 Unauthorized response
- * @example mock('GET /api/protected', unauthorized('Token expired'))
- */
-export function unauthorized(
-  message: string | object = "Unauthorized",
-): [number, object] {
-  const body = typeof message === "string" ? { message } : message;
-  return [401, body];
-}
-
-/**
- * Helper to create a 403 Forbidden response
- * @example mock('GET /api/admin', forbidden('Admin access required'))
- */
-export function forbidden(
-  message: string | object = "Forbidden",
-): [number, object] {
-  const body = typeof message === "string" ? { message } : message;
-  return [403, body];
-}
-
-/**
- * Helper to create a 500 Internal Server Error response
- * @example mock('GET /api/broken', serverError('Database connection failed'))
- */
-export function serverError(
-  message: string | object = "Internal Server Error",
-): [number, object] {
-  const body = typeof message === "string" ? { message } : message;
-  return [500, body];
-}
-
-/**
- * Helper to create a 201 Created response
- * @example mock('POST /api/users', created({ id: 1, name: 'John' }))
- */
-export function created(body: object): [number, object] {
-  return [201, body];
-}
-
-/**
- * Helper to create a 204 No Content response
- * @example mock('DELETE /api/users/1', noContent())
- */
-export function noContent(): [number, null] {
-  return [204, null];
-}
-
-/**
- * Pagination options
- */
-export interface PaginateOptions {
-  page?: number;
-  pageSize?: number;
-}
-
-/**
- * Paginated response structure
- */
-export interface PaginatedResponse<T> {
-  data: T[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-}
-
-/**
- * Helper to create a paginated response
- * @example
- * const items = [{ id: 1 }, { id: 2 }, { id: 3 }]
- * mock('GET /api/items', ({ query }) => paginate(items, {
- *   page: parseInt(query.page || '1'),
- *   pageSize: parseInt(query.pageSize || '10')
- * }))
- */
-export function paginate<T>(
-  items: T[],
-  options: PaginateOptions = {},
-): PaginatedResponse<T> {
-  const page = options.page || 1;
-  const pageSize = options.pageSize || 10;
-  const total = items.length;
-  const totalPages = Math.ceil(total / pageSize);
-  const start = (page - 1) * pageSize;
-  const end = start + pageSize;
-  const data = items.slice(start, end);
-
-  return {
-    data,
-    page,
-    pageSize,
-    total,
-    totalPages,
-  };
-}
+// Re-export response helpers from core for backwards compatibility
+export {
+  badRequest,
+  created,
+  forbidden,
+  noContent,
+  notFound,
+  paginate,
+  serverError,
+  unauthorized,
+} from "@schmock/core";
