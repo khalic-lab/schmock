@@ -1,6 +1,6 @@
 import { JSDOM } from "jsdom";
 
-// Set up DOM globals before importing Vue
+// Set up DOM globals BEFORE importing Vue (Vue caches document at import time)
 const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
   url: "http://localhost",
 });
@@ -10,11 +10,14 @@ Object.assign(globalThis, {
   navigator: dom.window.navigator,
   HTMLElement: dom.window.HTMLElement,
   SVGElement: dom.window.SVGElement,
+  Node: dom.window.Node,
+  MutationObserver: dom.window.MutationObserver,
 });
 
-import { createApp, defineComponent, h, onMounted, ref } from "vue";
-import { schmock } from "@schmock/core";
-import { schmockPlugin, useSchmock } from "@schmock/vue";
+// Dynamic imports so Vue sees the DOM globals
+const { createApp, defineComponent, h, onMounted, ref } = await import("vue");
+const { schmock } = await import("@schmock/core");
+const { schmockPlugin, useSchmock } = await import("@schmock/vue");
 
 // 1. Verify exports
 if (typeof schmockPlugin !== "object") throw new Error("schmockPlugin not an object");
@@ -64,9 +67,6 @@ app.mount(container);
 await new Promise((r) => setTimeout(r, 100));
 
 // Verify rendering
-const appEl = container.querySelector("#app");
-if (!appEl) throw new Error("App not rendered");
-
 const count = container.querySelector("#count");
 if (count?.textContent !== "1") throw new Error("Fetch not intercepted, count: " + count?.textContent);
 

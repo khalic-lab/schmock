@@ -3,8 +3,8 @@ import { toExpress } from "@schmock/express";
 import express from "express";
 
 const mock = schmock();
-mock("GET /api/users", [{ id: 1, name: "Alice" }]);
-mock("POST /api/users", ({ body }) => [201, body]);
+mock("GET /users", [{ id: 1, name: "Alice" }]);
+mock("POST /users", ({ body }) => [201, body]);
 
 const app = express();
 app.use(express.json());
