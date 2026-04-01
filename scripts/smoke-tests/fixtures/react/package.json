@@ -1,0 +1,13 @@
+{
+  "name": "smoke-react",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@schmock/core": "^2.0.0",
+    "@schmock/react": "^2.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@testing-library/react": "^16.0.0",
+    "jsdom": "^26.0.0"
+  }
+}

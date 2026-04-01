@@ -1,0 +1,8 @@
+{
+  "name": "smoke-schmock",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@schmock/schmock": "^2.0.0"
+  }
+}

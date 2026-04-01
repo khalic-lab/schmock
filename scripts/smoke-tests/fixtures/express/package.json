@@ -1,0 +1,10 @@
+{
+  "name": "smoke-express",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@schmock/core": "^2.0.0",
+    "@schmock/express": "^2.0.0",
+    "express": "^5.0.0"
+  }
+}

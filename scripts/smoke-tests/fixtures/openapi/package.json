@@ -1,0 +1,9 @@
+{
+  "name": "smoke-openapi",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@schmock/core": "^2.0.0",
+    "@schmock/openapi": "^2.0.0"
+  }
+}

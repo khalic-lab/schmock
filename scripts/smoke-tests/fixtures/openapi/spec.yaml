@@ -1,0 +1,46 @@
+openapi: "3.0.0"
+info:
+  title: Smoke Test API
+  version: "1.0.0"
+paths:
+  /items:
+    get:
+      operationId: listItems
+      responses:
+        "200":
+          description: List of items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                  required: [id, name]
+    post:
+      operationId: createItem
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required: [name]
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
