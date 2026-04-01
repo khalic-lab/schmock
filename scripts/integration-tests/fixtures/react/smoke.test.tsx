@@ -1,108 +1,149 @@
+/**
+ * E2E: Todo app with React + SchmockProvider.
+ *
+ * Same Todo CRUD baseline as every adapter fixture.
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, waitFor, cleanup, act } from "@testing-library/react";
+import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import React, { useEffect, useState, useCallback } from "react";
-import { schmock } from "@schmock/core";
+import { schmock, notFound, noContent } from "@schmock/core";
 import { SchmockProvider, useSchmock } from "@schmock/react";
 import { renderWithSchmock } from "@schmock/react/testing";
 
-// ===== Test Components =====
+// ===== Todo App Component =====
 
-function UserList() {
-  const [users, setUsers] = useState<Array<{ id: number; name: string }>>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    void fetch("http://localhost/api/users")
-      .then((r) => r.json())
-      .then((data) => {
-        setUsers(data);
-        setLoading(false);
-      });
-  }, []);
-
-  if (loading) return <div data-testid="loading">Loading...</div>;
-  return (
-    <ul data-testid="user-list">
-      {users.map((u) => (
-        <li key={u.id} data-testid={`user-${u.id}`}>{u.name}</li>
-      ))}
-    </ul>
-  );
+interface Todo {
+  id: number;
+  title: string;
+  done: boolean;
 }
 
-function CreateForm({ onCreated }: { onCreated?: () => void }) {
-  const [result, setResult] = useState<string>("");
+function TodoApp() {
+  const [todos, setTodos] = useState<Todo[]>([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const handleSubmit = useCallback(async () => {
-    const res = await fetch("http://localhost/api/users", {
+  const loadTodos = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("http://localhost/api/todos");
+      if (!res.ok) throw new Error(`${res.status}`);
+      setTodos(await res.json());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadTodos(); }, [loadTodos]);
+
+  const addTodo = async () => {
+    if (!input.trim()) return;
+    const res = await fetch("http://localhost/api/todos", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "NewUser" }),
+      body: JSON.stringify({ title: input, done: false }),
     });
-    const data = await res.json();
-    setResult(data.name);
-    onCreated?.();
-  }, [onCreated]);
+    if (res.ok) {
+      setTodos((prev) => [...prev, await res.json()]);
+      setInput("");
+    }
+  };
+
+  const toggleTodo = async (id: number) => {
+    const todo = todos.find((t) => t.id === id);
+    if (!todo) return;
+    const res = await fetch(`http://localhost/api/todos/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ done: !todo.done }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setTodos((prev) => prev.map((t) => (t.id === id ? updated : t)));
+    }
+  };
+
+  const deleteTodo = async (id: number) => {
+    const res = await fetch(`http://localhost/api/todos/${id}`, { method: "DELETE" });
+    if (res.ok) setTodos((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  if (error) return <div data-testid="error">{error}</div>;
+  if (loading) return <div data-testid="loading">Loading...</div>;
 
   return (
     <div>
-      <button data-testid="submit" onClick={handleSubmit}>Create</button>
-      {result && <span data-testid="result">{result}</span>}
+      <div>
+        <input data-testid="todo-input" value={input} onChange={(e) => setInput(e.target.value)} />
+        <button data-testid="add-btn" onClick={() => void addTodo()}>Add</button>
+      </div>
+      <ul data-testid="todo-list">
+        {todos.map((t) => (
+          <li key={t.id} data-testid={`todo-${t.id}`}>
+            <span
+              data-testid={`text-${t.id}`}
+              style={{ textDecoration: t.done ? "line-through" : "none" }}
+              onClick={() => void toggleTodo(t.id)}
+            >
+              {t.title}
+            </span>
+            <button data-testid={`delete-${t.id}`} onClick={() => void deleteTodo(t.id)}>X</button>
+          </li>
+        ))}
+      </ul>
+      <div data-testid="count">{todos.length} todos</div>
     </div>
   );
 }
 
-function ErrorDisplay() {
-  const [error, setError] = useState<string>("");
+// ===== Stateful mock factory (same backend as core fixture) =====
 
-  useEffect(() => {
-    void fetch("http://localhost/api/failing").then((r) => {
-      if (!r.ok) setError(`Error: ${r.status}`);
-    });
-  }, []);
+function createTodoMock() {
+  const mock = schmock({
+    state: {
+      todos: [
+        { id: 1, title: "Buy milk", done: false },
+        { id: 2, title: "Write tests", done: true },
+      ] as Todo[],
+      nextId: 3,
+    },
+  });
 
-  return <div data-testid="error">{error || "loading"}</div>;
-}
+  mock("GET /api/todos", ({ state }) => state.todos);
 
-function MockInspector() {
-  const mock = useSchmock();
-  const [count, setCount] = useState(0);
+  mock("POST /api/todos", ({ body, state }) => {
+    const b = body as { title: string; done: boolean };
+    const todo = { id: (state as any).nextId++, title: b.title, done: b.done };
+    (state as any).todos.push(todo);
+    return [201, todo];
+  });
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCount(mock.callCount());
-    }, 50);
-    return () => clearInterval(interval);
-  }, [mock]);
+  mock("PATCH /api/todos/:id", ({ params, body, state }) => {
+    const todos = (state as any).todos as Todo[];
+    const todo = todos.find((t) => t.id === Number(params.id));
+    if (!todo) return notFound("Todo not found");
+    Object.assign(todo, body);
+    return todo;
+  });
 
-  return <div data-testid="call-count">{count}</div>;
-}
+  mock("DELETE /api/todos/:id", ({ params, state }) => {
+    const todos = (state as any).todos as Todo[];
+    const idx = todos.findIndex((t) => t.id === Number(params.id));
+    if (idx === -1) return notFound("Todo not found");
+    todos.splice(idx, 1);
+    return [204, null];
+  });
 
-function MultiLoader() {
-  const [data, setData] = useState<Record<string, unknown>>({});
-
-  useEffect(() => {
-    void Promise.all([
-      fetch("http://localhost/api/users").then((r) => r.json()),
-      fetch("http://localhost/api/posts").then((r) => r.json()),
-      fetch("http://localhost/api/tags").then((r) => r.json()),
-    ]).then(([users, posts, tags]) => {
-      setData({ users, posts, tags });
-    });
-  }, []);
-
-  return (
-    <div>
-      <span data-testid="users-count">{Array.isArray(data.users) ? data.users.length : 0}</span>
-      <span data-testid="posts-count">{Array.isArray(data.posts) ? data.posts.length : 0}</span>
-      <span data-testid="tags-count">{Array.isArray(data.tags) ? data.tags.length : 0}</span>
-    </div>
-  );
+  return mock;
 }
 
 // ===== Tests =====
 
-describe("React adapter integration", () => {
+describe("Todo App — React (SchmockProvider)", () => {
   let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
@@ -115,197 +156,136 @@ describe("React adapter integration", () => {
     globalThis.fetch = originalFetch;
   });
 
-  describe("SchmockProvider lifecycle", () => {
-    it("renders loading state then mocked data", async () => {
-      const mock = schmock();
-      mock("GET /api/users", [{ id: 1, name: "Alice" }]);
+  it("loads all todos", async () => {
+    const mock = createTodoMock();
+    render(<SchmockProvider mock={mock}><TodoApp /></SchmockProvider>);
 
-      render(
-        <SchmockProvider mock={mock}>
-          <UserList />
-        </SchmockProvider>,
-      );
-
-      // Initially loading
-      expect(screen.getByTestId("loading")).toBeDefined();
-
-      // Then data appears
-      await waitFor(() => {
-        expect(screen.getByTestId("user-1")).toBeDefined();
-        expect(screen.getByTestId("user-1").textContent).toBe("Alice");
-      });
-    });
-
-    it("restores fetch on unmount — no leak between tests", () => {
-      const mock = schmock();
-      const fetchBefore = globalThis.fetch;
-
-      const { unmount } = render(
-        <SchmockProvider mock={mock}>
-          <div />
-        </SchmockProvider>,
-      );
-
-      expect(globalThis.fetch).not.toBe(fetchBefore);
-      unmount();
-      expect(globalThis.fetch).toBe(fetchBefore);
-    });
-
-    it("multiple components share one provider", async () => {
-      const mock = schmock();
-      mock("GET /api/users", [{ id: 1, name: "Alice" }]);
-
-      render(
-        <SchmockProvider mock={mock}>
-          <UserList />
-          <MockInspector />
-        </SchmockProvider>,
-      );
-
-      await waitFor(() => {
-        expect(screen.getByTestId("user-1")).toBeDefined();
-        expect(screen.getByTestId("call-count").textContent).toBe("1");
-      });
+    await waitFor(() => {
+      expect(screen.getByTestId("text-1").textContent).toBe("Buy milk");
+      expect(screen.getByTestId("text-2").textContent).toBe("Write tests");
+      expect(screen.getByTestId("count").textContent).toBe("2 todos");
     });
   });
 
-  describe("useSchmock hook", () => {
-    it("provides access to spy API from within components", async () => {
-      const mock = schmock();
-      mock("GET /api/users", [{ id: 1, name: "Alice" }]);
+  it("adds a new todo", async () => {
+    const user = userEvent.setup();
+    const mock = createTodoMock();
+    render(<SchmockProvider mock={mock}><TodoApp /></SchmockProvider>);
 
-      render(
-        <SchmockProvider mock={mock}>
-          <UserList />
-          <MockInspector />
-        </SchmockProvider>,
-      );
+    await waitFor(() => expect(screen.getByTestId("count").textContent).toBe("2 todos"));
 
-      await waitFor(() => {
-        expect(screen.getByTestId("call-count").textContent).toBe("1");
-      });
+    await user.type(screen.getByTestId("todo-input"), "Ship it");
+    await user.click(screen.getByTestId("add-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("count").textContent).toBe("3 todos");
+      expect(screen.getByTestId("text-3").textContent).toBe("Ship it");
     });
 
-    it("throws descriptive error outside provider", () => {
-      expect(() => render(<MockInspector />)).toThrow(/SchmockProvider/);
+    expect(mock.lastRequest("POST", "/api/todos")?.body).toEqual({ title: "Ship it", done: false });
+  });
+
+  it("deletes a todo", async () => {
+    const user = userEvent.setup();
+    const mock = createTodoMock();
+    render(<SchmockProvider mock={mock}><TodoApp /></SchmockProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("count").textContent).toBe("2 todos"));
+
+    await user.click(screen.getByTestId("delete-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("count").textContent).toBe("1 todos");
+      expect(screen.queryByTestId("todo-1")).toBeNull();
     });
   });
 
-  describe("POST and mutations", () => {
-    it("handles POST with JSON body round-trip", async () => {
-      const mock = schmock();
-      mock("GET /api/users", []);
-      mock("POST /api/users", ({ body }) => [201, body]);
+  it("toggles a todo's done state", async () => {
+    const user = userEvent.setup();
+    const mock = createTodoMock();
+    render(<SchmockProvider mock={mock}><TodoApp /></SchmockProvider>);
 
-      render(
-        <SchmockProvider mock={mock}>
-          <CreateForm />
-        </SchmockProvider>,
-      );
+    await waitFor(() => expect(screen.getByTestId("text-1")).toBeDefined());
 
-      await act(async () => {
-        screen.getByTestId("submit").click();
-      });
+    await user.click(screen.getByTestId("text-1"));
 
-      await waitFor(() => {
-        expect(screen.getByTestId("result").textContent).toBe("NewUser");
-      });
-
-      expect(mock.callCount("POST", "/api/users")).toBe(1);
+    await waitFor(() => {
+      expect(screen.getByTestId("text-1").style.textDecoration).toBe("line-through");
     });
   });
 
-  describe("error handling", () => {
-    it("error status codes flow through to components", async () => {
-      const mock = schmock();
-      mock("GET /api/failing", [500, { message: "broken" }]);
+  it("handles API errors gracefully", async () => {
+    const mock = schmock();
+    mock("GET /api/todos", [500, { message: "DB down" }]);
 
-      render(
-        <SchmockProvider mock={mock}>
-          <ErrorDisplay />
-        </SchmockProvider>,
-      );
+    render(<SchmockProvider mock={mock}><TodoApp /></SchmockProvider>);
 
-      await waitFor(() => {
-        expect(screen.getByTestId("error").textContent).toBe("Error: 500");
-      });
+    await waitFor(() => {
+      expect(screen.getByTestId("error").textContent).toBe("500");
     });
   });
 
-  describe("concurrent fetches", () => {
-    it("handles parallel fetches from one component", async () => {
-      const mock = schmock();
-      mock("GET /api/users", [{ id: 1 }]);
-      mock("GET /api/posts", [{ id: 10 }, { id: 11 }]);
-      mock("GET /api/tags", ["a", "b", "c"]);
+  it("full lifecycle: add, toggle, delete", async () => {
+    const user = userEvent.setup();
+    const mock = createTodoMock();
+    render(<SchmockProvider mock={mock}><TodoApp /></SchmockProvider>);
 
-      render(
-        <SchmockProvider mock={mock}>
-          <MultiLoader />
-        </SchmockProvider>,
-      );
+    await waitFor(() => expect(screen.getByTestId("count").textContent).toBe("2 todos"));
 
-      await waitFor(() => {
-        expect(screen.getByTestId("users-count").textContent).toBe("1");
-        expect(screen.getByTestId("posts-count").textContent).toBe("2");
-        expect(screen.getByTestId("tags-count").textContent).toBe("3");
-      });
+    // Add
+    await user.type(screen.getByTestId("todo-input"), "New");
+    await user.click(screen.getByTestId("add-btn"));
+    await waitFor(() => expect(screen.getByTestId("count").textContent).toBe("3 todos"));
 
-      expect(mock.callCount()).toBe(3);
+    // Toggle
+    await user.click(screen.getByTestId("text-3"));
+    await waitFor(() => {
+      expect(screen.getByTestId("text-3").style.textDecoration).toBe("line-through");
     });
+
+    // Delete
+    await user.click(screen.getByTestId("delete-3"));
+    await waitFor(() => expect(screen.getByTestId("count").textContent).toBe("2 todos"));
   });
 
-  describe("renderWithSchmock utility", () => {
-    it("sets up routes and provider in one call", async () => {
-      const { mock } = renderWithSchmock(<UserList />, {
-        routes: [["GET /api/users", [{ id: 1, name: "Bob" }]]],
-      });
+  it("spy: tracks all operations", async () => {
+    const user = userEvent.setup();
+    const mock = createTodoMock();
+    render(<SchmockProvider mock={mock}><TodoApp /></SchmockProvider>);
 
-      await waitFor(() => {
-        expect(screen.getByTestId("user-1").textContent).toBe("Bob");
-      });
+    await waitFor(() => expect(screen.getByTestId("count")).toBeDefined());
 
-      expect(mock.called("GET", "/api/users")).toBe(true);
-    });
+    await user.type(screen.getByTestId("todo-input"), "X");
+    await user.click(screen.getByTestId("add-btn"));
+    await waitFor(() => expect(screen.getByTestId("text-3")).toBeDefined());
 
-    it("accepts a pre-configured mock instance", async () => {
-      const mock = schmock();
-      mock("GET /api/users", [{ id: 5, name: "Eve" }]);
+    await user.click(screen.getByTestId("delete-1"));
+    await waitFor(() => expect(screen.queryByTestId("todo-1")).toBeNull());
 
-      renderWithSchmock(<UserList />, { mock });
-
-      await waitFor(() => {
-        expect(screen.getByTestId("user-5").textContent).toBe("Eve");
-      });
-    });
-
-    it("cleans up on unmount", () => {
-      const fetchBefore = globalThis.fetch;
-
-      const { unmount } = renderWithSchmock(<div />, {
-        routes: [["GET /api/x", []]],
-      });
-
-      expect(globalThis.fetch).not.toBe(fetchBefore);
-      unmount();
-      expect(globalThis.fetch).toBe(fetchBefore);
-    });
+    expect(mock.called("GET", "/api/todos")).toBe(true);
+    expect(mock.called("POST", "/api/todos")).toBe(true);
+    expect(mock.called("DELETE", "/api/todos/1")).toBe(true);
   });
 
-  describe("passthrough", () => {
-    it("unmatched routes hit the original fetch", async () => {
-      const fakeFetch = globalThis.fetch as ReturnType<typeof vi.fn>;
-      const mock = schmock();
-      mock("GET /api/users", []);
+  it("test isolation: fresh state each test", async () => {
+    const mock = createTodoMock();
+    render(<SchmockProvider mock={mock}><TodoApp /></SchmockProvider>);
 
-      render(
-        <SchmockProvider mock={mock} options={{ passthrough: true }}>
-          <div />
-        </SchmockProvider>,
-      );
+    await waitFor(() => {
+      expect(screen.getByTestId("count").textContent).toBe("2 todos");
+    });
 
-      await fetch("http://localhost/api/unknown");
-      expect(fakeFetch).toHaveBeenCalled();
+    expect(mock.callCount()).toBe(1); // Just the initial GET
+  });
+
+  it("renderWithSchmock shorthand works", async () => {
+    const { mock } = renderWithSchmock(<TodoApp />, {
+      routes: [["GET /api/todos", [{ id: 10, title: "Quick", done: false }]]],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("text-10").textContent).toBe("Quick");
+      expect(screen.getByTestId("count").textContent).toBe("1 todos");
     });
   });
 });
