@@ -51,3 +51,31 @@ After initial implementation, the React and Vue feature files were found to lack
 ### D13: Agent Teams as execution mechanism (2026-04-01)
 
 The operator requested the experimental Agent Teams (teammates) feature rather than subagent-driven-development or executing-plans. Three persistent teammates were created: core-dev (packages/core), adapter-dev (packages/express, angular, schmock), frontend-dev (packages/react, vue). Tasks 1+2 ran first in isolated worktrees (background Agent tool), then the team executed Tasks 3-8 with core-dev and adapter-dev running concurrently. The CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 env var was added to settings.json to enable the feature.
+
+### D14: Global fetch interception (MSW-style) for React and Vue (2026-04-01)
+
+Rather than providing a replacement fetch client or framework-specific HTTP adapters, the React and Vue adapters intercept globalThis.fetch by patching it. This supports both test-time (Node 18+) and browser/dev-time environments without requiring any changes to application code. The approach mirrors MSW conceptually.
+
+### D15: mock.intercept() belongs in core, not a separate package (2026-04-01)
+
+An initial proposal to publish @schmock/interceptor as a standalone package was rejected. fetch interception is the client-side equivalent of mock.listen() and belongs at the same layer of abstraction inside @schmock/core. Core gains mock.intercept(options?) which returns { restore(), active }.
+
+### D16: Facade pattern stays per-adapter; core provides primitives only (2026-04-01)
+
+Each adapter package (Express, Angular, React, Vue) owns its own facade — the framework-specific conversion logic. Core exports primitives (isRouteNotFound, response helpers, mock.intercept()) but does not contain any facade. An earlier design that placed shared facade logic in an adapter-core package was rejected.
+
+### D17: Response helpers and isRouteNotFound extracted to core (2026-04-01)
+
+notFound(), badRequest(), unauthorized(), forbidden(), serverError(), created(), noContent(), and paginate() were previously duplicated in the Angular adapter. isRouteNotFound() detection was duplicated in both Express and Angular. Both are now in @schmock/core and re-exported by adapters that need them.
+
+### D18: Single-install packaging model per framework (2026-04-01)
+
+Each framework adapter package (@schmock/react, @schmock/vue, @schmock/express, @schmock/angular) is a complete install — it brings core and all required dependencies. Users do not need to manually install @schmock/core separately. Plugins (@schmock/faker, @schmock/openapi, etc.) remain additive opt-ins.
+
+### D19: Meta-package strips framework adapter dependencies (2026-04-01)
+
+@schmock/schmock no longer depends on @schmock/express or @schmock/angular. It is core + plugins. Framework-specific code now lives exclusively in the framework packages. CLI (@schmock/cli) was confirmed to use node:http directly (not Express) and remains in the meta-package alongside core utilities it depends on.
+
+### D20: React test utilities published as @schmock/react/testing subpath (2026-04-01)
+
+renderWithSchmock and related test helpers require @testing-library/react, which should not be a mandatory dependency for all React adapter users. They are published under a /testing subpath export so the peer dependency is optional and only needed by users who import the test utilities.
