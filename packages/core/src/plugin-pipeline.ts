@@ -30,7 +30,7 @@ export async function runPluginPipeline(
     try {
       const result = await plugin.process(currentContext, response);
 
-      if (!result || !result.context) {
+      if (!result?.context) {
         throw new Error(`Plugin ${plugin.name} didn't return valid result`);
       }
 

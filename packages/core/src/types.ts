@@ -29,3 +29,7 @@ export type SeedSource = Schmock.SeedSource;
 export type SeedConfig = Schmock.SeedConfig;
 export type CliOptions = Schmock.CliOptions;
 export type CliServer = Schmock.CliServer;
+export type AdapterRequest = Schmock.AdapterRequest;
+export type AdapterResponse = Schmock.AdapterResponse;
+export type InterceptOptions = Schmock.InterceptOptions;
+export type InterceptHandle = Schmock.InterceptHandle;

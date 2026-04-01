@@ -34,6 +34,24 @@ export function toRouteKey(method: HttpMethod, path: string): Schmock.RouteKey {
 }
 
 /**
+ * Check if a Schmock response is a route-not-found response.
+ * Used by adapters to decide whether to pass through to the real backend.
+ */
+export function isRouteNotFound(response: {
+  status: number;
+  body: unknown;
+}): boolean {
+  const { status, body } = response;
+  return (
+    status === 404 &&
+    body !== null &&
+    typeof body === "object" &&
+    "code" in body &&
+    body.code === ROUTE_NOT_FOUND_CODE
+  );
+}
+
+/**
  * Check if a value is a status tuple: [status, body] or [status, body, headers]
  * Guards against misinterpreting numeric arrays like [1, 2, 3] as tuples.
  */

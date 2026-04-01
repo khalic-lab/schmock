@@ -70,6 +70,8 @@ export function schmock(
       getState: instance.getState.bind(instance),
       listen: instance.listen.bind(instance),
       close: instance.close.bind(instance),
+      intercept: (options?: Schmock.InterceptOptions) =>
+        instance.intercept(options),
     },
   );
 
@@ -82,6 +84,7 @@ export function schmock(
 export {
   HTTP_METHODS,
   isHttpMethod,
+  isRouteNotFound,
   isStatusTuple,
   ROUTE_NOT_FOUND_CODE,
   toHttpMethod,
@@ -99,6 +102,17 @@ export {
   SchemaValidationError,
   SchmockError,
 } from "./errors.js";
+// Re-export response helpers
+export {
+  badRequest,
+  created,
+  forbidden,
+  noContent,
+  notFound,
+  paginate,
+  serverError,
+  unauthorized,
+} from "./helpers.js";
 // Re-export HTTP server helpers
 export {
   collectBody,
@@ -107,12 +121,19 @@ export {
   writeSchmockResponse,
 } from "./http-helpers.js";
 // Re-export types
+// Re-export interceptor
+export { createFetchInterceptor } from "./interceptor.js";
+// Re-export types
 export type {
+  AdapterRequest,
+  AdapterResponse,
   CallableMockInstance,
   Generator,
   GeneratorFunction,
   GlobalConfig,
   HttpMethod,
+  InterceptHandle,
+  InterceptOptions,
   Plugin,
   PluginContext,
   PluginResult,

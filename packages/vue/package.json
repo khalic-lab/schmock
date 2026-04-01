@@ -1,0 +1,50 @@
+{
+  "name": "@schmock/vue",
+  "version": "1.13.0",
+  "description": "Vue adapter for Schmock — Plugin and composables",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "bun build:lib && bun build:types",
+    "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts --external @schmock/core --external vue",
+    "build:types": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest --watch",
+    "test:bdd": "vitest run --config vitest.config.bdd.ts",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write --unsafe src/",
+    "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
+  },
+  "license": "MIT",
+  "dependencies": {},
+  "peerDependencies": {
+    "@schmock/core": "^1.13.0",
+    "vue": "^3.3.0"
+  },
+  "devDependencies": {
+    "@amiceli/vitest-cucumber": "^6.3.0",
+    "@vue/test-utils": "^2.4.0",
+    "jsdom": "^26.0.0",
+    "vue": "^3.5.0",
+    "vitest": "^4.1.2"
+  },
+  "keywords": [
+    "schmock",
+    "mock",
+    "vue",
+    "testing",
+    "api"
+  ],
+  "author": "Khalic Lab"
+}
