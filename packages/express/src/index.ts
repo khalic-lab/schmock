@@ -1,8 +1,8 @@
 /// <reference path="../../core/schmock.d.ts" />
 
 import {
-  ROUTE_NOT_FOUND_CODE,
   SchmockError,
+  isRouteNotFound,
   toHttpMethod,
 } from "@schmock/core";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
@@ -204,14 +204,7 @@ export function toExpress(
       );
 
       // Detect ROUTE_NOT_FOUND responses and pass to next middleware
-      const body = schmockResponse.body;
-      if (
-        schmockResponse.status === 404 &&
-        body &&
-        typeof body === "object" &&
-        "code" in body &&
-        body.code === ROUTE_NOT_FOUND_CODE
-      ) {
+      if (isRouteNotFound(schmockResponse)) {
         next();
         return;
       }
