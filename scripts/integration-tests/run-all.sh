@@ -47,8 +47,8 @@ run_test() {
     return
   fi
 
-  # Run vitest via bun test
-  if bun test 2>&1; then
+  # Run vitest via package script (bun run test, NOT bun test which uses Bun's runner)
+  if bun run test 2>&1; then
     green "  PASS"
     PASSED=$((PASSED + 1))
   else
