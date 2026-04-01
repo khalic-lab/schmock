@@ -138,13 +138,13 @@ Updated dependencies:
 - `@schmock/validation`
 - `@schmock/query`
 - `@schmock/openapi`
+- `@schmock/cli`
 - ~~`@schmock/express`~~ removed
 - ~~`@schmock/angular`~~ removed
-- ~~`@schmock/cli`~~ removed
 
 ### `@schmock/cli`
 
-Remains standalone. No changes.
+Depends on core + openapi (uses `node:http` directly, not Express). Stays in the meta-package. No changes needed.
 
 ## Execution Order
 
