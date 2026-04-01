@@ -84,7 +84,10 @@ describe("mock.intercept()", () => {
   });
 
   it("applies beforeRequest hook", async () => {
-    mock("GET /api/users", ({ headers }) => [200, { token: headers["x-token"] }]);
+    mock("GET /api/users", ({ headers }) => [
+      200,
+      { token: headers["x-token"] },
+    ]);
     const handle = mock.intercept({
       beforeRequest: (req) => ({
         ...req,
@@ -101,9 +104,9 @@ describe("mock.intercept()", () => {
   it("applies beforeResponse hook", async () => {
     mock("GET /api/users", [{ id: 1 }]);
     const handle = mock.intercept({
-      beforeResponse: (res) => ({
-        ...res,
-        headers: { ...res.headers, "x-mock": "true" },
+      beforeResponse: (resp) => ({
+        ...resp,
+        headers: { ...resp.headers, "x-mock": "true" },
       }),
     });
 

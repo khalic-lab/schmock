@@ -1,9 +1,9 @@
 /// <reference path="../../core/schmock.d.ts" />
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
-import React, { useEffect, useState } from "react";
 import { schmock } from "@schmock/core";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { useEffect, useState } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SchmockProvider, useSchmock } from "./index.js";
 import { renderWithSchmock } from "./testing.js";
 
@@ -11,7 +11,7 @@ function UserList() {
   const [users, setUsers] = useState<Array<{ id: number; name: string }>>([]);
 
   useEffect(() => {
-    fetch("http://localhost/api/users")
+    void fetch("http://localhost/api/users")
       .then((res) => res.json())
       .then(setUsers);
   }, []);

@@ -70,7 +70,8 @@ export function schmock(
       getState: instance.getState.bind(instance),
       listen: instance.listen.bind(instance),
       close: instance.close.bind(instance),
-      intercept: (options?: Schmock.InterceptOptions) => instance.intercept(options),
+      intercept: (options?: Schmock.InterceptOptions) =>
+        instance.intercept(options),
     },
   );
 
@@ -101,13 +102,6 @@ export {
   SchemaValidationError,
   SchmockError,
 } from "./errors.js";
-// Re-export HTTP server helpers
-export {
-  collectBody,
-  parseNodeHeaders,
-  parseNodeQuery,
-  writeSchmockResponse,
-} from "./http-helpers.js";
 // Re-export response helpers
 export {
   badRequest,
@@ -119,6 +113,13 @@ export {
   serverError,
   unauthorized,
 } from "./helpers.js";
+// Re-export HTTP server helpers
+export {
+  collectBody,
+  parseNodeHeaders,
+  parseNodeQuery,
+  writeSchmockResponse,
+} from "./http-helpers.js";
 // Re-export types
 // Re-export interceptor
 export { createFetchInterceptor } from "./interceptor.js";

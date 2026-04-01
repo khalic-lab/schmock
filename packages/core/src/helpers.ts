@@ -1,26 +1,36 @@
 /// <reference path="../schmock.d.ts" />
 
-export function notFound(message: string | object = "Not Found"): [number, object] {
+export function notFound(
+  message: string | object = "Not Found",
+): [number, object] {
   const body = typeof message === "string" ? { message } : message;
   return [404, body];
 }
 
-export function badRequest(message: string | object = "Bad Request"): [number, object] {
+export function badRequest(
+  message: string | object = "Bad Request",
+): [number, object] {
   const body = typeof message === "string" ? { message } : message;
   return [400, body];
 }
 
-export function unauthorized(message: string | object = "Unauthorized"): [number, object] {
+export function unauthorized(
+  message: string | object = "Unauthorized",
+): [number, object] {
   const body = typeof message === "string" ? { message } : message;
   return [401, body];
 }
 
-export function forbidden(message: string | object = "Forbidden"): [number, object] {
+export function forbidden(
+  message: string | object = "Forbidden",
+): [number, object] {
   const body = typeof message === "string" ? { message } : message;
   return [403, body];
 }
 
-export function serverError(message: string | object = "Internal Server Error"): [number, object] {
+export function serverError(
+  message: string | object = "Internal Server Error",
+): [number, object] {
   const body = typeof message === "string" ? { message } : message;
   return [500, body];
 }

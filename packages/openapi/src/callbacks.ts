@@ -22,7 +22,7 @@ export function fireCallbacks(
 ): void {
   for (const callback of callbacks) {
     const url = resolveCallbackUrl(callback.urlExpression, context, response);
-    if (!url || !url.startsWith("http")) continue;
+    if (!url?.startsWith("http")) continue;
 
     const body = Array.isArray(response) ? response[1] : response;
 

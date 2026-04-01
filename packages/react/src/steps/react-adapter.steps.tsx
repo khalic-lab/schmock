@@ -1,10 +1,10 @@
 /// <reference path="../../../core/schmock.d.ts" />
 
-import { loadFeature, describeFeature } from "@amiceli/vitest-cucumber";
+import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
+import { notFound, schmock } from "@schmock/core";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { useEffect, useState } from "react";
 import { expect, vi } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
-import React, { useEffect, useState } from "react";
-import { schmock, notFound } from "@schmock/core";
 import { SchmockProvider, useSchmock } from "../index.js";
 import { renderWithSchmock } from "../testing.js";
 
@@ -14,7 +14,7 @@ function UserList() {
   const [users, setUsers] = useState<Array<{ id: number; name: string }>>([]);
 
   useEffect(() => {
-    fetch("http://localhost/api/users")
+    void fetch("http://localhost/api/users")
       .then((res) => res.json())
       .then(setUsers);
   }, []);
@@ -37,7 +37,7 @@ function ErrorFetcher() {
   const [status, setStatus] = useState<number | null>(null);
 
   useEffect(() => {
-    fetch("http://localhost/api/missing").then((res) => {
+    void fetch("http://localhost/api/missing").then((res) => {
       setStatus(res.status);
     });
   }, []);
@@ -49,7 +49,7 @@ function PostForm() {
   const [result, setResult] = useState<string>("");
 
   useEffect(() => {
-    fetch("http://localhost/api/items", {
+    void fetch("http://localhost/api/items", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "Widget" }),
@@ -122,94 +122,79 @@ describeFeature(feature, ({ Scenario }) => {
         unmount();
       });
 
-      Then(
-        "fetch should be restored to the original implementation",
-        () => {
-          expect(globalThis.fetch).toBe(savedFetch);
-          cleanup();
-          globalThis.fetch = originalFetch;
-        },
-      );
-    },
-  );
-
-  Scenario(
-    "useSchmock returns the mock instance",
-    ({ Given, When, Then }) => {
-      Given("a Schmock instance", () => {
-        originalFetch = globalThis.fetch;
-        mock = schmock();
-      });
-
-      When(
-        "I render a component that calls useSchmock inside SchmockProvider",
-        () => {
-          render(
-            <SchmockProvider mock={mock}>
-              <MockConsumer />
-            </SchmockProvider>,
-          );
-        },
-      );
-
-      Then("it should receive the CallableMockInstance", async () => {
-        await waitFor(() => {
-          expect(screen.getByTestId("has-mock").textContent).toBe("yes");
-        });
+      Then("fetch should be restored to the original implementation", () => {
+        expect(globalThis.fetch).toBe(savedFetch);
         cleanup();
         globalThis.fetch = originalFetch;
       });
     },
   );
 
-  Scenario(
-    "Passthrough for unmatched routes",
-    ({ Given, When, Then, And }) => {
-      const fakeFetch = vi.fn().mockResolvedValue(new Response("real"));
+  Scenario("useSchmock returns the mock instance", ({ Given, When, Then }) => {
+    Given("a Schmock instance", () => {
+      originalFetch = globalThis.fetch;
+      mock = schmock();
+    });
 
-      Given(
-        'a Schmock instance with route "GET /api/users" returning users',
-        () => {
-          originalFetch = globalThis.fetch;
-          globalThis.fetch = fakeFetch;
-          mock = schmock();
-          mock("GET /api/users", [{ id: 1 }]);
-        },
-      );
-
-      And("the provider is configured with passthrough enabled", () => {
+    When(
+      "I render a component that calls useSchmock inside SchmockProvider",
+      () => {
         render(
-          <SchmockProvider mock={mock} options={{ passthrough: true }}>
-            <div />
+          <SchmockProvider mock={mock}>
+            <MockConsumer />
           </SchmockProvider>,
         );
-      });
+      },
+    );
 
-      When('the component fetches "/api/other"', async () => {
-        await fetch("http://localhost/api/other");
+    Then("it should receive the CallableMockInstance", async () => {
+      await waitFor(() => {
+        expect(screen.getByTestId("has-mock").textContent).toBe("yes");
       });
+      cleanup();
+      globalThis.fetch = originalFetch;
+    });
+  });
 
-      Then(
-        "the request should pass through to the original fetch",
-        () => {
-          expect(fakeFetch).toHaveBeenCalled();
-          cleanup();
-          globalThis.fetch = originalFetch;
-        },
+  Scenario("Passthrough for unmatched routes", ({ Given, When, Then, And }) => {
+    const fakeFetch = vi.fn().mockResolvedValue(new Response("real"));
+
+    Given(
+      'a Schmock instance with route "GET /api/users" returning users',
+      () => {
+        originalFetch = globalThis.fetch;
+        globalThis.fetch = fakeFetch;
+        mock = schmock();
+        mock("GET /api/users", [{ id: 1 }]);
+      },
+    );
+
+    And("the provider is configured with passthrough enabled", () => {
+      render(
+        <SchmockProvider mock={mock} options={{ passthrough: true }}>
+          <div />
+        </SchmockProvider>,
       );
-    },
-  );
+    });
+
+    When('the component fetches "/api/other"', async () => {
+      await fetch("http://localhost/api/other");
+    });
+
+    Then("the request should pass through to the original fetch", () => {
+      expect(fakeFetch).toHaveBeenCalled();
+      cleanup();
+      globalThis.fetch = originalFetch;
+    });
+  });
 
   Scenario(
     "renderWithSchmock test utility handles setup and cleanup",
     ({ Given, When, Then }) => {
-      Given(
-        'route definitions for "GET /api/users" returning users',
-        () => {
-          originalFetch = globalThis.fetch;
-          // Routes defined inline in renderWithSchmock
-        },
-      );
+      Given('route definitions for "GET /api/users" returning users', () => {
+        originalFetch = globalThis.fetch;
+        // Routes defined inline in renderWithSchmock
+      });
 
       When(
         'I use renderWithSchmock to render a component that fetches "/api/users"',
@@ -263,14 +248,11 @@ describeFeature(feature, ({ Scenario }) => {
   Scenario(
     "POST with JSON body works through the provider",
     ({ Given, When, Then }) => {
-      Given(
-        "a Schmock instance with a POST route that echoes the body",
-        () => {
-          originalFetch = globalThis.fetch;
-          mock = schmock();
-          mock("POST /api/items", ({ body }) => [201, body]);
-        },
-      );
+      Given("a Schmock instance with a POST route that echoes the body", () => {
+        originalFetch = globalThis.fetch;
+        mock = schmock();
+        mock("POST /api/items", ({ body }) => [201, body]);
+      });
 
       When(
         "I render a component that posts data inside SchmockProvider",
@@ -298,12 +280,9 @@ describeFeature(feature, ({ Scenario }) => {
     ({ Given, When, Then }) => {
       let error: Error | undefined;
 
-      Given(
-        "a component that calls useSchmock without a provider",
-        () => {
-          originalFetch = globalThis.fetch;
-        },
-      );
+      Given("a component that calls useSchmock without a provider", () => {
+        originalFetch = globalThis.fetch;
+      });
 
       When("I try to render it", () => {
         try {
@@ -313,14 +292,11 @@ describeFeature(feature, ({ Scenario }) => {
         }
       });
 
-      Then(
-        "it should throw an error mentioning SchmockProvider",
-        () => {
-          expect(error?.message).toMatch(/SchmockProvider/);
-          cleanup();
-          globalThis.fetch = originalFetch;
-        },
-      );
+      Then("it should throw an error mentioning SchmockProvider", () => {
+        expect(error?.message).toMatch(/SchmockProvider/);
+        cleanup();
+        globalThis.fetch = originalFetch;
+      });
     },
   );
 });

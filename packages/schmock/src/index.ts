@@ -22,7 +22,6 @@
  *   import { schmock } from "@schmock/core";
  *   import { openapi } from "@schmock/openapi";
  */
-export { schmock } from "@schmock/core";
 export {
   badRequest,
   created,
@@ -30,6 +29,7 @@ export {
   noContent,
   notFound,
   paginate,
+  schmock,
   serverError,
   unauthorized,
 } from "@schmock/core";

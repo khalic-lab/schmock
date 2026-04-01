@@ -15,10 +15,16 @@ describe("notFound", () => {
     expect(notFound()).toEqual([404, { message: "Not Found" }]);
   });
   it("returns 404 with custom string message", () => {
-    expect(notFound("User not found")).toEqual([404, { message: "User not found" }]);
+    expect(notFound("User not found")).toEqual([
+      404,
+      { message: "User not found" },
+    ]);
   });
   it("returns 404 with custom object", () => {
-    expect(notFound({ code: "NOT_FOUND", detail: "gone" })).toEqual([404, { code: "NOT_FOUND", detail: "gone" }]);
+    expect(notFound({ code: "NOT_FOUND", detail: "gone" })).toEqual([
+      404,
+      { code: "NOT_FOUND", detail: "gone" },
+    ]);
   });
 });
 
@@ -27,7 +33,10 @@ describe("badRequest", () => {
     expect(badRequest()).toEqual([400, { message: "Bad Request" }]);
   });
   it("returns 400 with custom string", () => {
-    expect(badRequest("Invalid email")).toEqual([400, { message: "Invalid email" }]);
+    expect(badRequest("Invalid email")).toEqual([
+      400,
+      { message: "Invalid email" },
+    ]);
   });
 });
 
@@ -51,7 +60,10 @@ describe("serverError", () => {
 
 describe("created", () => {
   it("returns 201 with body", () => {
-    expect(created({ id: 1, name: "John" })).toEqual([201, { id: 1, name: "John" }]);
+    expect(created({ id: 1, name: "John" })).toEqual([
+      201,
+      { id: 1, name: "John" },
+    ]);
   });
 });
 
@@ -66,12 +78,24 @@ describe("paginate", () => {
 
   it("returns first page with default pageSize", () => {
     const result = paginate(items);
-    expect(result).toEqual({ data: items, page: 1, pageSize: 10, total: 5, totalPages: 1 });
+    expect(result).toEqual({
+      data: items,
+      page: 1,
+      pageSize: 10,
+      total: 5,
+      totalPages: 1,
+    });
   });
 
   it("paginates correctly with custom options", () => {
     const result = paginate(items, { page: 2, pageSize: 2 });
-    expect(result).toEqual({ data: [{ id: 3 }, { id: 4 }], page: 2, pageSize: 2, total: 5, totalPages: 3 });
+    expect(result).toEqual({
+      data: [{ id: 3 }, { id: 4 }],
+      page: 2,
+      pageSize: 2,
+      total: 5,
+      totalPages: 3,
+    });
   });
 
   it("returns empty data for page beyond range", () => {
