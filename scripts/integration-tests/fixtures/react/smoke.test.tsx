@@ -48,7 +48,8 @@ function TodoApp() {
       body: JSON.stringify({ title: input, done: false }),
     });
     if (res.ok) {
-      setTodos((prev) => [...prev, await res.json()]);
+      const todo = await res.json();
+      setTodos((prev) => [...prev, todo]);
       setInput("");
     }
   };
