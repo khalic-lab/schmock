@@ -78,9 +78,10 @@ describe("mock.intercept() real-world patterns", () => {
 
   it("preserves custom headers through intercept", async () => {
     const mock = schmock();
+    // When passing a plain object to fetch, header keys preserve original casing
     mock("GET /api/protected", ({ headers }) => ({
-      auth: headers.authorization,
-      custom: headers["x-custom"],
+      auth: headers.Authorization ?? headers.authorization,
+      custom: headers["X-Custom"] ?? headers["x-custom"],
     }));
     const handle = mock.intercept();
 
