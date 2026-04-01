@@ -70,6 +70,7 @@ export function schmock(
       getState: instance.getState.bind(instance),
       listen: instance.listen.bind(instance),
       close: instance.close.bind(instance),
+      intercept: (options?: Schmock.InterceptOptions) => instance.intercept(options),
     },
   );
 
@@ -119,12 +120,19 @@ export {
   unauthorized,
 } from "./helpers.js";
 // Re-export types
+// Re-export interceptor
+export { createFetchInterceptor } from "./interceptor.js";
+// Re-export types
 export type {
+  AdapterRequest,
+  AdapterResponse,
   CallableMockInstance,
   Generator,
   GeneratorFunction,
   GlobalConfig,
   HttpMethod,
+  InterceptHandle,
+  InterceptOptions,
   Plugin,
   PluginContext,
   PluginResult,
