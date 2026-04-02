@@ -42,7 +42,7 @@
   },
   "devDependencies": {
     "@angular/common": "^21.2.6",
-    "@angular/compiler": "^21.2.6",
+    "@angular/compiler": "^21.2.7",
     "@angular/core": "^21.2.6",
     "@angular/platform-browser": "^21.2.6",
     "@angular/platform-browser-dynamic": "^21.2.6",
