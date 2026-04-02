@@ -45,7 +45,7 @@
     "@angular/compiler": "^21.2.6",
     "@angular/core": "^21.2.6",
     "@angular/platform-browser": "^21.2.6",
-    "@angular/platform-browser-dynamic": "^21.2.6",
+    "@angular/platform-browser-dynamic": "^21.2.7",
     "@schmock/openapi": "^1.13.0",
     "@types/node": "^25.5.0",
     "typescript": "^6.0.2",
