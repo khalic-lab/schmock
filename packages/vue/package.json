@@ -35,7 +35,7 @@
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^6.3.0",
     "@vue/test-utils": "^2.4.0",
-    "jsdom": "^26.0.0",
+    "jsdom": "^29.0.1",
     "vue": "^3.5.0",
     "vitest": "^4.1.2"
   },
