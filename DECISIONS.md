@@ -111,3 +111,19 @@ When `fetch()` is called with a `Request` object as input and an `init` object w
 ### D28: Full pre-publish audit conducted; critical and important issues fixed; deferred items tracked in AUDIT.md (2026-04-02)
 
 A six-reviewer audit of the entire repository was conducted before promotion. Reviewers covered: core package, all plugins, all framework adapters, CLI/docs/tests/config, silent failure patterns, and type system design. Seven critical and five important issues were identified and fixed in a team session (coder + test-writer + test-runner teammates). Twelve issues were resolved: CLI missing `.catch()`, angular baseUrl stripping, plugin version strings hardcoded at 1.x, OpenAPI callback silent failure, three `catch { return {} }` patterns in generators, four doc pages using `npm install`, `server.closeAllConnections()` for port leak, Express non-standard HTTP method passthrough, `renderWithSchmock` rerender fix, faker `minItems > maxItems` guard, and CLI invalid port validation. Remaining items (unbounded request history, duplicate parameterized route handling, regex escaping order, `isStatusTuple` ambiguity, AJV missing formats, type system improvements) are tracked in `AUDIT.md` as deferred work. All ~1,652 tests pass after fixes.
+
+### D29: Fix all type hygiene issues found in pre-publish audit (D29) (2026-04-04)
+
+The operator reviewed the full type hygiene audit and instructed 'Fix ALL'. Scope of fixes decided:
+
+1. **`any` cleanup** — `@schmock/query`: `items: any[]`, `response?: any`, `data: any[]` (pervasive in index.ts). `@schmock/faker`: `data: any`, `state?: any`, `overrides?: Record<string, any>`. `@schmock/express`: `body?: any` in five inline callback shapes. `@schmock/angular`: `body?: any` in transform options.
+2. **Dedup 3 duplicate types** — `SchemaGenerationContext`, `FakerPluginOptions` (faker/src/index.ts vs. schmock.d.ts), `OpenApiOptions` (openapi/src/plugin.ts vs. schmock.d.ts). `schmock.d.ts` is the source of truth; packages re-export from there.
+3. **Named types for repeated adapter shapes** — response shape `{ status: number; body: any; headers: Record<string, string> }` repeated in Express and Angular with slight variations; request transform shape repeated inline in both.
+4. **Missing explicit return types** — `schmock()`, `handle()`, `generateFromSchema()`, `queryPlugin()`, `applyOverrides()`, and ~4 others.
+5. **String literal unions** — validation error codes (`"REQUEST_VALIDATION_ERROR"` etc.) and content-type literals (`"application/json"` etc.) to become named union types.
+
+Two `as any` casts in `faker/src/jsf-config.ts:30,40` were flagged as suspicious (json-schema-faker API boundary) but are included in the fix scope. Implementation started (all relevant files read), session ended before edits were applied.
+
+### D30: BDD feature files refactored to eliminate redundancy; adapters restricted to framework-specific integration behavior (2026-04-04)
+
+After receiving the consolidated BDD quality audit across all 37 feature files, the operator instructed 'FIX ALL'. Audit identified: ~25 scenarios to remove (trivial, exact duplicates, tests of framework/language behavior rather than Schmock), ~12 to merge, ~15 to rewrite (weak assertions, vague titles, implementation-detail tests), ~5 to split (bloated multi-behavior scenarios). Key cross-file duplications identified: passthrough/baseUrl tested 4×, error status codes 5×, POST with JSON 3×, plugin pipeline 3×. The governing principle established: adapter feature files (angular-adapter, react-adapter, vue-adapter, express-adapter) must cover only framework integration concerns — HttpResponse wrapping, Provider lifecycle, middleware wiring — and must not re-test core routing, error handling, or response helpers already covered in core-owned feature files. developer-experience.feature to be stripped to genuine DX pitfalls only. Five parallel agents were launched to execute the changes.

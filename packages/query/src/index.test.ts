@@ -305,10 +305,7 @@ describe("queryPlugin", () => {
   });
 
   describe("pagination edge cases", () => {
-    const makePaginationPlugin = (
-      defaultLimit = 10,
-      maxLimit = 100,
-    ) =>
+    const makePaginationPlugin = (defaultLimit = 10, maxLimit = 100) =>
       queryPlugin({
         pagination: { defaultLimit, maxLimit },
       });
@@ -352,10 +349,7 @@ describe("queryPlugin", () => {
 
     it("clamps limit exceeding maxLimit to maxLimit", async () => {
       const plugin = makePaginationPlugin(10, 3);
-      const result = await plugin.process(
-        makeContext({ limit: "999" }),
-        items,
-      );
+      const result = await plugin.process(makeContext({ limit: "999" }), items);
 
       expect(result.response.pagination.limit).toBe(3);
       expect(result.response.data).toHaveLength(3);
@@ -363,10 +357,7 @@ describe("queryPlugin", () => {
 
     it("defaults gracefully when page is non-numeric", async () => {
       const plugin = makePaginationPlugin(2);
-      const result = await plugin.process(
-        makeContext({ page: "abc" }),
-        items,
-      );
+      const result = await plugin.process(makeContext({ page: "abc" }), items);
 
       expect(result.response.pagination.page).toBe(1);
       expect(result.response.data).toEqual([{ id: 1 }, { id: 2 }]);
@@ -374,10 +365,7 @@ describe("queryPlugin", () => {
 
     it("defaults gracefully when limit is non-numeric", async () => {
       const plugin = makePaginationPlugin(2);
-      const result = await plugin.process(
-        makeContext({ limit: "abc" }),
-        items,
-      );
+      const result = await plugin.process(makeContext({ limit: "abc" }), items);
 
       expect(result.response.pagination.limit).toBe(2);
       expect(result.response.data).toEqual([{ id: 1 }, { id: 2 }]);
@@ -385,10 +373,7 @@ describe("queryPlugin", () => {
 
     it("returns empty data with correct total for a very large page number", async () => {
       const plugin = makePaginationPlugin(2);
-      const result = await plugin.process(
-        makeContext({ page: "9999" }),
-        items,
-      );
+      const result = await plugin.process(makeContext({ page: "9999" }), items);
 
       expect(result.response.data).toEqual([]);
       expect(result.response.pagination.total).toBe(5);

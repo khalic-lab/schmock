@@ -33,18 +33,15 @@ describe("applyOverrides — property-based tests", () => {
 
   it("with empty overrides returns structuredClone of data", () => {
     fc.assert(
-      fc.property(
-        fc.dictionary(fc.string(), fc.jsonValue()),
-        (data) => {
-          const result = applyOverrides(data, {});
+      fc.property(fc.dictionary(fc.string(), fc.jsonValue()), (data) => {
+        const result = applyOverrides(data, {});
 
-          // Should be deep-equal but not the same reference
-          expect(result).toEqual(data);
-          if (Object.keys(data).length > 0) {
-            expect(result).not.toBe(data);
-          }
-        },
-      ),
+        // Should be deep-equal but not the same reference
+        expect(result).toEqual(data);
+        if (Object.keys(data).length > 0) {
+          expect(result).not.toBe(data);
+        }
+      }),
       { numRuns: 100 },
     );
   });
@@ -62,7 +59,10 @@ describe("applyOverrides — property-based tests", () => {
           const overrides = { name: "Alice", age: 42 };
 
           const first = applyOverrides(data, overrides);
-          const second = applyOverrides(first as Record<string, unknown>, overrides);
+          const second = applyOverrides(
+            first as Record<string, unknown>,
+            overrides,
+          );
 
           expect(second).toEqual(first);
         },
@@ -167,6 +167,6 @@ describe("determineArrayCount — edge cases", () => {
   it("with negative explicitCount returns 0", () => {
     expect(determineArrayCount({}, -1)).toBe(0);
     expect(determineArrayCount({}, -100)).toBe(0);
-    expect(determineArrayCount({}, -Infinity)).toBe(0);
+    expect(determineArrayCount({}, Number.NEGATIVE_INFINITY)).toBe(0);
   });
 });

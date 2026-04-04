@@ -156,10 +156,7 @@ function resolveTemplatePath(
   return result;
 }
 
-function processTemplate(
-  template: string,
-  context: TemplateContext,
-): unknown {
+function processTemplate(template: string, context: TemplateContext): unknown {
   // Check if the template is just a single template expression
   const singleTemplateMatch = template.match(/^\{\{\s*([^}]+)\s*\}\}$/);
   if (singleTemplateMatch) {
