@@ -1,6 +1,6 @@
 {
   "name": "@schmock/react",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "React adapter for Schmock — Provider, hooks, and test utilities",
   "type": "module",
   "main": "./dist/index.js",

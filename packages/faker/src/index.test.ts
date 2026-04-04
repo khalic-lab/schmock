@@ -767,7 +767,7 @@ describe("Schema Generator", () => {
       });
 
       expect(plugin).toHaveProperty("name", "faker");
-      expect(plugin).toHaveProperty("version", "2.0.0");
+      expect(plugin).toHaveProperty("version", "2.0.1");
       expect(plugin).toHaveProperty("process");
       expect(typeof plugin.process).toBe("function");
     });

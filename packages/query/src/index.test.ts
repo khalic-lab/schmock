@@ -5,7 +5,7 @@ describe("queryPlugin", () => {
   it("creates a plugin with correct name", () => {
     const plugin = queryPlugin({ pagination: {} });
     expect(plugin.name).toBe("query");
-    expect(plugin.version).toBe("2.0.0");
+    expect(plugin.version).toBe("2.0.1");
   });
 
   it("passes through non-array responses", async () => {

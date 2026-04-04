@@ -1,6 +1,6 @@
 {
   "name": "@schmock/schmock",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "All-in-one Schmock package — installs core, faker, validation, query, openapi, and CLI",
   "type": "module",
   "main": "./dist/index.js",

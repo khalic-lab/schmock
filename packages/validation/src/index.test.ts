@@ -9,7 +9,7 @@ describe("validationPlugin", () => {
       },
     });
     expect(plugin.name).toBe("validation");
-    expect(plugin.version).toBe("2.0.0");
+    expect(plugin.version).toBe("2.0.1");
   });
 
   it("passes through non-matching requests", async () => {
