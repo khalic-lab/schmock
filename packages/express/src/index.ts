@@ -60,10 +60,7 @@ export interface ExpressAdapterOptions {
     schmockResponse: Schmock.Response,
     req: Request,
     res: Response,
-  ) =>
-    | Schmock.Response
-    | undefined
-    | Promise<Schmock.Response | undefined>;
+  ) => Schmock.Response | undefined | Promise<Schmock.Response | undefined>;
 }
 
 /**

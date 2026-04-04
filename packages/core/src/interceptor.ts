@@ -157,8 +157,7 @@ export function createFetchInterceptor(
         ? baseUrl.slice(0, -1)
         : baseUrl;
       const isMatch =
-        path === normalizedBase ||
-        path.startsWith(`${normalizedBase}/`);
+        path === normalizedBase || path.startsWith(`${normalizedBase}/`);
       if (!isMatch) {
         return originalFetch(input, init);
       }

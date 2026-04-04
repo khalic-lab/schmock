@@ -18,3 +18,8 @@ When implementing the shared Todo CRUD baseline, the assistant investigated exte
 ### Q4: Should integration fixtures include 'getting started' tests that copy-paste docs examples
 
 The assistant proposed complementing the Todo CRUD baseline with per-adapter tests that mirror the exact getting-started code from the schmock docs verbatim. If a docs example breaks, the test would fail — enforcing that docs and implementation stay in sync. Offered as an alternative framing alongside the TodoMVC question. Not accepted or rejected by the operator before the session ended.
+### Q5: Should a dedicated type-quality review be run (duplicate types, inline types, unsafe `as`)? — RESOLVED (2026-04-04)
+
+Operator raised the question of whether to run a broader type-system code review targeting: duplicate type definitions across packages, inline/anonymous types that should be named, and unsafe `as` type assertions. Related to deferred AUDIT.md items T1–T9 but would go further into structural type hygiene. Not yet accepted or rejected.
+
+**Resolution:** Operator accepted with 'Good idea before publish.' Parallel agents were dispatched to scan the full codebase for type hygiene issues: duplicate type definitions across packages, inline/anonymous types that should be named, and unsafe `as` assertions. Results had not been returned at session end — the scan was in flight when the session closed.

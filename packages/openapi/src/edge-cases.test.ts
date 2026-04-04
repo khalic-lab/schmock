@@ -381,7 +381,7 @@ describe("content-negotiation edge cases", () => {
     it("handles q=abc gracefully by treating as default q=1", () => {
       // Number.parseFloat("abc") => NaN, which sorts unpredictably,
       // but should not crash
-      const result = negotiateContentType("application/json;q=abc", [
+      const _result = negotiateContentType("application/json;q=abc", [
         "application/json",
       ]);
       // NaN comparison: NaN !== 0 so the entry is not skipped
@@ -446,8 +446,8 @@ describe("request-pipeline edge cases", () => {
       const result = validateSecurity(context, schemes);
       expect(result).toBeDefined();
       expect(result?.response).toBeDefined();
-      const [status] = result!.response as [number, unknown, unknown];
-      expect(status).toBe(401);
+      const response = result?.response as [number, unknown, unknown];
+      expect(response[0]).toBe(401);
     });
   });
 
@@ -493,8 +493,8 @@ describe("request-pipeline edge cases", () => {
 
       const result = validateSecurity(context, schemes);
       expect(result).toBeDefined();
-      const [status] = result!.response as [number, unknown];
-      expect(status).toBe(401);
+      const response = result?.response as [number, unknown];
+      expect(response[0]).toBe(401);
     });
 
     it("passes when apiKey is in header and header is present", () => {
@@ -658,8 +658,8 @@ describe("request-pipeline edge cases", () => {
 
       const result = processContentNegotiation(context);
       expect(result).toBeDefined();
-      const [status] = result!.response as [number, unknown];
-      expect(status).toBe(406);
+      const response = result?.response as [number, unknown];
+      expect(response[0]).toBe(406);
     });
 
     it("passes when Accept matches an available type", () => {
