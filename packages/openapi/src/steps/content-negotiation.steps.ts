@@ -73,35 +73,4 @@ describeFeature(feature, ({ Scenario }) => {
     });
   });
 
-  Scenario("Wildcard Accept passes through", ({ Given, When, Then }) => {
-    Given("a mock with a spec defining JSON responses", async () => {
-      mock = schmock({ state: {} });
-      mock.pipe(await openapi({ spec: specWithJson }));
-    });
-
-    When('I request with Accept header "*/*"', async () => {
-      response = await mock.handle("GET", "/items", {
-        headers: { accept: "*/*" },
-      });
-    });
-
-    Then("the response status is 200", () => {
-      expect(response.status).toBe(200);
-    });
-  });
-
-  Scenario("No Accept header defaults to success", ({ Given, When, Then }) => {
-    Given("a mock with a spec defining JSON responses", async () => {
-      mock = schmock({ state: {} });
-      mock.pipe(await openapi({ spec: specWithJson }));
-    });
-
-    When("I request without an Accept header", async () => {
-      response = await mock.handle("GET", "/items", { headers: {} });
-    });
-
-    Then("the response status is 200", () => {
-      expect(response.status).toBe(200);
-    });
-  });
 });

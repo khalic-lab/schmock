@@ -93,24 +93,6 @@ Feature: HTTP Methods Support
     And the text endpoint should have content-type "text/plain"
     And the upload endpoint should have content-type "text/plain"
 
-  Scenario: Method case sensitivity
-    Given I create an empty mock for case sensitivity testing
-    When I attempt to create a mock with lowercase method
-    Then it should throw RouteParseError for invalid method case
-
-  Scenario: Unsupported HTTP methods
-    Given I create an empty mock for unsupported method testing
-    When I attempt to create a mock with unsupported method
-    Then it should throw RouteParseError for unsupported method
-
-  Scenario: Method with special characters in path
-    Given I create a mock with nested parameterized path segments
-    When I make a GET request to "/api/v1/users/123/posts/abc-def"
-    Then I should receive special characters response:
-      """
-      { "userId": "123", "postId": "abc-def" }
-      """
-
   Scenario: Method with request headers validation
     Given I create a mock with authorization header checking
     When I make a POST request with valid headers

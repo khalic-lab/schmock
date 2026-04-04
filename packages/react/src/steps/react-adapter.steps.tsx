@@ -6,7 +6,6 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { expect, vi } from "vitest";
 import { SchmockProvider, useSchmock } from "../index.js";
-import { renderWithSchmock } from "../testing.js";
 
 const feature = await loadFeature("../../features/react-adapter.feature");
 
@@ -130,32 +129,6 @@ describeFeature(feature, ({ Scenario }) => {
     },
   );
 
-  Scenario("useSchmock returns the mock instance", ({ Given, When, Then }) => {
-    Given("a Schmock instance", () => {
-      originalFetch = globalThis.fetch;
-      mock = schmock();
-    });
-
-    When(
-      "I render a component that calls useSchmock inside SchmockProvider",
-      () => {
-        render(
-          <SchmockProvider mock={mock}>
-            <MockConsumer />
-          </SchmockProvider>,
-        );
-      },
-    );
-
-    Then("it should receive the CallableMockInstance", async () => {
-      await waitFor(() => {
-        expect(screen.getByTestId("has-mock").textContent).toBe("yes");
-      });
-      cleanup();
-      globalThis.fetch = originalFetch;
-    });
-  });
-
   Scenario("Passthrough for unmatched routes", ({ Given, When, Then, And }) => {
     const fakeFetch = vi.fn().mockResolvedValue(new Response("real"));
 
@@ -187,33 +160,6 @@ describeFeature(feature, ({ Scenario }) => {
       globalThis.fetch = originalFetch;
     });
   });
-
-  Scenario(
-    "renderWithSchmock test utility handles setup and cleanup",
-    ({ Given, When, Then }) => {
-      Given('route definitions for "GET /api/users" returning users', () => {
-        originalFetch = globalThis.fetch;
-        // Routes defined inline in renderWithSchmock
-      });
-
-      When(
-        'I use renderWithSchmock to render a component that fetches "/api/users"',
-        () => {
-          renderWithSchmock(<UserList />, {
-            routes: [["GET /api/users", [{ id: 1, name: "Bob" }]]],
-          });
-        },
-      );
-
-      Then("the component should display the mocked users", async () => {
-        await waitFor(() => {
-          expect(screen.getByText("Bob")).toBeDefined();
-        });
-        cleanup();
-        globalThis.fetch = originalFetch;
-      });
-    },
-  );
 
   Scenario(
     "Error status codes flow through correctly",

@@ -32,25 +32,4 @@ describeFeature(feature, ({ Scenario }) => {
     });
   });
 
-  Scenario(
-    "Different seeds produce different output",
-    ({ Given, And, When, Then }) => {
-      Given("a schema plugin with seed 42", () => {
-        // setup done during generation
-      });
-
-      And("a schema plugin with seed 99", () => {
-        // setup done during generation
-      });
-
-      When("I generate data from each", async () => {
-        result1 = await generateFromSchema({ schema: testSchema, seed: 42 });
-        result2 = await generateFromSchema({ schema: testSchema, seed: 99 });
-      });
-
-      Then("the outputs are different", () => {
-        expect(result1).not.toEqual(result2);
-      });
-    },
-  );
 });

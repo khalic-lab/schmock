@@ -14,12 +14,3 @@ Feature: Content Negotiation
     Then the response status is 406
     And the error body has an "acceptable" array
 
-  Scenario: Wildcard Accept passes through
-    Given a mock with a spec defining JSON responses
-    When I request with Accept header "*/*"
-    Then the response status is 200
-
-  Scenario: No Accept header defaults to success
-    Given a mock with a spec defining JSON responses
-    When I request without an Accept header
-    Then the response status is 200

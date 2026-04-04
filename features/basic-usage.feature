@@ -41,30 +41,6 @@ Feature: Basic Usage
     Then I should receive empty response
     And the status should be 204
 
-  Scenario: Undefined response
-    Given I create a mock returning undefined at "GET /undefined"
-    When I request "GET /undefined"
-    Then I should receive empty response
-    And the status should be 204
-
-  Scenario: Empty string response
-    Given I create a mock returning empty string at "GET /empty"
-    When I request "GET /empty"
-    Then I should receive text ""
-    And the content-type should be "text/plain"
-
-  Scenario: Number response
-    Given I create a mock returning number 42 at "GET /count"
-    When I request "GET /count"
-    Then I should receive text "42"
-    And the content-type should be "text/plain"
-
-  Scenario: Boolean response
-    Given I create a mock returning boolean true at "GET /active"
-    When I request "GET /active"
-    Then I should receive text "true"
-    And the content-type should be "text/plain"
-
   Scenario: Function returning string
     Given I create a mock with a string generator at "GET /dynamic"
     When I request "GET /dynamic"

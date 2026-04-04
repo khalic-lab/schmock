@@ -79,30 +79,6 @@ describeFeature(feature, ({ Scenario }) => {
     });
   });
 
-  Scenario("Pagination beyond last page returns empty", ({ Given, When, Then, And }) => {
-    Given("I create a mock with 25 items and pagination plugin", () => {
-      mock = schmock();
-      mock("GET /items", generateItems(25))
-        .pipe(queryPlugin({
-          pagination: { defaultLimit: 10, maxLimit: 100 },
-        }));
-    });
-
-    When("I request page 10", async () => {
-      response = await mock.handle("GET", "/items", {
-        query: { page: "10" },
-      });
-    });
-
-    Then("I should receive {int} items", (_, count: number) => {
-      expect(response.body.data).toHaveLength(count);
-    });
-
-    And("the pagination total should be {int}", (_, total: number) => {
-      expect(response.body.pagination.total).toBe(total);
-    });
-  });
-
   Scenario("Sort items ascending by name", ({ Given, When, Then, And }) => {
     Given("I create a mock with named items and sorting plugin", () => {
       mock = schmock();

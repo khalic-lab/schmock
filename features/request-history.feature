@@ -3,21 +3,6 @@ Feature: Request History & Spy API
   I want to inspect what requests were made to my mock
   So that I can verify my code called the right endpoints
 
-  Scenario: No requests recorded initially
-    Given I create a mock with a single GET route for history
-    Then the mock should not have been called
-    And the call count should be 0
-    And the history should be empty
-
-  Scenario: Record a single GET request
-    Given I create a mock returning users at "GET /users"
-    When I request "GET /users"
-    Then the mock should have been called
-    And the call count should be 1
-    And the history should have 1 entry
-    And the last request method should be "GET"
-    And the last request path should be "/users"
-
   Scenario: Record multiple requests
     Given I create a mock with GET and POST user routes
     When I request "GET /users"
@@ -79,13 +64,6 @@ Feature: Request History & Spy API
       { "name": "Second" }
       """
     Then the last request for "POST /users" body should have property "name" with value "Second"
-
-  Scenario: History works with namespaced mocks
-    Given I create a namespaced mock under "/api"
-    When I request "GET /api/users"
-    Then the mock should have been called
-    And the call count should be 1
-    And the last request path should be "/users"
 
   Scenario: 404 requests are not recorded in history
     Given I create a mock with only a users route

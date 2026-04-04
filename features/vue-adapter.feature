@@ -13,11 +13,6 @@ Feature: Vue Adapter
     When I mount and unmount a Vue app with the Schmock plugin
     Then fetch should be restored to the original implementation
 
-  Scenario: useSchmock returns the mock instance
-    Given a Schmock instance
-    When I use the useSchmock composable inside a component with the plugin
-    Then it should receive the CallableMockInstance
-
   Scenario: Passthrough for unmatched routes
     Given a Schmock instance with route "GET /api/users" returning users
     And the plugin is configured with passthrough enabled

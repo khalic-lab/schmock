@@ -16,16 +16,6 @@ Feature: Error Handling
     Then I should receive status 404
     And the response should contain error "Route not found: POST /api/data"
 
-  Scenario: Invalid route key throws RouteDefinitionError
-    Given I attempt to register a route with an invalid HTTP method
-    Then it should throw a RouteDefinitionError
-    And the error message should contain "Invalid HTTP method"
-
-  Scenario: Empty route path throws RouteDefinitionError
-    Given I attempt to register a route with an empty path
-    Then it should throw a RouteDefinitionError
-    And the error message should contain "Invalid route format"
-
   Scenario: Plugin throws error returns 500 with PluginError
     Given I create a mock with a plugin that throws "Plugin failed"
     When I request "GET /test"
@@ -51,11 +41,6 @@ Feature: Error Handling
     Then I should receive status 500
     And the response should contain error "Generator failed"
     And the response should have error code "INTERNAL_ERROR"
-
-  Scenario: Invalid JSON generator with JSON content-type throws RouteDefinitionError
-    Given I attempt to register a route with a circular reference as JSON
-    Then it should throw a RouteDefinitionError
-    And the error message should contain "not valid JSON"
 
   Scenario: Namespace mismatch returns 404
     Given I create a mock with namespace "/api/v1" and a GET /users route

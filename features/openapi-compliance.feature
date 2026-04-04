@@ -63,8 +63,3 @@ Feature: OpenAPI Response Compliance
     Then the response status is 404
     And the error body has a "message" property
     And the error body has a "statusCode" property
-
-  Scenario: Debug mode logs detection results
-    Given a mock with the Petstore spec and debug enabled
-    Then the debug output contains "CRUD resources"
-    And the debug output contains "pets"

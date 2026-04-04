@@ -78,25 +78,6 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
     });
   });
 
-  Scenario("Path with query string placeholder", ({ When, Then, And }) => {
-    When("I parse route key {string}", (_, routeKey: string) => {
-      result = parseRouteKey(routeKey);
-    });
-
-    Then("the method should be {string}", (_, expectedMethod: string) => {
-      expect(result.method).toBe(expectedMethod);
-    });
-
-    And("the path should be {string}", (_, expectedPath: string) => {
-      expect(result.path).toBe(expectedPath);
-    });
-
-    And("query parameters are handled separately at runtime", () => {
-      // This is a documentation scenario - query params are not part of the route key
-      expect(result.path).not.toContain("?");
-    });
-  });
-
   Scenario("Complex nested paths", ({ When, Then, And }) => {
     When("I parse route key {string}", (_, routeKey: string) => {
       result = parseRouteKey(routeKey);

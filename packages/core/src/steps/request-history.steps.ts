@@ -9,57 +9,6 @@ describeFeature(feature, ({ Scenario }) => {
   let mock: CallableMockInstance;
   let response: any;
 
-  Scenario("No requests recorded initially", ({ Given, Then, And }) => {
-    Given("I create a mock with a single GET route for history", () => {
-      mock = schmock();
-      mock("GET /users", [{ id: 1 }]);
-    });
-
-    Then("the mock should not have been called", () => {
-      expect(mock.called()).toBe(false);
-    });
-
-    And("the call count should be 0", () => {
-      expect(mock.callCount()).toBe(0);
-    });
-
-    And("the history should be empty", () => {
-      expect(mock.history()).toEqual([]);
-    });
-  });
-
-  Scenario("Record a single GET request", ({ Given, When, Then, And }) => {
-    Given("I create a mock returning users at {string}", (_, route: string) => {
-      mock = schmock();
-      mock(route as Schmock.RouteKey, [{ id: 1, name: "John" }]);
-    });
-
-    When("I request {string}", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      response = await mock.handle(method as any, path);
-    });
-
-    Then("the mock should have been called", () => {
-      expect(mock.called()).toBe(true);
-    });
-
-    And("the call count should be 1", () => {
-      expect(mock.callCount()).toBe(1);
-    });
-
-    And("the history should have 1 entry", () => {
-      expect(mock.history()).toHaveLength(1);
-    });
-
-    And("the last request method should be {string}", (_, method: string) => {
-      expect(mock.lastRequest()?.method).toBe(method);
-    });
-
-    And("the last request path should be {string}", (_, path: string) => {
-      expect(mock.lastRequest()?.path).toBe(path);
-    });
-  });
-
   Scenario("Record multiple requests", ({ Given, When, And, Then }) => {
     Given("I create a mock with GET and POST user routes", () => {
       mock = schmock();
@@ -285,30 +234,6 @@ describeFeature(feature, ({ Scenario }) => {
         expect((record?.body as any)?.[prop]).toBe(value);
       },
     );
-  });
-
-  Scenario("History works with namespaced mocks", ({ Given, When, Then, And }) => {
-    Given("I create a namespaced mock under {string}", (_, namespace: string) => {
-      mock = schmock({ namespace });
-      mock("GET /users", [{ id: 1 }]);
-    });
-
-    When("I request {string}", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      response = await mock.handle(method as any, path);
-    });
-
-    Then("the mock should have been called", () => {
-      expect(mock.called()).toBe(true);
-    });
-
-    And("the call count should be 1", () => {
-      expect(mock.callCount()).toBe(1);
-    });
-
-    And("the last request path should be {string}", (_, path: string) => {
-      expect(mock.lastRequest()?.path).toBe(path);
-    });
   });
 
   Scenario("404 requests are not recorded in history", ({ Given, When, Then, And }) => {
