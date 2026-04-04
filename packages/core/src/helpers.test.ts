@@ -103,4 +103,45 @@ describe("paginate", () => {
     expect(result.data).toEqual([]);
     expect(result.total).toBe(5);
   });
+
+  it("page=0 falls back to page 1 (falsy default)", () => {
+    const result = paginate(items, { page: 0, pageSize: 2 });
+    // page=0 is falsy, so options.page || 1 => 1
+    expect(result.page).toBe(1);
+    expect(result.data).toEqual([{ id: 1 }, { id: 2 }]);
+  });
+
+  it("pageSize=0 falls back to default 10 (falsy default)", () => {
+    const result = paginate(items, { pageSize: 0 });
+    // pageSize=0 is falsy, so options.pageSize || 10 => 10
+    expect(result.pageSize).toBe(10);
+    expect(result.data).toEqual(items);
+  });
+
+  it("handles empty array", () => {
+    const result = paginate([], { page: 1, pageSize: 5 });
+    expect(result).toEqual({
+      data: [],
+      page: 1,
+      pageSize: 5,
+      total: 0,
+      totalPages: 0,
+    });
+  });
+
+  it("negative page produces empty data (start index < 0)", () => {
+    const result = paginate(items, { page: -1, pageSize: 2 });
+    // (page - 1) * pageSize = (-1 - 1) * 2 = -4
+    // items.slice(-4, -2) => items from index 1 to 3
+    expect(result.page).toBe(-1);
+    expect(result.pageSize).toBe(2);
+    expect(result.total).toBe(5);
+  });
+
+  it("negative pageSize returns empty data", () => {
+    const result = paginate(items, { page: 1, pageSize: -5 });
+    // start = 0, end = 0 + (-5) = -5 => items.slice(0, -5) => []
+    expect(result.data).toEqual([]);
+    expect(result.pageSize).toBe(-5);
+  });
 });

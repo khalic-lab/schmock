@@ -114,6 +114,32 @@ describe("Standalone Server", () => {
     expect(() => mock.close()).not.toThrow();
   });
 
+  it("generator that throws synchronously returns 500", async () => {
+    mock = schmock();
+    mock("GET /boom", () => {
+      throw new Error("sync kaboom");
+    });
+    const info = await mock.listen(0);
+
+    const res = await fetch(`http://127.0.0.1:${info.port}/boom`);
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("sync kaboom");
+  });
+
+  it("generator that returns rejected Promise returns 500", async () => {
+    mock = schmock();
+    mock("GET /reject", async () => {
+      throw new Error("async rejection");
+    });
+    const info = await mock.listen(0);
+
+    const res = await fetch(`http://127.0.0.1:${info.port}/reject`);
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("async rejection");
+  });
+
   it("close terminates keep-alive connections immediately", async () => {
     mock = schmock();
     mock("GET /test", { ok: true });

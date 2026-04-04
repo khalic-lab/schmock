@@ -491,3 +491,104 @@ describe("handle() — fuzz", () => {
     );
   });
 });
+
+// ============================================================
+// Route matching round-trip properties
+// ============================================================
+
+describe("route matching round-trip — property", () => {
+  it("parameterized route: arbitrary param values are extracted correctly", () => {
+    fc.assert(
+      fc.asyncProperty(
+        safeSeg,
+        safeSeg,
+        safeSeg,
+        async (resource, paramA, paramB) => {
+          const mock = schmock();
+          let capturedParams: Record<string, string> = {};
+          mock(`GET /${resource}/:a/:b` as any, (ctx) => {
+            capturedParams = ctx.params;
+            return { ok: true };
+          });
+
+          const response = await mock.handle(
+            "GET",
+            `/${resource}/${paramA}/${paramB}`,
+          );
+          expect(response.status).toBe(200);
+          expect(capturedParams.a).toBe(paramA);
+          expect(capturedParams.b).toBe(paramB);
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+
+  it("any valid response format produces a valid Response with status/body/headers", () => {
+    const responseGen = fc.oneof(
+      // Object body
+      fc.record({ key: safeSeg }),
+      // Tuple [status, body]
+      fc.tuple(fc.integer({ min: 100, max: 599 }), fc.record({ v: safeSeg })),
+      // Tuple [status, body, headers]
+      fc.tuple(
+        fc.integer({ min: 100, max: 599 }),
+        fc.record({ v: safeSeg }),
+        fc.constant({}),
+      ),
+      // null/undefined
+      fc.constant(null),
+      fc.constant(undefined),
+    );
+
+    fc.assert(
+      fc.asyncProperty(responseGen, async (genValue) => {
+        const mock = schmock();
+        mock("GET /test", () => genValue);
+
+        const response = await mock.handle("GET", "/test");
+        expect(typeof response.status).toBe("number");
+        expect(response.status).toBeGreaterThanOrEqual(100);
+        expect(response.status).toBeLessThanOrEqual(599);
+        expect(response).toHaveProperty("headers");
+        expect(typeof response.headers).toBe("object");
+      }),
+      { numRuns: 300 },
+    );
+  });
+
+  it("header keys are always lowercased after extractHeaders in interceptor", () => {
+    const headerKey = fc
+      .stringMatching(/^[A-Za-z][A-Za-z0-9-]{0,20}$/)
+      .filter((k) => k.length > 0);
+    const headerVal = safeSeg;
+
+    fc.assert(
+      fc.asyncProperty(headerKey, headerVal, async (key, val) => {
+        const mock = schmock();
+        let capturedHeaders: Record<string, string> = {};
+        mock("GET /hdr", (ctx) => {
+          capturedHeaders = ctx.headers;
+          return { ok: true };
+        });
+        const handle = mock.intercept();
+
+        try {
+          await fetch("http://localhost/hdr", {
+            headers: { [key]: val },
+          });
+
+          // All header keys should be lowercase
+          for (const hdrKey of Object.keys(capturedHeaders)) {
+            expect(hdrKey).toBe(hdrKey.toLowerCase());
+          }
+          // The value should be preserved
+          expect(capturedHeaders[key.toLowerCase()]).toBe(val);
+        } finally {
+          handle.restore();
+        }
+      }),
+      { numRuns: 200 },
+    );
+  });
+});

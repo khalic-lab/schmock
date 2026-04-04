@@ -225,6 +225,80 @@ describe("response parsing", () => {
     });
   });
 
+  describe("status code boundaries", () => {
+    it("status code 100 (lower boundary) is accepted as tuple", async () => {
+      const mock = schmock();
+      mock("GET /continue", () => [100, "Continue"]);
+
+      const response = await mock.handle("GET", "/continue");
+      expect(response.status).toBe(100);
+      expect(response.body).toBe("Continue");
+    });
+
+    it("status code 599 (upper boundary) is accepted as tuple", async () => {
+      const mock = schmock();
+      mock("GET /custom", () => [599, { message: "custom status" }]);
+
+      const response = await mock.handle("GET", "/custom");
+      expect(response.status).toBe(599);
+      expect(response.body).toEqual({ message: "custom status" });
+    });
+
+    it("float status like 200.5 is accepted as tuple (number check)", async () => {
+      const mock = schmock();
+      mock("GET /float", () => [200.5, { ok: true }]);
+
+      const response = await mock.handle("GET", "/float");
+      // isStatusTuple checks typeof === 'number' and 100 <= n <= 599
+      // 200.5 passes both checks, so it's treated as a tuple
+      expect(response.status).toBe(200.5);
+      expect(response.body).toEqual({ ok: true });
+    });
+
+    it("array [201, null, undefined] — tuple with undefined headers defaults to empty", async () => {
+      const mock = schmock();
+      mock("GET /null-headers", () => [201, null, undefined] as any);
+
+      const response = await mock.handle("GET", "/null-headers");
+      // isStatusTuple: length 3, first element 201 (number, 100-599) -> true
+      // destructure: [status=201, body=null, headers=undefined]
+      // headers defaults to {} via `headers = {}`
+      expect(response.status).toBe(201);
+      expect(response.body).toBeUndefined(); // null body becomes undefined
+      expect(response.headers).toEqual({});
+    });
+
+    it("non-tuple array [1, 2, 3, 4] with length > 3 treated as body", async () => {
+      const mock = schmock();
+      mock("GET /long-array", () => [1, 2, 3, 4] as any);
+
+      const response = await mock.handle("GET", "/long-array");
+      // isStatusTuple requires length 2 or 3, so length 4 => not a tuple => body
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([1, 2, 3, 4]);
+    });
+
+    it("status 99 (below 100) is NOT treated as a tuple", async () => {
+      const mock = schmock();
+      mock("GET /below-range", () => [99, { data: true }]);
+
+      const response = await mock.handle("GET", "/below-range");
+      // isStatusTuple requires value[0] >= 100, so 99 fails => treated as body
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([99, { data: true }]);
+    });
+
+    it("status 600 (above 599) is NOT treated as a tuple", async () => {
+      const mock = schmock();
+      mock("GET /above-range", () => [600, { data: true }]);
+
+      const response = await mock.handle("GET", "/above-range");
+      // isStatusTuple requires value[0] <= 599, so 600 fails => treated as body
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([600, { data: true }]);
+    });
+  });
+
   describe("edge cases", () => {
     it("handles response with circular references gracefully", async () => {
       const mock = schmock();
