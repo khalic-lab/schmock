@@ -151,8 +151,17 @@ export function createFetchInterceptor(
     const path = extractPathname(urlString);
 
     // BaseUrl filter — non-matching requests go straight to real fetch
-    if (baseUrl && !path.startsWith(baseUrl)) {
-      return originalFetch(input, init);
+    // Enforce segment boundary: /api must not match /apiv2
+    if (baseUrl) {
+      const normalizedBase = baseUrl.endsWith("/")
+        ? baseUrl.slice(0, -1)
+        : baseUrl;
+      const isMatch =
+        path === normalizedBase ||
+        path.startsWith(`${normalizedBase}/`);
+      if (!isMatch) {
+        return originalFetch(input, init);
+      }
     }
 
     // Build adapter request

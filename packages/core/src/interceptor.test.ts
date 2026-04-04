@@ -224,4 +224,68 @@ describe("mock.intercept()", () => {
 
     handle.restore();
   });
+
+  it("baseUrl /api should NOT match /apiv2 (segment boundary)", async () => {
+    mock("GET /apiv2/data", [{ v2: true }]);
+    const savedFetch = globalThis.fetch;
+    const handle = mock.intercept({ baseUrl: "/api" });
+
+    // /apiv2/data does not start with "/api/" — it should passthrough
+    await fetch("http://localhost/apiv2/data");
+    expect(savedFetch).toHaveBeenCalled();
+
+    handle.restore();
+  });
+
+  it("baseUrl with trailing slash matches the same routes as without", async () => {
+    mock("GET /api/items", [{ id: 1 }]);
+
+    // Without trailing slash
+    const handle1 = mock.intercept({ baseUrl: "/api" });
+    const res1 = await fetch("http://localhost/api/items");
+    expect(res1.status).toBe(200);
+    expect(await res1.json()).toEqual([{ id: 1 }]);
+    handle1.restore();
+
+    // With trailing slash — should still match /api/items
+    const handle2 = mock.intercept({ baseUrl: "/api/" });
+    const res2 = await fetch("http://localhost/api/items");
+    expect(res2.status).toBe(200);
+    expect(await res2.json()).toEqual([{ id: 1 }]);
+    handle2.restore();
+  });
+
+  it("extractBody: init.body wins over Request.body per Fetch spec", async () => {
+    mock("POST /api/data", ({ body }) => [200, body]);
+    const handle = mock.intercept();
+
+    const req = new Request("http://localhost/api/data", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source: "request" }),
+    });
+
+    const res = await fetch(req, {
+      body: JSON.stringify({ source: "init" }),
+    });
+    expect(await res.json()).toEqual({ source: "init" });
+
+    handle.restore();
+  });
+
+  it("extractBody: failed JSON parse falls back to text", async () => {
+    mock("POST /api/text", ({ body }) => [200, { received: body }]);
+    const handle = mock.intercept();
+
+    const res = await fetch("http://localhost/api/text", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "not-json-{broken",
+    });
+
+    const json = await res.json();
+    expect(json.received).toBe("not-json-{broken");
+
+    handle.restore();
+  });
 });
