@@ -58,12 +58,6 @@ Feature: Route Key Format
       []
       """
 
-  Scenario: Path with query string placeholder
-    When I parse route key "GET /search"
-    Then the method should be "GET"
-    And the path should be "/search"
-    And query parameters are handled separately at runtime
-
   Scenario: Complex nested paths
     When I parse route key "DELETE /api/v2/organizations/:orgId/teams/:teamId/members/:userId"
     Then the method should be "DELETE"

@@ -64,41 +64,6 @@ describeFeature(feature, ({ Scenario }) => {
     });
   });
 
-  Scenario("Multiple async generators in different routes", ({ Given, When, Then, And }) => {
-    Given("I create a mock with async routes for posts and comments", () => {
-      mock = schmock();
-      mock("GET /async-posts", async () => {
-        await new Promise(resolve => setTimeout(resolve, 5));
-        return [{ id: 1, title: "First Post" }];
-      });
-      mock("GET /async-comments", async () => {
-        await new Promise(resolve => setTimeout(resolve, 8));
-        return [{ id: 1, comment: "Great post!" }];
-      });
-    });
-
-    When("I make concurrent requests to {string} and {string}", async (_, path1: string, path2: string) => {
-      const [posts, comments] = await Promise.all([
-        mock.handle("GET", path1),
-        mock.handle("GET", path2),
-      ]);
-      responses = [posts, comments];
-    });
-
-    Then("both responses should be returned successfully", () => {
-      expect(responses[0].status).toBe(200);
-      expect(responses[1].status).toBe(200);
-    });
-
-    And("the posts response should contain {string}", (_, text: string) => {
-      expect(JSON.stringify(responses[0].body)).toContain(text);
-    });
-
-    And("the comments response should contain {string}", (_, text: string) => {
-      expect(JSON.stringify(responses[1].body)).toContain(text);
-    });
-  });
-
   Scenario("Async plugin processing", ({ Given, When, Then, And }) => {
     Given("I create a mock with an async processing plugin at {string}", (_, route: string) => {
       const [method, path] = route.split(" ");

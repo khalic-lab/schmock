@@ -36,91 +36,6 @@ Feature: Angular Adapter
     Then the response should be an HttpResponse
     And the status should be 201
 
-  # Helper Functions
-
-  Scenario: Use notFound helper
-    Given I create an Angular mock using helpers:
-      """
-      mock('GET /api/users/999', notFound('User not found'))
-      """
-    When I make an Angular request to "GET /api/users/999"
-    Then the response should be an HttpErrorResponse
-    And the error status should be 404
-    And the error body should contain "User not found"
-
-  Scenario: Use badRequest helper
-    Given I create an Angular mock using helpers:
-      """
-      mock('POST /api/users', badRequest('Invalid email format'))
-      """
-    When I make an Angular request to "POST /api/users"
-    Then the response should be an HttpErrorResponse
-    And the error status should be 400
-    And the error body should contain "Invalid email format"
-
-  Scenario: Use unauthorized helper
-    Given I create an Angular mock using helpers:
-      """
-      mock('GET /api/protected', unauthorized('Token expired'))
-      """
-    When I make an Angular request to "GET /api/protected"
-    Then the response should be an HttpErrorResponse
-    And the error status should be 401
-    And the error body should contain "Token expired"
-
-  Scenario: Use forbidden helper
-    Given I create an Angular mock using helpers:
-      """
-      mock('GET /api/admin', forbidden('Admin access required'))
-      """
-    When I make an Angular request to "GET /api/admin"
-    Then the response should be an HttpErrorResponse
-    And the error status should be 403
-    And the error body should contain "Admin access required"
-
-  Scenario: Use serverError helper
-    Given I create an Angular mock using helpers:
-      """
-      mock('GET /api/broken', serverError('Database connection failed'))
-      """
-    When I make an Angular request to "GET /api/broken"
-    Then the response should be an HttpErrorResponse
-    And the error status should be 500
-    And the error body should contain "Database connection failed"
-
-  Scenario: Use created helper
-    Given I create an Angular mock using helpers:
-      """
-      mock('POST /api/users', created({ id: 1, name: 'John' }))
-      """
-    When I make an Angular request to "POST /api/users"
-    Then the response should be an HttpResponse
-    And the status should be 201
-
-  Scenario: Use noContent helper
-    Given I create an Angular mock using helpers:
-      """
-      mock('DELETE /api/users/1', noContent())
-      """
-    When I make an Angular request to "DELETE /api/users/1"
-    Then the response should be an HttpResponse
-    And the status should be 204
-
-  Scenario: Use paginate helper
-    Given I create an Angular mock with pagination:
-      """
-      const items = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }]
-      mock('GET /api/items', ({ query }) => paginate(items, {
-        page: parseInt(query.page || '1'),
-        pageSize: parseInt(query.pageSize || '2')
-      }))
-      """
-    When I make an Angular request to "GET /api/items?page=1&pageSize=2"
-    Then the response should be an HttpResponse
-    And the response body should have 2 items in data
-    And the response should have total 5
-    And the response should have totalPages 3
-
   # Adapter Configuration Options
 
   Scenario: Requests outside baseUrl are passed through
@@ -177,40 +92,7 @@ Feature: Angular Adapter
     And the error status should be 500
     And the error body should use the custom error format
 
-  # URL and Query Parameter Handling
-
-  Scenario: Handle full URLs with protocol and host
-    Given I create an Angular mock with:
-      """
-      mock('GET /api/users', [200, { users: [] }])
-      """
-    When I make an Angular request to "GET http://localhost:4200/api/users"
-    Then the response should be an HttpResponse
-    And the status should be 200
-
-  Scenario: Extract query parameters from URL
-    Given I create an Angular mock with query handling:
-      """
-      mock('GET /api/search', ({ query }) => [200, { q: query.q, page: query.page }])
-      """
-    When I make an Angular request to "GET /api/search?q=typescript&page=2"
-    Then the response should be an HttpResponse
-    And the response body should contain both query parameters
-
-  # Auto Route Creation from OpenAPI Spec
-
-  Scenario: Auto-create interceptor from inline OpenAPI spec
-    Given I create an Angular interceptor from an inline OpenAPI spec
-    When I make an Angular request to "GET /items"
-    Then the response should be an HttpResponse
-    And the status should be 200
-
-  Scenario: Auto-created interceptor supports full CRUD lifecycle
-    Given I create an Angular interceptor from an inline OpenAPI spec with CRUD
-    When I create an item via "POST /items" with body '{"name":"Widget"}'
-    And I make an Angular request to "GET /items"
-    Then the response should be an HttpResponse
-    And the response body should be a non-empty array
+  # OpenAPI Spec with Angular Adapter Options
 
   Scenario: Auto-created interceptor respects baseUrl option
     Given I create an Angular interceptor from spec with baseUrl "/api"

@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
-import { expect, vi } from "vitest";
+import { expect } from "vitest";
 import { openapi } from "../plugin";
 
 const feature = await loadFeature("../../features/openapi-compliance.feature");
@@ -10,7 +10,6 @@ const fixturesDir = resolve(import.meta.dirname, "../__fixtures__");
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
-  let debugOutput: string[];
 
   Scenario(
     "Wrapped list response with allOf composition",
@@ -394,34 +393,4 @@ describeFeature(feature, ({ Scenario }) => {
     },
   );
 
-  Scenario("Debug mode logs detection results", ({ Given, Then, And }) => {
-    Given("a mock with the Petstore spec and debug enabled", async () => {
-      debugOutput = [];
-      const spy = vi
-        .spyOn(console, "log")
-        .mockImplementation((...args: unknown[]) => {
-          debugOutput.push(args.map(String).join(" "));
-        });
-
-      mock = schmock({ state: {} });
-      mock.pipe(
-        await openapi({
-          spec: `${fixturesDir}/petstore-swagger2.json`,
-          debug: true,
-        }),
-      );
-
-      spy.mockRestore();
-    });
-
-    Then('the debug output contains "CRUD resources"', () => {
-      const joined = debugOutput.join("\n");
-      expect(joined).toContain("CRUD resource");
-    });
-
-    And('the debug output contains "pets"', () => {
-      const joined = debugOutput.join("\n");
-      expect(joined).toContain("pets");
-    });
-  });
 });

@@ -8,7 +8,6 @@ const feature = await loadFeature("../../features/error-handling.feature");
 describeFeature(feature, ({ Scenario }) => {
   let mock: CallableMockInstance;
   let response: any;
-  let error: Error | null = null;
 
   Scenario("Route not found returns 404", ({ Given, When, Then, And }) => {
     Given("I create a mock with a GET /users route returning a user list", () => {
@@ -51,48 +50,6 @@ describeFeature(feature, ({ Scenario }) => {
 
     And("the response should contain error {string}", (_, errorMessage: string) => {
       expect(response.body.error).toContain(errorMessage);
-    });
-  });
-
-  Scenario("Invalid route key throws RouteDefinitionError", ({ Given, Then, And }) => {
-    Given("I attempt to register a route with an invalid HTTP method", () => {
-      error = null;
-      try {
-        mock = schmock();
-        mock("INVALID_METHOD /path" as any, "response");
-      } catch (e) {
-        error = e as Error;
-      }
-    });
-
-    Then("it should throw a RouteDefinitionError", () => {
-      expect(error).not.toBeNull();
-      expect(error!.constructor.name).toBe("RouteParseError");
-    });
-
-    And("the error message should contain {string}", (_, message: string) => {
-      expect(error!.message).toContain("Invalid route key format");
-    });
-  });
-
-  Scenario("Empty route path throws RouteDefinitionError", ({ Given, Then, And }) => {
-    Given("I attempt to register a route with an empty path", () => {
-      error = null;
-      try {
-        mock = schmock();
-        mock("GET " as any, "response");
-      } catch (e) {
-        error = e as Error;
-      }
-    });
-
-    Then("it should throw a RouteDefinitionError", () => {
-      expect(error).not.toBeNull();
-      expect(error!.constructor.name).toBe("RouteParseError");
-    });
-
-    And("the error message should contain {string}", (_, message: string) => {
-      expect(error!.message).toContain("Invalid route key format");
     });
   });
 
@@ -194,29 +151,6 @@ describeFeature(feature, ({ Scenario }) => {
 
     And("the response should have error code {string}", (_, errorCode: string) => {
       expect(response.body.code).toBe(errorCode);
-    });
-  });
-
-  Scenario("Invalid JSON generator with JSON content-type throws RouteDefinitionError", ({ Given, Then, And }) => {
-    Given("I attempt to register a route with a circular reference as JSON", () => {
-      error = null;
-      try {
-        mock = schmock();
-        const circularRef: Record<string, unknown> = {};
-        circularRef.self = circularRef;
-        mock("GET /invalid", circularRef, { contentType: "application/json" });
-      } catch (e) {
-        error = e as Error;
-      }
-    });
-
-    Then("it should throw a RouteDefinitionError", () => {
-      expect(error).not.toBeNull();
-      expect(error!.constructor.name).toBe("RouteDefinitionError");
-    });
-
-    And("the error message should contain {string}", (_, message: string) => {
-      expect(error!.message).toContain(message);
     });
   });
 

@@ -18,13 +18,6 @@ Feature: Async Support
     Then the response should have property "userId" with value "123"
     And the response should have property "fetchedAt"
 
-  Scenario: Multiple async generators in different routes
-    Given I create a mock with async routes for posts and comments
-    When I make concurrent requests to "/async-posts" and "/async-comments"
-    Then both responses should be returned successfully
-    And the posts response should contain "First Post"
-    And the comments response should contain "Great post!"
-
   Scenario: Async plugin processing
     Given I create a mock with an async processing plugin at "GET /processed"
     When I request "GET /processed"

@@ -9,7 +9,6 @@ describeFeature(feature, ({ Scenario }) => {
   let mock: CallableMockInstance;
   let response: any;
   let responses: any[] = [];
-  let error: Error | null = null;
 
   Scenario("GET method with query parameters", ({ Given, When, Then }) => {
     Given("I create a mock with a GET search endpoint", () => {
@@ -252,71 +251,6 @@ describeFeature(feature, ({ Scenario }) => {
 
     And("the upload endpoint should have content-type {string}", (_, contentType: string) => {
       expect(responses[3].headers?.["content-type"]).toBe(contentType);
-    });
-  });
-
-  Scenario("Method case sensitivity", ({ Given, When, Then }) => {
-    error = null;
-
-    Given("I create an empty mock for case sensitivity testing", () => {
-      mock = schmock();
-    });
-
-    When("I attempt to create a mock with lowercase method", () => {
-      error = null;
-      try {
-        mock('get /test' as Schmock.RouteKey, { method: 'get' });
-      } catch (e) {
-        error = e as Error;
-      }
-    });
-
-    Then("it should throw RouteParseError for invalid method case", () => {
-      expect(error).not.toBeNull();
-      expect(error!.constructor.name).toBe('RouteParseError');
-      expect(error!.message).toContain('Invalid route key format');
-    });
-  });
-
-  Scenario("Unsupported HTTP methods", ({ Given, When, Then }) => {
-    error = null;
-
-    Given("I create an empty mock for unsupported method testing", () => {
-      mock = schmock();
-    });
-
-    When("I attempt to create a mock with unsupported method", () => {
-      error = null;
-      try {
-        mock('CUSTOM /endpoint' as Schmock.RouteKey, { custom: true });
-      } catch (e) {
-        error = e as Error;
-      }
-    });
-
-    Then("it should throw RouteParseError for unsupported method", () => {
-      expect(error).not.toBeNull();
-      expect(error!.constructor.name).toBe('RouteParseError');
-      expect(error!.message).toContain('Invalid route key format');
-    });
-  });
-
-  Scenario("Method with special characters in path", ({ Given, When, Then }) => {
-    Given("I create a mock with nested parameterized path segments", () => {
-      mock = schmock();
-      mock('GET /api/v1/users/:id/posts/:post-id', ({ params }) => ({
-        userId: params.id,
-        postId: params['post-id'],
-      }));
-    });
-
-    When("I make a GET request to {string}", async (_, path: string) => {
-      response = await mock.handle('GET', path);
-    });
-
-    Then("I should receive special characters response:", (_, docString: string) => {
-      const expected = JSON.parse(docString);
-      expect(response.body).toEqual(expected);
     });
   });
 

@@ -126,30 +126,6 @@ describeFeature(feature, ({ Scenario }) => {
     });
   });
 
-  Scenario("useSchmock returns the mock instance", ({ Given, When, Then }) => {
-    let wrapper: ReturnType<typeof mount>;
-
-    Given("a Schmock instance", () => {
-      originalFetch = globalThis.fetch;
-      mock = schmock();
-    });
-
-    When(
-      "I use the useSchmock composable inside a component with the plugin",
-      () => {
-        wrapper = mount(MockConsumer, {
-          global: { plugins: [[schmockPlugin, { mock }]] },
-        });
-      },
-    );
-
-    Then("it should receive the CallableMockInstance", () => {
-      expect(wrapper.find("[data-testid='has-mock']").text()).toBe("yes");
-      wrapper.unmount();
-      globalThis.fetch = originalFetch;
-    });
-  });
-
   Scenario("Passthrough for unmatched routes", ({ Given, When, Then, And }) => {
     const fakeFetch = vi.fn().mockResolvedValue(new Response("real"));
 

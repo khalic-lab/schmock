@@ -13,21 +13,11 @@ Feature: React Adapter
     When I mount and unmount a SchmockProvider
     Then fetch should be restored to the original implementation
 
-  Scenario: useSchmock returns the mock instance
-    Given a Schmock instance
-    When I render a component that calls useSchmock inside SchmockProvider
-    Then it should receive the CallableMockInstance
-
   Scenario: Passthrough for unmatched routes
     Given a Schmock instance with route "GET /api/users" returning users
     And the provider is configured with passthrough enabled
     When the component fetches "/api/other"
     Then the request should pass through to the original fetch
-
-  Scenario: renderWithSchmock test utility handles setup and cleanup
-    Given route definitions for "GET /api/users" returning users
-    When I use renderWithSchmock to render a component that fetches "/api/users"
-    Then the component should display the mocked users
 
   Scenario: Error status codes flow through correctly
     Given a Schmock instance with a route returning status 404

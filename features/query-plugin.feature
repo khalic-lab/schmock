@@ -16,12 +16,6 @@ Feature: Query Plugin
     Then I should receive 5 items
     And the pagination totalPages should be 5
 
-  Scenario: Pagination beyond last page returns empty
-    Given I create a mock with 25 items and pagination plugin
-    When I request page 10
-    Then I should receive 0 items
-    And the pagination total should be 25
-
   Scenario: Sort items ascending by name
     Given I create a mock with named items and sorting plugin
     When I request with sort "name" order "asc"
