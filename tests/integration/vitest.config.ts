@@ -14,6 +14,8 @@ export default defineConfig({
       "@schmock/query": resolve(__dirname, "../../packages/query/src"),
       "@schmock/openapi": resolve(__dirname, "../../packages/openapi/src"),
       "@schmock/cli": resolve(__dirname, "../../packages/cli/src"),
+      "@schmock/react": resolve(__dirname, "../../packages/react/src"),
+      "@schmock/vue": resolve(__dirname, "../../packages/vue/src"),
     },
   },
   test: {
