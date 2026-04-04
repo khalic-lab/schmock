@@ -3,7 +3,7 @@
 Use Schmock as Express middleware. Unmatched routes pass through to the next middleware.
 
 ```sh
-npm install @schmock/express
+bun install @schmock/express
 ```
 
 ## Basic Usage

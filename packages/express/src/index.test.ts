@@ -472,6 +472,37 @@ describe("toExpress", () => {
     });
   });
 
+  describe("non-standard HTTP methods", () => {
+    it("calls next() for WebDAV methods like PROPFIND", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const req = createReq({ method: "PROPFIND", path: "/resource" });
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      await toExpress(mock)(req, res, next);
+
+      expect(next).toHaveBeenCalled();
+      expect(mock.handle).not.toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it("calls next() for LOCK method", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const req = createReq({ method: "LOCK", path: "/resource" });
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      await toExpress(mock)(req, res, next);
+
+      expect(next).toHaveBeenCalled();
+      expect(mock.handle).not.toHaveBeenCalled();
+    });
+  });
+
   describe("custom transforms", () => {
     it("uses custom header transform", async () => {
       const mock = createMock(() =>

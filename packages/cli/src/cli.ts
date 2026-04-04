@@ -153,14 +153,27 @@ export async function createCliServer(options: CliOptions): Promise<CliServer> {
     const headers = parseNodeHeaders(req);
     const query = parseNodeQuery(url);
 
-    void collectBody(req, headers).then((body) =>
-      mock
-        .handle(method, path, { headers, body, query })
-        .then((schmockResponse) => {
-          const extra = cors ? CORS_HEADERS : undefined;
-          writeSchmockResponse(res, schmockResponse, extra);
-        }),
-    );
+    void collectBody(req, headers)
+      .then((body) =>
+        mock
+          .handle(method, path, { headers, body, query })
+          .then((schmockResponse) => {
+            const extra = cors ? CORS_HEADERS : undefined;
+            writeSchmockResponse(res, schmockResponse, extra);
+          }),
+      )
+      .catch((error) => {
+        if (!res.headersSent) {
+          res.writeHead(500, { "content-type": "application/json" });
+        }
+        res.end(
+          JSON.stringify({
+            error:
+              error instanceof Error ? error.message : "Internal Server Error",
+            code: "SERVER_ERROR",
+          }),
+        );
+      });
   });
 
   return new Promise((resolve, reject) => {
@@ -180,6 +193,16 @@ export async function createCliServer(options: CliOptions): Promise<CliServer> {
       });
     });
   });
+}
+
+function validatePort(value: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(
+      `Invalid port "${value}". Port must be an integer between 0 and 65535.`,
+    );
+  }
+  return port;
 }
 
 export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
@@ -206,7 +229,7 @@ export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
 
   return {
     spec,
-    port: values.port ? Number(values.port) : undefined,
+    port: values.port ? validatePort(values.port) : undefined,
     hostname: values.hostname,
     seed: values.seed,
     cors: values.cors,

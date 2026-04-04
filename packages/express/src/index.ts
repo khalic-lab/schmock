@@ -168,9 +168,17 @@ export function toExpress(
 
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
+      // Skip non-standard HTTP methods (e.g. WebDAV PROPFIND, LOCK)
+      let method: ReturnType<typeof toHttpMethod>;
+      try {
+        method = toHttpMethod(req.method);
+      } catch {
+        return next();
+      }
+
       // Run request interceptor if provided
       let requestData = {
-        method: toHttpMethod(req.method),
+        method,
         path: req.path,
         headers: transformHeaders(req.headers),
         body: req.body,

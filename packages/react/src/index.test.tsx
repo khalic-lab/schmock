@@ -132,4 +132,21 @@ describe("renderWithSchmock", () => {
     unmount();
     expect(globalThis.fetch).not.toBe(fetchBeforeUnmount);
   });
+
+  it("rerender preserves provider context", async () => {
+    const { rerender } = renderWithSchmock(<MockConsumer />, {
+      routes: [],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("has-mock").textContent).toBe("yes");
+    });
+
+    // Rerender should still have the provider wrapping
+    rerender(<MockConsumer />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("has-mock").textContent).toBe("yes");
+    });
+  });
 });

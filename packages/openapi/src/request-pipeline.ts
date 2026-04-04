@@ -302,7 +302,11 @@ async function generateResponseBody(
   }
   try {
     return await generateFromSchema({ schema: finalSchema, seed });
-  } catch {
+  } catch (error) {
+    console.warn(
+      "[@schmock/openapi] Response body generation failed:",
+      error instanceof Error ? error.message : error,
+    );
     return {};
   }
 }

@@ -1,6 +1,6 @@
 # Schmock Project Instructions
 
-Schmock is a TypeScript HTTP mocking library with a callable API, extensible plugin pipeline (`.pipe()`), and framework adapters for Express and Angular.
+Schmock is a TypeScript HTTP mocking library with a callable API, extensible plugin pipeline (`.pipe()`), and framework adapters for React, Vue, Express, and Angular.
 
 ## Quick Reference
 
@@ -11,6 +11,8 @@ Schmock is a TypeScript HTTP mocking library with a callable API, extensible plu
 | Testing patterns | `docs/testing.md` |
 | API reference | `docs/api.md` |
 | Plugin development | `docs/plugins.md` |
+| React adapter | `docs/react.md` |
+| Vue adapter | `docs/vue.md` |
 | Express adapter | `docs/express.md` |
 | Angular adapter | `docs/angular.md` |
 | CLI guide | `docs/cli.md` |
@@ -27,6 +29,8 @@ Schmock is a TypeScript HTTP mocking library with a callable API, extensible plu
 | `@schmock/validation` | Request/response validation via AJV |
 | `@schmock/query` | Pagination, sorting, and filtering for list endpoints |
 | `@schmock/openapi` | Auto-register routes from OpenAPI/Swagger specs |
+| `@schmock/react` | React Provider + hook for fetch interception |
+| `@schmock/vue` | Vue 3 Plugin + composable for fetch interception |
 | `@schmock/express` | Express middleware adapter |
 | `@schmock/angular` | Angular HTTP interceptor adapter |
 | `@schmock/cli` | Standalone CLI server from OpenAPI specs |

@@ -5,7 +5,7 @@
  * This version uses bare fetch with mock.intercept().
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { schmock, notFound, created, noContent } from "@schmock/core";
+import { schmock, notFound } from "@schmock/core";
 
 interface Todo {
   id: number;

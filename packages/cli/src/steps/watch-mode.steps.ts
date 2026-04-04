@@ -31,49 +31,54 @@ function makeTempSpec(): string {
 }
 
 describeFeature(feature, ({ Scenario }) => {
-  Scenario("Server reloads with new routes after spec change", ({ Given, And, When, Then }) => {
-    let specPath: string;
-    let server: CliServer;
-    let originalPort: number;
+  Scenario(
+    "Server reloads with new routes after spec change",
+    ({ Given, And, When, Then }) => {
+      let specPath: string;
+      let server: CliServer;
+      let originalPort: number;
 
-    Given("a temp spec file with one route", () => {
-      specPath = makeTempSpec();
-    });
+      Given("a temp spec file with one route", () => {
+        specPath = makeTempSpec();
+      });
 
-    And("a CLI server is started", async () => {
-      server = await createCliServer({ spec: specPath, port: 0 });
-      originalPort = server.port;
-    });
+      And("a CLI server is started", async () => {
+        server = await createCliServer({ spec: specPath, port: 0 });
+        originalPort = server.port;
+      });
 
-    When("the spec file is updated to include a new route", () => {
-      writeFileSync(
-        specPath,
-        makeSpec({
-          "/items": {
-            get: { responses: { "200": { description: "OK" } } },
-          },
-          "/users": {
-            get: { responses: { "200": { description: "OK" } } },
-          },
-        }),
-      );
-    });
+      When("the spec file is updated to include a new route", () => {
+        writeFileSync(
+          specPath,
+          makeSpec({
+            "/items": {
+              get: { responses: { "200": { description: "OK" } } },
+            },
+            "/users": {
+              get: { responses: { "200": { description: "OK" } } },
+            },
+          }),
+        );
+      });
 
-    And("the server is reloaded", async () => {
-      server = await reloadServer(server, { spec: specPath });
-    });
+      And("the server is reloaded", async () => {
+        server = await reloadServer(server, { spec: specPath });
+      });
 
-    Then("the reloaded server is listening", () => {
-      expect(server.server.listening).toBe(true);
-      expect(server.port).toBe(originalPort);
-    });
+      Then("the reloaded server is listening", () => {
+        expect(server.server.listening).toBe(true);
+        expect(server.port).toBe(originalPort);
+      });
 
-    And("the new route responds successfully", async () => {
-      const res = await fetch(`http://${server.hostname}:${server.port}/users`);
-      expect(res.status).toBe(200);
-      server.close();
-    });
-  });
+      And("the new route responds successfully", async () => {
+        const res = await fetch(
+          `http://${server.hostname}:${server.port}/users`,
+        );
+        expect(res.status).toBe(200);
+        server.close();
+      });
+    },
+  );
 
   Scenario("Reload preserves the port", ({ Given, And, When, Then }) => {
     let specPath: string;

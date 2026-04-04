@@ -6,6 +6,7 @@ import {
   SchemaValidationError,
 } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
+import { version as packageVersion } from "../package.json";
 import { MAX_ARRAY_SIZE, NULLABLE_NULL_PROBABILITY } from "./constants.js";
 import { generateWithJsf } from "./jsf-config.js";
 import { applyOverrides, determineArrayCount } from "./overrides.js";
@@ -35,7 +36,7 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
 
   return {
     name: "faker",
-    version: "1.0.1",
+    version: packageVersion,
 
     async process(context: Schmock.PluginContext, response?: any) {
       // If response already exists, pass it through

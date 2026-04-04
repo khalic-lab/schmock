@@ -3,7 +3,7 @@
 Start a mock API server from the command line. Point it at an OpenAPI spec and get a working server.
 
 ```sh
-npm install -g @schmock/cli
+bun install -g @schmock/cli
 ```
 
 ## Usage
@@ -31,7 +31,7 @@ schmock <spec> [options]
 | `--seed <path>` | JSON file with seed data | — |
 | `--cors` | Enable CORS headers | `false` |
 | `--debug` | Enable debug logging | `false` |
-| `--faker-seed <number>` | Deterministic data generation | — |
+| `--seed-random <number>` | Deterministic data generation | — |
 | `--errors` | Enable request validation | `false` |
 | `--watch` | Watch spec file for changes | `false` |
 | `--admin` | Enable admin API endpoints | `false` |
@@ -66,7 +66,7 @@ schmock api.yaml --cors --port 4000
 ### Deterministic data
 
 ```sh
-schmock api.yaml --faker-seed 42
+schmock api.yaml --seed-random 42
 # Same data every time with the same seed
 ```
 

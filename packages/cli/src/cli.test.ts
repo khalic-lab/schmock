@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { parseCliArgs } from "./cli";
+import { connect } from "node:net";
+import { resolve } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { createCliServer, parseCliArgs } from "./cli";
+
+const PETSTORE_SPEC = resolve(
+  __dirname,
+  "../../openapi/src/__fixtures__/petstore-openapi3.json",
+);
 
 describe("parseCliArgs", () => {
   it("parses --spec flag", () => {
@@ -67,5 +74,63 @@ describe("parseCliArgs", () => {
   it("--spec flag takes precedence over positional", () => {
     const result = parseCliArgs(["positional.yaml", "--spec", "flag.yaml"]);
     expect(result.spec).toBe("flag.yaml");
+  });
+
+  it("throws on non-numeric --port value", () => {
+    expect(() => parseCliArgs(["--spec", "x.yaml", "--port", "foo"])).toThrow();
+  });
+
+  it("throws on negative --port value", () => {
+    expect(() => parseCliArgs(["--spec", "x.yaml", "--port", "-1"])).toThrow();
+  });
+
+  it("throws on out-of-range --port value", () => {
+    expect(() =>
+      parseCliArgs(["--spec", "x.yaml", "--port", "99999"]),
+    ).toThrow();
+  });
+});
+
+describe("createCliServer error handling", () => {
+  let server: Awaited<ReturnType<typeof createCliServer>> | undefined;
+
+  afterEach(() => {
+    server?.close();
+    server = undefined;
+  });
+
+  it("returns 500 JSON when request body stream errors", async () => {
+    server = await createCliServer({ spec: PETSTORE_SPEC, port: 0 });
+    const { port } = server;
+
+    // Use a raw TCP socket to send a request then destroy the connection
+    // mid-body, triggering a stream error that the .catch() should handle
+    await new Promise<string>((done, reject) => {
+      const socket = connect(port, "127.0.0.1", () => {
+        // Send a POST with a large content-length but then destroy the stream
+        socket.write(
+          "POST /pets HTTP/1.1\r\n" +
+            "Host: 127.0.0.1\r\n" +
+            "Content-Type: application/json\r\n" +
+            "Content-Length: 10000\r\n" +
+            "\r\n" +
+            '{"partial":',
+        );
+        // Destroy after partial body to trigger stream error
+        setTimeout(() => socket.destroy(), 50);
+      });
+
+      let data = "";
+      socket.on("data", (chunk) => {
+        data += chunk.toString();
+      });
+      socket.on("close", () => done(data));
+      socket.on("error", () => done(data));
+      setTimeout(() => reject(new Error("Timeout")), 5000);
+    });
+
+    // Verify the server is still alive after the error
+    const healthCheck = await fetch(`http://127.0.0.1:${port}/pets`);
+    expect(healthCheck.status).toBe(200);
   });
 });

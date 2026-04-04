@@ -51,13 +51,13 @@ const mock = schmock({ debug: true })
 
 ```sh
 # Only pipeline logs
-npm start | grep "SCHMOCK:PIPELINE"
+bun start | grep "SCHMOCK:PIPELINE"
 
 # Only errors
-npm start | grep "SCHMOCK:ERROR"
+bun start | grep "SCHMOCK:ERROR"
 
 # Specific request
-npm start | grep "abc123"
+bun start | grep "abc123"
 ```
 
 ## Environment-based

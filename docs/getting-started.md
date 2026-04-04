@@ -3,19 +3,21 @@
 ## Installation
 
 ```sh
-npm install @schmock/core
+bun install @schmock/core
 ```
 
 Optional packages:
 
 ```sh
-npm install @schmock/openapi    # Auto-mock from OpenAPI specs
-npm install @schmock/faker      # Schema-based data generation
-npm install @schmock/validation # Request/response validation
-npm install @schmock/query      # Pagination, sorting, filtering
-npm install @schmock/express    # Express middleware adapter
-npm install @schmock/angular    # Angular HTTP interceptor
-npm install @schmock/cli        # Standalone CLI server
+bun install @schmock/react      # React Provider + hook
+bun install @schmock/vue        # Vue 3 Plugin + composable
+bun install @schmock/express    # Express middleware adapter
+bun install @schmock/angular    # Angular HTTP interceptor
+bun install @schmock/openapi    # Auto-mock from OpenAPI specs
+bun install @schmock/faker      # Schema-based data generation
+bun install @schmock/validation # Request/response validation
+bun install @schmock/query      # Pagination, sorting, filtering
+bun install @schmock/cli        # Standalone CLI server
 ```
 
 ## Core Concepts
@@ -209,6 +211,8 @@ mock.close()
 
 - [OpenAPI Auto-Mocking](./openapi.md) — the fastest way to get a realistic mock API
 - [Testing Patterns](./testing.md) — real-world testing workflows
+- [React Adapter](./react.md) — intercept fetch in React apps
+- [Vue Adapter](./vue.md) — intercept fetch in Vue 3 apps
 - [Express Adapter](./express.md) — use Schmock as Express middleware
 - [Angular Adapter](./angular.md) — intercept Angular HTTP calls
 - [API Reference](./api.md) — complete type and method reference
