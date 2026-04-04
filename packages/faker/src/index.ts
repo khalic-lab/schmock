@@ -13,22 +13,9 @@ import { applyOverrides, determineArrayCount } from "./overrides.js";
 import { enhanceSchemaWithSmartMapping } from "./schema-enhancement.js";
 import { isJSONSchema7, validateSchema } from "./validation.js";
 
-export interface SchemaGenerationContext {
-  schema: JSONSchema7;
-  count?: number;
-  overrides?: Record<string, any>;
-  params?: Record<string, string>;
-  state?: any;
-  query?: Record<string, string>;
-  seed?: number;
-}
+export type SchemaGenerationContext = Schmock.SchemaGenerationContext;
 
-export interface FakerPluginOptions {
-  schema: JSONSchema7;
-  count?: number;
-  overrides?: Record<string, any>;
-  seed?: number;
-}
+export type FakerPluginOptions = Schmock.FakerPluginOptions;
 
 export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
   // Validate schema immediately when plugin is created (fail-fast)
@@ -38,7 +25,7 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
     name: "faker",
     version: packageVersion,
 
-    async process(context: Schmock.PluginContext, response?: any) {
+    async process(context: Schmock.PluginContext, response?: unknown) {
       // If response already exists, pass it through
       if (response !== undefined && response !== null) {
         return { context, response };
@@ -81,12 +68,10 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
 
 export async function generateFromSchema(
   options: SchemaGenerationContext,
-): Promise<any> {
+): Promise<unknown> {
   const { schema, count, overrides, params, state, query, seed } = options;
 
   validateSchema(schema);
-
-  let generated: any;
 
   // Handle array schemas with count
   if (schema.type === "array" && schema.items) {
@@ -111,21 +96,21 @@ export async function generateFromSchema(
     const itemSchema = rawItemSchema;
     const enhancedItemSchema = enhanceSchemaWithSmartMapping(itemSchema);
 
-    generated = [];
+    const items: unknown[] = [];
     for (let i = 0; i < itemCount; i++) {
-      let item = await generateWithJsf(enhancedItemSchema, seed);
+      let item: unknown = await generateWithJsf(enhancedItemSchema, seed);
       item = postProcessGenerated(item, enhancedItemSchema);
       item = applyOverrides(item, overrides, params, state, query);
-      generated.push(item);
+      items.push(item);
     }
-  } else {
-    // Handle object schemas
-    const enhancedSchema = enhanceSchemaWithSmartMapping(schema);
-    generated = await generateWithJsf(enhancedSchema, seed);
-    generated = postProcessGenerated(generated, enhancedSchema);
-    generated = applyOverrides(generated, overrides, params, state, query);
+    return items;
   }
 
+  // Handle object schemas
+  const enhancedSchema = enhanceSchemaWithSmartMapping(schema);
+  let generated: unknown = await generateWithJsf(enhancedSchema, seed);
+  generated = postProcessGenerated(generated, enhancedSchema);
+  generated = applyOverrides(generated, overrides, params, state, query);
   return generated;
 }
 
@@ -135,7 +120,7 @@ export async function generateFromSchema(
  * - schmockNullable: ~5% chance of null
  * - schmockTrueProbability: weighted boolean generation
  */
-function postProcessGenerated(data: any, schema: JSONSchema7): any {
+function postProcessGenerated(data: unknown, schema: JSONSchema7): unknown {
   if (
     data === null ||
     data === undefined ||
@@ -145,10 +130,10 @@ function postProcessGenerated(data: any, schema: JSONSchema7): any {
     return data;
   }
 
-  const schemaAny = schema as Record<string, unknown>;
+  const schemaExt = schema as Record<string, unknown>;
 
   // Apply nullable probability at this level
-  if (schemaAny.schmockNullable === true) {
+  if (schemaExt.schmockNullable === true) {
     if (Math.random() < NULLABLE_NULL_PROBABILITY) {
       return null;
     }
@@ -157,16 +142,17 @@ function postProcessGenerated(data: any, schema: JSONSchema7): any {
   // Apply boolean weighting at this level
   if (
     schema.type === "boolean" &&
-    typeof schemaAny.schmockTrueProbability === "number"
+    typeof schemaExt.schmockTrueProbability === "number"
   ) {
-    return Math.random() < schemaAny.schmockTrueProbability;
+    return Math.random() < schemaExt.schmockTrueProbability;
   }
 
   // Recurse into object properties
   if (typeof data === "object" && !Array.isArray(data) && schema.properties) {
+    const record = data as Record<string, unknown>;
     for (const [key, propSchema] of Object.entries(schema.properties)) {
-      if (key in data && isJSONSchema7(propSchema)) {
-        data[key] = postProcessGenerated(data[key], propSchema);
+      if (key in record && isJSONSchema7(propSchema)) {
+        record[key] = postProcessGenerated(record[key], propSchema);
       }
     }
   }

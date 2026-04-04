@@ -46,14 +46,14 @@ export function queryPlugin(options: QueryPluginOptions): Schmock.Plugin {
 
     process(
       context: Schmock.PluginContext,
-      response?: any,
+      response?: unknown,
     ): Schmock.PluginResult {
       // Only process array responses
       if (!Array.isArray(response)) {
         return { context, response };
       }
 
-      let items = [...response];
+      let items: unknown[] = [...response];
       const query = context.query || {};
 
       // Apply filtering
@@ -78,10 +78,10 @@ export function queryPlugin(options: QueryPluginOptions): Schmock.Plugin {
 }
 
 function applyFiltering(
-  items: any[],
+  items: unknown[],
   query: Record<string, string>,
   options: FilteringOptions,
-): any[] {
+): unknown[] {
   const prefix = options.filterPrefix ?? "filter";
   let result = items;
 
@@ -95,7 +95,9 @@ function applyFiltering(
 
     if (value !== undefined) {
       result = result.filter((item) => {
-        const itemValue = item[field];
+        if (typeof item !== "object" || item === null) return false;
+        const record = item as Record<string, unknown>;
+        const itemValue = record[field];
         if (itemValue === undefined) return false;
         // Intentional string coercion: query params are inherently strings
         return String(itemValue) === value;
@@ -107,10 +109,10 @@ function applyFiltering(
 }
 
 function applySorting(
-  items: any[],
+  items: unknown[],
   query: Record<string, string>,
   options: SortingOptions,
-): any[] {
+): unknown[] {
   const sortParam = options.sortParam ?? "sort";
   const orderParam = options.orderParam ?? "order";
   const sortField = query[sortParam] ?? options.default;
@@ -123,8 +125,12 @@ function applySorting(
   if (!options.allowed.includes(sortField)) return items;
 
   return items.sort((a, b) => {
-    const aVal = a[sortField];
-    const bVal = b[sortField];
+    if (typeof a !== "object" || a === null) return 0;
+    if (typeof b !== "object" || b === null) return 0;
+    const aRecord = a as Record<string, unknown>;
+    const bRecord = b as Record<string, unknown>;
+    const aVal = aRecord[sortField];
+    const bVal = bRecord[sortField];
 
     if (aVal === bVal) return 0;
     if (aVal === undefined) return 1;
@@ -142,7 +148,7 @@ function applySorting(
 }
 
 interface PaginatedResult {
-  data: any[];
+  data: unknown[];
   pagination: {
     page: number;
     limit: number;
@@ -152,7 +158,7 @@ interface PaginatedResult {
 }
 
 function applyPagination(
-  items: any[],
+  items: unknown[],
   query: Record<string, string>,
   options: PaginationOptions,
 ): PaginatedResult {

@@ -51,15 +51,16 @@ export function determineArrayCount(
  * @returns Data with overrides applied
  */
 export function applyOverrides(
-  data: any,
-  overrides?: Record<string, any>,
+  data: unknown,
+  overrides?: Record<string, unknown>,
   params?: Record<string, string>,
-  state?: any,
+  state?: Record<string, unknown>,
   query?: Record<string, string>,
-): any {
+): unknown {
   if (!overrides) return data;
+  if (typeof data !== "object" || data === null) return data;
 
-  const result = structuredClone(data);
+  const result = structuredClone(data) as Record<string, unknown>;
 
   for (const [key, value] of Object.entries(overrides)) {
     if (DANGEROUS_KEYS.has(key)) continue;
@@ -73,17 +74,18 @@ export function applyOverrides(
         value !== null &&
         !Array.isArray(value)
       ) {
+        const nested = value as Record<string, unknown>;
         // Recursively apply nested overrides
         if (result[key] && typeof result[key] === "object") {
           result[key] = applyOverrides(
             result[key],
-            value,
+            nested,
             params,
             state,
             query,
           );
         } else {
-          result[key] = applyOverrides({}, value, params, state, query);
+          result[key] = applyOverrides({}, nested, params, state, query);
         }
       } else if (typeof value === "string" && value.includes("{{")) {
         // Template processing
@@ -98,17 +100,13 @@ export function applyOverrides(
 }
 
 function setNestedProperty(
-  obj: any,
+  obj: Record<string, unknown>,
   path: string,
-  value: any,
-  context: {
-    params?: Record<string, string>;
-    state?: any;
-    query?: Record<string, string>;
-  },
+  value: unknown,
+  context: TemplateContext,
 ): void {
   const parts = path.split(".");
-  let current = obj;
+  let current: Record<string, unknown> = obj;
 
   // Navigate to the parent of the target property
   for (let i = 0; i < parts.length - 1; i++) {
@@ -121,7 +119,7 @@ function setNestedProperty(
     ) {
       current[part] = {};
     }
-    current = current[part];
+    current = current[part] as Record<string, unknown>;
   }
 
   // Set the final property
@@ -134,51 +132,48 @@ function setNestedProperty(
   }
 }
 
+interface TemplateContext {
+  params?: Record<string, string>;
+  state?: Record<string, unknown>;
+  query?: Record<string, string>;
+}
+
+function resolveTemplatePath(
+  context: TemplateContext,
+  expression: string,
+): unknown {
+  const parts = expression.trim().split(".");
+  let result: unknown = context;
+
+  for (const part of parts) {
+    if (result && typeof result === "object") {
+      result = (result as Record<string, unknown>)[part];
+    } else {
+      return undefined;
+    }
+  }
+
+  return result;
+}
+
 function processTemplate(
   template: string,
-  context: {
-    params?: Record<string, string>;
-    state?: any;
-    query?: Record<string, string>;
-  },
-): any {
+  context: TemplateContext,
+): unknown {
   // Check if the template is just a single template expression
   const singleTemplateMatch = template.match(/^\{\{\s*([^}]+)\s*\}\}$/);
   if (singleTemplateMatch) {
     // For single templates, return the actual value without string conversion
-    const expression = singleTemplateMatch[1];
-    const parts = expression.trim().split(".");
-    let result: any = context;
-
-    for (const part of parts) {
-      if (result && typeof result === "object") {
-        result = result[part];
-      } else {
-        return template; // Return original if can't resolve
-      }
-    }
-
+    const result = resolveTemplatePath(context, singleTemplateMatch[1]);
     return result !== undefined ? result : template;
   }
 
   // For templates mixed with other text, do string replacement
-  const processed = template.replace(
+  return template.replace(
     /\{\{\s*([^}]+)\s*\}\}/g,
-    (match, expression) => {
-      const parts = expression.trim().split(".");
-      let result: any = context;
-
-      for (const part of parts) {
-        if (result && typeof result === "object") {
-          result = result[part];
-        } else {
-          return match; // Return original if can't resolve
-        }
-      }
-
+    (match, expression: string) => {
+      const result = resolveTemplatePath(context, expression);
       return result !== undefined ? String(result) : match;
     },
   );
-
-  return processed;
 }

@@ -392,10 +392,10 @@ export function validateFakerMethod(fakerMethod: string): void {
     validationFaker = createFakerInstance();
   }
   const faker = validationFaker;
-  let current: any = faker;
+  let current: unknown = faker;
   for (const part of parts) {
     if (current && typeof current === "object" && part in current) {
-      current = current[part];
+      current = (current as Record<string, unknown>)[part];
     } else {
       throw new SchemaValidationError(
         "$.faker",
