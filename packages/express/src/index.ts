@@ -13,7 +13,7 @@ export interface ExpressAdapterOptions {
    * @param req - Express request
    * @returns Custom error response
    */
-  errorFormatter?: (error: Error, req: Request) => any;
+  errorFormatter?: (error: Error, req: Request) => unknown;
 
   /**
    * Whether to pass non-Schmock errors to Express error handler
@@ -45,15 +45,9 @@ export interface ExpressAdapterOptions {
     req: Request,
     res: Response,
   ) =>
-    | {
-        method?: string;
-        path?: string;
-        headers?: Record<string, string>;
-        body?: any;
-        query?: Record<string, string>;
-      }
+    | Schmock.AdapterRequestOverride
     | undefined
-    | Promise<any>;
+    | Promise<Schmock.AdapterRequestOverride | undefined>;
 
   /**
    * Response interceptor - called before sending response
@@ -63,31 +57,20 @@ export interface ExpressAdapterOptions {
    * @returns Modified response or void
    */
   beforeResponse?: (
-    schmockResponse: {
-      status: number;
-      body: any;
-      headers: Record<string, string>;
-    },
+    schmockResponse: Schmock.Response,
     req: Request,
     res: Response,
   ) =>
-    | { status: number; body: any; headers: Record<string, string> }
+    | Schmock.Response
     | undefined
-    | Promise<
-        | { status: number; body: any; headers: Record<string, string> }
-        | undefined
-      >;
+    | Promise<Schmock.Response | undefined>;
 }
 
 /**
  * Convert Schmock response to Express response
  */
 function schmockToExpressResponse(
-  schmockResponse: {
-    status: number;
-    body: any;
-    headers: Record<string, string>;
-  },
+  schmockResponse: Schmock.Response,
   res: Response,
 ): void {
   // Set status code

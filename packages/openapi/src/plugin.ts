@@ -34,34 +34,7 @@ export type OnSchemaCallback = (
   },
 ) => JSONSchema7 | undefined;
 
-export interface OpenApiOptions {
-  /** File path or inline spec object */
-  spec: string | object;
-  /** Optional seed data per resource */
-  seed?: SeedConfig;
-  /** Validate request bodies (default: false) */
-  validateRequests?: boolean;
-  /** Validate response bodies (default: false) */
-  validateResponses?: boolean;
-  /** Query features for list endpoints */
-  queryFeatures?: {
-    pagination?: boolean;
-    sorting?: boolean;
-    filtering?: boolean;
-  };
-  /** Override auto-detected response format per resource */
-  resources?: Record<string, Schmock.ResourceOverride>;
-  /** Log auto-detection decisions to console (default: false) */
-  debug?: boolean;
-  /** Seed for deterministic random generation */
-  fakerSeed?: number;
-  /** Validate security schemes (API key, Bearer, Basic) (default: false) */
-  security?: boolean;
-  /** Replace response schemas for specific routes. Key: "METHOD /path" or "METHOD /path STATUS" */
-  schemas?: Record<string, JSONSchema7>;
-  /** Called before generating a response body. Return a schema to replace the original, or void to keep it. */
-  onSchema?: OnSchemaCallback;
-}
+export type OpenApiOptions = Schmock.OpenApiOptions;
 
 /**
  * Create an OpenAPI plugin that auto-registers CRUD routes from a spec.

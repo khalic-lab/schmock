@@ -50,7 +50,7 @@ declare namespace Schmock {
      * @param response - Response from previous plugin (if any)
      * @returns Updated context and response
      */
-    process(context: PluginContext, response?: any): PluginResult | Promise<PluginResult>;
+    process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>;
 
     /**
      * Called when an error occurs
@@ -536,9 +536,9 @@ declare namespace Schmock {
   interface SchemaGenerationContext {
     schema: JSONSchema7;
     count?: number;
-    overrides?: Record<string, any>;
+    overrides?: Record<string, unknown>;
     params?: Record<string, string>;
-    state?: any;
+    state?: Record<string, unknown>;
     query?: Record<string, string>;
     seed?: number;
   }
@@ -549,22 +549,45 @@ declare namespace Schmock {
   interface FakerPluginOptions {
     schema: JSONSchema7;
     count?: number;
-    overrides?: Record<string, any>;
+    overrides?: Record<string, unknown>;
     seed?: number;
   }
 
   // ===== Express Adapter Types =====
 
   /**
+   * Override parts of a request before Schmock handles it
+   */
+  interface AdapterRequestOverride {
+    method?: string;
+    path?: string;
+    headers?: Record<string, string>;
+    body?: unknown;
+    query?: Record<string, string>;
+  }
+
+  /**
    * Configuration options for Express adapter
    */
   interface ExpressAdapterOptions {
-    errorFormatter?: (error: Error, req: any) => any;
+    errorFormatter?: (error: Error, req: unknown) => unknown;
     passErrorsToNext?: boolean;
-    transformHeaders?: (headers: any) => Record<string, string>;
-    transformQuery?: (query: any) => Record<string, string>;
-    beforeRequest?: (req: any, res: any) => any;
-    beforeResponse?: (response: any, req: any, res: any) => any;
+    transformHeaders?: (
+      headers: Record<string, string | string[] | undefined>,
+    ) => Record<string, string>;
+    transformQuery?: (query: Record<string, unknown>) => Record<string, string>;
+    beforeRequest?: (
+      req: unknown,
+      res: unknown,
+    ) =>
+      | AdapterRequestOverride
+      | undefined
+      | Promise<AdapterRequestOverride | undefined>;
+    beforeResponse?: (
+      response: Response,
+      req: unknown,
+      res: unknown,
+    ) => Response | undefined | Promise<Response | undefined>;
   }
 
   // ===== Angular Adapter Types =====
@@ -575,18 +598,12 @@ declare namespace Schmock {
   interface AngularAdapterOptions {
     baseUrl?: string;
     passthrough?: boolean;
-    errorFormatter?: (error: Error, request: any) => any;
-    transformRequest?: (request: any) => {
-      method?: string;
-      path?: string;
-      headers?: Record<string, string>;
-      body?: any;
-      query?: Record<string, string>;
-    };
+    errorFormatter?: (error: Error, request: unknown) => unknown;
+    transformRequest?: (request: unknown) => AdapterRequestOverride;
     transformResponse?: (
-      response: { status: number; body: unknown; headers: Record<string, string> },
-      request: any,
-    ) => { status: number; body: unknown; headers: Record<string, string> };
+      response: Response,
+      request: unknown,
+    ) => Response;
   }
 
   // ===== OpenAPI Plugin Options =====

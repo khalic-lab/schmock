@@ -33,3 +33,4 @@ export type AdapterRequest = Schmock.AdapterRequest;
 export type AdapterResponse = Schmock.AdapterResponse;
 export type InterceptOptions = Schmock.InterceptOptions;
 export type InterceptHandle = Schmock.InterceptHandle;
+export type AdapterRequestOverride = Schmock.AdapterRequestOverride;

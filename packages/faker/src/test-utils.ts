@@ -119,13 +119,17 @@ export const validators = {
     // Generate multiple samples to check for patterns
     const mappedSamples: any[] = [];
     for (let i = 0; i < 10; i++) {
-      const result = await generateFromSchema({ schema: mappedSchema });
+      const result = (await generateFromSchema({
+        schema: mappedSchema,
+      })) as Record<string, unknown>;
       mappedSamples.push(result[fieldName]);
     }
 
     const unmappedSamples: any[] = [];
     for (let i = 0; i < 10; i++) {
-      const result = await generateFromSchema({ schema: unmappedSchema });
+      const result = (await generateFromSchema({
+        schema: unmappedSchema,
+      })) as Record<string, unknown>;
       unmappedSamples.push(result.unmappedRandomField12345);
     }
 
@@ -254,7 +258,7 @@ export const generate = {
   ): Promise<T[]> => {
     const results: T[] = [];
     for (let i = 0; i < count; i++) {
-      results.push(await generateFromSchema({ schema, ...options }));
+      results.push((await generateFromSchema({ schema, ...options })) as T);
     }
     return results;
   },

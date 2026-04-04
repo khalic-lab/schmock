@@ -76,20 +76,16 @@ export interface AngularAdapterOptions {
    * @param request - Angular HTTP request
    * @returns Custom error response
    */
-  errorFormatter?: (error: Error, request: HttpRequest<any>) => any;
+  errorFormatter?: (error: Error, request: HttpRequest<unknown>) => unknown;
 
   /**
    * Request transformer - modify request before passing to Schmock
    * @param request - Angular HTTP request
    * @returns Modified request data
    */
-  transformRequest?: (request: HttpRequest<any>) => {
-    method?: string;
-    path?: string;
-    headers?: Record<string, string>;
-    body?: any;
-    query?: Record<string, string>;
-  };
+  transformRequest?: (
+    request: HttpRequest<unknown>,
+  ) => Schmock.AdapterRequestOverride;
 
   /**
    * Response transformer - modify Schmock response before returning
@@ -98,13 +94,9 @@ export interface AngularAdapterOptions {
    * @returns Modified response
    */
   transformResponse?: (
-    response: {
-      status: number;
-      body: unknown;
-      headers: Record<string, string>;
-    },
-    request: HttpRequest<any>,
-  ) => { status: number; body: unknown; headers: Record<string, string> };
+    response: Schmock.Response,
+    request: HttpRequest<unknown>,
+  ) => Schmock.Response;
 }
 
 /**
