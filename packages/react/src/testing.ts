@@ -23,13 +23,14 @@ export function renderWithSchmock(
     }
   }
 
-  const props = {
-    mock,
-    options: options.interceptOptions,
-    // biome-ignore lint/correctness/noChildrenProp: createElement requires children in props
-    children: ui,
-  };
-  const result = render(createElement(SchmockProvider, props));
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(SchmockProvider, {
+      mock,
+      options: options.interceptOptions,
+      children,
+    });
+
+  const result = render(ui, { wrapper });
 
   return {
     ...result,

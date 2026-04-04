@@ -143,6 +143,29 @@ describe("mock.intercept()", () => {
     handle.restore();
   });
 
+  it("normalizes header keys to lowercase", async () => {
+    mock("POST /api/data", ({ headers }) => [
+      200,
+      { auth: headers.authorization, ct: headers["content-type"] },
+    ]);
+    const handle = mock.intercept();
+
+    const res = await fetch("http://localhost/api/data", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer tok",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    expect(await res.json()).toEqual({
+      auth: "Bearer tok",
+      ct: "application/json",
+    });
+
+    handle.restore();
+  });
+
   it("parses JSON body from fetch init", async () => {
     mock("POST /api/users", ({ body }) => [201, body]);
     const handle = mock.intercept();
@@ -154,6 +177,50 @@ describe("mock.intercept()", () => {
     });
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual({ name: "Alice" });
+
+    handle.restore();
+  });
+
+  it("intercepts fetch called with a Request object", async () => {
+    mock("GET /api/users", [{ id: 1, name: "Alice" }]);
+    const handle = mock.intercept();
+
+    const req = new Request("http://localhost/api/users");
+    const res = await fetch(req);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([{ id: 1, name: "Alice" }]);
+
+    handle.restore();
+  });
+
+  it("prefers init.headers over Request.headers", async () => {
+    mock("GET /api/data", ({ headers }) => [200, { val: headers["x-custom"] }]);
+    const handle = mock.intercept();
+
+    const req = new Request("http://localhost/api/data", {
+      headers: { "X-Custom": "from-request" },
+    });
+    const res = await fetch(req, {
+      headers: { "X-Custom": "from-init" },
+    });
+    expect(await res.json()).toEqual({ val: "from-init" });
+
+    handle.restore();
+  });
+
+  it("parses URLSearchParams body", async () => {
+    mock("POST /api/form", ({ body }) => [200, body]);
+    const handle = mock.intercept();
+
+    const params = new URLSearchParams();
+    params.set("name", "Alice");
+    params.set("role", "admin");
+
+    const res = await fetch("http://localhost/api/form", {
+      method: "POST",
+      body: params,
+    });
+    expect(await res.json()).toEqual({ name: "Alice", role: "admin" });
 
     handle.restore();
   });

@@ -48,7 +48,8 @@ function extractHeaders(
 ): Record<string, string> {
   const headers: Record<string, string> = {};
 
-  const raw = input instanceof Request ? input.headers : init?.headers;
+  const raw =
+    init?.headers ?? (input instanceof Request ? input.headers : undefined);
   if (!raw) return headers;
 
   if (raw instanceof Headers) {
@@ -57,10 +58,12 @@ function extractHeaders(
     });
   } else if (Array.isArray(raw)) {
     for (const [key, value] of raw) {
-      headers[key] = value;
+      headers[key.toLowerCase()] = value;
     }
   } else {
-    Object.assign(headers, raw);
+    for (const key of Object.keys(raw)) {
+      headers[key.toLowerCase()] = (raw as Record<string, string>)[key];
+    }
   }
 
   return headers;
@@ -73,11 +76,11 @@ async function extractBody(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<unknown> {
-  const rawBody = input instanceof Request ? input.body : init?.body;
-  if (rawBody === null || rawBody === undefined) return undefined;
+  // Per Fetch spec, init.body overrides Request.body when both are present
+  const bodyInit = init?.body ?? (input instanceof Request ? input.body : null);
+  if (bodyInit === null || bodyInit === undefined) return undefined;
 
   // String body — try to parse as JSON
-  const bodyInit = init?.body;
   if (typeof bodyInit === "string") {
     try {
       return JSON.parse(bodyInit);
@@ -86,8 +89,17 @@ async function extractBody(
     }
   }
 
+  // URLSearchParams — convert to key/value object
+  if (bodyInit instanceof URLSearchParams) {
+    const result: Record<string, string> = {};
+    bodyInit.forEach((value, key) => {
+      result[key] = value;
+    });
+    return result;
+  }
+
   // Request with body — clone and read
-  if (input instanceof Request && input.body) {
+  if (input instanceof Request && !init?.body && input.body) {
     try {
       return await input.clone().json();
     } catch {

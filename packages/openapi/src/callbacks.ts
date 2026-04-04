@@ -31,8 +31,11 @@ export function fireCallbacks(
       method: callback.method,
       headers: { "content-type": "application/json" },
       body: body !== undefined ? JSON.stringify(body) : undefined,
-    }).catch(() => {
-      // Silently ignore callback failures
+    }).catch((error: unknown) => {
+      console.warn(
+        `[@schmock/openapi] Callback ${callback.method} ${url} failed:`,
+        error instanceof Error ? error.message : error,
+      );
     });
   }
 }

@@ -1,5 +1,7 @@
 /// <reference path="../../core/schmock.d.ts" />
 
+import { version as packageVersion } from "../package.json";
+
 interface PaginationOptions {
   /** Default items per page (default: 10) */
   defaultLimit?: number;
@@ -40,7 +42,7 @@ interface QueryPluginOptions {
 export function queryPlugin(options: QueryPluginOptions): Schmock.Plugin {
   return {
     name: "query",
-    version: "1.0.0",
+    version: packageVersion,
 
     process(
       context: Schmock.PluginContext,

@@ -3,7 +3,7 @@
 The `@schmock/openapi` plugin parses an OpenAPI (or Swagger 2.0) spec and auto-registers routes with CRUD behavior, schema-generated responses, security validation, and more.
 
 ```sh
-npm install @schmock/openapi
+bun install @schmock/openapi
 ```
 
 ## Basic Usage

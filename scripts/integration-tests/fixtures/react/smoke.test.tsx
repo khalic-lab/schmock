@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React, { useEffect, useState, useCallback } from "react";
-import { schmock, notFound, noContent } from "@schmock/core";
+import { schmock, notFound } from "@schmock/core";
 import { SchmockProvider, useSchmock } from "@schmock/react";
 import { renderWithSchmock } from "@schmock/react/testing";
 

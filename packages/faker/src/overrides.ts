@@ -24,10 +24,9 @@ export function determineArrayCount(
   }
 
   if (schema.minItems !== undefined && schema.maxItems !== undefined) {
-    return (
-      Math.floor(random() * (schema.maxItems - schema.minItems + 1)) +
-      schema.minItems
-    );
+    const min = schema.minItems;
+    const max = Math.max(min, schema.maxItems);
+    return Math.floor(random() * (max - min + 1)) + min;
   }
 
   if (schema.minItems !== undefined) {

@@ -191,6 +191,59 @@ describe("Angular Adapter", () => {
       expect(mockNext.handle).toHaveBeenCalledWith(otherRequest);
     });
 
+    it("strips baseUrl prefix before passing path to mock.handle", async () => {
+      mockInstance.handle = vi
+        .fn()
+        .mockResolvedValue({ status: 200, body: "ok", headers: {} });
+
+      const InterceptorClass = createSchmockInterceptor(mockInstance, {
+        baseUrl: "/api",
+      });
+      const interceptor = new InterceptorClass();
+
+      const apiRequest = new HttpRequest("GET", "/api/users");
+      const mockNext: HttpHandler = { handle: vi.fn() };
+
+      await new Promise<void>((resolve) => {
+        interceptor
+          .intercept(apiRequest, mockNext)
+          .subscribe({ complete: resolve });
+      });
+
+      // Route path passed to handle should be '/users', not '/api/users'
+      expect(mockInstance.handle).toHaveBeenCalledWith(
+        "GET",
+        "/users",
+        expect.any(Object),
+      );
+    });
+
+    it("passes '/' when request path equals baseUrl exactly", async () => {
+      mockInstance.handle = vi
+        .fn()
+        .mockResolvedValue({ status: 200, body: "ok", headers: {} });
+
+      const InterceptorClass = createSchmockInterceptor(mockInstance, {
+        baseUrl: "/api",
+      });
+      const interceptor = new InterceptorClass();
+
+      const apiRequest = new HttpRequest("GET", "/api");
+      const mockNext: HttpHandler = { handle: vi.fn() };
+
+      await new Promise<void>((resolve) => {
+        interceptor
+          .intercept(apiRequest, mockNext)
+          .subscribe({ complete: resolve });
+      });
+
+      expect(mockInstance.handle).toHaveBeenCalledWith(
+        "GET",
+        "/",
+        expect.any(Object),
+      );
+    });
+
     it("uses custom error formatter", async () => {
       const error = new Error("Test error");
       mockInstance.handle = vi.fn().mockRejectedValue(error);

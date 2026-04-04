@@ -3,7 +3,7 @@
 Intercept Angular HTTP calls with Schmock. Unmatched requests pass through to the real backend.
 
 ```sh
-npm install @schmock/angular
+bun install @schmock/angular
 ```
 
 ## Basic Usage

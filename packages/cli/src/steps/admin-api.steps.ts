@@ -20,10 +20,9 @@ async function fetchJson(
   method: string,
   path: string,
 ): Promise<{ status: number; body: unknown }> {
-  const res = await fetch(
-    `http://${server.hostname}:${server.port}${path}`,
-    { method },
-  );
+  const res = await fetch(`http://${server.hostname}:${server.port}${path}`, {
+    method,
+  });
   const status = res.status;
   if (status === 204) return { status, body: undefined };
   const body: unknown = await res.json();
@@ -36,7 +35,11 @@ describeFeature(feature, ({ Scenario }) => {
     let response: { status: number; body: unknown };
 
     Given("a CLI server with admin enabled and a simple spec", async () => {
-      server = await createCliServer({ spec: simpleSpec as never, port: 0, admin: true });
+      server = await createCliServer({
+        spec: simpleSpec as never,
+        port: 0,
+        admin: true,
+      });
     });
 
     When('I request "GET /schmock-admin/routes"', async () => {
@@ -48,13 +51,16 @@ describeFeature(feature, ({ Scenario }) => {
       expect(response.status).toBe(200);
     });
 
-    And("the response body contains at least one route with method and path", () => {
-      expect(Array.isArray(response.body)).toBe(true);
-      const routes = response.body as Array<{ method: string; path: string }>;
-      expect(routes.length).toBeGreaterThan(0);
-      expect(routes[0]).toHaveProperty("method");
-      expect(routes[0]).toHaveProperty("path");
-    });
+    And(
+      "the response body contains at least one route with method and path",
+      () => {
+        expect(Array.isArray(response.body)).toBe(true);
+        const routes = response.body as Array<{ method: string; path: string }>;
+        expect(routes.length).toBeGreaterThan(0);
+        expect(routes[0]).toHaveProperty("method");
+        expect(routes[0]).toHaveProperty("path");
+      },
+    );
   });
 
   Scenario("Inspect server state", ({ Given, When, Then, And }) => {
@@ -62,7 +68,11 @@ describeFeature(feature, ({ Scenario }) => {
     let response: { status: number; body: unknown };
 
     Given("a CLI server with admin enabled and a simple spec", async () => {
-      server = await createCliServer({ spec: simpleSpec as never, port: 0, admin: true });
+      server = await createCliServer({
+        spec: simpleSpec as never,
+        port: 0,
+        admin: true,
+      });
     });
 
     When('I request "GET /schmock-admin/state"', async () => {
@@ -85,7 +95,11 @@ describeFeature(feature, ({ Scenario }) => {
     let response: { status: number; body: unknown };
 
     Given("a CLI server with admin enabled and a simple spec", async () => {
-      server = await createCliServer({ spec: simpleSpec as never, port: 0, admin: true });
+      server = await createCliServer({
+        spec: simpleSpec as never,
+        port: 0,
+        admin: true,
+      });
     });
 
     When('I send "POST /schmock-admin/reset"', async () => {
@@ -103,7 +117,11 @@ describeFeature(feature, ({ Scenario }) => {
     let response: { status: number; body: unknown };
 
     Given("a CLI server with admin enabled and a simple spec", async () => {
-      server = await createCliServer({ spec: simpleSpec as never, port: 0, admin: true });
+      server = await createCliServer({
+        spec: simpleSpec as never,
+        port: 0,
+        admin: true,
+      });
     });
 
     When("I make a request to the mock API", async () => {

@@ -283,6 +283,8 @@ export class CallableMockInstance {
   // ===== Reset / Lifecycle =====
 
   reset(): void {
+    this.interceptHandle?.restore();
+    this.interceptHandle = null;
     this.close();
     this.routes = [];
     this.staticRoutes.clear();
@@ -370,6 +372,7 @@ export class CallableMockInstance {
     if (!this.server) {
       return;
     }
+    this.server.closeAllConnections();
     this.server.close();
     this.server = undefined;
     this.serverInfo = undefined;

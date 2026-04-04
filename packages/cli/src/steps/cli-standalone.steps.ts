@@ -1,6 +1,6 @@
-import { resolve } from "node:path";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
 import type { CliServer } from "../cli";
@@ -23,40 +23,37 @@ describeFeature(feature, ({ Scenario }) => {
     return `http://${cliServer.hostname}:${cliServer.port}`;
   }
 
-  Scenario(
-    "Start server from a spec file",
-    ({ Given, When, Then, And }) => {
-      Given("I have a petstore spec file", () => {
-        specPath = resolve(fixturesDir, "petstore-openapi3.json");
-      });
+  Scenario("Start server from a spec file", ({ Given, When, Then, And }) => {
+    Given("I have a petstore spec file", () => {
+      specPath = resolve(fixturesDir, "petstore-openapi3.json");
+    });
 
-      When("I create a CLI server from the spec", async () => {
-        cliServer = await createCliServer({ spec: specPath, port: 0 });
-      });
+    When("I create a CLI server from the spec", async () => {
+      cliServer = await createCliServer({ spec: specPath, port: 0 });
+    });
 
-      Then("the CLI server should be running", () => {
-        expect(cliServer.port).toBeGreaterThan(0);
-      });
+    Then("the CLI server should be running", () => {
+      expect(cliServer.port).toBeGreaterThan(0);
+    });
 
-      When("I fetch {string} from the CLI server", async (_, route: string) => {
-        const [, path] = route.split(" ");
-        httpResponse = await fetch(`${baseUrl()}${path}`);
-      });
+    When("I fetch {string} from the CLI server", async (_, route: string) => {
+      const [, path] = route.split(" ");
+      httpResponse = await fetch(`${baseUrl()}${path}`);
+    });
 
-      Then("the CLI response status should be {int}", (_, status: number) => {
-        expect(httpResponse.status).toBe(status);
-      });
+    Then("the CLI response status should be {int}", (_, status: number) => {
+      expect(httpResponse.status).toBe(status);
+    });
 
-      And("the CLI response body should be an array", async () => {
-        const body = await httpResponse.json();
-        expect(Array.isArray(body)).toBe(true);
-      });
+    And("the CLI response body should be an array", async () => {
+      const body = await httpResponse.json();
+      expect(Array.isArray(body)).toBe(true);
+    });
 
-      When("I stop the CLI server", () => {
-        cliServer.close();
-      });
-    },
-  );
+    When("I stop the CLI server", () => {
+      cliServer.close();
+    });
+  });
 
   Scenario("Serve with seed data", ({ Given, When, And, Then }) => {
     Given("I have a petstore spec file", () => {
@@ -141,9 +138,7 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     Then("the CLI response should have CORS headers", () => {
-      expect(httpResponse.headers.get("access-control-allow-origin")).toBe(
-        "*",
-      );
+      expect(httpResponse.headers.get("access-control-allow-origin")).toBe("*");
     });
 
     When("I stop the CLI server", () => {
@@ -175,9 +170,7 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     And("the CLI response should have CORS headers", () => {
-      expect(httpResponse.headers.get("access-control-allow-origin")).toBe(
-        "*",
-      );
+      expect(httpResponse.headers.get("access-control-allow-origin")).toBe("*");
     });
 
     When("I stop the CLI server", () => {

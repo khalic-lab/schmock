@@ -113,4 +113,27 @@ describe("Standalone Server", () => {
     mock.close();
     expect(() => mock.close()).not.toThrow();
   });
+
+  it("close terminates keep-alive connections immediately", async () => {
+    mock = schmock();
+    mock("GET /test", { ok: true });
+    const info = await mock.listen(0);
+
+    // Make a keep-alive request to establish a persistent connection
+    const res = await fetch(`http://127.0.0.1:${info.port}/test`, {
+      headers: { connection: "keep-alive" },
+    });
+    expect(res.status).toBe(200);
+
+    // Close the server — should terminate all connections
+    mock.close();
+
+    // Subsequent request should fail immediately (not hang on keep-alive)
+    try {
+      await fetch(`http://127.0.0.1:${info.port}/test`);
+      expect.unreachable("Should have thrown");
+    } catch {
+      // Expected: connection refused
+    }
+  });
 });

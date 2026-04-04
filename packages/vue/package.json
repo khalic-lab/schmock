@@ -30,7 +30,7 @@
   "dependencies": {},
   "peerDependencies": {
     "@schmock/core": "^2.0.0",
-    "vue": "^3.3.0"
+    "vue": "^3.5.0"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^6.3.0",

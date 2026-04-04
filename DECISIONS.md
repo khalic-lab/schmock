@@ -79,3 +79,35 @@ Each framework adapter package (@schmock/react, @schmock/vue, @schmock/express, 
 ### D20: React test utilities published as @schmock/react/testing subpath (2026-04-01)
 
 renderWithSchmock and related test helpers require @testing-library/react, which should not be a mandatory dependency for all React adapter users. They are published under a /testing subpath export so the peer dependency is optional and only needed by users who import the test utilities.
+
+### D21: Integration runner must use `bun run test`, not `bun test`, for vitest packages (2026-04-01)
+
+When the integration test runner called `bun test` for the React and Vue fixtures, Bun used its built-in test runner, which ignores vitest.config.ts entirely — meaning no jsdom environment was injected. Every test that touched `document` or `@testing-library/react` crashed with `ReferenceError: document is not defined`. The runner was updated to call `bun run test` instead, which invokes the `test` script in package.json and goes through Vitest with the correct jsdom environment. Packages that use Bun's native runner (core, express) are unaffected.
+
+### D22: `extractHeaders` normalizes all header keys to lowercase (2026-04-02)
+
+In `@schmock/core`'s `mock.intercept()` implementation, `extractHeaders` now normalizes all header keys to lowercase across all three input formats (Headers instance, array of tuples, plain object). This matches the `Headers` Web API behavior and means handlers always read `headers.authorization`, never `headers.Authorization`. The Headers instance path already returned lowercase keys; the array and plain-object paths were updated to call `.toLowerCase()` on each key.
+
+### D23: E2E tests should simulate the first-install developer journey, not just API correctness (2026-04-01)
+
+After integration tests passed (4/4), the operator decided additional E2E coverage should mirror the realistic onboarding experience: what someone following the docs would actually build after a fresh install. The goal is confidence that a new user can install a package, wire it up following the standard pattern, and have it work — not just that the API surface is correct. The assistant began writing new test files targeting this "I just installed this, now what?" perspective.
+
+### D24: Todo CRUD as shared baseline across all adapter integration fixtures (2026-04-01)
+
+The operator asked to unify the integration fixtures around a common Todo CRUD scenario (load all todos, add a todo, toggle completion, delete, error handling on 4xx/5xx) so that each adapter can be compared on equal footing. The plan is to merge the basic and app-specific fixtures into a single fixture per adapter, with `testing-patterns` and `express-dev-proxy` retained as specialized extras. Fixture rewrite was started but the session ended mid-discussion about how to source the todo component implementations.
+
+### D25: Angular baseUrl strips prefix before routing (behavioral clarification) (2026-04-02)
+
+The Angular adapter's `baseUrl` option was documented to strip the prefix before passing the path to `mock.handle()` — e.g., a request to `/api/users` with `baseUrl: '/api'` should match a route registered as `GET /users`. The implementation was not doing this; it only used `baseUrl` as a filter. The code was corrected to strip the prefix: `const routePath = baseUrl ? path.slice(baseUrl.length) || '/' : path`. The docs were already correct; this fix aligns the implementation with the stated and intended behavior.
+
+### D26: renderWithSchmock uses RTL wrapper option for rerender provider preservation (2026-04-02)
+
+The original `renderWithSchmock` implementation wrapped the component by passing it as a child to `SchmockProvider` directly. This meant calling `result.rerender(newUi)` would not re-wrap in the provider, breaking the context for re-renders. The implementation was changed to use React Testing Library's `wrapper` option: `render(ui, { wrapper: ({ children }) => createElement(SchmockProvider, { mock, options }, children) })`. This ensures `rerender()` also wraps its argument in the provider automatically.
+
+### D27: extractBody prioritizes init.body over Request.body per Fetch spec (2026-04-02)
+
+When `fetch()` is called with a `Request` object as input and an `init` object with a `body` property, the Fetch specification states that `init.body` takes precedence over `input.body`. The `extractBody` function in the core interceptor was updated to check `init?.body` first before falling back to reading from the `Request` object's body stream. This is a spec-compliance fix that also avoids consuming a potentially already-read body stream.
+
+### D28: Full pre-publish audit conducted; critical and important issues fixed; deferred items tracked in AUDIT.md (2026-04-02)
+
+A six-reviewer audit of the entire repository was conducted before promotion. Reviewers covered: core package, all plugins, all framework adapters, CLI/docs/tests/config, silent failure patterns, and type system design. Seven critical and five important issues were identified and fixed in a team session (coder + test-writer + test-runner teammates). Twelve issues were resolved: CLI missing `.catch()`, angular baseUrl stripping, plugin version strings hardcoded at 1.x, OpenAPI callback silent failure, three `catch { return {} }` patterns in generators, four doc pages using `npm install`, `server.closeAllConnections()` for port leak, Express non-standard HTTP method passthrough, `renderWithSchmock` rerender fix, faker `minItems > maxItems` guard, and CLI invalid port validation. Remaining items (unbounded request history, duplicate parameterized route handling, regex escaping order, `isStatusTuple` ambiguity, AJV missing formats, type system improvements) are tracked in `AUDIT.md` as deferred work. All ~1,652 tests pass after fixes.

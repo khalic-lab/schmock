@@ -379,8 +379,11 @@ async function generateErrorResponse(
     try {
       const body = await generateFromSchema({ schema: errorSchema });
       return toTuple(status, body);
-    } catch {
-      // Fall through to default
+    } catch (error) {
+      console.warn(
+        `[@schmock/openapi] Error schema generation failed for status ${status}:`,
+        error instanceof Error ? error.message : error,
+      );
     }
   }
 
@@ -400,7 +403,11 @@ async function generateErrorResponse(
 async function generateWrapperSkeleton(schema: JSONSchema7): Promise<unknown> {
   try {
     return await generateFromSchema({ schema });
-  } catch {
+  } catch (error) {
+    console.warn(
+      "[@schmock/openapi] Wrapper skeleton generation failed:",
+      error instanceof Error ? error.message : error,
+    );
     return {};
   }
 }

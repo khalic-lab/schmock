@@ -212,12 +212,15 @@ export function createSchmockInterceptor(
         return next.handle(req);
       }
 
+      // Strip baseUrl prefix so routes match without it
+      const routePath = baseUrl ? path.slice(baseUrl.length) || "/" : path;
+
       // Extract request data using Angular's built-in params
       const query = extractQueryParams(req);
 
       let requestData = {
         method: toSafeHttpMethod(req.method),
-        path,
+        path: routePath,
         headers: headersToObject(req),
         body: req.body,
         query,

@@ -3,6 +3,7 @@
 import { isStatusTuple } from "@schmock/core";
 import Ajv, { type ValidateFunction } from "ajv";
 import type { JSONSchema7 } from "json-schema";
+import { version as packageVersion } from "../package.json";
 
 interface ValidationRules {
   request?: {
@@ -52,7 +53,7 @@ export function validationPlugin(
 
   return {
     name: "validation",
-    version: "1.0.0",
+    version: packageVersion,
 
     process(
       context: Schmock.PluginContext,

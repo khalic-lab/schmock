@@ -11,7 +11,7 @@ describe("Schema Plugin Integration", () => {
       });
       expect(validPlugin).toBeDefined();
       expect(validPlugin.name).toBe("faker");
-      expect(validPlugin.version).toBe("1.0.1");
+      expect(validPlugin.version).toBe("2.0.0");
 
       // Invalid schema should throw immediately
       expect(() => {
