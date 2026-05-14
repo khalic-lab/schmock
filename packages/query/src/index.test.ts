@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { version as packageVersion } from "../package.json";
 import { queryPlugin } from "./index";
 
 describe("queryPlugin", () => {
   it("creates a plugin with correct name", () => {
     const plugin = queryPlugin({ pagination: {} });
     expect(plugin.name).toBe("query");
-    expect(plugin.version).toBe("2.0.1");
+    expect(plugin.version).toBe(packageVersion);
   });
 
   it("passes through non-array responses", async () => {
