@@ -23,3 +23,7 @@ The assistant proposed complementing the Todo CRUD baseline with per-adapter tes
 Operator raised the question of whether to run a broader type-system code review targeting: duplicate type definitions across packages, inline/anonymous types that should be named, and unsafe `as` type assertions. Related to deferred AUDIT.md items T1–T9 but would go further into structural type hygiene. Not yet accepted or rejected.
 
 **Resolution:** Operator accepted with 'Good idea before publish.' Parallel agents were dispatched to scan the full codebase for type hygiene issues: duplicate type definitions across packages, inline/anonymous types that should be named, and unsafe `as` assertions. Results had not been returned at session end — the scan was in flight when the session closed.
+
+### Q6: Should plugin version assertions in tests be dynamic (read from package.json) rather than hardcoded?
+
+Version assertions hardcoded to '2.0.0' in faker, query, and validation test files broke immediately when bumping to 2.0.1. The same issue occurred at the prior audit (D28 fixed '1.x' hardcodes for 2.0.0). Each version bump requires a manual sweep of test files to update these strings or tests fail. A dynamic alternative — reading the version from the package's own package.json at test time — would survive all future bumps without edits. No decision was made this session; the strings were re-hardcoded to '2.0.1' as an expedient fix.
