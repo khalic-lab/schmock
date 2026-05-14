@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { version as packageVersion } from "../package.json";
 import { validationPlugin } from "./index";
 
 describe("validationPlugin", () => {
@@ -9,7 +10,7 @@ describe("validationPlugin", () => {
       },
     });
     expect(plugin.name).toBe("validation");
-    expect(plugin.version).toBe("2.0.1");
+    expect(plugin.version).toBe(packageVersion);
   });
 
   it("passes through non-matching requests", async () => {

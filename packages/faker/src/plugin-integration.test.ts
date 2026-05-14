@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { version as packageVersion } from "../package.json";
 import { fakerPlugin } from "./index";
 import { schemas, validators } from "./test-utils";
 
@@ -11,7 +12,7 @@ describe("Schema Plugin Integration", () => {
       });
       expect(validPlugin).toBeDefined();
       expect(validPlugin.name).toBe("faker");
-      expect(validPlugin.version).toBe("2.0.1");
+      expect(validPlugin.version).toBe(packageVersion);
 
       // Invalid schema should throw immediately
       expect(() => {

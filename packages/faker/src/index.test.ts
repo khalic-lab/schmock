@@ -1,5 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
+import { version as packageVersion } from "../package.json";
 import { fakerPlugin, generateFromSchema } from "./index";
 import {
   generate,
@@ -767,7 +768,7 @@ describe("Schema Generator", () => {
       });
 
       expect(plugin).toHaveProperty("name", "faker");
-      expect(plugin).toHaveProperty("version", "2.0.1");
+      expect(plugin).toHaveProperty("version", packageVersion);
       expect(plugin).toHaveProperty("process");
       expect(typeof plugin.process).toBe("function");
     });

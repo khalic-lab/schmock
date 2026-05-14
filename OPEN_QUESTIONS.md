@@ -24,6 +24,6 @@ Operator raised the question of whether to run a broader type-system code review
 
 **Resolution:** Operator accepted with 'Good idea before publish.' Parallel agents were dispatched to scan the full codebase for type hygiene issues: duplicate type definitions across packages, inline/anonymous types that should be named, and unsafe `as` assertions. Results had not been returned at session end — the scan was in flight when the session closed.
 
-### Q6: Should plugin version assertions in tests be dynamic (read from package.json) rather than hardcoded?
+### Q6: ~~Should plugin version assertions in tests be dynamic (read from package.json) rather than hardcoded?~~ — RESOLVED (2026-05-14)
 
-Version assertions hardcoded to '2.0.0' in faker, query, and validation test files broke immediately when bumping to 2.0.1. The same issue occurred at the prior audit (D28 fixed '1.x' hardcodes for 2.0.0). Each version bump requires a manual sweep of test files to update these strings or tests fail. A dynamic alternative — reading the version from the package's own package.json at test time — would survive all future bumps without edits. No decision was made this session; the strings were re-hardcoded to '2.0.1' as an expedient fix.
+Yes. The four hardcoded version assertions in `packages/faker/src/index.test.ts`, `packages/faker/src/plugin-integration.test.ts`, `packages/query/src/index.test.ts`, and `packages/validation/src/index.test.ts` now import `version` from `../package.json` and assert against it, mirroring how each plugin's source pulls its `version` field. Version bumps no longer require a manual test sweep.
