@@ -36,8 +36,8 @@
     "@schmock/openapi": "^2.0.0"
   },
   "devDependencies": {
-    "@amiceli/vitest-cucumber": "^6.3.0",
-    "@types/node": "^25.5.0",
-    "vitest": "^4.1.1"
+    "@amiceli/vitest-cucumber": "^6.5.0",
+    "@types/node": "^25.8.0",
+    "vitest": "^4.1.6"
   }
 }

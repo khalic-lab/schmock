@@ -24,7 +24,7 @@
     "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
   "devDependencies": {
-    "@types/node": "^25.5.0"
+    "@types/node": "^25.8.0"
   },
   "dependencies": {
     "@schmock/core": "^2.0.0",
