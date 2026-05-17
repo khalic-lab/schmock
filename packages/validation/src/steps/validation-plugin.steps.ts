@@ -265,4 +265,45 @@ describeFeature(feature, ({ Scenario }) => {
       expect(response.status).toBe(status);
     });
   });
+
+  const givenEmailFormatMock = () => {
+    mock = schmock();
+    mock("POST /users", ({ body }: any) => [201, body])
+      .pipe(validationPlugin({
+        request: {
+          body: {
+            type: "object",
+            properties: {
+              email: { type: "string", format: "email" },
+            },
+            required: ["email"],
+          },
+        },
+      }));
+  };
+
+  const whenPostingEmail = async (_: unknown, email: string) => {
+    response = await mock.handle("POST", "/users", {
+      body: { email },
+    });
+  };
+
+  Scenario("Email format validation rejects malformed strings", ({ Given, When, Then, And }) => {
+    Given("I create a mock validating email format on the email field", givenEmailFormatMock);
+    When("I send a POST with email {string}", whenPostingEmail);
+    Then("the status should be {int}", (_, status: number) => {
+      expect(response.status).toBe(status);
+    });
+    And("the response body should have error code {string}", (_, code: string) => {
+      expect(response.body.code).toBe(code);
+    });
+  });
+
+  Scenario("Email format validation accepts well-formed addresses", ({ Given, When, Then }) => {
+    Given("I create a mock validating email format on the email field", givenEmailFormatMock);
+    When("I send a POST with email {string}", whenPostingEmail);
+    Then("the status should be {int}", (_, status: number) => {
+      expect(response.status).toBe(status);
+    });
+  });
 });

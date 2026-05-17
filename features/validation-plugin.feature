@@ -50,3 +50,14 @@ Feature: Validation Plugin
     Given I create a validated mock with custom error status 422
     When I send an invalid request body
     Then the status should be 422
+
+  Scenario: Email format validation rejects malformed strings
+    Given I create a mock validating email format on the email field
+    When I send a POST with email "not-an-email"
+    Then the status should be 400
+    And the response body should have error code "REQUEST_VALIDATION_ERROR"
+
+  Scenario: Email format validation accepts well-formed addresses
+    Given I create a mock validating email format on the email field
+    When I send a POST with email "user@example.com"
+    Then the status should be 201
