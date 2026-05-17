@@ -1,7 +1,7 @@
 {
   "name": "@schmock/faker",
   "description": "Faker-powered automatic data generation for Schmock",
-  "version": "2.0.3",
+  "version": "2.1.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -34,7 +34,7 @@
     "json-schema-faker": "^0.6.1"
   },
   "peerDependencies": {
-    "@schmock/core": "^2.0.3"
+    "@schmock/core": "^2.1.0"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^6.5.0",
