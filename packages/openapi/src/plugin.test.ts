@@ -218,7 +218,9 @@ describe("openapi plugin", () => {
                     schema: {
                       $id: sharedId,
                       type: "object",
-                      properties: { name: { type: "string", minLength: minLen } },
+                      properties: {
+                        name: { type: "string", minLength: minLen },
+                      },
                       required: ["name"],
                     },
                   },
@@ -239,8 +241,12 @@ describe("openapi plugin", () => {
         await openapi({ spec: specBuilder(5) as any, validateRequests: true }),
       );
 
-      const resA = await mockA.handle("POST", "/users", { body: { name: "x" } });
-      const resB = await mockB.handle("POST", "/users", { body: { name: "x" } });
+      const resA = await mockA.handle("POST", "/users", {
+        body: { name: "x" },
+      });
+      const resB = await mockB.handle("POST", "/users", {
+        body: { name: "x" },
+      });
 
       expect(resA.status).toBeLessThan(400);
       expect(resB.status).toBe(400);
