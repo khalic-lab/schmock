@@ -166,10 +166,7 @@ export async function openapi(
 
       // 3. Request validation (if enabled)
       if (options.validateRequests) {
-        const validationResult = validateRequestBody(
-          context,
-          bodyValidatorCtx,
-        );
+        const validationResult = validateRequestBody(context, bodyValidatorCtx);
         if (validationResult) {
           return validationResult;
         }
