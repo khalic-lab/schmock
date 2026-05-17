@@ -143,3 +143,25 @@ Investigation triggered by the operator noticing only 95 integration tests revea
 ### D34: D33 complete: Angular integration fixture, React/Vue CI wiring, standalone plugin tests (2026-04-04)
 
 Three parallel agents resolved D33. Angular received a new integration fixture (previously had zero integration coverage anywhere in the repo). React and Vue fixtures that existed under scripts/integration-tests/fixtures/ but were not referenced by test:all were wired into the CI pipeline. Faker, validation, and query each received standalone integration test files exercising their API surfaces independently, rather than only being covered inside multi-plugin combination tests. Integration test count: 95 → 157 (+62). All 11 packages now have integration coverage. Committed as 2312232.
+
+### D35: 2.0.3 patch — Tier A audit fixes shipped (2026-05-17)
+
+After v2.0.2 (dep refresh) shipped, the operator asked for next steps. Verified that AUDIT.md was stale: of the 15 IMPORTANT items listed, 5 (I1/I6/I8/I9/I12) had silently been fixed in D28 but were still marked deferred. The remaining 10 were re-evaluated and split into three tiers:
+
+- **Tier A — patch 2.0.3** (this entry): 7 non-breaking correctness/reliability fixes shipped as one PR.
+- **Tier B — minor 2.1.0**: I3 (baseUrl → full URL handling, per operator), I7 (Express errorFormatter consistency), I13 (smoke tests for angular/validation/query).
+- **Tier C — new initiative**: Q1 examples/ apps, Q4 docs-as-tests.
+
+Tier A scope shipped in this release:
+
+1. **I11 (validation, ajv-formats)** — silent trust violation: `format: "email"` silently passed any string. Added ajv-formats dep, called `addFormats(ajv)`. Two new BDD scenarios.
+2. **I2 (core, duplicate routes)** — warning + staticRoutes dedup already existed (D28), but `this.routes.push` still added duplicates. Now returns early. New BDD scenario asserts `getRoutes()` is deduped.
+3. **I4 (core, requestHistory cap)** — new `GlobalConfig.maxHistorySize` option, opt-in FIFO eviction; defaults to unbounded so existing users see no change. Technically a minor-version feature in strict semver but bundled per operator sign-off.
+4. **I5 (core, parser)** — `:name.json` no longer swallows `.json`; param names restricted to `[A-Za-z0-9_-]+`; pattern build is now split → escape literal segments → substitute capture groups. Two regression tests.
+5. **I10 (faker, validateSchema perf)** — full-tree checks (circular, depth, deep-nesting-with-arrays, array-size-limits) gated on `path === "$"`. Per-node checks remain on every recursion. Legacy `$ref="#"` error message preserved by gating it too.
+6. **I15 (openapi, AJV per plugin)** — replaced module-level AJV singleton with `BodyValidatorContext` factory. Each `openapi()` call gets its own instance + schema cache; multi-spec processes no longer collide on `$id`. New plugin test exercises two plugins sharing `$id`.
+7. **I14 (core, isStatusTuple ambiguity)** — documented `[200, 300]`-as-data ambiguity in constants.ts JSDoc and docs/api.md. No code change.
+
+Also: backfilled the missing `v2.0.1` git tag (release history had a gap between v2.0.0 and v2.0.2). AUDIT.md updated inline to mark each resolved item.
+
+Open AUDIT items deferred to 2.1.0: I3 (baseUrl rename/expand), I7 (Express errorFormatter), I13 (smoke tests).
