@@ -2,6 +2,8 @@
 
 Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 
+> **Status as of 2026-05-17:** all CRITICAL items (C1–C7) fixed in D28. Of the IMPORTANT items, I1/I6/I8/I9/I12 were also fixed in D28 — marked `✓ RESOLVED` below. Remaining open items are scheduled for the 2.0.3 patch (see Tier A plan).
+
 ## CRITICAL — Must fix before publish
 
 ### C1: CLI missing `.catch()` on request promise chain
@@ -47,17 +49,17 @@ Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 
 ## IMPORTANT — Should fix before publish
 
-### I1: `server.close()` doesn't terminate keep-alive connections
+### I1: `server.close()` doesn't terminate keep-alive connections — ✓ RESOLVED (D28)
 - **Package:** `@schmock/core`
-- **File:** `packages/core/src/builder.ts:371-379`
+- **File:** `packages/core/src/builder.ts:375-376`
 - **Issue:** `http.Server.close()` stops accepting but doesn't close keep-alive connections. Port leaks in test suites. `close()` is sync but cleanup is async.
-- **Fix:** Call `server.closeAllConnections()` (Node 18.2+) before `server.close()`.
+- **Fix:** `closeAllConnections()` now called before `close()`.
 
-### I2: Duplicate parameterized routes silently ignored
+### I2: Duplicate parameterized routes — both still pushed to `this.routes`
 - **Package:** `@schmock/core`
-- **File:** `packages/core/src/builder.ts:133-162`
-- **Issue:** Registering `GET /users/:id` twice pushes both to the array. First always wins, second is a ghost. `getRoutes()` returns both, confusing users.
-- **Fix:** Find-and-replace existing route on duplicate, or throw.
+- **File:** `packages/core/src/builder.ts:133-153`
+- **Status:** Warning was added in D28 (`"Duplicate route: … — first registration wins"`) and `staticRoutes` Map already dedups. But `this.routes.push(compiledRoute)` on line 153 still adds the duplicate. `getRoutes()` returns ghost entries.
+- **Fix:** Skip the `this.routes.push` when `existing` is truthy.
 
 ### I3: `baseUrl` naming misleads — sounds like full URL, only matches pathname
 - **Package:** `@schmock/core`
@@ -77,11 +79,11 @@ Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 - **Issue:** Special chars escaped *before* `:param` replacement. Paths with dots/brackets near params can produce broken regex.
 - **Fix:** Replace params first, then escape remaining segments. Or validate param names are `[a-zA-Z0-9_]+`.
 
-### I6: Express throws on non-standard HTTP methods
+### I6: Express throws on non-standard HTTP methods — ✓ RESOLVED (D28)
 - **Package:** `@schmock/express`
-- **File:** `packages/express/src/index.ts:173`
-- **Issue:** `toHttpMethod()` throws on WebDAV methods (PROPFIND, LOCK). Express middleware returns 500 instead of calling `next()`.
-- **Fix:** Catch invalid method and `next()` through.
+- **File:** `packages/express/src/index.ts:152-154`
+- **Issue:** `toHttpMethod()` threw on WebDAV methods (PROPFIND, LOCK). Express middleware returned 500 instead of calling `next()`.
+- **Fix:** `toHttpMethod` is now called inside a try/catch that falls through to `next()`.
 
 ### I7: Express `errorFormatter` only fires for SchmockError
 - **Package:** `@schmock/express`
@@ -89,17 +91,17 @@ Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 - **Issue:** Regular errors from hooks bypass the formatter. Inconsistent with Angular adapter which formats all errors.
 - **Fix:** Call formatter for all errors, or document the restriction.
 
-### I8: React `renderWithSchmock` rerender lacks provider wrapping
+### I8: React `renderWithSchmock` rerender lacks provider wrapping — ✓ RESOLVED (D26, D28)
 - **Package:** `@schmock/react`
-- **File:** `packages/react/src/testing.ts:32`
-- **Issue:** Uses `render(createElement(...))` instead of RTL's `wrapper` option. `result.rerender()` won't re-wrap in provider.
-- **Fix:** Use `render(ui, { wrapper: ... })` pattern.
+- **File:** `packages/react/src/testing.ts:26-33`
+- **Issue:** Used `render(createElement(...))` instead of RTL's `wrapper` option. `result.rerender()` wouldn't re-wrap in provider.
+- **Fix:** Now uses `render(ui, { wrapper })` pattern so rerender re-wraps automatically.
 
-### I9: Faker `determineArrayCount` breaks on `minItems > maxItems`
+### I9: Faker `determineArrayCount` breaks on `minItems > maxItems` — ✓ RESOLVED (D28)
 - **Package:** `@schmock/faker`
-- **File:** `packages/faker/src/overrides.ts:26-31`
-- **Issue:** Negative range produces garbage counts, possibly negative numbers.
-- **Fix:** `const max = Math.max(min, schema.maxItems);`
+- **File:** `packages/faker/src/overrides.ts:28`
+- **Issue:** Negative range produced garbage counts, possibly negative numbers.
+- **Fix:** `const max = Math.max(min, schema.maxItems);` guard now in place.
 
 ### I10: Faker `validateSchema` is O(n^2+) on deep schemas
 - **Package:** `@schmock/faker`
@@ -113,11 +115,11 @@ Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 - **Issue:** `format: "email"` silently passes any string. Users expect format validation from a validation plugin.
 - **Fix:** Install `ajv-formats` and apply it, or document the limitation.
 
-### I12: CLI `--port foo` silently becomes random port
+### I12: CLI `--port foo` silently becomes random port — ✓ RESOLVED (D28)
 - **Package:** `@schmock/cli`
-- **File:** `packages/cli/src/cli.ts:209`
-- **Issue:** `Number("foo")` → NaN → Node treats as 0 (random port). No error message.
-- **Fix:** Validate port is a number in valid range, fail fast with error message.
+- **File:** `packages/cli/src/cli.ts:199-200`
+- **Issue:** `Number("foo")` → NaN → Node treated as 0 (random port). No error message.
+- **Fix:** `Number.isInteger(port) && port >= 0 && port <= 65535` validation now fails fast.
 
 ### I13: Missing smoke tests for 3 packages
 - **Files:** `scripts/smoke-tests/run-all.sh:83`
