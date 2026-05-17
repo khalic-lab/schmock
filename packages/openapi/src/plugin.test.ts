@@ -202,4 +202,48 @@ describe("openapi plugin", () => {
       expect(Array.isArray(body2) && body2.length).toBe(0);
     });
   });
+
+  describe("validator isolation", () => {
+    it("two plugins with overlapping schema $id values don't collide on AJV compile", async () => {
+      const sharedId = "https://example.com/schemas/user.json";
+      const specBuilder = (minLen: number) => ({
+        openapi: "3.0.0",
+        info: { title: "test", version: "1.0.0" },
+        paths: {
+          "/users": {
+            post: {
+              requestBody: {
+                content: {
+                  "application/json": {
+                    schema: {
+                      $id: sharedId,
+                      type: "object",
+                      properties: { name: { type: "string", minLength: minLen } },
+                      required: ["name"],
+                    },
+                  },
+                },
+              },
+              responses: { "201": { description: "created" } },
+            },
+          },
+        },
+      });
+
+      const mockA = schmock();
+      const mockB = schmock();
+      mockA.pipe(
+        await openapi({ spec: specBuilder(1) as any, validateRequests: true }),
+      );
+      mockB.pipe(
+        await openapi({ spec: specBuilder(5) as any, validateRequests: true }),
+      );
+
+      const resA = await mockA.handle("POST", "/users", { body: { name: "x" } });
+      const resB = await mockB.handle("POST", "/users", { body: { name: "x" } });
+
+      expect(resA.status).toBeLessThan(400);
+      expect(resB.status).toBe(400);
+    });
+  });
 });

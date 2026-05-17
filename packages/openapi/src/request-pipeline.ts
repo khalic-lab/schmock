@@ -182,8 +182,22 @@ export function processContentNegotiation(
   return undefined;
 }
 
-const ajv = new Ajv({ allErrors: true });
-const schemaCache = new WeakMap<object, import("ajv").ValidateFunction>();
+/**
+ * Per-plugin validator context. Each openapi() call creates its own
+ * AJV instance and schema cache so that loading multiple specs in the
+ * same process can't collide on duplicate \$id values.
+ */
+export interface BodyValidatorContext {
+  ajv: Ajv;
+  cache: WeakMap<object, import("ajv").ValidateFunction>;
+}
+
+export function createBodyValidatorContext(): BodyValidatorContext {
+  return {
+    ajv: new Ajv({ allErrors: true }),
+    cache: new WeakMap(),
+  };
+}
 
 /**
  * Validate request body against the spec's requestBody schema.
@@ -191,6 +205,7 @@ const schemaCache = new WeakMap<object, import("ajv").ValidateFunction>();
  */
 export function validateRequestBody(
   context: Schmock.PluginContext,
+  validatorCtx: BodyValidatorContext,
 ): Schmock.PluginResult | undefined {
   const requestBodySchema = getRouteRequestBody(context.route);
 
@@ -198,10 +213,10 @@ export function validateRequestBody(
     return undefined;
   }
 
-  let validate = schemaCache.get(requestBodySchema);
+  let validate = validatorCtx.cache.get(requestBodySchema);
   if (!validate) {
-    validate = ajv.compile(requestBodySchema);
-    schemaCache.set(requestBodySchema, validate);
+    validate = validatorCtx.ajv.compile(requestBodySchema);
+    validatorCtx.cache.set(requestBodySchema, validate);
   }
   if (!validate(context.body)) {
     const errors =
