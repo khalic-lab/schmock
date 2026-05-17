@@ -127,5 +127,22 @@ describe("parseRouteKey", () => {
       expect(match).toBeTruthy();
       expect(match?.[1]).toBe("report-2023.pdf");
     });
+
+    it("stops the param name at a literal '.' suffix and escapes the dot", () => {
+      const route = parseRouteKey("GET /files/:name.json");
+
+      expect(route.params).toEqual(["name"]);
+      expect("/files/report.json".match(route.pattern)?.[1]).toBe("report");
+      expect("/files/report.json2".match(route.pattern)).toBeNull();
+      expect("/files/reportXjson".match(route.pattern)).toBeNull();
+    });
+
+    it("treats parens around params as literal characters", () => {
+      const route = parseRouteKey("GET /items/(:id)");
+
+      expect(route.params).toEqual(["id"]);
+      expect("/items/(42)".match(route.pattern)?.[1]).toBe("42");
+      expect("/items/42".match(route.pattern)).toBeNull();
+    });
   });
 });

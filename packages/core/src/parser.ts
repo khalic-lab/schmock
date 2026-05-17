@@ -34,22 +34,24 @@ export function parseRouteKey(routeKey: string): ParsedRoute {
 
   const [, method, path] = match;
 
-  // Extract parameter names
+  // Parameter names are restricted to [A-Za-z0-9_-] so that surrounding
+  // literals (".json", brackets, parens, etc.) terminate the name and can
+  // be escaped without bleeding into the parameter regex. Build the
+  // pattern by splitting the path on the param marker, escaping each
+  // literal segment, then substituting the capture group for each :name.
   const params: string[] = [];
-  const paramPattern = /:([^/]+)/g;
-  let paramMatch: RegExpExecArray | null;
 
-  paramMatch = paramPattern.exec(path);
-  while (paramMatch !== null) {
-    params.push(paramMatch[1]);
-    paramMatch = paramPattern.exec(path);
-  }
-
-  // Build regex pattern for matching
-  // Replace :param with capture groups
   const regexPath = path
-    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&") // Escape special regex chars except :
-    .replace(/:([^/]+)/g, "([^/]+)"); // Replace :param with capture group
+    .split(/(:[a-zA-Z0-9_-]+)/g)
+    .map((segment) => {
+      const paramMatch = segment.match(/^:([a-zA-Z0-9_-]+)$/);
+      if (paramMatch) {
+        params.push(paramMatch[1]);
+        return "([^/]+)";
+      }
+      return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    })
+    .join("");
 
   const pattern = new RegExp(`^${regexPath}$`);
 
