@@ -248,4 +248,47 @@ describeFeature(feature, ({ Scenario }) => {
       );
     },
   );
+
+  Scenario(
+    "errorFormatter fires for non-SchmockError generator errors",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Express middleware with errorFormatter and a generator that throws a plain Error",
+        () => {
+          mock = schmock();
+          mock("GET /boom", () => {
+            throw new Error("kaboom");
+          });
+          middleware = toExpress(mock, {
+            errorFormatter: (error) => ({
+              formatted: true,
+              message: error.message,
+            }),
+          });
+        },
+      );
+
+      When("a request is made to {string}", async (_, request: string) => {
+        const [method, path] = request.split(" ");
+        const req = createMockReq(method, path);
+        res = createMockRes();
+        next = vi.fn();
+        await middleware(req, res, next);
+      });
+
+      Then(
+        "the Express response should have status {int}",
+        (_, status: number) => {
+          expect(res.status).toHaveBeenCalledWith(status);
+        },
+      );
+
+      And("the Express response body should be the formatter output", () => {
+        expect(res.json).toHaveBeenCalledWith({
+          formatted: true,
+          message: "kaboom",
+        });
+      });
+    },
+  );
 });

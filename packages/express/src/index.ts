@@ -201,12 +201,34 @@ export function toExpress(
         }
       }
 
+      // Auto-route schmock's internal 500 ({ error, code }) through
+      // errorFormatter so the formatter sees every error path, not just
+      // those caught here. Mirrors the Angular adapter behaviour.
+      if (
+        errorFormatter &&
+        schmockResponse.status === 500 &&
+        schmockResponse.body !== null &&
+        typeof schmockResponse.body === "object" &&
+        "error" in schmockResponse.body &&
+        "code" in schmockResponse.body
+      ) {
+        const respBody = schmockResponse.body as Record<string, unknown>;
+        const errMsg =
+          typeof respBody.error === "string" ? respBody.error : "Unknown error";
+        const formatted = errorFormatter(new Error(errMsg), req);
+        res.status(500).json(formatted);
+        return;
+      }
+
       // Convert and send Schmock response
       schmockToExpressResponse(schmockResponse, res);
     } catch (error) {
       // Handle errors based on configuration
-      if (error instanceof SchmockError && errorFormatter) {
-        const formatted = errorFormatter(error, req);
+      if (errorFormatter) {
+        // Fires for any Error from the handler/pipeline, not just
+        // SchmockError — matches the Angular adapter's behavior.
+        const err = error instanceof Error ? error : new Error(String(error));
+        const formatted = errorFormatter(err, req);
         res.status(500).json(formatted);
       } else if (passErrorsToNext) {
         next(error);

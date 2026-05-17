@@ -40,3 +40,9 @@ Feature: Express Adapter
     When a request is made to "GET /custom"
     Then the Express response should have status 200
     And the Express response should have header "x-custom" with value "value"
+
+  Scenario: errorFormatter fires for non-SchmockError generator errors
+    Given I create an Express middleware with errorFormatter and a generator that throws a plain Error
+    When a request is made to "GET /boom"
+    Then the Express response should have status 500
+    And the Express response body should be the formatter output
