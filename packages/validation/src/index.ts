@@ -2,6 +2,7 @@
 
 import { isStatusTuple } from "@schmock/core";
 import Ajv, { type ValidateFunction } from "ajv";
+import addFormats from "ajv-formats";
 import type { JSONSchema7 } from "json-schema";
 import { version as packageVersion } from "../package.json";
 
@@ -31,6 +32,7 @@ export function validationPlugin(
 
   // Pre-compile all validators at plugin creation time
   const ajv = new Ajv({ allErrors: true });
+  addFormats(ajv);
   const validators: {
     requestBody?: ValidateFunction;
     requestQuery?: ValidateFunction;
