@@ -165,3 +165,17 @@ Tier A scope shipped in this release:
 Also: backfilled the missing `v2.0.1` git tag (release history had a gap between v2.0.0 and v2.0.2). AUDIT.md updated inline to mark each resolved item.
 
 Open AUDIT items deferred to 2.1.0: I3 (baseUrl rename/expand), I7 (Express errorFormatter), I13 (smoke tests).
+
+### D36: 2.1.0 minor — Tier B audit fixes shipped (2026-05-17)
+
+Tier B from the post-2.0.2 audit plan closed. Three items, all behavioural/test changes that don't break existing path-form usage but add new capability/coverage:
+
+1. **I3 (core + angular, origin-form baseUrl)** — operator's choice from the original tier presentation was "full URL handling seems better DX". Both the fetch interceptor and the Angular HTTP interceptor now parse `baseUrl` into origin + path. Path-form (`/api`) keeps prior pathname-prefix semantics. Origin-form (`https://api.example.com[/v1]`) requires matching origin and, when a path is present, matching pathname prefix. Relative-URL requests don't match an origin-form base. Two BDD scenarios added.
+
+2. **I7 (express, errorFormatter coverage)** — formerly the formatter only fired for `SchmockError` raised from the catch block. Generator throws, which schmock catches internally and returns as `{ code, error }` 500 responses, bypassed it. Now: catch block routes any `Error`, and before sending a response, schmock's internal 500 `{ error, code }` shape is detected and re-rendered through the formatter. Matches the Angular adapter behaviour. New BDD scenario.
+
+3. **I13 (smoke tests for angular/validation/query)** — `scripts/smoke-tests/run-all.sh` previously skipped these three (`ALL_PACKAGES` listed 8 of 11). Minimal install-from-npm fixtures added. Validation fixture covers the new ajv-formats wiring shipped in 2.0.3 (asserts `format: "email"` actually rejects). All 11 smoke fixtures now pass against the published artifacts.
+
+Bumped to minor (not patch) because I3 changes behaviour for users who passed an origin-form `baseUrl` (previously silently ignored, now actually intercepts). I7 is a strict expansion — formatter sees strictly more error paths than before.
+
+All AUDIT.md IMPORTANT items (I1–I15) are now resolved. No items deferred to 3.x.
