@@ -255,4 +255,22 @@ describeFeature(feature, ({ Scenario }) => {
       expect(mock.callCount()).toBe(0);
     });
   });
+
+  Scenario("maxHistorySize bounds the history with FIFO eviction", ({ Given, When, Then }) => {
+    Given("I create a mock with maxHistorySize {int} and a users route", (_, maxHistorySize: number) => {
+      mock = schmock({ maxHistorySize });
+      mock("GET /users", []);
+    });
+
+    When("I issue {int} requests to {string}", async (_, count: number, request: string) => {
+      const [method, path] = request.split(" ");
+      for (let i = 0; i < count; i++) {
+        await mock.handle(method as any, path);
+      }
+    });
+
+    Then("the call count should be {int}", (_, expected: number) => {
+      expect(mock.callCount()).toBe(expected);
+    });
+  });
 });

@@ -70,3 +70,8 @@ Feature: Request History & Spy API
     When I request "GET /nonexistent"
     Then the mock should not have been called
     And the call count should be 0
+
+  Scenario: maxHistorySize bounds the history with FIFO eviction
+    Given I create a mock with maxHistorySize 3 and a users route
+    When I issue 5 requests to "GET /users"
+    Then the call count should be 3
