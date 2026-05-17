@@ -137,38 +137,41 @@ export function validateSchema(schema: JSONSchema7, path = "$"): void {
     }
   }
 
-  // Check for circular references
-  if (hasCircularReference(schema)) {
-    throw new SchemaValidationError(
-      path,
-      "Schema contains circular references which are not supported",
-    );
-  }
+  // Full-tree integrity checks are O(n) each, so only run them once at the
+  // top of the recursion. Running them at every node turns validation into
+  // O(n²) on deep schemas without finding anything the top-level pass misses.
+  // The self-ref/$ref="#" check is part of this group so that an inner $ref
+  // is reported as "circular references" (caught by hasCircularReference at
+  // the root), matching the legacy error message.
+  if (path === "$") {
+    if (hasCircularReference(schema)) {
+      throw new SchemaValidationError(
+        path,
+        "Schema contains circular references which are not supported",
+      );
+    }
 
-  // Check nesting depth
-  const depth = calculateNestingDepth(schema);
-  if (depth > MAX_NESTING_DEPTH) {
-    throw new ResourceLimitError(
-      "schema_nesting_depth",
-      MAX_NESTING_DEPTH,
-      depth,
-    );
-  }
+    if (schema.$ref === "#") {
+      throw new SchemaValidationError(
+        path,
+        "Self-referencing schemas are not supported",
+      );
+    }
 
-  // Check for dangerous combination of deep nesting + large arrays
-  if (depth >= DEEP_NESTING_THRESHOLD) {
-    checkForDeepNestingWithArrays(schema, path);
-  }
+    const depth = calculateNestingDepth(schema);
+    if (depth > MAX_NESTING_DEPTH) {
+      throw new ResourceLimitError(
+        "schema_nesting_depth",
+        MAX_NESTING_DEPTH,
+        depth,
+      );
+    }
 
-  // Check for potentially dangerous array sizes in schema definition
-  checkArraySizeLimits(schema, path);
+    if (depth >= DEEP_NESTING_THRESHOLD) {
+      checkForDeepNestingWithArrays(schema, path);
+    }
 
-  // Check for forbidden features
-  if (schema.$ref === "#") {
-    throw new SchemaValidationError(
-      path,
-      "Self-referencing schemas are not supported",
-    );
+    checkArraySizeLimits(schema, path);
   }
 }
 
