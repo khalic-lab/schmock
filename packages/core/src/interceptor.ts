@@ -46,7 +46,10 @@ function extractOrigin(url: string): string | null {
  * Trailing slash is stripped from the path so the segment-boundary check
  * works the same way for "/api" and "/api/".
  */
-function parseBaseUrl(baseUrl: string): { origin: string | null; path: string } {
+function parseBaseUrl(baseUrl: string): {
+  origin: string | null;
+  path: string;
+} {
   if (baseUrl.includes("://")) {
     try {
       const parsed = new URL(baseUrl);
