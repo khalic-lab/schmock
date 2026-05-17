@@ -183,4 +183,22 @@ describeFeature(feature, ({ Scenario }) => {
     });
   });
 
+  Scenario("Duplicate routes are not duplicated in getRoutes()", ({ Given, When, Then }) => {
+    let routesList: ReturnType<typeof mock.getRoutes>;
+
+    Given("I create a mock with two routes on {string} with different data", (_, route: string) => {
+      mock = schmock();
+      mock(route as Schmock.RouteKey, [{ id: 1 }]);
+      mock(route as Schmock.RouteKey, [{ id: 2 }]);
+    });
+
+    When("I call getRoutes", () => {
+      routesList = mock.getRoutes();
+    });
+
+    Then("only one route entry is returned", () => {
+      expect(routesList).toHaveLength(1);
+    });
+  });
+
 });

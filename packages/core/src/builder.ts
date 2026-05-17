@@ -129,7 +129,7 @@ export class CallableMockInstance {
     // Parse the route key to create pattern and extract parameters
     const parsed = parseRouteKey(route);
 
-    // Check for duplicate routes
+    // Check for duplicate routes — first registration wins, subsequent ones are dropped
     const existing = this.routes.find(
       (r) => r.method === parsed.method && r.path === parsed.path,
     );
@@ -138,6 +138,7 @@ export class CallableMockInstance {
         "warning",
         `Duplicate route: ${route} — first registration wins`,
       );
+      return this;
     }
 
     // Compile the route
@@ -153,12 +154,9 @@ export class CallableMockInstance {
     this.routes.push(compiledRoute);
 
     // Store static routes (no params) in Map for O(1) lookup
-    // Only store the first registration — "first registration wins" semantics
     if (parsed.params.length === 0) {
       const key = `${parsed.method} ${normalizePath(parsed.path)}`;
-      if (!this.staticRoutes.has(key)) {
-        this.staticRoutes.set(key, compiledRoute);
-      }
+      this.staticRoutes.set(key, compiledRoute);
     }
 
     this.logger.log("route", `Route defined: ${route}`, {

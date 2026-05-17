@@ -61,3 +61,8 @@ Feature: Developer Experience
       [{ "id": 1 }]
       """
 
+  Scenario: Duplicate routes are not duplicated in getRoutes()
+    Given I create a mock with two routes on "GET /items" with different data
+    When I call getRoutes
+    Then only one route entry is returned
+
