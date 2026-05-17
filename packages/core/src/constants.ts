@@ -54,6 +54,11 @@ export function isRouteNotFound(response: {
 /**
  * Check if a value is a status tuple: [status, body] or [status, body, headers]
  * Guards against misinterpreting numeric arrays like [1, 2, 3] as tuples.
+ *
+ * Known ambiguity: a length-2 numeric array whose first element happens to
+ * be in the HTTP-status range (e.g. [200, 300] as legitimate data) is
+ * indistinguishable from a status tuple by shape alone. Prefer the explicit
+ * status() helper or return an object response when the data could collide.
  */
 export function isStatusTuple(
   value: unknown,

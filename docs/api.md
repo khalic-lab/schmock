@@ -154,6 +154,12 @@ type ResponseResult =
   | [number, unknown, Record<string, string>]       // [status, body, headers]
 ```
 
+> **Ambiguity:** a plain length-2 numeric array whose first element falls in
+> the HTTP-status range (100–599) — e.g. `[200, 300]` as a coordinate pair —
+> is indistinguishable from a `[status, body]` tuple by shape. If your data
+> can match that shape, wrap it (`{ value: [200, 300] }`) or return it as a
+> single-element array.
+
 ### Plugin Interface
 
 ```typescript
