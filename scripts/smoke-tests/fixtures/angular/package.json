@@ -1,0 +1,13 @@
+{
+  "name": "smoke-angular",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@schmock/core": "^2.0.0",
+    "@schmock/angular": "^2.0.0",
+    "@angular/common": "^21.0.0",
+    "@angular/compiler": "^21.0.0",
+    "@angular/core": "^21.0.0",
+    "rxjs": "^7.8.2"
+  }
+}
