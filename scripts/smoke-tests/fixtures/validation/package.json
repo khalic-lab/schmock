@@ -1,0 +1,9 @@
+{
+  "name": "smoke-validation",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@schmock/core": "^2.0.0",
+    "@schmock/validation": "^2.0.0"
+  }
+}

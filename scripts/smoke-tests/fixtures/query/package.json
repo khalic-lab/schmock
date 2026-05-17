@@ -1,0 +1,9 @@
+{
+  "name": "smoke-query",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@schmock/core": "^2.0.0",
+    "@schmock/query": "^2.0.0"
+  }
+}

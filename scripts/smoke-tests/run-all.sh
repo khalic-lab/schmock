@@ -80,7 +80,7 @@ run_test() {
 }
 
 # All testable packages
-ALL_PACKAGES=(core faker express react vue openapi cli schmock)
+ALL_PACKAGES=(core faker express angular validation query react vue openapi cli schmock)
 
 # Filter by args or run all
 if [[ $# -gt 0 ]]; then
