@@ -115,6 +115,11 @@ declare namespace Schmock {
     debug?: boolean;
     /** Initial shared state object */
     state?: Record<string, unknown>;
+    /**
+     * Maximum number of requests retained in history (FIFO eviction).
+     * Defaults to unbounded; set this to cap memory growth in long-running servers.
+     */
+    maxHistorySize?: number;
   }
 
   /**

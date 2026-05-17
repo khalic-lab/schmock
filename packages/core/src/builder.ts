@@ -562,7 +562,7 @@ export class CallableMockInstance {
       // Apply delay (route-level overrides global)
       await this.applyDelay(matchedRoute.config.delay);
 
-      // Record request in history
+      // Record request in history (FIFO-bounded when maxHistorySize is set)
       this.requestHistory.push({
         method,
         path: requestPath,
@@ -573,6 +573,17 @@ export class CallableMockInstance {
         timestamp: Date.now(),
         response: { status: response.status, body: response.body },
       });
+      const maxHistorySize = this.globalConfig.maxHistorySize;
+      if (
+        typeof maxHistorySize === "number" &&
+        maxHistorySize >= 0 &&
+        this.requestHistory.length > maxHistorySize
+      ) {
+        this.requestHistory.splice(
+          0,
+          this.requestHistory.length - maxHistorySize,
+        );
+      }
 
       this.emit("request:end", {
         method,
