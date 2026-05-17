@@ -2,7 +2,7 @@
 
 Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 
-> **Status as of 2026-05-17:** all CRITICAL items (C1–C7) fixed in D28. Of the IMPORTANT items, I1/I6/I8/I9/I12 were fixed in D28, and I2/I4/I5/I10/I11/I14/I15 were fixed in the 2.0.3 patch (D35). I3, I7, and I13 remain open and are scheduled for the 2.1.0 minor.
+> **Status as of 2026-05-17:** all CRITICAL items (C1–C7) fixed in D28. All IMPORTANT items now resolved: I1/I6/I8/I9/I12 in D28, I2/I4/I5/I10/I11/I14/I15 in 2.0.3 (D35), and I3/I7/I13 in 2.1.0 (D36).
 
 ## CRITICAL — Must fix before publish
 
@@ -60,11 +60,11 @@ Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 - **File:** `packages/core/src/builder.ts:133-153`
 - **Status:** D28 added the warning and dedup in `staticRoutes`. 2.0.3 now also returns early before `this.routes.push`, so `getRoutes()` no longer reports ghost entries.
 
-### I3: `baseUrl` naming misleads — sounds like full URL, only matches pathname
-- **Package:** `@schmock/core`
-- **File:** `packages/core/src/interceptor.ts:153-155`, `schmock.d.ts:429`
-- **Issue:** User passes `baseUrl: "https://api.example.com"`, nothing is intercepted because comparison is against pathname only.
-- **Fix:** Rename to `basePath` in docs/types, or handle full URL comparison when protocol is present.
+### I3: `baseUrl` naming misleads — sounds like full URL, only matches pathname — ✓ RESOLVED (2.1.0)
+- **Package:** `@schmock/core`, `@schmock/angular`
+- **File:** `packages/core/src/interceptor.ts:155-185`, `packages/angular/src/index.ts:202-232`, `schmock.d.ts:433-447`
+- **Issue:** Passing `baseUrl: "https://api.example.com"` silently intercepted nothing because the comparison was pathname-only.
+- **Fix:** Both adapters now parse the option into origin + path. Path-form (`/api`) keeps current behavior. Origin-form (`https://api.example.com[/v1]`) requires matching origin AND, when a path is present, matching path prefix. Two BDD scenarios added.
 
 ### I4: Unbounded `requestHistory` — memory leak — ✓ RESOLVED (2.0.3)
 - **Package:** `@schmock/core`
@@ -84,11 +84,11 @@ Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 - **Issue:** `toHttpMethod()` threw on WebDAV methods (PROPFIND, LOCK). Express middleware returned 500 instead of calling `next()`.
 - **Fix:** `toHttpMethod` is now called inside a try/catch that falls through to `next()`.
 
-### I7: Express `errorFormatter` only fires for SchmockError
+### I7: Express `errorFormatter` only fires for SchmockError — ✓ RESOLVED (2.1.0)
 - **Package:** `@schmock/express`
-- **File:** `packages/express/src/index.ts:220-222`
-- **Issue:** Regular errors from hooks bypass the formatter. Inconsistent with Angular adapter which formats all errors.
-- **Fix:** Call formatter for all errors, or document the restriction.
+- **File:** `packages/express/src/index.ts:196-237`
+- **Issue:** Generator-throw 500s (which schmock catches internally and returns as `{ code, error }` 500 responses) bypassed the formatter, and the catch-block path only fired for `SchmockError`. Inconsistent with Angular.
+- **Fix:** Catch block now routes any `Error`; before sending a response, the middleware also detects schmock's internal 500 `{ error, code }` shape and re-renders it through the formatter. Matches Angular behavior. New BDD scenario.
 
 ### I8: React `renderWithSchmock` rerender lacks provider wrapping — ✓ RESOLVED (D26, D28)
 - **Package:** `@schmock/react`
@@ -120,10 +120,10 @@ Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 - **Issue:** `Number("foo")` → NaN → Node treated as 0 (random port). No error message.
 - **Fix:** `Number.isInteger(port) && port >= 0 && port <= 65535` validation now fails fast.
 
-### I13: Missing smoke tests for 3 packages
-- **Files:** `scripts/smoke-tests/run-all.sh:83`
-- **Issue:** `angular`, `validation`, `query` have no smoke test fixtures.
-- **Fix:** Create minimal fixtures and add to ALL_PACKAGES.
+### I13: Missing smoke tests for 3 packages — ✓ RESOLVED (2.1.0)
+- **Files:** `scripts/smoke-tests/run-all.sh:83`, `scripts/smoke-tests/fixtures/{angular,validation,query}/`
+- **Issue:** `angular`, `validation`, `query` had no smoke test fixtures; `ALL_PACKAGES` listed 8 of 11 published packages.
+- **Fix:** Added fixtures for each — validation exercises the format keyword (confirms ajv-formats wiring in the published artifact), query exercises pagination/filter/sort, angular instantiates the interceptor and runs a matched + unmatched request. All 11 fixtures now pass.
 
 ### I14: `isStatusTuple` misidentifies numeric arrays as tuples — ✓ DOCUMENTED (2.0.3)
 - **Package:** `@schmock/core`
