@@ -2,7 +2,7 @@
 
 Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 
-> **Status as of 2026-05-17:** all CRITICAL items (C1–C7) fixed in D28. Of the IMPORTANT items, I1/I6/I8/I9/I12 were also fixed in D28 — marked `✓ RESOLVED` below. Remaining open items are scheduled for the 2.0.3 patch (see Tier A plan).
+> **Status as of 2026-05-17:** all CRITICAL items (C1–C7) fixed in D28. Of the IMPORTANT items, I1/I6/I8/I9/I12 were fixed in D28, and I2/I4/I5/I10/I11/I14/I15 were fixed in the 2.0.3 patch (D35). I3, I7, and I13 remain open and are scheduled for the 2.1.0 minor.
 
 ## CRITICAL — Must fix before publish
 
@@ -55,11 +55,10 @@ Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 - **Issue:** `http.Server.close()` stops accepting but doesn't close keep-alive connections. Port leaks in test suites. `close()` is sync but cleanup is async.
 - **Fix:** `closeAllConnections()` now called before `close()`.
 
-### I2: Duplicate parameterized routes — both still pushed to `this.routes`
+### I2: Duplicate parameterized routes — both still pushed to `this.routes` — ✓ RESOLVED (2.0.3)
 - **Package:** `@schmock/core`
 - **File:** `packages/core/src/builder.ts:133-153`
-- **Status:** Warning was added in D28 (`"Duplicate route: … — first registration wins"`) and `staticRoutes` Map already dedups. But `this.routes.push(compiledRoute)` on line 153 still adds the duplicate. `getRoutes()` returns ghost entries.
-- **Fix:** Skip the `this.routes.push` when `existing` is truthy.
+- **Status:** D28 added the warning and dedup in `staticRoutes`. 2.0.3 now also returns early before `this.routes.push`, so `getRoutes()` no longer reports ghost entries.
 
 ### I3: `baseUrl` naming misleads — sounds like full URL, only matches pathname
 - **Package:** `@schmock/core`
@@ -67,17 +66,17 @@ Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 - **Issue:** User passes `baseUrl: "https://api.example.com"`, nothing is intercepted because comparison is against pathname only.
 - **Fix:** Rename to `basePath` in docs/types, or handle full URL comparison when protocol is present.
 
-### I4: Unbounded `requestHistory` — memory leak
+### I4: Unbounded `requestHistory` — memory leak — ✓ RESOLVED (2.0.3)
 - **Package:** `@schmock/core`
 - **File:** `packages/core/src/builder.ts:567`
-- **Issue:** Every request pushed with no size limit. CLI server running for hours will eat memory.
-- **Fix:** Add optional `maxHistorySize` config with FIFO eviction.
+- **Issue:** Every request pushed with no size limit. CLI server running for hours would eat memory.
+- **Fix:** Added `GlobalConfig.maxHistorySize` (opt-in, defaults to unbounded). When set, history is FIFO-evicted past the cap.
 
-### I5: Regex escaping order in `parseRouteKey`
+### I5: Regex escaping order in `parseRouteKey` — ✓ RESOLVED (2.0.3)
 - **Package:** `@schmock/core`
-- **File:** `packages/core/src/parser.ts:50-54`
-- **Issue:** Special chars escaped *before* `:param` replacement. Paths with dots/brackets near params can produce broken regex.
-- **Fix:** Replace params first, then escape remaining segments. Or validate param names are `[a-zA-Z0-9_]+`.
+- **File:** `packages/core/src/parser.ts:42-56`
+- **Issue:** Special chars were escaped *before* `:param` replacement, so paths with dots/brackets near params produced broken regex (e.g. `:name.json` swallowed `.json` into the param name).
+- **Fix:** New approach splits the path on the param token, escapes each literal segment in place, and substitutes the capture group only where a token actually appears. Param names restricted to `[A-Za-z0-9_-]+`.
 
 ### I6: Express throws on non-standard HTTP methods — ✓ RESOLVED (D28)
 - **Package:** `@schmock/express`
@@ -103,17 +102,17 @@ Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 - **Issue:** Negative range produced garbage counts, possibly negative numbers.
 - **Fix:** `const max = Math.max(min, schema.maxItems);` guard now in place.
 
-### I10: Faker `validateSchema` is O(n^2+) on deep schemas
+### I10: Faker `validateSchema` is O(n^2+) on deep schemas — ✓ RESOLVED (2.0.3)
 - **Package:** `@schmock/faker`
-- **File:** `packages/faker/src/validation.ts:28-173`
-- **Issue:** Full-tree traversals (`hasCircularReference`, `calculateNestingDepth`, `checkForDeepNestingWithArrays`) run on every recursive call.
-- **Fix:** Run expensive checks only at top level (`path === "$"`).
+- **File:** `packages/faker/src/validation.ts:140-173`
+- **Issue:** Full-tree traversals (`hasCircularReference`, `calculateNestingDepth`, `checkForDeepNestingWithArrays`, `checkArraySizeLimits`) ran on every recursive call.
+- **Fix:** Gated those four checks (plus the self-ref `$ref` check, for legacy error-message compatibility) on `path === "$"`. Per-node validations still run on every recursive call.
 
-### I11: Validation plugin — AJV missing `ajv-formats`
+### I11: Validation plugin — AJV missing `ajv-formats` — ✓ RESOLVED (2.0.3)
 - **Package:** `@schmock/validation`
-- **File:** `packages/validation/src/index.ts:32`
-- **Issue:** `format: "email"` silently passes any string. Users expect format validation from a validation plugin.
-- **Fix:** Install `ajv-formats` and apply it, or document the limitation.
+- **File:** `packages/validation/src/index.ts:32-34`
+- **Issue:** `format: "email"` (and every other AJV format keyword) silently passed any string. A silent trust violation in a plugin called "validation".
+- **Fix:** Added `ajv-formats` as a dependency and call `addFormats(ajv)` after constructing the AJV instance. New BDD scenarios cover the malformed-rejected and well-formed-accepted paths.
 
 ### I12: CLI `--port foo` silently becomes random port — ✓ RESOLVED (D28)
 - **Package:** `@schmock/cli`
@@ -126,14 +125,14 @@ Full-repo review by 6 independent agents. Findings deduplicated and prioritized.
 - **Issue:** `angular`, `validation`, `query` have no smoke test fixtures.
 - **Fix:** Create minimal fixtures and add to ALL_PACKAGES.
 
-### I14: `isStatusTuple` misidentifies numeric arrays as tuples
+### I14: `isStatusTuple` misidentifies numeric arrays as tuples — ✓ DOCUMENTED (2.0.3)
 - **Package:** `@schmock/core`
-- **File:** `packages/core/src/constants.ts:58-68`
+- **File:** `packages/core/src/constants.ts:54-68`, `docs/api.md:156-160`
 - **Issue:** `[200, 300]` (legitimate data) detected as status tuple `{ status: 200, body: 300 }`.
-- **Fix:** Document the edge case. Consider requiring explicit `status()` helper for disambiguation.
+- **Fix:** Documented the edge case in the constants.ts JSDoc and in docs/api.md, recommending users wrap the array or restructure data that could collide. No code change.
 
-### I15: OpenAPI module-level AJV singleton — `$id` conflicts across specs
+### I15: OpenAPI module-level AJV singleton — `$id` conflicts across specs — ✓ RESOLVED (2.0.3)
 - **Package:** `@schmock/openapi`
-- **File:** `packages/openapi/src/request-pipeline.ts:185`
-- **Issue:** Shared AJV instance throws on duplicate `$id` when loading multiple specs.
-- **Fix:** Create per-plugin AJV instance or strip `$id` in normalizer.
+- **File:** `packages/openapi/src/request-pipeline.ts:185-202`
+- **Issue:** Shared AJV instance threw on duplicate `$id` when loading multiple specs in the same process.
+- **Fix:** Introduced `BodyValidatorContext` (AJV + schema cache) and `createBodyValidatorContext()`. Each `openapi()` call now builds its own context, threaded through `validateRequestBody`. Plugin-level test exercises two plugins sharing a `$id`.
