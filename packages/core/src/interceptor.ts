@@ -25,6 +25,42 @@ function extractPathname(url: string): string {
 }
 
 /**
+ * Extract origin (scheme + host + port) from a URL string, or null for
+ * relative URLs that don't carry one.
+ */
+function extractOrigin(url: string): string | null {
+  if (!url.includes("://")) return null;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse the user-supplied baseUrl option into its origin and path parts.
+ * - "/api"                  → { origin: null, path: "/api" }
+ * - "https://x.com/api/v1"  → { origin: "https://x.com", path: "/api/v1" }
+ * - "https://x.com"         → { origin: "https://x.com", path: "" }
+ *
+ * Trailing slash is stripped from the path so the segment-boundary check
+ * works the same way for "/api" and "/api/".
+ */
+function parseBaseUrl(baseUrl: string): { origin: string | null; path: string } {
+  if (baseUrl.includes("://")) {
+    try {
+      const parsed = new URL(baseUrl);
+      const rawPath = parsed.pathname;
+      const path = rawPath === "/" ? "" : rawPath.replace(/\/$/, "");
+      return { origin: parsed.origin, path };
+    } catch {
+      // Fall through to path-only handling
+    }
+  }
+  return { origin: null, path: baseUrl.replace(/\/$/, "") };
+}
+
+/**
  * Extract query parameters from a URL string.
  */
 function extractQuery(url: string): Record<string, string> {
@@ -150,16 +186,25 @@ export function createFetchInterceptor(
 
     const path = extractPathname(urlString);
 
-    // BaseUrl filter — non-matching requests go straight to real fetch
-    // Enforce segment boundary: /api must not match /apiv2
+    // BaseUrl filter — non-matching requests go straight to real fetch.
+    // Two modes:
+    //   - origin form ("https://api.example.com/v1"): require matching
+    //     origin AND matching path prefix.
+    //   - path form ("/api"): match pathname prefix only.
+    // Both enforce a segment boundary so "/api" doesn't match "/apiv2".
     if (baseUrl) {
-      const normalizedBase = baseUrl.endsWith("/")
-        ? baseUrl.slice(0, -1)
-        : baseUrl;
-      const isMatch =
-        path === normalizedBase || path.startsWith(`${normalizedBase}/`);
-      if (!isMatch) {
-        return originalFetch(input, init);
+      const { origin: baseOrigin, path: basePath } = parseBaseUrl(baseUrl);
+      if (baseOrigin) {
+        const reqOrigin = extractOrigin(urlString);
+        if (reqOrigin !== baseOrigin) {
+          return originalFetch(input, init);
+        }
+      }
+      if (basePath) {
+        const isMatch = path === basePath || path.startsWith(`${basePath}/`);
+        if (!isMatch) {
+          return originalFetch(input, init);
+        }
       }
     }
 

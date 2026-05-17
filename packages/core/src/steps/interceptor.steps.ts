@@ -130,6 +130,60 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     });
   });
 
+  Scenario("Origin-form baseUrl intercepts matching origin only", ({ Given, When, Then, And }) => {
+    Given("a Schmock instance with route \"GET /api/users\" returning users", () => {
+      setup();
+      mock("GET /api/users", [{ id: 1 }]);
+    });
+
+    And("fetch is intercepted with baseUrl \"https://api.example.com\"", () => {
+      handle = mock.intercept({ baseUrl: "https://api.example.com" });
+    });
+
+    When("I fetch \"https://api.example.com/api/users\"", async () => {
+      fetchResponse = await fetch("https://api.example.com/api/users");
+    });
+
+    Then("the response status should be {int}", (_, status: number) => {
+      expect(fetchResponse?.status).toBe(status);
+    });
+
+    When("I fetch \"https://other.example.com/api/users\"", async () => {
+      await fetch("https://other.example.com/api/users");
+    });
+
+    Then("the original fetch should have been called", () => {
+      expect(savedFetch).toHaveBeenCalled();
+    });
+  });
+
+  Scenario("Origin-form baseUrl with a path prefix requires both to match", ({ Given, When, Then, And }) => {
+    Given("a Schmock instance with route \"GET /v1/users\" returning users", () => {
+      setup();
+      mock("GET /v1/users", [{ id: 1 }]);
+    });
+
+    And("fetch is intercepted with baseUrl \"https://api.example.com/v1\"", () => {
+      handle = mock.intercept({ baseUrl: "https://api.example.com/v1" });
+    });
+
+    When("I fetch \"https://api.example.com/v1/users\"", async () => {
+      fetchResponse = await fetch("https://api.example.com/v1/users");
+    });
+
+    Then("the response status should be {int}", (_, status: number) => {
+      expect(fetchResponse?.status).toBe(status);
+    });
+
+    When("I fetch \"https://api.example.com/users\"", async () => {
+      await fetch("https://api.example.com/users");
+    });
+
+    Then("the original fetch should have been called", () => {
+      expect(savedFetch).toHaveBeenCalled();
+    });
+  });
+
   Scenario("beforeRequest hook modifies the request", ({ Given, When, Then, And }) => {
     Given("a Schmock instance with route \"GET /api/users\" that reads headers", () => {
       setup();

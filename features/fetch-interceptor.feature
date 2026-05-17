@@ -34,6 +34,22 @@ Feature: Fetch Interceptor
     When I fetch "/other/endpoint"
     Then the original fetch should have been called
 
+  Scenario: Origin-form baseUrl intercepts matching origin only
+    Given a Schmock instance with route "GET /api/users" returning users
+    And fetch is intercepted with baseUrl "https://api.example.com"
+    When I fetch "https://api.example.com/api/users"
+    Then the response status should be 200
+    When I fetch "https://other.example.com/api/users"
+    Then the original fetch should have been called
+
+  Scenario: Origin-form baseUrl with a path prefix requires both to match
+    Given a Schmock instance with route "GET /v1/users" returning users
+    And fetch is intercepted with baseUrl "https://api.example.com/v1"
+    When I fetch "https://api.example.com/v1/users"
+    Then the response status should be 200
+    When I fetch "https://api.example.com/users"
+    Then the original fetch should have been called
+
   Scenario: beforeRequest hook modifies the request
     Given a Schmock instance with route "GET /api/users" that reads headers
     And fetch is intercepted with a beforeRequest hook that adds a header

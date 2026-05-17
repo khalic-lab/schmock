@@ -160,6 +160,40 @@ function extractPathname(url: string): string {
 }
 
 /**
+ * Extract origin from a URL string, or null for relative URLs.
+ */
+function extractOrigin(url: string): string | null {
+  if (!url.includes("://")) return null;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse a baseUrl option into its origin + path parts. Path-only inputs
+ * keep current "pathname prefix" semantics; origin-form inputs require the
+ * request's origin to match too.
+ */
+function parseBaseUrl(baseUrl: string): {
+  origin: string | null;
+  path: string;
+} {
+  if (baseUrl.includes("://")) {
+    try {
+      const parsed = new URL(baseUrl);
+      const rawPath = parsed.pathname;
+      const path = rawPath === "/" ? "" : rawPath.replace(/\/$/, "");
+      return { origin: parsed.origin, path };
+    } catch {
+      // Fall through to path-only handling
+    }
+  }
+  return { origin: null, path: baseUrl.replace(/\/$/, "") };
+}
+
+/**
  * Convert Angular headers to plain object
  */
 function headersToObject(request: HttpRequest<any>): Record<string, string> {
@@ -199,13 +233,29 @@ export function createSchmockInterceptor(
       // Extract pathname from URL (handles full URLs like http://localhost:4200/api/users)
       const path = extractPathname(req.url);
 
-      // Check if we should intercept this request
-      if (baseUrl && !path.startsWith(baseUrl)) {
-        return next.handle(req);
+      // baseUrl filter. Path-form keeps current "pathname prefix + strip"
+      // semantics. Origin-form additionally requires the request's origin
+      // to match — relative-URL requests with no origin won't match an
+      // origin-form base.
+      let effectiveBasePath = "";
+      if (baseUrl) {
+        const { origin: baseOrigin, path: basePath } = parseBaseUrl(baseUrl);
+        if (baseOrigin) {
+          const reqOrigin = extractOrigin(req.url);
+          if (reqOrigin !== baseOrigin) {
+            return next.handle(req);
+          }
+        }
+        if (basePath && !path.startsWith(basePath)) {
+          return next.handle(req);
+        }
+        effectiveBasePath = basePath;
       }
 
-      // Strip baseUrl prefix so routes match without it
-      const routePath = baseUrl ? path.slice(baseUrl.length) || "/" : path;
+      // Strip baseUrl path prefix so routes match without it
+      const routePath = effectiveBasePath
+        ? path.slice(effectiveBasePath.length) || "/"
+        : path;
 
       // Extract request data using Angular's built-in params
       const query = extractQueryParams(req);

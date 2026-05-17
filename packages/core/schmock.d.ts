@@ -431,7 +431,19 @@ declare namespace Schmock {
   }
 
   interface InterceptOptions {
-    /** Only intercept URLs whose pathname starts with this prefix */
+    /**
+     * Only intercept URLs matching this base.
+     *
+     * Two modes:
+     * - Path form ("/api"): match request pathnames whose prefix is the
+     *   base path (with a segment-boundary check, so "/api" never
+     *   matches "/apiv2").
+     * - Origin form ("https://api.example.com" or
+     *   "https://api.example.com/v1"): require the request origin to
+     *   match the base origin AND, if a base path is present, the
+     *   request pathname to start with it. Relative-URL fetches
+     *   (no origin) won't match an origin-form base.
+     */
     baseUrl?: string;
     /** Pass unmatched routes to real fetch (default: true) */
     passthrough?: boolean;
