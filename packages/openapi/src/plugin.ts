@@ -13,6 +13,7 @@ import {
 import type { ParsedPath } from "./parser.js";
 import { parseSpec } from "./parser.js";
 import {
+  createBodyValidatorContext,
   processContentNegotiation,
   processPreferHeader,
   validateRequestBody,
@@ -66,6 +67,10 @@ export async function openapi(
   // Security scheme lookup
   const securitySchemes = spec.securitySchemes;
   const globalSecurity = spec.globalSecurity;
+
+  // Per-plugin AJV instance so multiple openapi() plugins in the same
+  // process can't collide on duplicate \$id values from their specs.
+  const bodyValidatorCtx = createBodyValidatorContext();
 
   return {
     name: "@schmock/openapi",
@@ -161,7 +166,10 @@ export async function openapi(
 
       // 3. Request validation (if enabled)
       if (options.validateRequests) {
-        const validationResult = validateRequestBody(context);
+        const validationResult = validateRequestBody(
+          context,
+          bodyValidatorCtx,
+        );
         if (validationResult) {
           return validationResult;
         }
