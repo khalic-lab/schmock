@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "schmock": "./dist/bin.js"
+    "schmock": "dist/bin.js"
   },
   "files": [
     "dist"
