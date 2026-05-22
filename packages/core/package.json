@@ -20,7 +20,7 @@
   "scripts": {
     "build": "bun build:lib && bun build:types",
     "build:lib": "bun build --minify --target node --outdir=dist src/index.ts",
-    "build:types": "rm -f tsconfig.tsbuildinfo && tsc --build",
+    "build:types": "rm -f tsconfig.tsbuildinfo && tsc --build && node scripts/embed-ambient-types.js",
     "pretest": "rm -f src/*.js src/*.d.ts || true",
     "test": "vitest",
     "test:watch": "vitest --watch",
