@@ -1,6 +1,5 @@
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
-import { NULLABLE_NULL_PROBABILITY } from "./constants";
 import { generateFromSchema } from "./index";
 
 /**
