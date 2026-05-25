@@ -33,7 +33,7 @@
     "@types/node": "^25.8.0",
     "express": "^5.2.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.7"
   },
   "peerDependencies": {
     "@schmock/core": "^2.1.2",
