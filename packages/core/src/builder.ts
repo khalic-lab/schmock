@@ -1,5 +1,4 @@
 import type { Server } from "node:http";
-import { createServer } from "node:http";
 import { normalizePath, toHttpMethod } from "./constants.js";
 import {
   errorMessage,
@@ -321,6 +320,17 @@ export class CallableMockInstance {
       );
     }
 
+    // Lazy-load node:http so browser bundles never pull it in. See issue #395.
+    return import("node:http").then(({ createServer }) =>
+      this.#startHttpServer(createServer, port, hostname),
+    );
+  }
+
+  #startHttpServer(
+    createServer: typeof import("node:http").createServer,
+    port: number,
+    hostname: string,
+  ): Promise<Schmock.ServerInfo> {
     const httpServer = createServer((req, res) => {
       const handleRequest = async () => {
         const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
