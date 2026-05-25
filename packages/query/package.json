@@ -35,6 +35,6 @@
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^6.5.0",
     "@types/node": "^25.8.0",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.7"
   }
 }
