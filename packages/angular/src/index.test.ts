@@ -459,7 +459,7 @@ describe("Angular Adapter", () => {
 
       expect(provider).toEqual({
         provide: HTTP_INTERCEPTORS,
-        useClass: expect.any(Function),
+        useFactory: expect.any(Function),
         multi: true,
       });
     });
@@ -471,8 +471,19 @@ describe("Angular Adapter", () => {
       });
 
       expect(provider.provide).toBe(HTTP_INTERCEPTORS);
-      expect(provider.useClass).toBeDefined();
+      expect(provider.useFactory).toBeDefined();
       expect(provider.multi).toBe(true);
+    });
+
+    // Regression: a runtime-generated @Injectable() class can't be AOT-compiled,
+    // so `useClass` throws NG0204 ("needs JIT compiler") in apps without
+    // @angular/compiler. The provider must use `useFactory` + manual `new`.
+    it("uses useFactory (not useClass) so it works under AOT", () => {
+      const provider = provideSchmockInterceptor(mockInstance);
+
+      expect("useClass" in provider).toBe(false);
+      const interceptor = provider.useFactory();
+      expect(typeof interceptor.intercept).toBe("function");
     });
   });
 });

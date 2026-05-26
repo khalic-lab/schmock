@@ -420,9 +420,15 @@ export function provideSchmockInterceptor(
   mock: Schmock.CallableMockInstance,
   options?: AngularAdapterOptions,
 ) {
+  // `createSchmockInterceptor` builds the @Injectable() class at runtime, so
+  // ngc never sees it. `useClass` would force Angular to compile it via DI,
+  // which needs @angular/compiler — absent in AOT apps → NG0204 "needs JIT
+  // compiler". `useFactory` + manual `new` sidesteps DI entirely; the class
+  // has no injected constructor deps, so instantiation is complete.
+  const Interceptor = createSchmockInterceptor(mock, options);
   return {
     provide: HTTP_INTERCEPTORS,
-    useClass: createSchmockInterceptor(mock, options),
+    useFactory: () => new Interceptor(),
     multi: true,
   };
 }
@@ -479,12 +485,14 @@ export async function provideSchmockInterceptorFromSpec(
   openapiOptions: Schmock.OpenApiOptions,
   adapterOptions?: AngularAdapterOptions,
 ) {
+  // See `provideSchmockInterceptor` — `useFactory` keeps this AOT-safe.
+  const Interceptor = await createSchmockInterceptorFromSpec(
+    openapiOptions,
+    adapterOptions,
+  );
   return {
     provide: HTTP_INTERCEPTORS,
-    useClass: await createSchmockInterceptorFromSpec(
-      openapiOptions,
-      adapterOptions,
-    ),
+    useFactory: () => new Interceptor(),
     multi: true,
   };
 }

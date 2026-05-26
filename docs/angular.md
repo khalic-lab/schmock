@@ -107,7 +107,10 @@ const InterceptorClass = await createSchmockInterceptorFromSpec(
 )
 
 providers: [
-  { provide: HTTP_INTERCEPTORS, useClass: InterceptorClass, multi: true },
+  // useFactory (not useClass): the interceptor class is generated at runtime,
+  // so AOT apps without @angular/compiler can't DI-compile it. Manual `new`
+  // avoids that — the class has no injected constructor deps.
+  { provide: HTTP_INTERCEPTORS, useFactory: () => new InterceptorClass(), multi: true },
 ]
 ```
 
@@ -161,12 +164,14 @@ describe('UserService', () => {
     mock = schmock()
     mock('GET /api/users', [{ id: 1, name: 'Alice' }])
 
+    const SchmockInterceptor = createSchmockInterceptor(mock)
+
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(withInterceptorsFromDi()),
         {
           provide: HTTP_INTERCEPTORS,
-          useClass: createSchmockInterceptor(mock),
+          useFactory: () => new SchmockInterceptor(),
           multi: true,
         },
       ],
