@@ -1273,6 +1273,9 @@ describe("stress: scalar-galaxy.yaml — BREAD operations", () => {
     );
 
     // Auth endpoints — non-CRUD static
+    // Status codes come from the OpenAPI spec, not a 200 default. See
+    // scalar-galaxy.yaml: POST /user/signup → 201, POST /auth/token → 201,
+    // GET /me → 200, POST /planets/{id}/image → 200, POST /celestial-bodies → 201.
     const signup = await mock.handle("POST", "/user/signup", {
       body: {
         name: "Astronaut",
@@ -1280,12 +1283,12 @@ describe("stress: scalar-galaxy.yaml — BREAD operations", () => {
         password: "s3cr3t",
       },
     });
-    expect(signup.status).toBe(200);
+    expect(signup.status).toBe(201);
 
     const token = await mock.handle("POST", "/auth/token", {
       body: { email: "astro@galaxy.com", password: "s3cr3t" },
     });
-    expect(token.status).toBe(200);
+    expect(token.status).toBe(201);
 
     const me = await mock.handle("GET", "/me");
     expect(me.status).toBe(200);
@@ -1298,7 +1301,7 @@ describe("stress: scalar-galaxy.yaml — BREAD operations", () => {
     const celestial = await mock.handle("POST", "/celestial-bodies", {
       body: { name: "Phobos", type: "moon" },
     });
-    expect(celestial.status).toBe(200);
+    expect(celestial.status).toBe(201);
   });
 
   it("gas giants vs terrestrial planets maintain type integrity", async () => {
@@ -1839,7 +1842,7 @@ describe("stress: realistic E2E flows", () => {
     const mock = schmock({ state: {} });
     mock.pipe(await openapi({ spec: scalarGalaxySpec }));
 
-    // 1. Signup
+    // 1. Signup — spec declares 201 Created
     const signup = await mock.handle("POST", "/user/signup", {
       body: {
         name: "Explorer",
@@ -1847,13 +1850,13 @@ describe("stress: realistic E2E flows", () => {
         password: "stars123",
       },
     });
-    expect(signup.status).toBe(200);
+    expect(signup.status).toBe(201);
 
-    // 2. Get token
+    // 2. Get token — spec declares 201 Created
     const token = await mock.handle("POST", "/auth/token", {
       body: { email: "explorer@galaxy.com", password: "stars123" },
     });
-    expect(token.status).toBe(200);
+    expect(token.status).toBe(201);
 
     // 3. Create a planet
     const created = await mock.handle("POST", "/planets", {

@@ -51,8 +51,12 @@ describe("generators — schema failure warnings", () => {
       "Schema too deep",
     );
 
-    // Falls back to empty object
-    expect(result).toEqual({});
+    // Falls back to a tuple [status, {}] so the spec-declared status (200 here,
+    // since the parsedPath has only a 200 response) is preserved through
+    // parseResponse — returning raw {} would let parseResponse think it was a
+    // schmock fallback and *not* flip its 200→204 conversion for null bodies,
+    // but tuple form is the established contract for spec-driven generators.
+    expect(result).toEqual([200, {}]);
   });
 
   it("returns empty object as fallback but does not swallow silently", async () => {
