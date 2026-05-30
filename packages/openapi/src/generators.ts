@@ -299,12 +299,17 @@ export function createStaticGenerator(
   seed?: number,
   onSchema?: OnSchemaCallback,
 ): Schmock.GeneratorFunction {
-  // Get the success response schema
+  // Get the success response schema and track which status code it came from
+  // so we can return it as a tuple — otherwise parseResponse will flip 200 -> 204
+  // when generation produces null (possible for degenerate schemas like
+  // { allOf: [] } where any value is a valid output).
   let responseSchema: JSONSchema7 | undefined;
+  let responseStatus = 200;
   for (const code of [200, 201]) {
     const resp = parsedPath.responses.get(code);
     if (resp?.schema) {
       responseSchema = resp.schema;
+      responseStatus = code;
       break;
     }
   }
@@ -312,6 +317,7 @@ export function createStaticGenerator(
     for (const [code, resp] of parsedPath.responses) {
       if (code >= 200 && code < 300 && resp.schema) {
         responseSchema = resp.schema;
+        responseStatus = code;
         break;
       }
     }
@@ -331,13 +337,14 @@ export function createStaticGenerator(
         if (patched) schema = patched;
       }
       try {
-        return await generateFromSchema({ schema, seed });
+        const body = await generateFromSchema({ schema, seed });
+        return toTuple(responseStatus, body);
       } catch (error) {
         console.warn(
           `[@schmock/openapi] Schema generation failed for ${parsedPath.method} ${parsedPath.path}:`,
           error instanceof Error ? error.message : error,
         );
-        return {};
+        return toTuple(responseStatus, {});
       }
     }
     return toTuple(200, {});
