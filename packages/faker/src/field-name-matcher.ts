@@ -110,11 +110,17 @@ export function findBestMapping(
   }
 
   // Skip if schema already has pattern, enum, faker, or $ref constraint
+  // Also skip string mappings when minLength/maxLength is set — name-based
+  // mappings (e.g. lorem.word for "label") don't honor JSON Schema length
+  // constraints, so they'd produce out-of-range strings ~20% of the time.
+  // Mirrors the numeric constraint skip just below.
   if (
     schemaAny.pattern ||
     schemaAny.enum ||
     schemaAny.faker ||
-    schemaAny.$ref
+    schemaAny.$ref ||
+    (schemaType === "string" &&
+      (schema.minLength !== undefined || schema.maxLength !== undefined))
   ) {
     return undefined;
   }
