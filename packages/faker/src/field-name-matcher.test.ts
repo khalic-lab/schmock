@@ -228,6 +228,46 @@ describe("findBestMapping", () => {
       const result = findBestMapping("email", schema);
       expect(result).toBeUndefined();
     });
+
+    // Regression: name-based mappings (e.g. lorem.word for 'label') don't
+    // honor JSON Schema length constraints, so they'd produce out-of-range
+    // strings ~20% of the time when the schema asked for a specific length.
+    // Skip the mapping and let json-schema-faker generate a length-respecting
+    // string instead. Mirrors the numeric constraint skip in the loop below.
+    it("skips string mapping when schema has minLength", () => {
+      const result = findBestMapping("label", {
+        type: "string",
+        minLength: 3,
+      });
+      expect(result).toBeUndefined();
+    });
+
+    it("skips string mapping when schema has maxLength", () => {
+      const result = findBestMapping("label", {
+        type: "string",
+        maxLength: 20,
+      });
+      expect(result).toBeUndefined();
+    });
+
+    it("skips string mapping when both length constraints are set", () => {
+      const result = findBestMapping("label", {
+        type: "string",
+        minLength: 3,
+        maxLength: 20,
+      });
+      expect(result).toBeUndefined();
+    });
+
+    it("does not skip non-string types when minLength happens to be set", () => {
+      // minLength is a string-only keyword; on a non-string schema it's
+      // meaningless. The number mapping for 'age' should still apply.
+      const result = findBestMapping("age", {
+        type: "number",
+        minLength: 3, // nonsensical on a number, but shouldn't block the mapping
+      } as any);
+      expect(result).toBeDefined();
+    });
   });
 
   it("does not map unrecognized fields", () => {
