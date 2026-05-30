@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+# Cancel in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Run all checks in parallel using matrix strategy
+  check:
+    name: ${{ matrix.task }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # Don't cancel other jobs if one fails
+      matrix:
+        task: [lint, typecheck, test-unit, test-bdd, test-integration, build]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better git operations
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13  # Match local dev version
+
+      # Cache dependencies only (not build outputs)
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+          key: deps-${{ runner.os }}-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Build packages for tasks that need built artifacts
+      - name: Build packages
+        if: matrix.task == 'test-unit' || matrix.task == 'test-bdd' || matrix.task == 'test-integration'
+        run: bun run build
+
+      - name: Run ${{ matrix.task }}
+        run: |
+          case "${{ matrix.task }}" in
+            lint)
+              echo "::group::Running linter"
+              bun run lint
+              echo "::endgroup::"
+              ;;
+            typecheck)
+              echo "::group::Running type check"
+              bun run typecheck
+              echo "::endgroup::"
+              ;;
+            test-unit)
+              echo "::group::Running unit tests"
+              bun run test:unit
+              echo "::endgroup::"
+              ;;
+            test-bdd)
+              echo "::group::Running BDD tests"
+              if [[ "${{ github.base_ref }}" == "main" ]]; then
+                bun run test:bdd
+              else
+                bun run test:bdd || {
+                  echo "::warning::BDD tests failed (allowed during TDD on non-main branches)"
+                  exit 0
+                }
+              fi
+              echo "::endgroup::"
+              ;;
+            test-integration)
+              echo "::group::Running integration tests"
+              bun run test:integration
+              echo "::endgroup::"
+              ;;
+            build)
+              echo "::group::Building packages"
+              bun run build
+              echo "::endgroup::"
+              ;;
+          esac
+
+  # Summary job for branch protection rules
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [check]
+    if: always()
+    steps:
+      - name: Check CI results
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "❌ CI failed — some checks did not pass"
+            exit 1
+          else
+            echo "✅ All CI checks passed"
+          fi
