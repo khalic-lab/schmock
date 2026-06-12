@@ -28,14 +28,14 @@
     },
     "packages/angular": {
       "name": "@schmock/angular",
-      "version": "2.1.5",
+      "version": "2.1.6",
       "devDependencies": {
         "@angular/common": "^21.2.13",
         "@angular/compiler": "^21.2.13",
         "@angular/core": "^21.2.13",
         "@angular/platform-browser": "^21.2.13",
         "@angular/platform-browser-dynamic": "^21.2.13",
-        "@schmock/openapi": "^2.1.5",
+        "@schmock/openapi": "^2.1.6",
         "@types/node": "^25.8.0",
         "typescript": "^6.0.3",
         "vitest": "^4.1.7",
@@ -44,8 +44,8 @@
       "peerDependencies": {
         "@angular/common": ">=15.0.0 <22.0.0",
         "@angular/core": ">=15.0.0 <22.0.0",
-        "@schmock/core": "^2.1.5",
-        "@schmock/openapi": "^2.1.5",
+        "@schmock/core": "^2.1.6",
+        "@schmock/openapi": "^2.1.6",
         "rxjs": "^7.8.2",
       },
       "optionalPeers": [
@@ -54,7 +54,7 @@
     },
     "packages/cli": {
       "name": "@schmock/cli",
-      "version": "2.1.5",
+      "version": "2.1.6",
       "bin": {
         "schmock": "dist/bin.js",
       },
@@ -70,7 +70,7 @@
     },
     "packages/core": {
       "name": "@schmock/core",
-      "version": "2.1.5",
+      "version": "2.1.6",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.5.0",
         "@types/json-schema": "^7.0.15",
@@ -81,7 +81,7 @@
     },
     "packages/express": {
       "name": "@schmock/express",
-      "version": "2.1.5",
+      "version": "2.1.6",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.5.0",
         "@types/express": "^5.0.6",
@@ -97,7 +97,7 @@
     },
     "packages/faker": {
       "name": "@schmock/faker",
-      "version": "2.1.5",
+      "version": "2.1.6",
       "dependencies": {
         "@faker-js/faker": "^10.4.0",
         "json-schema-faker": "^0.6.1",
@@ -109,15 +109,15 @@
         "vitest": "^4.1.7",
       },
       "peerDependencies": {
-        "@schmock/core": "^2.1.5",
+        "@schmock/core": "^2.1.6",
       },
     },
     "packages/openapi": {
       "name": "@schmock/openapi",
-      "version": "2.1.5",
+      "version": "2.1.6",
       "dependencies": {
         "@apidevtools/swagger-parser": "^12.1.0",
-        "@schmock/faker": "^2.1.5",
+        "@schmock/faker": "^2.1.6",
         "ajv": "^8.20.0",
       },
       "devDependencies": {
@@ -128,12 +128,12 @@
         "vitest": "^4.1.7",
       },
       "peerDependencies": {
-        "@schmock/core": "^2.1.5",
+        "@schmock/core": "^2.1.6",
       },
     },
     "packages/query": {
       "name": "@schmock/query",
-      "version": "2.1.5",
+      "version": "2.1.6",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.5.0",
         "@types/node": "^25.8.0",
@@ -145,7 +145,7 @@
     },
     "packages/react": {
       "name": "@schmock/react",
-      "version": "2.1.5",
+      "version": "2.1.6",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.5.0",
         "@testing-library/react": "^16.3.2",
@@ -166,7 +166,7 @@
     },
     "packages/schmock": {
       "name": "@schmock/schmock",
-      "version": "2.1.5",
+      "version": "2.1.6",
       "dependencies": {
         "@schmock/cli": "^2.1.5",
         "@schmock/core": "^2.1.5",
@@ -181,7 +181,7 @@
     },
     "packages/validation": {
       "name": "@schmock/validation",
-      "version": "2.1.5",
+      "version": "2.1.6",
       "dependencies": {
         "ajv": "^8.20.0",
         "ajv-formats": "^3.0.1",
@@ -198,7 +198,7 @@
     },
     "packages/vue": {
       "name": "@schmock/vue",
-      "version": "2.1.5",
+      "version": "2.1.6",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^6.5.0",
         "@vue/test-utils": "^2.4.10",

@@ -1,7 +1,7 @@
 {
   "name": "@schmock/query",
   "description": "Pagination, filtering, and sorting plugin for Schmock",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -30,7 +30,7 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@schmock/core": "^2.1.5"
+    "@schmock/core": "^2.1.6"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^6.5.0",
