@@ -25,24 +25,37 @@ describe("publish.sh", () => {
     expect(content).toContain('TARGET="${1:-all}"');
   });
 
-  it("should list valid packages", () => {
-    expect(content).toContain('VALID_PACKAGES="core schema express angular"');
+  it("should list all 11 packages in dependency order", () => {
+    expect(content).toContain(
+      "PACKAGES=(core faker validation query express react vue openapi angular cli schmock)",
+    );
+    // Packages previously missing from the stale 8-package list.
+    for (const pkg of ["react", "vue", "schmock"]) {
+      expect(content).toContain(pkg);
+    }
   });
 
   it("should run validation before publishing", () => {
     const validationIdx = content.indexOf("Running validation");
-    const publishIdx = content.indexOf("Publishing...");
+    const publishIdx = content.indexOf("Publishing @schmock");
     expect(validationIdx).toBeGreaterThan(-1);
     expect(publishIdx).toBeGreaterThan(-1);
     expect(validationIdx).toBeLessThan(publishIdx);
   });
 
-  it("should use --access public for npm publish", () => {
-    expect(content).toContain("npm publish --access public");
+  it("should npm publish with the required leading ./ path and --access public", () => {
+    expect(content).toContain('npm publish "./${pkg_dir}" --access public');
   });
 
-  it("should create GitHub releases", () => {
-    expect(content).toContain("gh release create");
+  it("should create ONE unified vX.Y.Z release, not per-package releases", () => {
+    expect(content).toContain('gh release create "v${VERSION}"');
+    // The old per-package tag form must be gone.
+    expect(content).not.toContain('${pkg}-v${version}');
+  });
+
+  it("should skip packages already published (resumable)", () => {
+    expect(content).toContain("is_published");
+    expect(content).toContain("already on npm");
   });
 
   it("should handle unknown package names", () => {
