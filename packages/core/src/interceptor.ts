@@ -93,7 +93,7 @@ function extractHeaders(
 
   if (raw instanceof Headers) {
     raw.forEach((value, key) => {
-      headers[key] = value;
+      headers[key.toLowerCase()] = value;
     });
   } else if (Array.isArray(raw)) {
     for (const [key, value] of raw) {
