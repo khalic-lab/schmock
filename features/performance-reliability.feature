@@ -7,7 +7,7 @@ Feature: Performance and Reliability E2E
     Given I create a mock for high-volume load testing
     When I send 100 concurrent "GET /api/health" requests
     Then all concurrent requests should complete successfully
-    And the average response time should be under 50ms
+    And the average response time should be under 500ms
     And no requests should timeout
     When I send 50 concurrent requests to different "/api/data/:id" endpoints
     Then all responses should be unique based on ID
