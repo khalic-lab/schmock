@@ -58,6 +58,12 @@ describe("publish.sh", () => {
     expect(content).toContain("already on npm");
   });
 
+  it("should hint to bump when nothing was published (all skipped)", () => {
+    expect(content).toContain("PUBLISHED_COUNT");
+    expect(content).toContain('PUBLISHED_COUNT" -eq 0');
+    expect(content).toContain("bump.ts");
+  });
+
   it("should handle unknown package names", () => {
     expect(content).toContain("Unknown package");
   });

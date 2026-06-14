@@ -18,6 +18,11 @@ PACKAGES=(core faker validation query express react vue openapi angular cli schm
 
 TARGET="${1:-all}"
 
+# Tallied as packages are processed so we can tell "published something" from
+# "everything was already on npm" (a no-op run that usually means: bump first).
+PUBLISHED_COUNT=0
+SKIPPED_COUNT=0
+
 # Versions are kept in sync across all packages — read the canonical one from core.
 VERSION=$(node -p "require('./packages/core/package.json').version")
 
@@ -45,6 +50,7 @@ publish_package() {
 
   if is_published "$pkg"; then
     echo "skip    @schmock/${pkg}@${VERSION} (already on npm)"
+    SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
     return 0
   fi
 
@@ -52,6 +58,7 @@ publish_package() {
   # The leading ./ is REQUIRED: `npm publish packages/core` is parsed as a GitHub
   # owner/repo shorthand and fails with "Repository not found".
   npm publish "./${pkg_dir}" --access public
+  PUBLISHED_COUNT=$((PUBLISHED_COUNT + 1))
 }
 
 # --- Validate -------------------------------------------------------------
@@ -72,6 +79,21 @@ if [ "$TARGET" = "all" ]; then
     publish_package "$pkg"
   done
 
+  echo ""
+  echo "Summary: published ${PUBLISHED_COUNT}, skipped ${SKIPPED_COUNT} of ${#PACKAGES[@]} at ${VERSION}."
+
+  # Nothing published + release already tagged => true no-op. The usual cause is
+  # a re-run without bumping. Point the operator at the bump script and stop here.
+  if [ "$PUBLISHED_COUNT" -eq 0 ] && gh release view "v${VERSION}" >/dev/null 2>&1; then
+    echo ""
+    echo "Nothing to publish — all ${#PACKAGES[@]} packages are already at ${VERSION} on npm and the"
+    echo "v${VERSION} GitHub release already exists. If you have new changes to ship, bump first:"
+    echo "    bun .claude/skills/devops/scripts/bump.ts patch   # or minor / major"
+    echo ""
+    echo "Done."
+    exit 0
+  fi
+
   # --- Tag: ONE unified release for the whole version (not per-package) ---
   # Push first so origin/main always reflects the published commit, then create
   # the release only if it doesn't already exist (resumable after a partial run).
@@ -89,6 +111,9 @@ if [ "$TARGET" = "all" ]; then
   fi
 elif in_list "$TARGET" "${PACKAGES[@]}"; then
   publish_package "$TARGET"
+  if [ "$PUBLISHED_COUNT" -eq 0 ]; then
+    echo "@schmock/${TARGET}@${VERSION} is already on npm — bump the version to publish new changes."
+  fi
   echo "(single-package publish — no GitHub release created)"
 else
   echo "Unknown package: ${TARGET}"
