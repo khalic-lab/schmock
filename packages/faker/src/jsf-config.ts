@@ -1,6 +1,10 @@
 import { base, en, Faker } from "@faker-js/faker";
 import type { JSONSchema7 } from "json-schema";
-import { generate } from "json-schema-faker";
+import {
+  type GenerateOptions,
+  generate,
+  type JsonSchema,
+} from "json-schema-faker";
 
 /**
  * Create isolated faker instance to avoid race conditions.
@@ -27,7 +31,9 @@ export async function generateWithJsf(
   const effectiveSeed = seed ?? Math.floor(Math.random() * 2147483647);
 
   return generate(
-    schema as any,
+    // JSONSchema7.items allows arrays but JsonSchema.items does not — structural
+    // mismatch requires routing through `unknown`.
+    schema as unknown as JsonSchema,
     {
       seed: effectiveSeed,
       optionalsProbability: 1.0,
@@ -37,6 +43,6 @@ export async function generateWithJsf(
       failOnInvalidTypes: false,
       failOnInvalidFormat: false,
       extensions: { faker: createFakerInstance(seed) },
-    } as any,
+    } as GenerateOptions & Record<string, unknown>,
   );
 }

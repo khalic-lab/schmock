@@ -130,7 +130,16 @@ declare namespace Schmock {
     contentType?: string;
     /** Per-route response delay in ms, or [min, max] for random delay (overrides global) */
     delay?: number | [number, number];
-    /** Additional route-specific options */
+    /**
+     * Extension point for plugin-specific metadata.
+     *
+     * Intentionally open: `@schmock/openapi` stores "openapi:*" keys here
+     * (e.g. `"openapi:operationId"`, `"openapi:tags"`), and third-party plugins
+     * may do the same. Removing this signature would be a breaking change.
+     *
+     * **Known tradeoff:** typos in known keys (e.g. `{ contenType: "…" }`) compile
+     * silently. Prefer using the explicitly typed properties above when possible.
+     */
     [key: string]: unknown;
   }
 
@@ -285,8 +294,7 @@ declare namespace Schmock {
      * @param path - Filter by request path
      * @returns Array of request records
      */
-    history(): RequestRecord[];
-    history(method: HttpMethod, path: string): RequestRecord[];
+    history(method?: HttpMethod, path?: string): RequestRecord[];
 
     /**
      * Check if any request was made, optionally for a specific route
@@ -295,8 +303,7 @@ declare namespace Schmock {
      * @param path - Filter by request path
      * @returns true if at least one matching request was recorded
      */
-    called(): boolean;
-    called(method: HttpMethod, path: string): boolean;
+    called(method?: HttpMethod, path?: string): boolean;
 
     /**
      * Get the number of recorded requests, optionally for a specific route
@@ -305,8 +312,7 @@ declare namespace Schmock {
      * @param path - Filter by request path
      * @returns Number of matching requests
      */
-    callCount(): number;
-    callCount(method: HttpMethod, path: string): number;
+    callCount(method?: HttpMethod, path?: string): number;
 
     /**
      * Get the most recent request, optionally for a specific route
@@ -315,8 +321,7 @@ declare namespace Schmock {
      * @param path - Filter by request path
      * @returns Most recent matching request record, or undefined
      */
-    lastRequest(): RequestRecord | undefined;
-    lastRequest(method: HttpMethod, path: string): RequestRecord | undefined;
+    lastRequest(method?: HttpMethod, path?: string): RequestRecord | undefined;
 
     // ===== Reset / Lifecycle =====
 
@@ -406,6 +411,15 @@ declare namespace Schmock {
     pageSize?: number;
   }
 
+  /**
+   * Shape returned by the core `paginate()` helper (packages/core/src/helpers.ts).
+   *
+   * **Note:** the `@schmock/query` plugin produces a DIFFERENT nested shape:
+   * ```ts
+   * { data: T[]; pagination: { page: number; limit: number; total: number; totalPages: number } }
+   * ```
+   * Do not assume this type describes query-plugin responses.
+   */
   interface PaginatedResponse<T> {
     data: T[];
     page: number;
@@ -575,13 +589,7 @@ declare namespace Schmock {
   /**
    * Override parts of a request before Schmock handles it
    */
-  interface AdapterRequestOverride {
-    method?: string;
-    path?: string;
-    headers?: Record<string, string>;
-    body?: unknown;
-    query?: Record<string, string>;
-  }
+  type AdapterRequestOverride = Partial<AdapterRequest>;
 
   /**
    * Configuration options for Express adapter
