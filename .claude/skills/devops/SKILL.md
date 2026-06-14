@@ -17,9 +17,9 @@ End-to-end release flow:
 
 1. **Validate** — All quality gates pass (`/code-quality validate`)
 2. **Bump** — Increment versions across all packages
-3. **Build** — `bun build` for all packages
+3. **Build** — `bun build:quiet` for all packages
 4. **Publish** — `npm publish ./packages/<pkg> --access public` per package (note the `./` — see Known Pitfalls)
-5. **Tag** — a single unified `gh release create vX.Y.Z` for the whole version (NOT per-package)
+5. **Tag** — push `main`, then a single unified `gh release create vX.Y.Z` for the whole version (NOT per-package)
 
 ## Version Management
 
@@ -66,10 +66,9 @@ Dependencies must be published before dependents:
 ## Publishing Checklist
 
 Before publishing:
-- [ ] All tests pass (`bun test:all`)
-- [ ] Lint passes (`bun lint`)
-- [ ] Build succeeds (`bun build`)
-- [ ] Package exports are correct (`bun check:publish`)
+- [ ] All tests pass (`bun test:all:quiet`)
+- [ ] Lint passes (`bun lint:quiet`)
+- [ ] Build succeeds (`bun build:quiet`)
 - [ ] Versions are bumped
 - [ ] On `main` branch
 
@@ -78,7 +77,7 @@ During publishing:
 - [ ] Verify packages appear on npm (`npm view @schmock/<pkg> version`)
 
 After publishing:
-- [ ] Create a single unified GitHub release `vX.Y.Z` with `gh release create` (not per-package)
+- [ ] Push `main` to origin, then create a single unified GitHub release `vX.Y.Z` with `gh release create` (not per-package) — `publish.sh` does both automatically
 - [ ] Update CHANGELOG if needed
 
 ## CI/CD Awareness
