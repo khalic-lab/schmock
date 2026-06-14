@@ -66,9 +66,13 @@ const PostForm = defineComponent({
   },
 });
 
-describeFeature(feature, ({ Scenario }) => {
+describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let mock: Schmock.CallableMockInstance;
   let originalFetch: typeof globalThis.fetch;
+
+  AfterEachScenario(() => {
+    globalThis.fetch = originalFetch;
+  });
 
   Scenario("SchmockPlugin intercepts fetch calls", ({ Given, When, Then }) => {
     let wrapper: ReturnType<typeof mount>;
