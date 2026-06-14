@@ -64,6 +64,9 @@ describeFeature(feature, ({ Scenario }) => {
       }
     });
 
+    // Generous ceiling, not a perf target: in-process handlers are sub-millisecond,
+    // so this only guards against a pathological hang. A tight bound (e.g. 50ms)
+    // flakes under CI load where 100 concurrent requests contend for the event loop.
     And("the average response time should be under {int}ms", (_, maxTime: number) => {
       const avgTime = responsesTimes.reduce((a, b) => a + b, 0) / responsesTimes.length;
       expect(avgTime).toBeLessThan(maxTime);

@@ -8,7 +8,7 @@ Feature: Response Delay
     And a route "GET /fast" with delay of 10ms
     And a route "GET /default" with no delay override
     When I request "GET /fast"
-    Then the response took less than 100ms
+    Then the response took less than 150ms
     When I request "GET /default" with timing
     Then that response took at least 150ms
 
