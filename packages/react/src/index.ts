@@ -28,15 +28,31 @@ export function SchmockProvider({
   children,
 }: SchmockProviderProps) {
   // Intercept synchronously so child effects already see the patched fetch.
+  // Re-intercept whenever the mock reference or options change (by value).
   const handleRef = useRef<Schmock.InterceptHandle | null>(null);
-  if (handleRef.current === null) {
+  const prevMockRef = useRef<Schmock.CallableMockInstance | null>(null);
+  const prevOptionsRef = useRef<string | undefined>(undefined);
+
+  const serializedOptions =
+    options !== undefined ? JSON.stringify(options) : undefined;
+
+  if (
+    handleRef.current === null ||
+    prevMockRef.current !== mock ||
+    prevOptionsRef.current !== serializedOptions
+  ) {
+    handleRef.current?.restore();
     handleRef.current = mock.intercept(options);
+    prevMockRef.current = mock;
+    prevOptionsRef.current = serializedOptions;
   }
 
   useEffect(() => {
     return () => {
       handleRef.current?.restore();
       handleRef.current = null;
+      prevMockRef.current = null;
+      prevOptionsRef.current = undefined;
     };
   }, []);
 
