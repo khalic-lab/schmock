@@ -89,31 +89,34 @@ export class CallableMockInstance {
     generator: Schmock.Generator,
     config: Schmock.RouteConfig,
   ): this {
+    // FIX 1.2: shallow-clone the caller's config so mutations below stay private
+    const routeConfig = { ...config };
+
     // Auto-detect contentType if not provided
-    if (!config.contentType) {
+    if (!routeConfig.contentType) {
       if (typeof generator === "function") {
         // Default to JSON for function generators
-        config.contentType = "application/json";
+        routeConfig.contentType = "application/json";
       } else if (
         typeof generator === "string" ||
         typeof generator === "number" ||
         typeof generator === "boolean"
       ) {
         // Default to plain text for primitives
-        config.contentType = "text/plain";
+        routeConfig.contentType = "text/plain";
       } else if (Buffer.isBuffer(generator)) {
         // Default to octet-stream for buffers
-        config.contentType = "application/octet-stream";
+        routeConfig.contentType = "application/octet-stream";
       } else {
         // Default to JSON for objects/arrays
-        config.contentType = "application/json";
+        routeConfig.contentType = "application/json";
       }
     }
 
     // Validate generator matches contentType if it's static data
     if (
       typeof generator !== "function" &&
-      config.contentType === "application/json"
+      routeConfig.contentType === "application/json"
     ) {
       try {
         JSON.stringify(generator);
@@ -128,9 +131,13 @@ export class CallableMockInstance {
     // Parse the route key to create pattern and extract parameters
     const parsed = parseRouteKey(route);
 
-    // Check for duplicate routes — first registration wins, subsequent ones are dropped
+    // FIX 2.2: normalize paths before duplicate check so /users and /users/ are
+    // treated as the same route (consistent with the static-route Map key below)
+    const normalizedParsedPath = normalizePath(parsed.path);
     const existing = this.routes.find(
-      (r) => r.method === parsed.method && r.path === parsed.path,
+      (r) =>
+        r.method === parsed.method &&
+        normalizePath(r.path) === normalizedParsedPath,
     );
     if (existing) {
       this.logger.log(
@@ -147,7 +154,7 @@ export class CallableMockInstance {
       method: parsed.method,
       path: parsed.path,
       generator,
-      config,
+      config: routeConfig,
     };
 
     this.routes.push(compiledRoute);
@@ -159,7 +166,7 @@ export class CallableMockInstance {
     }
 
     this.logger.log("route", `Route defined: ${route}`, {
-      contentType: config.contentType,
+      contentType: routeConfig.contentType,
       generatorType: typeof generator,
       hasParams: parsed.params.length > 0,
     });
@@ -191,13 +198,32 @@ export class CallableMockInstance {
 
   // ===== Request Spy / History API =====
 
+  /**
+   * FIX 2.3: Deep-clone a request record so callers cannot corrupt internal
+   * history by mutating nested body/response objects.
+   * Falls back to a shallow spread for bodies that are not structuredClone-able
+   * (e.g. Buffers, streams — rare in practice but defensively handled).
+   */
+  private cloneRecord(r: Schmock.RequestRecord): Schmock.RequestRecord {
+    try {
+      return structuredClone(r);
+    } catch {
+      return {
+        ...r,
+        response: { ...r.response },
+      };
+    }
+  }
+
   history(method?: Schmock.HttpMethod, path?: string): Schmock.RequestRecord[] {
     if (method || path) {
-      return this.requestHistory.filter(
-        (r) => (!method || r.method === method) && (!path || r.path === path),
-      );
+      return this.requestHistory
+        .filter(
+          (r) => (!method || r.method === method) && (!path || r.path === path),
+        )
+        .map((r) => this.cloneRecord(r));
     }
-    return [...this.requestHistory];
+    return this.requestHistory.map((r) => this.cloneRecord(r));
   }
 
   called(method?: Schmock.HttpMethod, path?: string): boolean {
@@ -226,9 +252,13 @@ export class CallableMockInstance {
       const filtered = this.requestHistory.filter(
         (r) => (!method || r.method === method) && (!path || r.path === path),
       );
-      return filtered[filtered.length - 1];
+      const last = filtered[filtered.length - 1];
+      // FIX 2.3: return a deep clone so callers cannot corrupt internal history
+      return last ? this.cloneRecord(last) : undefined;
     }
-    return this.requestHistory[this.requestHistory.length - 1];
+    const last = this.requestHistory[this.requestHistory.length - 1];
+    // FIX 2.3: return a deep clone so callers cannot corrupt internal history
+    return last ? this.cloneRecord(last) : undefined;
   }
 
   // ===== Introspection =====
@@ -288,10 +318,10 @@ export class CallableMockInstance {
     this.plugins = [];
     this.requestHistory = [];
     this.listeners.clear();
+    // FIX 3.3: assign a fresh object instead of deleting keys off the caller's
+    // reference — this avoids mutating the external state object passed by the user
     if (this.globalConfig.state) {
-      for (const key of Object.keys(this.globalConfig.state)) {
-        delete this.globalConfig.state[key];
-      }
+      this.globalConfig.state = {};
     }
     this.logger.log("lifecycle", "Mock fully reset");
   }
@@ -302,10 +332,10 @@ export class CallableMockInstance {
   }
 
   resetState(): void {
+    // FIX 3.3: assign a fresh object instead of deleting keys off the caller's
+    // reference — this avoids mutating the external state object passed by the user
     if (this.globalConfig.state) {
-      for (const key of Object.keys(this.globalConfig.state)) {
-        delete this.globalConfig.state[key];
-      }
+      this.globalConfig.state = {};
     }
     this.logger.log("lifecycle", "State cleared");
   }

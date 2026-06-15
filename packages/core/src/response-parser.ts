@@ -9,6 +9,7 @@ function isResponseObject(value: unknown): value is {
     typeof value === "object" &&
     value !== null &&
     "status" in value &&
+    typeof (value as Record<string, unknown>).status === "number" &&
     "body" in value
   );
 }
