@@ -4,7 +4,7 @@ import { isJSONSchema7, validateFakerMethod } from "./validation.js";
 
 /** JSONSchema7 extended with json-schema-faker's `faker` property and schmock markers */
 interface FakerSchema extends JSONSchema7 {
-  faker?: string;
+  faker?: string | Record<string, unknown>;
   schmockNullable?: boolean;
   schmockTrueProbability?: number;
 }
@@ -75,9 +75,13 @@ function enhanceFieldSchema(
 ): FakerSchema {
   const enhanced: FakerSchema = { ...fieldSchema };
 
-  // If already has faker extension, validate it and don't override
+  // If already has faker extension, validate it and don't override.
+  // User-supplied faker values are always strings; the object form is only
+  // produced internally by this function when fakerArgs are present.
   if (enhanced.faker) {
-    validateFakerMethod(enhanced.faker);
+    if (typeof enhanced.faker === "string") {
+      validateFakerMethod(enhanced.faker);
+    }
     return enhanced;
   }
 
@@ -101,12 +105,22 @@ function enhanceFieldSchema(
   // Apply smart field name mapping via the scoring matcher
   const match = findBestMapping(fieldName, enhanced);
   if (match) {
-    enhanced.faker = match.mapping.fakerMethod;
-    if (match.mapping.format) {
-      enhanced.format = match.mapping.format;
+    const { fakerMethod, format, trueProbability, fakerArgs } = match.mapping;
+    // Use the JSF object form when fakerArgs are present so the options object
+    // is forwarded to the faker method (e.g. number.int({ min, max })).
+    // JSF calls Q(...J) where J is the value, so we must wrap fakerArgs in an
+    // array: { "number.int": [{ min, max }] } → faker.number.int({ min, max }).
+    // Fall back to the plain string form when there are no args.
+    if (fakerArgs) {
+      enhanced.faker = { [fakerMethod]: [fakerArgs] };
+    } else {
+      enhanced.faker = fakerMethod;
     }
-    if (match.mapping.trueProbability !== undefined) {
-      enhanced.schmockTrueProbability = match.mapping.trueProbability;
+    if (format) {
+      enhanced.format = format;
+    }
+    if (trueProbability !== undefined) {
+      enhanced.schmockTrueProbability = trueProbability;
     }
   }
 
