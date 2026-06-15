@@ -540,7 +540,11 @@ describe("OpenAPI Edge Cases", () => {
     // the builder may return 204 (no content). When it picks the object branch,
     // it returns 200 with a valid object. Both are acceptable.
     expect([200, 204]).toContain(res.status);
-    if (res.status === 200 && res.body !== null) {
+    // A nullable schema may legitimately yield no content (null OR undefined):
+    // the null branch can surface as a 200 with an empty body. Use loose `!= null`
+    // so both are skipped. (The branch choice is not seed-stable — see audit 1.4,
+    // the schmockNullable Math.random roll ignores fakerSeed — hence the guard.)
+    if (res.status === 200 && res.body != null) {
       expect(typeof res.body).toBe("object");
     }
   });

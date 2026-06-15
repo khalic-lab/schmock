@@ -1,3 +1,4 @@
+import { isStatusTuple } from "./constants.js";
 import { errorMessage, PluginError } from "./errors.js";
 
 /** Structural typing — DebugLogger satisfies this without an import */
@@ -68,10 +69,12 @@ export async function runPluginPipeline(
             }
 
             // ResponseResult return → recover, stop pipeline
+            // Accept both object-with-status and status tuple [code, body] / [code, body, headers]
             if (
-              typeof errorResult === "object" &&
-              errorResult !== null &&
-              "status" in errorResult
+              isStatusTuple(errorResult) ||
+              (typeof errorResult === "object" &&
+                errorResult !== null &&
+                "status" in errorResult)
             ) {
               response = errorResult;
               break;
