@@ -29,8 +29,8 @@
     "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
   "peerDependencies": {
-    "@angular/common": ">=15.0.0 <22.0.0",
-    "@angular/core": ">=15.0.0 <22.0.0",
+    "@angular/common": ">=15.0.0 <23.0.0",
+    "@angular/core": ">=15.0.0 <23.0.0",
     "@schmock/core": "^2.1.5",
     "@schmock/openapi": "^2.1.5",
     "rxjs": "^7.8.2"
@@ -41,13 +41,13 @@
     }
   },
   "devDependencies": {
-    "@angular/common": "^21.2.13",
-    "@angular/compiler": "^21.2.13",
-    "@angular/core": "^21.2.13",
-    "@angular/platform-browser": "^21.2.13",
-    "@angular/platform-browser-dynamic": "^21.2.13",
+    "@angular/common": "^22.0.5",
+    "@angular/compiler": "^22.0.5",
+    "@angular/core": "^22.0.5",
+    "@angular/platform-browser": "^22.0.5",
+    "@angular/platform-browser-dynamic": "^22.0.5",
     "@schmock/openapi": "^2.1.5",
-    "@types/node": "^25.8.0",
+    "@types/node": "^26.1.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7",
     "zone.js": "^0.16.2"

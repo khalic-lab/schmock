@@ -10,7 +10,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "style": {
         "noParameterAssign": "error",
         "useAsConstAssertion": "error",
@@ -27,7 +27,8 @@
       "suspicious": {
         "noExplicitAny": "off",
         "noEvolvingTypes": "warn",
-        "noImportCycles": "warn"
+        "noImportCycles": "warn",
+        "noShadow": "warn"
       },
       "correctness": {
         "noUnusedPrivateClassMembers": "warn",
@@ -35,8 +36,7 @@
       },
       "nursery": {
         "noFloatingPromises": "warn",
-        "noMisusedPromises": "warn",
-        "noShadow": "warn"
+        "noMisusedPromises": "warn"
       }
     }
   },
