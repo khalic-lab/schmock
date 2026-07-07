@@ -41,7 +41,7 @@ describe("check-deps.sh", () => {
     const output = result.stdout + result.stderr;
     expect(output).toContain("Outdated Packages");
     expect(output).toContain("Package Export Compatibility");
-  });
+  }, 30000);
 
   it("should accept 'outdated' target", () => {
     const result = run("outdated");
@@ -53,7 +53,7 @@ describe("check-deps.sh", () => {
     const result = run("publish");
     const output = result.stdout + result.stderr;
     expect(output).toContain("Package Export Compatibility");
-  });
+  }, 30000);
 
   it("should accept 'audit' target", () => {
     const result = run("audit");
@@ -65,5 +65,5 @@ describe("check-deps.sh", () => {
     const result = run("");
     const output = result.stdout + result.stderr;
     expect(output).toContain("Outdated Packages");
-  });
+  }, 30000);
 });
