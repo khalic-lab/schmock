@@ -3,6 +3,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
 } from "node:fs";
@@ -11,18 +12,20 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const SCRIPT = join(__dirname, "..", "bump.ts");
 const ROOT = join(__dirname, "../../../../..");
+const PACKAGES_DIR = join(ROOT, "packages");
 
 /**
- * bump.ts modifies real files (package.json), so we
- * back them up before each test and restore after.
+ * bump.ts modifies real files (package.json), so we back them all up before
+ * each test and restore after. Every package must be covered — bump.ts rewrites
+ * all 11 package.json files (version + cross-package @schmock/* deps), so
+ * backing up only a subset leaks version drift into the working tree.
  */
 const backupDir = join(__dirname, "__backup__");
-const filesToBackup = [
-  join(ROOT, "packages/core/package.json"),
-  join(ROOT, "packages/faker/package.json"),
-  join(ROOT, "packages/express/package.json"),
-  join(ROOT, "packages/angular/package.json"),
-];
+
+const filesToBackup = readdirSync(PACKAGES_DIR, { withFileTypes: true })
+  .filter((d) => d.isDirectory())
+  .map((d) => join(PACKAGES_DIR, d.name, "package.json"))
+  .filter((f) => existsSync(f));
 
 function run(args: string): { output: string; exitCode: number } {
   try {

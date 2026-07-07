@@ -67,7 +67,7 @@ Critical compatibility ranges:
 
 4. **Commit the update:**
    ```bash
-   git add bun.lockb package.json packages/*/package.json
+   git add bun.lock package.json packages/*/package.json
    git commit -m "chore(deps): update <package> to <version>"
    ```
 
@@ -86,7 +86,7 @@ When updating dependencies, respect these constraints:
 Check for known security vulnerabilities:
 
 ```bash
-npm audit
+bun audit
 ```
 
 ## Commands

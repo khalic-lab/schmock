@@ -40,7 +40,8 @@
     "knip": "knip",
     "knip:quiet": "knip --no-progress",
     "eslint": "eslint",
-    "eslint:quiet": "eslint --quiet"
+    "eslint:quiet": "eslint --quiet",
+    "check:publish": "bun run --filter '*' check:publish"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",
