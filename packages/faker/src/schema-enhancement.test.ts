@@ -170,10 +170,16 @@ describe("enhanceSchemaWithSmartMapping", () => {
     expect(props.email.faker).toBe("lorem.word");
   });
 
-  it("handles schema without properties gracefully", () => {
+  it("adds useful text generation to an unconstrained root string", () => {
     const schema: JSONSchema7 = { type: "string" };
     const enhanced = enhanceSchemaWithSmartMapping(schema);
-    expect(enhanced).toEqual({ type: "string" });
+    expect(enhanced).toEqual({ type: "string", faker: "lorem.word" });
+  });
+
+  it("preserves an explicit zero minimum length", () => {
+    const schema: JSONSchema7 = { type: "string", minLength: 0 };
+    const enhanced = enhanceSchemaWithSmartMapping(schema);
+    expect(enhanced).toEqual(schema);
   });
 
   it("handles null/undefined schema gracefully", () => {

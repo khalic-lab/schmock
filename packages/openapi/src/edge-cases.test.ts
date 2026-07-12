@@ -379,23 +379,15 @@ describe("content-negotiation edge cases", () => {
 
   describe("Accept header with malformed q-value", () => {
     it("handles q=abc gracefully by treating as default q=1", () => {
-      // Number.parseFloat("abc") => NaN, which sorts unpredictably,
-      // but should not crash
-      const _result = negotiateContentType("application/json;q=abc", [
-        "application/json",
-      ]);
-      // NaN comparison: NaN !== 0 so the entry is not skipped
-      // but NaN comparisons in sort are unpredictable
-      // The key thing is it doesn't throw
-      expect(() =>
+      expect(
         negotiateContentType("application/json;q=abc", ["application/json"]),
-      ).not.toThrow();
+      ).toBe("application/json");
     });
 
     it("handles q= (empty) gracefully", () => {
-      expect(() =>
+      expect(
         negotiateContentType("application/json;q=", ["application/json"]),
-      ).not.toThrow();
+      ).toBe("application/json");
     });
   });
 
@@ -422,6 +414,12 @@ describe("content-negotiation edge cases", () => {
       const result = negotiateContentType("", ["application/json"]);
       expect(result).toBe("application/json");
     });
+  });
+
+  it("matches media types case-insensitively", () => {
+    expect(negotiateContentType("Application/JSON", ["application/json"])).toBe(
+      "application/json",
+    );
   });
 });
 
@@ -452,7 +450,7 @@ describe("request-pipeline edge cases", () => {
   });
 
   describe("validateSecurity — API key in query parameter", () => {
-    it("passes through when apiKey is in query (cannot be validated from headers)", () => {
+    it("rejects when the query API key is missing", () => {
       const schemes = new Map([
         [
           "apiKeyQuery",
@@ -469,9 +467,32 @@ describe("request-pipeline edge cases", () => {
         route: { "openapi:security": [["apiKeyQuery"]] },
       });
 
-      // Query-based API keys pass through since headers-only validation
       const result = validateSecurity(context, schemes);
-      expect(result).toBeUndefined();
+      expect(result?.response).toEqual([
+        401,
+        { error: "Unauthorized", code: "UNAUTHORIZED" },
+        {},
+      ]);
+    });
+
+    it("passes when the query API key has a non-empty value", () => {
+      const schemes = new Map([
+        [
+          "apiKeyQuery",
+          {
+            type: "apiKey" as const,
+            in: "query" as const,
+            name: "api_key",
+          },
+        ],
+      ]);
+
+      const context = makePluginContext({
+        query: { api_key: "secret" },
+        route: { "openapi:security": [["apiKeyQuery"]] },
+      });
+
+      expect(validateSecurity(context, schemes)).toBeUndefined();
     });
 
     it("rejects when apiKey is in header and header is missing", () => {
@@ -656,7 +677,7 @@ describe("request-pipeline edge cases", () => {
         },
       });
 
-      const result = processContentNegotiation(context);
+      const result = processContentNegotiation(context, 200);
       expect(result).toBeDefined();
       const response = result?.response as [number, unknown];
       expect(response[0]).toBe(406);
@@ -679,7 +700,7 @@ describe("request-pipeline edge cases", () => {
         },
       });
 
-      const result = processContentNegotiation(context);
+      const result = processContentNegotiation(context, 200);
       expect(result).toBeUndefined();
     });
   });
@@ -697,6 +718,20 @@ describe("seed edge cases", () => {
 
       const result = await loadSeed(config, resources);
       expect(result.get("pets")).toEqual([]);
+    });
+  });
+
+  describe("loadSeed with a Faker seed", () => {
+    it("repeats the same seed and changes output for a different seed", async () => {
+      const resources: CrudResource[] = [makeResource()];
+      const config = { pets: { count: 3 } };
+
+      const first = await loadSeed(config, resources, 42);
+      const second = await loadSeed(config, resources, 42);
+      const different = await loadSeed(config, resources, 43);
+
+      expect(first.get("pets")).toEqual(second.get("pets"));
+      expect(first.get("pets")).not.toEqual(different.get("pets"));
     });
   });
 

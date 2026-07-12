@@ -23,8 +23,9 @@ Feature: CLI Standalone Server
 
   Scenario: Custom port
     Given I have a petstore spec file
-    When I create a CLI server on port 9876
-    Then the CLI server should be running on port 9876
+    And I reserve an available CLI port
+    When I create a CLI server on the reserved port
+    Then the CLI server should be running on the reserved port
     When I stop the CLI server
 
   Scenario: CORS headers on responses
@@ -43,10 +44,30 @@ Feature: CLI Standalone Server
     When I stop the CLI server
 
   Scenario: Missing spec shows usage error
-    When I create a CLI server without a spec
-    Then the CLI should throw a missing spec error
+    When I run the CLI without a spec
+    Then the CLI process exit code should be 1
+    And the CLI error output should contain "Error: --spec is required"
 
   Scenario: Invalid spec shows error
     Given I have an invalid spec file
     When I create a CLI server from the invalid spec
-    Then the CLI should throw a parse error
+    Then the CLI error should contain "not a valid Openapi API definition"
+
+  Scenario: Reject unsupported HTTP methods
+    Given I have a running CLI petstore server
+    When I send a raw CLI request with method "PROPFIND" target "/pets" and host "localhost"
+    Then the raw CLI response status should be 405
+    And the raw CLI response should allow supported methods
+    When I stop the CLI server
+
+  Scenario: Reject a malformed request target
+    Given I have a running CLI petstore server
+    When I send a raw CLI request with method "GET" target "/pets" and host ":"
+    Then the raw CLI response status should be 400
+    When I stop the CLI server
+
+  Scenario: Reject an oversized declared request body
+    Given I have a running CLI petstore server
+    When I send a raw CLI request declaring an oversized body
+    Then the raw CLI response status should be 413
+    When I stop the CLI server

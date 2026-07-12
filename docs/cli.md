@@ -77,6 +77,10 @@ schmock api.yaml --watch
 # Server reloads when the spec file changes
 ```
 
+Reloads are serialized and keep the same port. A changed spec is parsed and
+configured before the live server is replaced, so an invalid intermediate save
+is reported without taking the current mock offline.
+
 ## Admin API
 
 When started with `--admin`, additional endpoints are available:

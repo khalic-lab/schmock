@@ -55,6 +55,7 @@ describe("parseSpec", () => {
       expect(createPet).toBeDefined();
       expect(createPet?.requestBody).toBeDefined();
       expect(createPet?.requestBody?.type).toBe("object");
+      expect(createPet?.requestBodyRequired).toBe(true);
     });
 
     it("extracts response schemas with multiple status codes", async () => {
@@ -94,6 +95,63 @@ describe("parseSpec", () => {
 
       expect(createPet).toBeDefined();
       expect(createPet?.requestBody).toBeDefined();
+      expect(createPet?.requestBodyRequired).toBe(true);
+    });
+
+    it("preserves an explicit empty operation security override", async () => {
+      const parsed = await parseSpec({
+        openapi: "3.0.3",
+        info: { title: "Security", version: "1.0.0" },
+        security: [{ bearerAuth: [] }],
+        components: {
+          securitySchemes: {
+            bearerAuth: { type: "http", scheme: "bearer" },
+          },
+        },
+        paths: {
+          "/health": {
+            get: {
+              security: [],
+              responses: { "200": { description: "OK" } },
+            },
+          },
+        },
+      });
+
+      expect(parsed.globalSecurity).toEqual([["bearerAuth"]]);
+      expect(parsed.paths[0].security).toEqual([]);
+    });
+
+    it("preserves schemas for every declared response media type", async () => {
+      const parsed = await parseSpec({
+        openapi: "3.0.3",
+        info: { title: "Media", version: "1.0.0" },
+        paths: {
+          "/result": {
+            get: {
+              responses: {
+                "200": {
+                  description: "OK",
+                  content: {
+                    "application/json": { schema: { type: "string" } },
+                    "application/problem+json": {
+                      schema: { type: "object", required: ["error"] },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const response = parsed.paths[0].responses.get(200);
+      expect(response?.content?.get("application/json")?.schema?.type).toBe(
+        "string",
+      );
+      expect(
+        response?.content?.get("application/problem+json")?.schema?.type,
+      ).toBe("object");
     });
 
     it("resolves $ref pointers via dereference", async () => {

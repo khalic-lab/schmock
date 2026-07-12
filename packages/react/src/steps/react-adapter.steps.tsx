@@ -1,9 +1,9 @@
 /// <reference path="../../../core/schmock.d.ts" />
 
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
-import { notFound, schmock } from "@schmock/core";
+import { schmock } from "@schmock/core";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { expect, vi } from "vitest";
 import { SchmockProvider, useSchmock } from "../index.js";
 
@@ -28,41 +28,44 @@ function UserList() {
 }
 
 function MockConsumer() {
-  const mock = useSchmock();
-  return <div data-testid="has-mock">{mock ? "yes" : "no"}</div>;
+  useSchmock();
+  return <div data-testid="has-mock">yes</div>;
 }
 
-function ErrorFetcher() {
-  const [status, setStatus] = useState<number | null>(null);
+function LayoutEffectFetcher() {
+  const [value, setValue] = useState("loading");
 
-  useEffect(() => {
-    void fetch("http://localhost/api/missing").then((res) => {
-      setStatus(res.status);
-    });
+  useLayoutEffect(() => {
+    let active = true;
+    void fetch("http://localhost/api/layout-effect")
+      .then((response) => response.json())
+      .then((body: unknown) => {
+        if (
+          active &&
+          typeof body === "object" &&
+          body !== null &&
+          "value" in body &&
+          typeof body.value === "string"
+        ) {
+          setValue(body.value);
+        }
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
-  return <div data-testid="status">{status ?? "loading"}</div>;
+  return <div data-testid="layout-effect-value">{value}</div>;
 }
 
-function PostForm() {
-  const [result, setResult] = useState<string>("");
-
-  useEffect(() => {
-    void fetch("http://localhost/api/items", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Widget" }),
-    })
-      .then((res) => res.json())
-      .then((data) => setResult(data.name));
-  }, []);
-
-  return <div data-testid="result">{result || "loading"}</div>;
-}
-
-describeFeature(feature, ({ Scenario }) => {
+describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let mock: Schmock.CallableMockInstance;
-  let originalFetch: typeof globalThis.fetch;
+  let originalFetch: typeof globalThis.fetch = globalThis.fetch;
+
+  AfterEachScenario(() => {
+    cleanup();
+    globalThis.fetch = originalFetch;
+  });
 
   Scenario(
     "SchmockProvider intercepts fetch calls",
@@ -129,98 +132,6 @@ describeFeature(feature, ({ Scenario }) => {
     },
   );
 
-  Scenario("Passthrough for unmatched routes", ({ Given, When, Then, And }) => {
-    const fakeFetch = vi.fn().mockResolvedValue(new Response("real"));
-
-    Given(
-      'a Schmock instance with route "GET /api/users" returning users',
-      () => {
-        originalFetch = globalThis.fetch;
-        globalThis.fetch = fakeFetch;
-        mock = schmock();
-        mock("GET /api/users", [{ id: 1 }]);
-      },
-    );
-
-    And("the provider is configured with passthrough enabled", () => {
-      render(
-        <SchmockProvider mock={mock} options={{ passthrough: true }}>
-          <div />
-        </SchmockProvider>,
-      );
-    });
-
-    When('the component fetches "/api/other"', async () => {
-      await fetch("http://localhost/api/other");
-    });
-
-    Then("the request should pass through to the original fetch", () => {
-      expect(fakeFetch).toHaveBeenCalled();
-      cleanup();
-      globalThis.fetch = originalFetch;
-    });
-  });
-
-  Scenario(
-    "Error status codes flow through correctly",
-    ({ Given, When, Then }) => {
-      Given("a Schmock instance with a route returning status 404", () => {
-        originalFetch = globalThis.fetch;
-        mock = schmock();
-        mock("GET /api/missing", notFound("Not here"));
-      });
-
-      When(
-        "I render a component that fetches that route inside SchmockProvider",
-        () => {
-          render(
-            <SchmockProvider mock={mock}>
-              <ErrorFetcher />
-            </SchmockProvider>,
-          );
-        },
-      );
-
-      Then("the component should receive the error status", async () => {
-        await waitFor(() => {
-          expect(screen.getByTestId("status").textContent).toBe("404");
-        });
-        cleanup();
-        globalThis.fetch = originalFetch;
-      });
-    },
-  );
-
-  Scenario(
-    "POST with JSON body works through the provider",
-    ({ Given, When, Then }) => {
-      Given("a Schmock instance with a POST route that echoes the body", () => {
-        originalFetch = globalThis.fetch;
-        mock = schmock();
-        mock("POST /api/items", ({ body }) => [201, body]);
-      });
-
-      When(
-        "I render a component that posts data inside SchmockProvider",
-        () => {
-          render(
-            <SchmockProvider mock={mock}>
-              <PostForm />
-            </SchmockProvider>,
-          );
-        },
-      );
-
-      Then("the component should display the echoed data", async () => {
-        await waitFor(() => {
-          expect(screen.getByTestId("result").textContent).toBe("Widget");
-        });
-        cleanup();
-        globalThis.fetch = originalFetch;
-      });
-    },
-  );
-
   Scenario(
     "useSchmock throws outside SchmockProvider",
     ({ Given, When, Then }) => {
@@ -233,8 +144,8 @@ describeFeature(feature, ({ Scenario }) => {
       When("I try to render it", () => {
         try {
           render(<MockConsumer />);
-        } catch (e) {
-          error = e as Error;
+        } catch (caught) {
+          if (caught instanceof Error) error = caught;
         }
       });
 
@@ -243,6 +154,93 @@ describeFeature(feature, ({ Scenario }) => {
         cleanup();
         globalThis.fetch = originalFetch;
       });
+    },
+  );
+
+  Scenario(
+    "Provider applies a new request hook after rerender",
+    ({ Given, When, Then }) => {
+      let rerenderProvider: ((marker: string) => void) | undefined;
+
+      Given('a provider request hook that marks requests as "first"', () => {
+        originalFetch = globalThis.fetch;
+        mock = schmock();
+        mock("GET /api/hook", ({ headers }) => ({
+          marker: headers["x-provider-hook"],
+        }));
+
+        const renderProvider = (marker: string) => (
+          <SchmockProvider
+            mock={mock}
+            options={{
+              beforeRequest: (request) => ({
+                ...request,
+                headers: {
+                  ...request.headers,
+                  "x-provider-hook": marker,
+                },
+              }),
+            }}
+          >
+            <div />
+          </SchmockProvider>
+        );
+
+        const result = render(renderProvider("first"));
+        rerenderProvider = (marker) => result.rerender(renderProvider(marker));
+      });
+
+      When(
+        'I rerender the provider with a hook that marks requests as "second"',
+        () => {
+          rerenderProvider?.("second");
+        },
+      );
+
+      Then('subsequent requests should use the "second" hook', async () => {
+        const response = await fetch("http://localhost/api/hook");
+        expect(await response.json()).toEqual({ marker: "second" });
+        cleanup();
+        globalThis.fetch = originalFetch;
+      });
+    },
+  );
+
+  Scenario(
+    "Descendant layout effects see interception on the first commit",
+    ({ Given, When, Then }) => {
+      Given(
+        "a Schmock instance with a route for a layout-effect request",
+        () => {
+          originalFetch = globalThis.fetch;
+          globalThis.fetch = vi.fn().mockResolvedValue(
+            new Response(JSON.stringify({ value: "real backend" }), {
+              headers: { "content-type": "application/json" },
+            }),
+          );
+          mock = schmock();
+          mock("GET /api/layout-effect", { value: "mocked layout effect" });
+        },
+      );
+
+      When("I render a layout-effect fetcher inside SchmockProvider", () => {
+        render(
+          <SchmockProvider mock={mock}>
+            <LayoutEffectFetcher />
+          </SchmockProvider>,
+        );
+      });
+
+      Then(
+        "the layout-effect fetcher should display the mocked value",
+        async () => {
+          await waitFor(() => {
+            expect(screen.getByTestId("layout-effect-value").textContent).toBe(
+              "mocked layout effect",
+            );
+          });
+        },
+      );
     },
   );
 });

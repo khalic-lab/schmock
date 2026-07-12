@@ -41,6 +41,108 @@ describe("Schema Generator", () => {
       });
     });
 
+    it("uses one seeded sequence across a generated array", async () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "integer" },
+            name: { type: "string" },
+          },
+          required: ["id", "name"],
+        },
+      };
+
+      const first = await generateFromSchema({ schema, count: 5, seed: 42 });
+      const second = await generateFromSchema({ schema, count: 5, seed: 42 });
+
+      expect(first).toEqual(second);
+      expect(Array.isArray(first)).toBe(true);
+      if (!Array.isArray(first)) {
+        throw new Error("Expected generated data to be an array");
+      }
+      expect(new Set(first.map((item) => JSON.stringify(item))).size).toBe(5);
+    });
+
+    it("generates tuple positions from their respective schemas", async () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        items: [{ type: "string" }, { type: "integer" }, { type: "boolean" }],
+        minItems: 3,
+        maxItems: 3,
+      };
+
+      const result = await generateFromSchema({ schema, seed: 42 });
+
+      expect(Array.isArray(result)).toBe(true);
+      if (!Array.isArray(result)) {
+        throw new Error("Expected generated data to be a tuple");
+      }
+      expect(result).toHaveLength(3);
+      expect(typeof result[0]).toBe("string");
+      expect(typeof result[1]).toBe("number");
+      expect(typeof result[2]).toBe("boolean");
+    });
+
+    it("generates a nested tuple reached through a definition reference", async () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: {
+          payload: { $ref: "#/definitions/payloadTuple" },
+        },
+        required: ["payload"],
+        definitions: {
+          payloadTuple: {
+            type: "array",
+            items: [
+              { type: "string" },
+              { type: "integer" },
+              { type: "boolean" },
+            ],
+            minItems: 3,
+            maxItems: 3,
+            additionalItems: false,
+          },
+        },
+      };
+
+      const result = await generateFromSchema({ schema, seed: 42 });
+
+      expect(result).toMatchObject({ payload: expect.any(Array) });
+      if (
+        typeof result !== "object" ||
+        result === null ||
+        !("payload" in result) ||
+        !Array.isArray(result.payload)
+      ) {
+        throw new Error("Expected generated payload to be a tuple");
+      }
+      expect(result.payload).toHaveLength(3);
+      expect(typeof result.payload[0]).toBe("string");
+      expect(typeof result.payload[1]).toBe("number");
+      expect(typeof result.payload[2]).toBe("boolean");
+    });
+
+    it("honors uniqueItems while generating the complete array", async () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        items: { type: "integer" },
+        minItems: 8,
+        maxItems: 8,
+        uniqueItems: true,
+      };
+
+      const result = await generateFromSchema({ schema, seed: 42 });
+
+      expect(Array.isArray(result)).toBe(true);
+      if (!Array.isArray(result)) {
+        throw new Error("Expected generated data to be an array");
+      }
+      expect(result).toHaveLength(8);
+      expect(new Set(result).size).toBe(8);
+    });
+
     it("respects array constraints from schema", async () => {
       const schema = schemas.simple.array(schemas.simple.string(), {
         minItems: 2,

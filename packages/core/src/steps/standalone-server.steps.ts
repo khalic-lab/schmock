@@ -4,10 +4,14 @@ import { schmock } from "../index";
 
 const feature = await loadFeature("../../features/standalone-server.feature");
 
-describeFeature(feature, ({ Scenario }) => {
+describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let mock: Schmock.CallableMockInstance;
   let serverInfo: Schmock.ServerInfo;
   let httpResponse: Response;
+
+  AfterEachScenario(() => {
+    mock?.close();
+  });
 
   function baseUrl(): string {
     return `http://${serverInfo.hostname}:${serverInfo.port}`;
@@ -49,12 +53,7 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     Then("the server should not be running", async () => {
-      try {
-        await fetch(`${baseUrl()}/hello`);
-        expect.unreachable("Should not be able to connect");
-      } catch {
-        // Connection refused — server is down
-      }
+      await expect(fetch(`${baseUrl()}/hello`)).rejects.toBeDefined();
     });
   });
 
@@ -222,12 +221,7 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     Then("the server should not be running", async () => {
-      try {
-        await fetch(`${baseUrl()}/hello`);
-        expect.unreachable("Should not be able to connect");
-      } catch {
-        // Connection refused — server is down
-      }
+      await expect(fetch(`${baseUrl()}/hello`)).rejects.toBeDefined();
     });
   });
 });

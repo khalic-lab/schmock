@@ -19,9 +19,9 @@
   },
   "scripts": {
     "build": "bun build:lib && bun build:types",
-    "build:lib": "bun build --minify --target node --outdir=dist src/index.ts",
+    "build:lib": "bun build --minify --target browser --format esm --outdir=dist src/index.ts --external @schmock/core --external ajv --external ajv-formats",
     "build:types": "tsc -p tsconfig.json",
-    "test": "vitest",
+    "test": "vitest run",
     "test:watch": "vitest --watch",
     "test:bdd": "vitest run --config vitest.config.bdd.ts",
     "lint": "biome check src/*.ts",
@@ -30,6 +30,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@types/json-schema": "^7.0.15",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1"
   },
@@ -38,7 +39,6 @@
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",
-    "@types/json-schema": "^7.0.15",
     "@types/node": "^26.1.0",
     "vitest": "^4.1.7"
   }

@@ -7,7 +7,7 @@ Feature: Lifecycle Events
     Given a mock with a route "GET /items"
     And I register listeners for all events
     When I request "GET /items"
-    Then the "request:start" event fired
+    Then the event order should be "request:start,request:match,request:end"
     And the "request:match" event fired with routePath "/items"
     And the "request:end" event fired with status 200
 
@@ -15,8 +15,7 @@ Feature: Lifecycle Events
     Given a mock with a route "GET /items"
     And I register listeners for all events
     When I request "GET /missing"
-    Then the "request:start" event fired
-    And the "request:notfound" event fired
+    Then the event order should be "request:start,request:notfound,request:end"
     And the "request:end" event fired with status 404
 
   Scenario: Off removes listener

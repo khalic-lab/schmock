@@ -1,5 +1,6 @@
 /// <reference path="../../core/schmock.d.ts" />
 
+import { isStatusTuple } from "@schmock/core";
 import { version as packageVersion } from "../package.json";
 
 interface PaginationOptions {
@@ -39,6 +40,47 @@ interface QueryPluginOptions {
   filtering?: FilteringOptions;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every((entry) => typeof entry === "string")
+  );
+}
+
+function isStructuredResponse(value: unknown): value is {
+  status: number;
+  body: unknown;
+  headers?: Record<string, string>;
+} {
+  return (
+    isRecord(value) &&
+    !Array.isArray(value) &&
+    typeof value.status === "number" &&
+    "body" in value &&
+    (value.headers === undefined || isStringRecord(value.headers))
+  );
+}
+
+function getResponseBody(response: unknown): unknown {
+  if (isStatusTuple(response)) return response[1];
+  if (isStructuredResponse(response)) return response.body;
+  return response;
+}
+
+function replaceResponseBody(response: unknown, body: unknown): unknown {
+  if (isStatusTuple(response)) {
+    return response.length === 3
+      ? [response[0], body, response[2]]
+      : [response[0], body];
+  }
+  if (isStructuredResponse(response)) return { ...response, body };
+  return body;
+}
+
 export function queryPlugin(options: QueryPluginOptions): Schmock.Plugin {
   return {
     name: "query",
@@ -48,12 +90,12 @@ export function queryPlugin(options: QueryPluginOptions): Schmock.Plugin {
       context: Schmock.PluginContext,
       response?: unknown,
     ): Schmock.PluginResult {
-      // Only process array responses
-      if (!Array.isArray(response)) {
+      const responseBody = getResponseBody(response);
+      if (!Array.isArray(responseBody)) {
         return { context, response };
       }
 
-      let items: unknown[] = [...response];
+      let items: unknown[] = [...responseBody];
       const query = context.query || {};
 
       // Apply filtering
@@ -69,10 +111,10 @@ export function queryPlugin(options: QueryPluginOptions): Schmock.Plugin {
       // Apply pagination
       if (options.pagination) {
         const result = applyPagination(items, query, options.pagination);
-        return { context, response: result };
+        return { context, response: replaceResponseBody(response, result) };
       }
 
-      return { context, response: items };
+      return { context, response: replaceResponseBody(response, items) };
     },
   };
 }
@@ -95,9 +137,8 @@ function applyFiltering(
 
     if (value !== undefined) {
       result = result.filter((item) => {
-        if (typeof item !== "object" || item === null) return false;
-        const record = item as Record<string, unknown>;
-        const itemValue = record[field];
+        if (!isRecord(item)) return false;
+        const itemValue = item[field];
         if (itemValue === undefined) return false;
         // Intentional string coercion: query params are inherently strings
         return String(itemValue) === value;
@@ -125,12 +166,9 @@ function applySorting(
   if (!options.allowed.includes(sortField)) return items;
 
   return items.sort((a, b) => {
-    if (typeof a !== "object" || a === null) return 0;
-    if (typeof b !== "object" || b === null) return 0;
-    const aRecord = a as Record<string, unknown>;
-    const bRecord = b as Record<string, unknown>;
-    const aVal = aRecord[sortField];
-    const bVal = bRecord[sortField];
+    if (!isRecord(a) || !isRecord(b)) return 0;
+    const aVal = a[sortField];
+    const bVal = b[sortField];
 
     if (aVal === bVal) return 0;
     if (aVal === undefined) return 1;

@@ -19,7 +19,17 @@ jobs:
     strategy:
       fail-fast: false  # Don't cancel other jobs if one fails
       matrix:
-        task: [lint, typecheck, test-unit, test-bdd, test-integration, build]
+        task:
+          - lint
+          - eslint
+          - knip
+          - typecheck
+          - test-unit
+          - test-bdd
+          - test-integration
+          - test-e2e
+          - build
+          - check-publish
 
     steps:
       - name: Checkout
@@ -48,7 +58,7 @@ jobs:
 
       # Build packages for tasks that need built artifacts
       - name: Build packages
-        if: matrix.task == 'test-unit' || matrix.task == 'test-bdd' || matrix.task == 'test-integration'
+        if: matrix.task == 'test-unit' || matrix.task == 'test-bdd' || matrix.task == 'test-integration' || matrix.task == 'test-e2e'
         run: bun run build
 
       - name: Run ${{ matrix.task }}
@@ -57,6 +67,16 @@ jobs:
             lint)
               echo "::group::Running linter"
               bun run lint
+              echo "::endgroup::"
+              ;;
+            eslint)
+              echo "::group::Running ESLint"
+              bun run eslint
+              echo "::endgroup::"
+              ;;
+            knip)
+              echo "::group::Running Knip"
+              bun run knip
               echo "::endgroup::"
               ;;
             typecheck)
@@ -71,14 +91,7 @@ jobs:
               ;;
             test-bdd)
               echo "::group::Running BDD tests"
-              if [[ "${{ github.base_ref }}" == "main" ]]; then
-                bun run test:bdd
-              else
-                bun run test:bdd || {
-                  echo "::warning::BDD tests failed (allowed during TDD on non-main branches)"
-                  exit 0
-                }
-              fi
+              bun run test:bdd
               echo "::endgroup::"
               ;;
             test-integration)
@@ -86,9 +99,19 @@ jobs:
               bun run test:integration
               echo "::endgroup::"
               ;;
+            test-e2e)
+              echo "::group::Running end-to-end tests"
+              bun run test:e2e
+              echo "::endgroup::"
+              ;;
             build)
               echo "::group::Building packages"
               bun run build
+              echo "::endgroup::"
+              ;;
+            check-publish)
+              echo "::group::Checking local release candidates"
+              bun run check:publish
               echo "::endgroup::"
               ;;
           esac
@@ -102,8 +125,8 @@ jobs:
     steps:
       - name: Check CI results
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "❌ CI failed — some checks did not pass"
+          if [[ "${{ needs.check.result }}" != "success" ]]; then
+            echo "❌ CI failed — one or more required checks did not pass"
             exit 1
           else
             echo "✅ All CI checks passed"

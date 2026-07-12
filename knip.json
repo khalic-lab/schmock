@@ -1,47 +1,58 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  "ignore": ["**/*.d.ts", ".claude/**", ".agents/**", "examples/**"],
-  "ignoreDependencies": [
-    "@tsconfig/strictest",
-    "@vitest/coverage-v8",
-    "bun-types",
-    "supertest",
-    "@types/supertest"
-  ],
-  "ignoreBinaries": ["vitest"],
+  "ignore": [".claude/**", ".agents/**", "examples/**"],
+  "ignoreDependencies": ["@tsconfig/strictest", "bun-types"],
   "workspaces": {
     ".": {
-      "entry": ["benchmarks/*.ts", "scripts/*.{js,ts}"],
-      "ignore": ["tests/**"]
-    },
-    "packages/core": {
-      "ignore": ["src/steps/**"],
-      "entry": ["src/types.ts!"]
-    },
-    "packages/faker": {
-      "ignore": ["src/steps/**"]
-    },
-    "packages/express": {
-      "ignore": ["src/steps/**"]
-    },
-    "packages/angular": {
-      "ignore": ["src/steps/**"],
+      "entry": [
+        "benchmarks/*.ts",
+        "scripts/*.{js,ts}"
+      ],
       "ignoreDependencies": [
-        "@angular/platform-browser",
-        "@angular/platform-browser-dynamic"
+        "@angular/common",
+        "@angular/compiler",
+        "rxjs"
       ]
     },
-    "packages/validation": {
-      "ignore": ["src/steps/**"]
+    "packages/core": {
+      "entry": ["src/types.ts!"]
     },
-    "packages/query": {
-      "ignore": ["src/steps/**"]
+    "packages/angular": {
+      "ignoreDependencies": [
+        "@angular/platform-browser",
+        "@angular/platform-browser-dynamic",
+        "@schmock/openapi"
+      ]
     },
-    "packages/openapi": {
-      "ignore": ["src/steps/**"]
+    "packages/schmock": {
+      "ignoreDependencies": [
+        "@schmock/faker",
+        "@schmock/validation",
+        "@schmock/query",
+        "@schmock/openapi",
+        "@schmock/cli"
+      ]
     },
-    "packages/cli": {
-      "ignore": ["src/steps/**"]
+    "scripts/integration-tests/fixtures/*": {
+      "entry": ["smoke.test.{ts,tsx}"]
+    },
+    "scripts/integration-tests/fixtures/react": {
+      "ignoreDependencies": ["react-dom"]
+    },
+    "scripts/smoke-tests/fixtures/*": {
+      "entry": ["smoke.{ts,tsx}"]
+    },
+    "scripts/smoke-tests/fixtures/angular": {
+      "entry": ["smoke.ts"],
+      "ignoreDependencies": ["@angular/core"]
+    },
+    "scripts/smoke-tests/fixtures/react": {
+      "entry": ["smoke.tsx"],
+      "ignoreDependencies": ["@testing-library/react"]
+    },
+    "scripts/smoke-tests/fixtures/vue": {
+      "entry": ["smoke.ts"],
+      "ignoreDependencies": ["@vue/test-utils"]
     }
   }
 }

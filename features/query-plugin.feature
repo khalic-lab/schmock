@@ -41,3 +41,16 @@ Feature: Query Plugin
     And the items should be sorted by name ascending
     And all items should have role "admin"
     And the pagination total should reflect filtered count
+
+  Scenario Outline: Paginate array response containers without losing metadata
+    Given I create a mock returning 5 items in a "<container>" response
+    When I request page 2 with limit 2
+    Then the response status should be 206
+    And response header "x-query-source" should be "<container>"
+    And I should receive 2 items
+    And the pagination total should be 5
+
+    Examples:
+      | container  |
+      | tuple      |
+      | structured |

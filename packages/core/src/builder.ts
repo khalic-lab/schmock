@@ -1,4 +1,5 @@
 import type { Server } from "node:http";
+import { isBinaryBody } from "./binary.js";
 import { normalizePath, toHttpMethod } from "./constants.js";
 import {
   errorMessage,
@@ -14,7 +15,11 @@ import {
 } from "./http-helpers.js";
 import { createFetchInterceptor } from "./interceptor.js";
 import { parseRouteKey } from "./parser.js";
-import { runPluginPipeline } from "./plugin-pipeline.js";
+import {
+  recoverGeneratorError,
+  runPluginBeforeRequest,
+  runPluginPipeline,
+} from "./plugin-pipeline.js";
 import { parseResponse } from "./response-parser.js";
 import type { CompiledCallableRoute } from "./route-matcher.js";
 import {
@@ -104,8 +109,8 @@ export class CallableMockInstance {
       ) {
         // Default to plain text for primitives
         routeConfig.contentType = "text/plain";
-      } else if (Buffer.isBuffer(generator)) {
-        // Default to octet-stream for buffers
+      } else if (isBinaryBody(generator)) {
+        // Default to octet-stream for browser and Node binary values
         routeConfig.contentType = "application/octet-stream";
       } else {
         // Default to JSON for objects/arrays
@@ -394,8 +399,16 @@ export class CallableMockInstance {
     this.server = httpServer;
 
     return new Promise((resolve, reject) => {
-      httpServer.on("error", reject);
+      const handleStartupError = (error: Error) => {
+        if (this.server === httpServer) {
+          this.server = undefined;
+          this.serverInfo = undefined;
+        }
+        reject(error);
+      };
+      httpServer.once("error", handleStartupError);
       httpServer.listen(port, hostname, () => {
+        httpServer.off("error", handleStartupError);
         const addr = httpServer.address();
         const actualPort =
           addr !== null && typeof addr === "object" ? addr.port : port;
@@ -485,7 +498,7 @@ export class CallableMockInstance {
           const response = {
             status: 404,
             body: { error: error.message, code: error.code },
-            headers: {},
+            headers: { "content-type": "application/json" },
           };
           this.emit("request:end", {
             method,
@@ -520,7 +533,7 @@ export class CallableMockInstance {
         const response = {
           status: 404,
           body: { error: error.message, code: error.code },
-          headers: {},
+          headers: { "content-type": "application/json" },
         };
         this.emit("request:end", {
           method,
@@ -547,25 +560,8 @@ export class CallableMockInstance {
         params,
       });
 
-      // Generate initial response from route handler
-      const context: Schmock.RequestContext = {
-        method,
-        path: requestPath,
-        params,
-        query: reqQuery,
-        headers: reqHeaders,
-        body: options?.body,
-        state: this.globalConfig.state || {},
-      };
-
-      let result: unknown;
-      if (isGeneratorFunction(matchedRoute.generator)) {
-        result = await matchedRoute.generator(context);
-      } else {
-        result = matchedRoute.generator;
-      }
-
-      // Build plugin context
+      // Build plugin context before route code so request guards can reject
+      // invalid or unauthorized requests without triggering side effects.
       let pluginContext: Schmock.PluginContext = {
         path: requestPath,
         route: matchedRoute.config,
@@ -578,16 +574,66 @@ export class CallableMockInstance {
         routeState: this.globalConfig.state || {},
       };
 
+      const preflightResult = await runPluginBeforeRequest(
+        this.plugins,
+        pluginContext,
+        this.logger,
+      );
+      pluginContext = preflightResult.context;
+      if (preflightResult.requestShortCircuited === true) {
+        pluginContext = { ...pluginContext, requestShortCircuited: true };
+      }
+
+      let result: unknown = preflightResult.response;
+      let skipPostProcessing = preflightResult.recoveredFromError === true;
+
+      if (result === undefined) {
+        const context: Schmock.RequestContext = {
+          method: pluginContext.method,
+          path: pluginContext.path,
+          params: pluginContext.params,
+          query: pluginContext.query,
+          headers: pluginContext.headers,
+          body: pluginContext.body,
+          state: pluginContext.routeState ?? this.globalConfig.state ?? {},
+        };
+
+        try {
+          if (isGeneratorFunction(matchedRoute.generator)) {
+            result = await matchedRoute.generator(context);
+          } else {
+            result = matchedRoute.generator;
+          }
+        } catch (error) {
+          const recovery = await recoverGeneratorError(
+            this.plugins,
+            pluginContext,
+            error,
+            this.logger,
+          );
+          pluginContext = recovery.context;
+          result = recovery.response;
+          skipPostProcessing = recovery.recoveredFromError === true;
+        }
+      }
+
       // Run plugin pipeline to transform the response
       try {
-        const pipelineResult = await runPluginPipeline(
-          this.plugins,
-          pluginContext,
-          result,
-          this.logger,
-        );
-        pluginContext = pipelineResult.context;
-        result = pipelineResult.response;
+        if (skipPostProcessing) {
+          this.logger.log(
+            "pipeline",
+            "Skipping response processors after error recovery",
+          );
+        } else {
+          const pipelineResult = await runPluginPipeline(
+            this.plugins,
+            pluginContext,
+            result,
+            this.logger,
+          );
+          pluginContext = pipelineResult.context;
+          result = pipelineResult.response;
+        }
       } catch (error) {
         this.logger.log(
           "error",
@@ -659,7 +705,7 @@ export class CallableMockInstance {
           error: errorMessage(error),
           code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
         },
-        headers: {},
+        headers: { "content-type": "application/json" },
       };
 
       // Apply delay even for error responses
@@ -691,10 +737,11 @@ export class CallableMockInstance {
       return;
     }
 
-    const ms = Array.isArray(effectiveDelay)
+    const configuredMs = Array.isArray(effectiveDelay)
       ? Math.random() * (effectiveDelay[1] - effectiveDelay[0]) +
         effectiveDelay[0]
       : effectiveDelay;
+    const ms = Math.max(0, configuredMs);
 
     await new Promise((resolve) => setTimeout(resolve, ms));
   }

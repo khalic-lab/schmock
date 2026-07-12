@@ -15,6 +15,19 @@ describeFeature(feature, ({ Scenario }) => {
     };
   }
 
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+  }
+
+  function eventData(type: string): Record<string, unknown> {
+    const event = events.find((candidate) => candidate.type === type);
+    expect(event).toBeDefined();
+    if (!event || !isRecord(event.data)) {
+      throw new Error(`Expected object payload for ${type}`);
+    }
+    return event.data;
+  }
+
   Scenario("Events fire at correct times", ({ Given, And, When, Then }) => {
     Given('a mock with a route "GET /items"', () => {
       mock = schmock({ state: {} });
@@ -33,58 +46,52 @@ describeFeature(feature, ({ Scenario }) => {
       await mock.handle("GET", "/items");
     });
 
-    Then('the "request:start" event fired', () => {
-      expect(events.some((e) => e.type === "request:start")).toBe(true);
+    Then("the event order should be {string}", (_, expectedOrder: string) => {
+      expect(events.map((event) => event.type)).toEqual(
+        expectedOrder.split(","),
+      );
     });
 
     And('the "request:match" event fired with routePath "/items"', () => {
-      const match = events.find((e) => e.type === "request:match");
-      expect(match).toBeDefined();
-      const data = match?.data as Record<string, unknown>;
-      expect(data.routePath).toBe("/items");
+      expect(eventData("request:match").routePath).toBe("/items");
     });
 
     And('the "request:end" event fired with status 200', () => {
-      const end = events.find((e) => e.type === "request:end");
-      expect(end).toBeDefined();
-      const data = end?.data as Record<string, unknown>;
-      expect(data.status).toBe(200);
+      expect(eventData("request:end").status).toBe(200);
     });
   });
 
-  Scenario("Not found event fires for unmatched routes", ({ Given, And, When, Then }) => {
-    Given('a mock with a route "GET /items"', () => {
-      mock = schmock({ state: {} });
-      mock("GET /items", [{ id: 1 }], {});
-    });
+  Scenario(
+    "Not found event fires for unmatched routes",
+    ({ Given, And, When, Then }) => {
+      Given('a mock with a route "GET /items"', () => {
+        mock = schmock({ state: {} });
+        mock("GET /items", [{ id: 1 }], {});
+      });
 
-    And("I register listeners for all events", () => {
-      events = [];
-      mock.on("request:start", collectEvent("request:start"));
-      mock.on("request:match", collectEvent("request:match"));
-      mock.on("request:notfound", collectEvent("request:notfound"));
-      mock.on("request:end", collectEvent("request:end"));
-    });
+      And("I register listeners for all events", () => {
+        events = [];
+        mock.on("request:start", collectEvent("request:start"));
+        mock.on("request:match", collectEvent("request:match"));
+        mock.on("request:notfound", collectEvent("request:notfound"));
+        mock.on("request:end", collectEvent("request:end"));
+      });
 
-    When('I request "GET /missing"', async () => {
-      await mock.handle("GET", "/missing");
-    });
+      When('I request "GET /missing"', async () => {
+        await mock.handle("GET", "/missing");
+      });
 
-    Then('the "request:start" event fired', () => {
-      expect(events.some((e) => e.type === "request:start")).toBe(true);
-    });
+      Then("the event order should be {string}", (_, expectedOrder: string) => {
+        expect(events.map((event) => event.type)).toEqual(
+          expectedOrder.split(","),
+        );
+      });
 
-    And('the "request:notfound" event fired', () => {
-      expect(events.some((e) => e.type === "request:notfound")).toBe(true);
-    });
-
-    And('the "request:end" event fired with status 404', () => {
-      const end = events.find((e) => e.type === "request:end");
-      expect(end).toBeDefined();
-      const data = end?.data as Record<string, unknown>;
-      expect(data.status).toBe(404);
-    });
-  });
+      And('the "request:end" event fired with status 404', () => {
+        expect(eventData("request:end").status).toBe(404);
+      });
+    },
+  );
 
   Scenario("Off removes listener", ({ Given, And, When, Then }) => {
     Given('a mock with a route "GET /items"', () => {

@@ -22,7 +22,7 @@
     "build:lib": "bun build --minify --target node --outdir=dist src/index.ts",
     "build:types": "rm -f tsconfig.tsbuildinfo && tsc --build && node scripts/embed-ambient-types.js",
     "pretest": "rm -f src/*.js src/*.d.ts || true",
-    "test": "vitest",
+    "test": "vitest run",
     "test:watch": "vitest --watch",
     "pretest:bdd": "rm -f src/*.js src/*.d.ts || true",
     "test:bdd": "vitest run --config vitest.config.bdd.ts",
@@ -31,9 +31,11 @@
     "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
   "license": "MIT",
+  "dependencies": {
+    "@types/json-schema": "^7.0.15"
+  },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",
-    "@types/json-schema": "^7.0.15",
     "@types/node": "^26.1.0",
     "@vitest/ui": "^4.1.9",
     "vitest": "^4.1.9"

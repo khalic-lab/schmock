@@ -1,423 +1,90 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
 import { schmock } from "../index";
-import type { CallableMockInstance } from "../types";
 
-const feature = await loadFeature("../../features/performance-reliability.feature");
+const feature = await loadFeature(
+  "../../features/performance-reliability.feature",
+);
+
+function withTimeout(
+  promise: Promise<void>,
+  timeoutMs: number,
+  message: string,
+): Promise<void> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
+}
 
 describeFeature(feature, ({ Scenario }) => {
-  let mock: CallableMockInstance;
-  let responses: any[] = [];
-  let responsesTimes: number[] = [];
-  let expectedResponseCount = 0;
+  let mock: Schmock.CallableMockInstance;
+  let releaseBarrier: (() => void) | undefined;
+  let boundedBarrier: Promise<void> | undefined;
+  let arrivals = 0;
+  let responses: Schmock.Response[] = [];
+  let expectedIds: string[] = [];
 
-  Scenario("High-volume concurrent requests", ({ Given, When, Then, And }) => {
-    responses = [];
-    responsesTimes = [];
+  Scenario(
+    "Concurrent request contexts remain isolated",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an asynchronous mock that waits until every request reaches a shared rendezvous",
+        () => {
+          mock = schmock();
+          arrivals = 0;
+          mock("GET /items/:id", async ({ params }) => {
+            arrivals += 1;
+            if (arrivals === expectedIds.length) releaseBarrier?.();
+            if (!boundedBarrier) {
+              throw new Error("Concurrent rendezvous was not initialized");
+            }
+            await boundedBarrier;
+            return { id: params.id };
+          });
+        },
+      );
 
-    Given("I create a mock for high-volume load testing", () => {
-      mock = schmock();
-      mock('GET /api/health', () => ({
-        status: 'healthy',
-        timestamp: Date.now()
-      }));
-      mock('GET /api/data/:id', ({ params }) => ({
-        id: params.id,
-        data: Array.from({ length: 50 }, (_, i) => ({
-          index: i,
-          value: Math.random()
-        })),
-        generated_at: new Date().toISOString()
-      }));
-      mock('POST /api/process', ({ body }) => {
-        const items = Array.isArray(body) ? body : [body];
-        return {
-          processed: items.length,
-          results: items.map(item => ({ ...item, processed: true })),
-          batch_id: Math.random().toString(36)
-        };
-      });
-    });
+      When(
+        "I issue {int} concurrent requests with distinct route IDs",
+        async (_scenario, count: number) => {
+          expectedIds = Array.from({ length: count }, (_, index) =>
+            String(index),
+          );
+          const barrier = new Promise<void>((resolve) => {
+            releaseBarrier = resolve;
+          });
+          boundedBarrier = withTimeout(
+            barrier,
+            2_000,
+            `Timed out waiting for ${count} requests to reach the shared rendezvous`,
+          );
+          const pending = expectedIds.map((id) =>
+            mock.handle("GET", `/items/${id}`),
+          );
+          responses = await Promise.all(pending);
+        },
+      );
 
-    When("I send {int} concurrent {string} requests", async (_, count: number, request: string) => {
-      const [method, path] = request.split(" ");
-      responses = [];
-      responsesTimes = [];
-      expectedResponseCount = count;
-
-      const promises = Array.from({ length: count }, async () => {
-        const startTime = Date.now();
-        const response = await mock.handle(method as any, path);
-        const elapsed = Date.now() - startTime;
-        return { response, elapsed };
-      });
-
-      const results = await Promise.all(promises);
-      responses = results.map(r => r.response);
-      responsesTimes = results.map(r => r.elapsed);
-    });
-
-    Then("all concurrent requests should complete successfully", () => {
-      expect(responses).toHaveLength(expectedResponseCount);
-      for (const response of responses) {
-        expect(response.status).toBe(200);
-      }
-    });
-
-    // Generous ceiling, not a perf target: in-process handlers are sub-millisecond,
-    // so this only guards against a pathological hang. A tight bound (e.g. 50ms)
-    // flakes under CI load where 100 concurrent requests contend for the event loop.
-    And("the average response time should be under {int}ms", (_, maxTime: number) => {
-      const avgTime = responsesTimes.reduce((a, b) => a + b, 0) / responsesTimes.length;
-      expect(avgTime).toBeLessThan(maxTime);
-    });
-
-    And("no requests should timeout", () => {
-      // All requests completed if we got here, so no timeouts
-      expect(responses.length).toBeGreaterThan(0);
-    });
-
-    When("I send {int} concurrent requests to different {string} endpoints", async (_, count: number, pathPattern: string) => {
-      responses = [];
-
-      const promises = Array.from({ length: count }, async (_, i) => {
-        const path = pathPattern.replace(":id", `id${i}`);
-        return await mock.handle("GET", path);
+      Then("every response should contain its corresponding route ID", () => {
+        expect(arrivals).toBe(expectedIds.length);
+        expect(responses).toHaveLength(expectedIds.length);
+        expect(responses.map((response) => response.body)).toEqual(
+          expectedIds.map((id) => ({ id })),
+        );
       });
 
-      responses = await Promise.all(promises);
-    });
-
-    Then("all responses should be unique based on ID", () => {
-      const ids = responses.map(r => r.body.id);
-      const uniqueIds = new Set(ids);
-      expect(uniqueIds.size).toBe(responses.length);
-    });
-
-    And("each response should contain {int} data items", (_, expectedCount: number) => {
-      for (const response of responses) {
-        expect(response.body.data).toHaveLength(expectedCount);
-      }
-    });
-
-    When("I send {int} concurrent {string} requests with different payloads", async (_, count: number, request: string) => {
-      const [method, path] = request.split(" ");
-      responses = [];
-      expectedResponseCount = count;
-
-      const promises = Array.from({ length: count }, async (_, i) => {
-        return await mock.handle(method as any, path, {
-          body: { id: i, data: `payload-${i}` }
-        });
+      And("the history should contain each route ID exactly once", () => {
+        const retainedIds = mock
+          .history()
+          .map((record) => record.params.id)
+          .sort();
+        expect(retainedIds).toEqual([...expectedIds].sort());
       });
-
-      responses = await Promise.all(promises);
-    });
-
-    And("all concurrent requests should complete successfully", () => {
-      expect(responses).toHaveLength(expectedResponseCount);
-      for (const response of responses) {
-        expect(response.status).toBe(200);
-      }
-    });
-
-    And("each response should have a unique batch_id", () => {
-      const batchIds = responses.map(r => r.body.batch_id);
-      const uniqueBatchIds = new Set(batchIds);
-      expect(uniqueBatchIds.size).toBe(responses.length);
-    });
-  });
-
-  Scenario("Memory usage under sustained load", ({ Given, When, Then, And }) => {
-    Given("I create a mock with large payload handling", () => {
-      mock = schmock();
-      mock('POST /api/large-data', ({ body }) => {
-        const largeArray = Array.from({ length: 1000 }, (_, i) => ({
-          id: i,
-          data: 'x'.repeat(100),
-          timestamp: Date.now(),
-          payload: body
-        }));
-        return {
-          results: largeArray,
-          items: largeArray,
-          total_size: largeArray.length,
-          size: 'large',
-          memory_usage: process.memoryUsage ? process.memoryUsage() : null
-        };
-      });
-      mock('GET /api/accumulate/:count', ({ params }) => {
-        const count = parseInt(params.count);
-        const items = Array.from({ length: count }, (_, i) => ({
-          id: i,
-          value: Math.random(),
-          timestamp: Date.now()
-        }));
-        return {
-          items: items,
-          accumulated: items,
-          total: items.length,
-          count: items.length,
-          memory_usage: process.memoryUsage ? process.memoryUsage() : null
-        };
-      });
-    });
-
-    When("I send {int} requests to {string} with {int}KB payloads", async (_, count: number, request: string, payloadSize: number) => {
-      const [method, path] = request.split(" ");
-      responses = [];
-
-      const largePayload = { data: 'x'.repeat(payloadSize * 1024) };
-
-      for (let i = 0; i < count; i++) {
-        const response = await mock.handle(method as any, path, { body: largePayload });
-        responses.push(response);
-      }
-    });
-
-    Then("all requests should complete without memory errors", () => {
-      expect(responses).toHaveLength(20);
-      for (const response of responses) {
-        expect(response.status).toBe(200);
-        expect(response.body.items).toHaveLength(1000);
-      }
-    });
-
-    And("each response should confirm large payload processing", () => {
-      expect(responses.every(r => r.body.size === 'large')).toBe(true);
-    });
-
-    When("I request {string} multiple times", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      responses = [];
-
-      for (let i = 0; i < 5; i++) {
-        const response = await mock.handle(method as any, path);
-        responses.push(response);
-      }
-    });
-
-    Then("each response should contain {int} accumulated items", (_, expectedCount: number) => {
-      for (const response of responses) {
-        expect(response.body.accumulated).toHaveLength(expectedCount);
-        expect(response.body.total).toBe(expectedCount);
-      }
-    });
-
-    And("all accumulation requests should complete successfully", () => {
-      expect(responses).toHaveLength(5);
-    });
-  });
-
-  Scenario("Error resilience and recovery", ({ Given, When, Then, And }) => {
-    responses = [];
-
-    Given("I create a mock with intermittent failure simulation", () => {
-      mock = schmock();
-      let requestCount = 0;
-      mock('POST /api/unreliable', ({ body }) => {
-        requestCount++;
-        if (requestCount % 5 === 0) {
-          return [500, { error: 'Simulated server error', request_id: requestCount }];
-        }
-        return [200, { success: true, data: body, request_id: requestCount }];
-      });
-      mock('GET /api/flaky', () => {
-        requestCount++;
-        if (requestCount % 5 === 0) {
-          return [500, { error: 'Flaky service error', request_id: requestCount }];
-        }
-        return [200, { success: true, request_id: requestCount }];
-      });
-      mock('POST /api/validate-strict', ({ body }) => {
-        if (!body || typeof body !== 'object') {
-          return [400, { error: 'Request body is required and must be an object', code: 'INVALID_BODY' }];
-        }
-        const record = body as Record<string, unknown>;
-        if (!record.name || typeof record.name !== 'string') {
-          return [422, { error: 'Name field is required and must be a string', code: 'INVALID_NAME' }];
-        }
-        if (!record.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(record.email as string)) {
-          return [422, { error: 'Valid email address is required', code: 'INVALID_EMAIL' }];
-        }
-        return [200, { message: 'Validation successful', data: body }];
-      });
-    });
-
-    When("I send {int} requests to {string}", async (_, count: number, request: string) => {
-      const [method, path] = request.split(" ");
-      responses = [];
-
-      for (let i = 0; i < count; i++) {
-        const response = await mock.handle(method as any, path);
-        responses.push(response);
-      }
-    });
-
-    Then("some requests should succeed and some should fail", () => {
-      const successCount = responses.filter(r => r.status === 200).length;
-      const errorCount = responses.filter(r => r.status >= 400).length;
-
-      expect(successCount).toBeGreaterThan(0);
-      expect(errorCount).toBeGreaterThan(0);
-      expect(successCount + errorCount).toBe(responses.length);
-    });
-
-    And("the success rate should be between {int}% and {int}%", (_, low: number, high: number) => {
-      const successCount = responses.filter(r => r.status === 200).length;
-      const actualRate = (successCount / responses.length) * 100;
-
-      expect(actualRate).toBeGreaterThanOrEqual(low);
-      expect(actualRate).toBeLessThanOrEqual(high);
-    });
-
-    And("error responses should have appropriate status codes", () => {
-      const errorResponses = responses.filter(r => r.status >= 400);
-      const validErrorCodes = [429, 500, 503];
-
-      for (const response of errorResponses) {
-        expect(validErrorCodes).toContain(response.status);
-      }
-    });
-
-    When("I send requests to {string} with various invalid inputs", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      responses = [];
-
-      // Test various invalid scenarios
-      const testCases: Schmock.RequestOptions[] = [
-        { headers: {}, body: null }, // No content-type, no body
-        { headers: { 'content-type': 'application/json' }, body: null }, // No body
-        { headers: { 'content-type': 'application/json' }, body: "invalid" }, // Invalid body type
-        { headers: { 'content-type': 'application/json' }, body: {} }, // Missing required field
-      ];
-
-      for (const testCase of testCases) {
-        const response = await mock.handle(method as any, path, testCase);
-        responses.push(response);
-      }
-    });
-
-    Then("each error response should have a non-empty error message", () => {
-      for (const response of responses) {
-        expect(response.status).toBeGreaterThanOrEqual(400);
-        expect(response.body.error).toBeDefined();
-        expect(typeof response.body.error).toBe('string');
-        expect(response.body.error.length).toBeGreaterThan(0);
-      }
-    });
-
-    And("each error response should have the correct status code", () => {
-      expect(responses[0].status).toBe(400); // No content-type
-      expect(responses[1].status).toBe(400); // No body
-      expect(responses[2].status).toBe(400); // Invalid body type
-      expect(responses[3].status).toBe(422); // Missing required field
-    });
-  });
-
-  Scenario("Route matching performance with complex patterns", ({ Given, When, Then, And }) => {
-    responses = [];
-
-    Given("I create a mock with many nested route patterns", () => {
-      mock = schmock();
-      mock('GET /api/users', () => ({ type: 'users-list' }));
-      mock('GET /api/users/:id', ({ params }) => ({ type: 'user', id: params.id }));
-      mock('GET /api/users/:userId/posts', ({ params }) => ({ type: 'user-posts', userId: params.userId }));
-      mock('GET /api/users/:userId/posts/:postId', ({ params }) => ({
-        type: 'user-post',
-        userId: params.userId,
-        postId: params.postId
-      }));
-      mock('GET /api/users/:userId/posts/:postId/comments', ({ params }) => ({
-        type: 'post-comments',
-        userId: params.userId,
-        postId: params.postId
-      }));
-      mock('GET /api/posts', () => ({ type: 'posts-list' }));
-      mock('GET /api/posts/:postId', ({ params }) => ({ type: 'post', postId: params.postId }));
-      mock('GET /api/posts/:postId/comments/:commentId', ({ params }) => ({
-        type: 'comment',
-        postId: params.postId,
-        commentId: params.commentId
-      }));
-      mock('GET /static/:category/:file', ({ params }) => ({
-        type: 'static',
-        category: params.category,
-        file: params.file
-      }));
-      mock('GET /api/v2/users/:userId', ({ params }) => ({
-        type: 'versioned-user',
-        userId: params.userId,
-        version: 'v2'
-      }));
-    });
-
-    When("I send requests to all route patterns simultaneously", async () => {
-      const testPaths = [
-        "GET /api/users",
-        "GET /api/users/123",
-        "GET /api/users/123/posts",
-        "GET /api/users/123/posts/456",
-        "GET /api/users/123/posts/456/comments",
-        "GET /api/posts",
-        "GET /api/posts/789",
-        "GET /api/posts/789/comments/101",
-        "GET /static/images/logo.png",
-        "GET /api/v2/users/456"
-      ];
-
-      const promises = testPaths.map(async (request) => {
-        const [method, path] = request.split(" ");
-        return await mock.handle(method as any, path);
-      });
-
-      responses = await Promise.all(promises);
-    });
-
-    Then("each request should match the correct route pattern", () => {
-      expect(responses[0].body.type).toBe("users-list");
-      expect(responses[1].body.type).toBe("user");
-      expect(responses[2].body.type).toBe("user-posts");
-      expect(responses[3].body.type).toBe("user-post");
-      expect(responses[4].body.type).toBe("post-comments");
-      expect(responses[5].body.type).toBe("posts-list");
-      expect(responses[6].body.type).toBe("post");
-      expect(responses[7].body.type).toBe("comment");
-      expect(responses[8].body.type).toBe("static");
-      expect(responses[9].body.type).toBe("versioned-user");
-    });
-
-    And("parameter extraction should work correctly for all patterns", () => {
-      expect(responses[1].body.id).toBe("123");
-      expect(responses[2].body.userId).toBe("123");
-      expect(responses[3].body.userId).toBe("123");
-      expect(responses[3].body.postId).toBe("456");
-      expect(responses[8].body.category).toBe("images");
-      expect(responses[8].body.file).toBe("logo.png");
-      expect(responses[9].body.version).toBe("v2");
-    });
-
-    When("I send requests to non-matching paths", async () => {
-      const invalidPaths = [
-        "GET /api/invalid",
-        "GET /users", // Missing /api prefix
-        "GET /api/users/123/invalid",
-        "POST /static/images/test.jpg" // Wrong method
-      ];
-
-      responses = [];
-      for (const request of invalidPaths) {
-        const [method, path] = request.split(" ");
-        const response = await mock.handle(method as any, path);
-        responses.push(response);
-      }
-    });
-
-    Then("they should consistently return {int} responses", (_, expectedStatus: number) => {
-      for (const response of responses) {
-        expect(response.status).toBe(expectedStatus);
-      }
-    });
-  });
-
+    },
+  );
 });

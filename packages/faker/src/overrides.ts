@@ -3,6 +3,10 @@ import { DEFAULT_ARRAY_COUNT } from "./constants.js";
 
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Determine number of items to generate for array schema
  * Prefers explicit count, then schema minItems/maxItems, with sane defaults
@@ -37,6 +41,10 @@ export function determineArrayCount(
     return Math.min(schema.maxItems, DEFAULT_ARRAY_COUNT);
   }
 
+  if (Array.isArray(schema.items)) {
+    return schema.items.length;
+  }
+
   return DEFAULT_ARRAY_COUNT;
 }
 
@@ -58,9 +66,9 @@ export function applyOverrides(
   query?: Record<string, string>,
 ): unknown {
   if (!overrides) return data;
-  if (typeof data !== "object" || data === null) return data;
+  if (!isRecord(data)) return data;
 
-  const result = structuredClone(data) as Record<string, unknown>;
+  const result = structuredClone(data);
 
   for (const [key, value] of Object.entries(overrides)) {
     if (DANGEROUS_KEYS.has(key)) continue;
@@ -69,23 +77,18 @@ export function applyOverrides(
       setNestedProperty(result, key, value, { params, state, query });
     } else {
       // Handle flat keys and nested objects
-      if (
-        typeof value === "object" &&
-        value !== null &&
-        !Array.isArray(value)
-      ) {
-        const nested = value as Record<string, unknown>;
+      if (isRecord(value)) {
         // Recursively apply nested overrides
-        if (result[key] && typeof result[key] === "object") {
+        if (isRecord(result[key])) {
           result[key] = applyOverrides(
             result[key],
-            nested,
+            value,
             params,
             state,
             query,
           );
         } else {
-          result[key] = applyOverrides({}, nested, params, state, query);
+          result[key] = applyOverrides({}, value, params, state, query);
         }
       } else if (typeof value === "string" && value.includes("{{")) {
         // Template processing
@@ -112,14 +115,14 @@ function setNestedProperty(
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i];
     if (DANGEROUS_KEYS.has(part)) return;
-    if (
-      !(part in current) ||
-      typeof current[part] !== "object" ||
-      current[part] === null
-    ) {
-      current[part] = {};
+    const next = current[part];
+    if (isRecord(next)) {
+      current = next;
+    } else {
+      const nested: Record<string, unknown> = {};
+      current[part] = nested;
+      current = nested;
     }
-    current = current[part] as Record<string, unknown>;
   }
 
   // Set the final property
@@ -146,8 +149,8 @@ function resolveTemplatePath(
   let result: unknown = context;
 
   for (const part of parts) {
-    if (result && typeof result === "object") {
-      result = (result as Record<string, unknown>)[part];
+    if (isRecord(result)) {
+      result = result[part];
     } else {
       return undefined;
     }

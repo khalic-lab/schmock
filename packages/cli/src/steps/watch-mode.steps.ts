@@ -1,10 +1,10 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import type { CliServer } from "../cli";
-import { createCliServer, reloadServer } from "../cli";
+import type { CliServer, WatchHandle } from "../cli";
+import { createCliServer, startWatch } from "../cli";
 
 const feature = await loadFeature("../../features/watch-mode.feature");
 
@@ -16,44 +16,99 @@ function makeSpec(paths: Record<string, unknown>): string {
   });
 }
 
-function makeTempSpec(): string {
-  const dir = mkdtempSync(join(tmpdir(), "schmock-watch-"));
-  const specPath = join(dir, "spec.json");
-  writeFileSync(
-    specPath,
-    makeSpec({
-      "/items": {
-        get: { responses: { "200": { description: "OK" } } },
-      },
-    }),
-  );
-  return specPath;
+function initialPaths(): Record<string, unknown> {
+  return {
+    "/items": {
+      get: { responses: { "200": { description: "OK" } } },
+    },
+  };
 }
 
-describeFeature(feature, ({ Scenario }) => {
-  Scenario(
-    "Server reloads with new routes after spec change",
-    ({ Given, And, When, Then }) => {
-      let specPath: string;
-      let server: CliServer;
-      let originalPort: number;
+describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
+  let tempDir: string | undefined;
+  let specPath = "";
+  let server: CliServer | undefined;
+  let watchHandle: WatchHandle | undefined;
+  let originalPort = 0;
+  let reloadPromise: Promise<CliServer> | undefined;
 
+  AfterEachScenario(async () => {
+    watchHandle?.close();
+    watchHandle = undefined;
+
+    if (server?.server.listening) {
+      server.server.closeAllConnections();
+      await new Promise<void>((resolve) =>
+        server?.server.close(() => resolve()),
+      );
+    }
+    server = undefined;
+
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+    tempDir = undefined;
+  });
+
+  function createTempSpec(): void {
+    tempDir = mkdtempSync(join(tmpdir(), "schmock-watch-"));
+    specPath = join(tempDir, "spec.json");
+    writeFileSync(specPath, makeSpec(initialPaths()));
+  }
+
+  async function startWatchedServer(): Promise<void> {
+    server = await createCliServer({ spec: specPath, port: 0 });
+    originalPort = server.port;
+    reloadPromise = new Promise<CliServer>((resolve) => {
+      watchHandle = startWatch(
+        specPath,
+        { spec: specPath, port: 0 },
+        () => {
+          if (!server) throw new Error("Expected a running CLI server");
+          return server;
+        },
+        (reloaded) => {
+          server = reloaded;
+          resolve(reloaded);
+        },
+      );
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  async function waitForReload(): Promise<CliServer> {
+    if (!reloadPromise) throw new Error("Watch reload was not configured");
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        reloadPromise,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () =>
+              reject(new Error("Timed out waiting for watched spec reload")),
+            5_000,
+          );
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  Scenario(
+    "Spec changes reload automatically on the same port",
+    ({ Given, And, When, Then }) => {
       Given("a temp spec file with one route", () => {
-        specPath = makeTempSpec();
+        createTempSpec();
       });
 
-      And("a CLI server is started", async () => {
-        server = await createCliServer({ spec: specPath, port: 0 });
-        originalPort = server.port;
+      And("a CLI server is started with file watching", async () => {
+        await startWatchedServer();
       });
 
       When("the spec file is updated to include a new route", () => {
         writeFileSync(
           specPath,
           makeSpec({
-            "/items": {
-              get: { responses: { "200": { description: "OK" } } },
-            },
+            ...initialPaths(),
             "/users": {
               get: { responses: { "200": { description: "OK" } } },
             },
@@ -61,46 +116,53 @@ describeFeature(feature, ({ Scenario }) => {
         );
       });
 
-      And("the server is reloaded", async () => {
-        server = await reloadServer(server, { spec: specPath });
-      });
-
-      Then("the reloaded server is listening", () => {
-        expect(server.server.listening).toBe(true);
-        expect(server.port).toBe(originalPort);
-      });
+      Then(
+        "the server reloads automatically on the original port",
+        async () => {
+          const reloaded = await waitForReload();
+          expect(reloaded.server.listening).toBe(true);
+          expect(reloaded.port).toBe(originalPort);
+        },
+      );
 
       And("the new route responds successfully", async () => {
-        const res = await fetch(
+        if (!server) throw new Error("Expected the reloaded CLI server");
+        const response = await fetch(
           `http://${server.hostname}:${server.port}/users`,
         );
-        expect(res.status).toBe(200);
-        server.close();
+        expect(response.status).toBe(200);
       });
     },
   );
 
-  Scenario("Reload preserves the port", ({ Given, And, When, Then }) => {
-    let specPath: string;
-    let server: CliServer;
-    let originalPort: number;
+  Scenario(
+    "Invalid spec changes keep the current server online",
+    ({ Given, And, When, Then }) => {
+      Given("a temp spec file with one route", () => {
+        createTempSpec();
+      });
 
-    Given("a temp spec file with one route", () => {
-      specPath = makeTempSpec();
-    });
+      And("a CLI server is started with file watching", async () => {
+        await startWatchedServer();
+      });
 
-    And("a CLI server is started on a random port", async () => {
-      server = await createCliServer({ spec: specPath, port: 0 });
-      originalPort = server.port;
-    });
+      When("the spec file is changed to invalid JSON", () => {
+        writeFileSync(specPath, "{");
+      });
 
-    When("the server is reloaded", async () => {
-      server = await reloadServer(server, { spec: specPath });
-    });
-
-    Then("the port number is the same as before", () => {
-      expect(server.port).toBe(originalPort);
-      server.close();
-    });
-  });
+      Then(
+        "the original route remains available after the failed reload",
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          if (!server) throw new Error("Expected the original CLI server");
+          expect(server.port).toBe(originalPort);
+          expect(server.server.listening).toBe(true);
+          const response = await fetch(
+            `http://${server.hostname}:${server.port}/items`,
+          );
+          expect(response.status).toBe(200);
+        },
+      );
+    },
+  );
 });

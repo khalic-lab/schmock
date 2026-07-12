@@ -191,6 +191,64 @@ describe("Angular Adapter", () => {
       expect(mockNext.handle).toHaveBeenCalledWith(otherRequest);
     });
 
+    it("does not treat a sibling path as part of baseUrl", async () => {
+      mockInstance.handle = vi.fn();
+      const InterceptorClass = createSchmockInterceptor(mockInstance, {
+        baseUrl: "/api",
+        passthrough: false,
+      });
+      const interceptor = new InterceptorClass();
+      const request = new HttpRequest("GET", "/apiv2/users");
+      const backendResponse = new HttpResponse({ body: "real" });
+      const next: HttpHandler = {
+        handle: vi.fn().mockReturnValue(of(backendResponse)),
+      };
+
+      const result = await new Promise<HttpEvent<unknown>>(
+        (resolve, reject) => {
+          interceptor.intercept(request, next).subscribe({
+            next: resolve,
+            error: reject,
+          });
+        },
+      );
+
+      expect(result).toBe(backendResponse);
+      expect(mockInstance.handle).not.toHaveBeenCalled();
+      expect(next.handle).toHaveBeenCalledWith(request);
+    });
+
+    it("passes unsupported methods through without changing them to GET", async () => {
+      mockInstance.handle = vi.fn();
+      const InterceptorClass = createSchmockInterceptor(mockInstance, {
+        passthrough: false,
+      });
+      const interceptor = new InterceptorClass();
+      const request = new HttpRequest<unknown>(
+        "PROPFIND",
+        "/api/users",
+        undefined,
+        {},
+      );
+      const backendResponse = new HttpResponse({ body: "real" });
+      const next: HttpHandler = {
+        handle: vi.fn().mockReturnValue(of(backendResponse)),
+      };
+
+      const result = await new Promise<HttpEvent<unknown>>(
+        (resolve, reject) => {
+          interceptor.intercept(request, next).subscribe({
+            next: resolve,
+            error: reject,
+          });
+        },
+      );
+
+      expect(result).toBe(backendResponse);
+      expect(mockInstance.handle).not.toHaveBeenCalled();
+      expect(next.handle).toHaveBeenCalledWith(request);
+    });
+
     it("strips baseUrl prefix before passing path to mock.handle", async () => {
       mockInstance.handle = vi
         .fn()
@@ -318,8 +376,8 @@ describe("Angular Adapter", () => {
         .mockResolvedValue({ status: 200, body: "original", headers: {} });
 
       const InterceptorClass = createSchmockInterceptor(mockInstance, {
-        transformResponse: (response) => ({
-          ...response,
+        transformResponse: (schmockResponse) => ({
+          ...schmockResponse,
           status: 201,
           body: "transformed",
         }),

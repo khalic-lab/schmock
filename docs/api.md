@@ -167,6 +167,7 @@ interface Plugin {
   name: string
   version?: string
   install?(instance: CallableMockInstance): void
+  beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
 }
@@ -180,6 +181,7 @@ interface PluginContext {
   headers: Record<string, string>
   body?: unknown
   state: Map<string, unknown>              // shared across plugins per request
+  requestShortCircuited?: boolean          // response came from beforeRequest
   routeState?: Record<string, unknown>     // route-level persistent state
 }
 
@@ -234,7 +236,7 @@ function fakerPlugin(options: FakerPluginOptions): Plugin
 interface FakerPluginOptions {
   schema: JSONSchema7
   count?: number                    // items for array schemas
-  overrides?: Record<string, any>   // field overrides (supports templates)
+  overrides?: Record<string, unknown> // field overrides (supports templates)
   seed?: number                     // deterministic generation
 }
 ```
@@ -249,9 +251,9 @@ function generateFromSchema(options: SchemaGenerationContext): unknown
 interface SchemaGenerationContext {
   schema: JSONSchema7
   count?: number
-  overrides?: Record<string, any>
+  overrides?: Record<string, unknown>
   params?: Record<string, string>
-  state?: any
+  state?: Record<string, unknown>
   query?: Record<string, string>
   seed?: number
 }
@@ -291,6 +293,9 @@ The faker plugin maps property names to appropriate faker methods automatically.
 | `rating`, `score`, `stars` | Integer 1–5 |
 
 200+ field names are mapped. See `packages/faker/src/field-mappings.ts` for the complete list.
+Unconstrained strings without a recognized field name use non-empty lorem text;
+explicit constraints such as `minLength: 0` remain authoritative. Draft 7 tuple
+schemas are normalized recursively, including tuples behind `$ref` definitions.
 
 ### Schema extensions
 
@@ -320,6 +325,7 @@ function validationPlugin(options: ValidationPluginOptions): Plugin
 interface ValidationPluginOptions {
   request?: {
     body?: JSONSchema7
+    bodyRequired?: boolean       // default: false
     query?: JSONSchema7
     headers?: JSONSchema7
   }
@@ -330,6 +336,9 @@ interface ValidationPluginOptions {
   responseErrorStatus?: number   // default: 500
 }
 ```
+
+Request rules run before the route generator. Set `bodyRequired: true` when an
+absent body must be rejected; supplied bodies are always validated.
 
 Error response format:
 
@@ -414,10 +423,8 @@ interface OpenApiOptions {
   schemas?: Record<string, JSONSchema7>   // replace response schemas
   onSchema?: OnSchemaCallback        // dynamic schema modification
   resources?: Record<string, ResourceOverride>  // override CRUD detection
-  queryFeatures?: {
-    pagination?: boolean
-    sorting?: boolean
-    filtering?: boolean
+  callbacks?: {
+    dispatch(request: OpenApiCallbackRequest): void | Promise<void>
   }
 }
 
@@ -441,6 +448,10 @@ interface ResourceOverride {
   errorSchema?: JSONSchema7       // custom error response format
 }
 ```
+
+Callbacks are disabled by default and never issue implicit network requests.
+The legacy `queryFeatures` option is unsupported and throws
+`OPENAPI_UNSUPPORTED_OPTION` when supplied.
 
 Supports Swagger 2.0, OpenAPI 3.0, and OpenAPI 3.1.
 

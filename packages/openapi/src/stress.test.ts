@@ -863,7 +863,7 @@ describe("stress: plugin edge cases", () => {
     expect(res.status).toBe(404);
   });
 
-  it("spec with no response schemas returns empty object", async () => {
+  it("honors a schema-less 204 response", async () => {
     const mock = schmock({ state: {} });
     mock.pipe(
       await openapi({
@@ -882,7 +882,8 @@ describe("stress: plugin edge cases", () => {
     );
 
     const ping = await mock.handle("GET", "/ping");
-    expect(ping.status).toBe(200);
+    expect(ping.status).toBe(204);
+    expect(ping.body).toBeUndefined();
   });
 });
 
@@ -2317,7 +2318,7 @@ describe("stress: weird inline specs", () => {
     expect((await mock.handle("GET", "/health")).status).toBe(200);
     expect((await mock.handle("POST", "/webhook")).status).toBe(200);
     expect((await mock.handle("PUT", "/config")).status).toBe(200);
-    expect((await mock.handle("DELETE", "/cache")).status).toBe(200);
+    expect((await mock.handle("DELETE", "/cache")).status).toBe(204);
   });
 });
 
@@ -2615,7 +2616,7 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
         currency: custFixture.currency,
       },
     });
-    expect(created.status).toBe(201);
+    expect(created.status).toBe(200);
     const cust = created.body as Record<string, unknown>;
     expect(cust.email).toBe(custFixture.email);
     expect(cust.customer).toBe(1);
@@ -2635,7 +2636,7 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
 
     // Delete
     const deleted = await mock.handle("DELETE", "/v1/customers/1");
-    expect(deleted.status).toBe(204);
+    expect(deleted.status).toBe(200);
 
     // Verify deleted
     const gone = await mock.handle("GET", "/v1/customers/1");
@@ -2650,7 +2651,7 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
     const created = await mock.handle("POST", "/v1/products", {
       body: { name: "Premium Plan", active: true },
     });
-    expect(created.status).toBe(201);
+    expect(created.status).toBe(200);
     const prod = created.body as Record<string, unknown>;
     expect(prod.id).toBe(1);
     expect(prod.name).toBe("Premium Plan");
@@ -2666,7 +2667,7 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
 
     // Delete
     const del = await mock.handle("DELETE", "/v1/products/1");
-    expect(del.status).toBe(204);
+    expect(del.status).toBe(200);
   }, 120_000);
 
   it("coupon CRUD with Stripe fixture data", async () => {
@@ -2682,14 +2683,14 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
         duration: couponFixture.duration,
       },
     });
-    expect(created.status).toBe(201);
+    expect(created.status).toBe(200);
     const coupon = created.body as Record<string, unknown>;
     expect(coupon.coupon).toBe(1);
     expect(coupon.duration).toBe(couponFixture.duration);
 
     // Delete
     const deleted = await mock.handle("DELETE", "/v1/coupons/1");
-    expect(deleted.status).toBe(204);
+    expect(deleted.status).toBe(200);
 
     // Gone
     const gone = await mock.handle("GET", "/v1/coupons/1");
@@ -2772,7 +2773,7 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
     const created = await mock.handle("POST", "/v1/customers", {
       body: { email: "test@stripe.com" },
     });
-    expect(created.status).toBe(201);
+    expect(created.status).toBe(200);
   }, 120_000);
 
   it("resetState clears all Stripe resources", async () => {
@@ -2827,7 +2828,7 @@ describe("stress: stripe spec — the confused Stripe developer", () => {
       const res = await mock.handle("POST", "/v1/customers", {
         body: { email, name: `User ${email.split("@")[0]}` },
       });
-      expect(res.status).toBe(201);
+      expect(res.status).toBe(200);
     }
 
     const list = await mock.handle("GET", "/v1/customers");

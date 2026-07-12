@@ -7,7 +7,6 @@ const feature = await loadFeature("../../features/audit-onerror-tuple.feature");
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Awaited<ReturnType<Schmock.CallableMockInstance["handle"]>>;
-  let thrownError: unknown;
 
   Scenario(
     "2-element tuple from onError recovers with correct status and body",
@@ -21,20 +20,13 @@ describeFeature(feature, ({ Scenario }) => {
             process: (_ctx, _response) => {
               throw new Error("simulated failure");
             },
-            onError: (_error, _ctx) => {
-              return [503, { error: "recovered" }] as [number, unknown];
-            },
+            onError: () => [503, { error: "recovered" }],
           });
         },
       );
 
       When('I handle a request to "GET /fail"', async () => {
-        thrownError = undefined;
-        try {
-          response = await mock.handle("GET", "/fail");
-        } catch (err) {
-          thrownError = err;
-        }
+        response = await mock.handle("GET", "/fail");
       });
 
       Then("the response status is 503", () => {
@@ -43,10 +35,6 @@ describeFeature(feature, ({ Scenario }) => {
 
       And('the response body is \'{"error":"recovered"}\'', () => {
         expect(response.body).toEqual({ error: "recovered" });
-      });
-
-      And("no error is thrown", () => {
-        expect(thrownError).toBeUndefined();
       });
     },
   );
@@ -63,24 +51,17 @@ describeFeature(feature, ({ Scenario }) => {
             process: (_ctx, _response) => {
               throw new Error("simulated failure with headers");
             },
-            onError: (_error, _ctx) => {
-              return [
-                503,
-                { error: "recovered with headers" },
-                { "x-recovery": "true" },
-              ] as [number, unknown, Record<string, string>];
-            },
+            onError: () => [
+              503,
+              { error: "recovered with headers" },
+              { "x-recovery": "true" },
+            ],
           });
         },
       );
 
       When('I handle a request to "GET /fail-with-headers"', async () => {
-        thrownError = undefined;
-        try {
-          response = await mock.handle("GET", "/fail-with-headers");
-        } catch (err) {
-          thrownError = err;
-        }
+        response = await mock.handle("GET", "/fail-with-headers");
       });
 
       Then("the response status is 503", () => {
@@ -91,9 +72,12 @@ describeFeature(feature, ({ Scenario }) => {
         expect(response.body).toEqual({ error: "recovered with headers" });
       });
 
-      And("no error is thrown", () => {
-        expect(thrownError).toBeUndefined();
-      });
+      And(
+        "the response header {string} is {string}",
+        (_, header: string, value: string) => {
+          expect(response.headers[header]).toBe(value);
+        },
+      );
     },
   );
 });

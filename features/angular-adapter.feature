@@ -46,6 +46,16 @@ Feature: Angular Adapter
     When I make an Angular request to "GET /external/data"
     Then the request should pass through to the real backend
 
+  Scenario: Base URL only matches an exact path segment
+    Given I create a strict Angular mock with baseUrl "/api"
+    When I make an Angular request to "GET /apiv2/users"
+    Then the request should pass through to the real backend
+
+  Scenario: Unsupported HTTP methods are passed through
+    Given I create a strict Angular mock for "GET /api/users"
+    When I make an Angular request to "PROPFIND /api/users"
+    Then the request should pass through to the real backend
+
   Scenario: Use passthrough option to handle unmatched routes
     Given I create an Angular mock with passthrough enabled:
       """

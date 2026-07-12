@@ -8,7 +8,11 @@ import {
 import type { JSONSchema7 } from "json-schema";
 import { version as packageVersion } from "../package.json";
 import { MAX_ARRAY_SIZE, NULLABLE_NULL_PROBABILITY } from "./constants.js";
-import { generateWithJsf } from "./jsf-config.js";
+import {
+  createSeededRandom,
+  generateWithJsf,
+  resolveGenerationSeed,
+} from "./jsf-config.js";
 import { applyOverrides, determineArrayCount } from "./overrides.js";
 import { enhanceSchemaWithSmartMapping } from "./schema-enhancement.js";
 import { isJSONSchema7, validateSchema } from "./validation.js";
@@ -16,6 +20,10 @@ import { isJSONSchema7, validateSchema } from "./validation.js";
 export type SchemaGenerationContext = Schmock.SchemaGenerationContext;
 
 export type FakerPluginOptions = Schmock.FakerPluginOptions;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
   // Validate schema immediately when plugin is created (fail-fast)
@@ -73,43 +81,39 @@ export async function generateFromSchema(
 
   validateSchema(schema);
 
-  // Handle array schemas with count
-  if (schema.type === "array" && schema.items) {
-    const itemCount = determineArrayCount(schema, count);
+  const generationSeed = resolveGenerationSeed(seed);
+  const random = createSeededRandom(generationSeed);
 
-    // Check for resource limits
+  let enhancedSchema = enhanceSchemaWithSmartMapping(schema);
+
+  // Resolve the top-level array size once, then let JSF generate the complete
+  // array so tuple positions, uniqueness, and a seeded sequence are preserved.
+  if (schema.type === "array" && schema.items) {
+    const itemCount = determineArrayCount(schema, count, random);
+
     if (itemCount > MAX_ARRAY_SIZE) {
       throw new ResourceLimitError("array_size", MAX_ARRAY_SIZE, itemCount);
     }
 
-    const rawItemSchema = Array.isArray(schema.items)
-      ? schema.items[0]
-      : schema.items;
-
-    if (!rawItemSchema || typeof rawItemSchema === "boolean") {
-      throw new SchemaValidationError(
-        "$.items",
-        "Array schema must have valid items definition",
-      );
-    }
-
-    const itemSchema = rawItemSchema;
-    const enhancedItemSchema = enhanceSchemaWithSmartMapping(itemSchema);
-
-    const items: unknown[] = [];
-    for (let i = 0; i < itemCount; i++) {
-      let item: unknown = await generateWithJsf(enhancedItemSchema, seed);
-      item = postProcessGenerated(item, enhancedItemSchema);
-      item = applyOverrides(item, overrides, params, state, query);
-      items.push(item);
-    }
-    return items;
+    enhancedSchema = {
+      ...enhancedSchema,
+      minItems: itemCount,
+      maxItems: itemCount,
+    };
   }
 
-  // Handle object schemas
-  const enhancedSchema = enhanceSchemaWithSmartMapping(schema);
-  let generated: unknown = await generateWithJsf(enhancedSchema, seed);
-  generated = postProcessGenerated(generated, enhancedSchema);
+  let generated: unknown = await generateWithJsf(
+    enhancedSchema,
+    generationSeed,
+  );
+  generated = postProcessGenerated(generated, enhancedSchema, random);
+
+  if (Array.isArray(generated)) {
+    return generated.map((item) =>
+      applyOverrides(item, overrides, params, state, query),
+    );
+  }
+
   generated = applyOverrides(generated, overrides, params, state, query);
   return generated;
 }
@@ -120,7 +124,11 @@ export async function generateFromSchema(
  * - schmockNullable: ~5% chance of null
  * - schmockTrueProbability: weighted boolean generation
  */
-function postProcessGenerated(data: unknown, schema: JSONSchema7): unknown {
+function postProcessGenerated(
+  data: unknown,
+  schema: JSONSchema7,
+  random: () => number,
+): unknown {
   if (
     data === null ||
     data === undefined ||
@@ -130,11 +138,9 @@ function postProcessGenerated(data: unknown, schema: JSONSchema7): unknown {
     return data;
   }
 
-  const schemaExt = schema as Record<string, unknown>;
-
   // Apply nullable probability at this level
-  if (schemaExt.schmockNullable === true) {
-    if (Math.random() < NULLABLE_NULL_PROBABILITY) {
+  if ("schmockNullable" in schema && schema.schmockNullable === true) {
+    if (random() < NULLABLE_NULL_PROBABILITY) {
       return null;
     }
   }
@@ -142,25 +148,36 @@ function postProcessGenerated(data: unknown, schema: JSONSchema7): unknown {
   // Apply boolean weighting at this level
   if (
     schema.type === "boolean" &&
-    typeof schemaExt.schmockTrueProbability === "number"
+    "schmockTrueProbability" in schema &&
+    typeof schema.schmockTrueProbability === "number"
   ) {
-    return Math.random() < schemaExt.schmockTrueProbability;
+    return random() < schema.schmockTrueProbability;
   }
 
   // Recurse into object properties
-  if (typeof data === "object" && !Array.isArray(data) && schema.properties) {
-    const record = data as Record<string, unknown>;
+  if (isRecord(data) && schema.properties) {
     for (const [key, propSchema] of Object.entries(schema.properties)) {
-      if (key in record && isJSONSchema7(propSchema)) {
-        record[key] = postProcessGenerated(record[key], propSchema);
+      if (key in data && isJSONSchema7(propSchema)) {
+        data[key] = postProcessGenerated(data[key], propSchema, random);
       }
     }
   }
 
   // Recurse into array items
-  if (Array.isArray(data) && schema.items && isJSONSchema7(schema.items)) {
-    for (let i = 0; i < data.length; i++) {
-      data[i] = postProcessGenerated(data[i], schema.items);
+  if (Array.isArray(data) && Array.isArray(schema.items)) {
+    for (let index = 0; index < data.length; index++) {
+      const itemSchema = schema.items[index];
+      if (itemSchema && isJSONSchema7(itemSchema)) {
+        data[index] = postProcessGenerated(data[index], itemSchema, random);
+      }
+    }
+  } else if (
+    Array.isArray(data) &&
+    schema.items &&
+    isJSONSchema7(schema.items)
+  ) {
+    for (let index = 0; index < data.length; index++) {
+      data[index] = postProcessGenerated(data[index], schema.items, random);
     }
   }
 

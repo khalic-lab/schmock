@@ -1,5 +1,5 @@
-import { resolve } from "node:path";
 import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
 import { expect } from "vitest";
@@ -9,6 +9,20 @@ const feature = await loadFeature("../../features/openapi-seed.feature");
 const fixturesDir = resolve(import.meta.dirname, "../__fixtures__");
 
 const scratchDir = resolve(import.meta.dirname, "../__fixtures__");
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requireRecord(
+  value: unknown,
+  description: string,
+): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`Expected ${description} to be an object`);
+  }
+  return value;
+}
 
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
@@ -90,7 +104,10 @@ describeFeature(feature, ({ Scenario }) => {
       });
 
       Then("the new pet ID is greater than existing seed IDs", () => {
-        const body = response.body as Record<string, unknown>;
+        const body = requireRecord(response.body, "created pet response body");
+        if (typeof body.petId !== "number") {
+          throw new Error("Expected the created pet ID to be numeric");
+        }
         expect(body.petId).toBeGreaterThan(2);
       });
     },
@@ -106,10 +123,11 @@ describeFeature(feature, ({ Scenario }) => {
       Then(
         'creating a mock with seed count "abc" should throw about non-negative integer',
         async () => {
+          const invalidCount = Number("abc");
           await expect(
             openapi({
               spec: specPath,
-              seed: { pets: { count: "abc" as any } },
+              seed: { pets: { count: invalidCount } },
             }),
           ).rejects.toThrow("non-negative integer");
         },

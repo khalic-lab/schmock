@@ -6,6 +6,21 @@ import { openapi } from "./plugin";
 const fixturesDir = resolve(import.meta.dirname, "__fixtures__");
 
 describe("openapi plugin", () => {
+  it("rejects unsupported query features with a structured setup error", async () => {
+    const spec = {
+      openapi: "3.0.3",
+      info: { title: "test", version: "1.0.0" },
+      paths: {},
+    };
+
+    await expect(
+      openapi({ spec, queryFeatures: { pagination: true } }),
+    ).rejects.toMatchObject({
+      code: "OPENAPI_UNSUPPORTED_OPTION",
+      context: { option: "queryFeatures" },
+    });
+  });
+
   describe("Swagger 2.0 integration", () => {
     it("auto-registers all routes from Petstore spec", async () => {
       const mock = schmock({ state: {} });
@@ -204,6 +219,54 @@ describe("openapi plugin", () => {
   });
 
   describe("validator isolation", () => {
+    it("isolates request and response schemas with the same $id", async () => {
+      const sharedSchema = {
+        $id: "https://example.com/schemas/item.json",
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      };
+      const spec = {
+        openapi: "3.0.3",
+        info: { title: "test", version: "1.0.0" },
+        paths: {
+          "/echo": {
+            post: {
+              requestBody: {
+                required: true,
+                content: {
+                  "application/json": { schema: sharedSchema },
+                },
+              },
+              responses: {
+                "201": {
+                  description: "created",
+                  content: {
+                    "application/json": { schema: sharedSchema },
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+      const mock = schmock();
+      mock.pipe(
+        await openapi({
+          spec,
+          validateRequests: true,
+          validateResponses: true,
+        }),
+      );
+
+      const response = await mock.handle("POST", "/echo", {
+        body: { name: "valid" },
+        headers: { accept: "application/json" },
+      });
+
+      expect(response.status).toBe(201);
+    });
+
     it("two plugins with overlapping schema $id values don't collide on AJV compile", async () => {
       const sharedId = "https://example.com/schemas/user.json";
       const specBuilder = (minLen: number) => ({

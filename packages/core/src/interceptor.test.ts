@@ -26,6 +26,83 @@ describe("mock.intercept()", () => {
     handle.restore();
   });
 
+  it("returns browser binary bodies without JSON serialization", async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    mock("GET /api/binary", bytes);
+    const handle = mock.intercept();
+
+    try {
+      const response = await fetch("http://localhost/api/binary");
+      expect(response.headers.get("content-type")).toBe(
+        "application/octet-stream",
+      );
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("returns dynamic binary bodies with binary content type", async () => {
+    const bytes = new Uint8Array([4, 5, 6]);
+    mock("GET /api/dynamic-binary", () => bytes.buffer);
+    const handle = mock.intercept();
+
+    try {
+      const response = await fetch("http://localhost/api/dynamic-binary");
+      expect(response.headers.get("content-type")).toBe(
+        "application/octet-stream",
+      );
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("returns tuple binary bodies with binary content type", async () => {
+    const bytes = new Uint8Array([7, 8, 9]);
+    mock(
+      "GET /api/tuple-binary",
+      () => [206, new DataView(bytes.buffer)] satisfies [number, unknown],
+    );
+    const handle = mock.intercept();
+
+    try {
+      const response = await fetch("http://localhost/api/tuple-binary");
+      expect(response.status).toBe(206);
+      expect(response.headers.get("content-type")).toBe(
+        "application/octet-stream",
+      );
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("normalizes a binary body supplied by beforeResponse", async () => {
+    mock("GET /api/source", "source");
+    const sharedBytes = new Uint8Array(new SharedArrayBuffer(3));
+    sharedBytes.set([10, 11, 12]);
+    const handle = mock.intercept({
+      beforeResponse: () => ({
+        status: 200,
+        body: new DataView(sharedBytes.buffer),
+        headers: {},
+      }),
+    });
+
+    try {
+      const response = await fetch("http://localhost/api/source");
+      expect(response.headers.get("content-type")).toBe(
+        "application/octet-stream",
+      );
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+        new Uint8Array([10, 11, 12]),
+      );
+    } finally {
+      handle.restore();
+    }
+  });
+
   it("passes through unmatched routes when passthrough is true", async () => {
     mock("GET /api/users", [{ id: 1 }]);
     // Save reference to the vi.fn() mock that the interceptor will call on passthrough
@@ -287,5 +364,125 @@ describe("mock.intercept()", () => {
     expect(json.received).toBe("not-json-{broken");
 
     handle.restore();
+  });
+
+  it("composes mock instances newest-first and chains passthrough", async () => {
+    const olderMock = schmock();
+    olderMock("GET /api/shared", { source: "older" });
+    olderMock("GET /api/older", { source: "older" });
+
+    const newerMock = schmock();
+    newerMock("GET /api/shared", { source: "newer" });
+
+    const olderHandle = olderMock.intercept();
+    const newerHandle = newerMock.intercept();
+
+    try {
+      const sharedResponse = await fetch("http://localhost/api/shared");
+      expect(await sharedResponse.json()).toEqual({ source: "newer" });
+
+      const olderResponse = await fetch("http://localhost/api/older");
+      expect(await olderResponse.json()).toEqual({ source: "older" });
+    } finally {
+      newerHandle.restore();
+      olderHandle.restore();
+    }
+  });
+
+  it("keeps remaining interceptors installed after out-of-order restore", async () => {
+    const baseline = globalThis.fetch;
+    const olderMock = schmock();
+    const newerMock = schmock();
+    newerMock("GET /api/newer", { source: "newer" });
+
+    const olderHandle = olderMock.intercept();
+    const newerHandle = newerMock.intercept();
+
+    olderHandle.restore();
+    expect(olderHandle.active).toBe(false);
+    expect(newerHandle.active).toBe(true);
+    expect(globalThis.fetch).not.toBe(baseline);
+
+    try {
+      const response = await fetch("http://localhost/api/newer");
+      expect(await response.json()).toEqual({ source: "newer" });
+    } finally {
+      newerHandle.restore();
+    }
+
+    expect(globalThis.fetch).toBe(baseline);
+  });
+
+  it("restores idempotently", () => {
+    const baseline = globalThis.fetch;
+    const handle = mock.intercept();
+
+    handle.restore();
+    handle.restore();
+
+    expect(handle.active).toBe(false);
+    expect(globalThis.fetch).toBe(baseline);
+  });
+
+  it("does not overwrite a fetch replacement installed after Schmock", () => {
+    const handle = mock.intercept();
+    const replacementFetch = vi
+      .fn()
+      .mockResolvedValue(new Response("third-party backend"));
+    globalThis.fetch = replacementFetch;
+
+    handle.restore();
+
+    expect(globalThis.fetch).toBe(replacementFetch);
+  });
+
+  it("keeps a third-party wrapper's captured dispatcher usable", async () => {
+    const baseline = globalThis.fetch;
+    const handle = mock.intercept();
+    const schmockDispatcher = globalThis.fetch;
+    const replacementFetch = vi.fn(
+      (input: RequestInfo | URL, init?: RequestInit) =>
+        schmockDispatcher(input, init),
+    );
+    globalThis.fetch = replacementFetch;
+
+    handle.restore();
+
+    const response = await fetch("http://localhost/real-backend");
+    expect(await response.text()).toBe("real backend");
+    expect(replacementFetch).toHaveBeenCalledOnce();
+    expect(baseline).toHaveBeenCalledOnce();
+  });
+
+  it("wraps the current fetch when a later interceptor follows a replacement", async () => {
+    const olderMock = schmock();
+    olderMock("GET /api/older", { source: "older" });
+    const olderHandle = olderMock.intercept();
+
+    const replacementFetch = vi
+      .fn()
+      .mockResolvedValue(new Response("third-party backend"));
+    globalThis.fetch = replacementFetch;
+
+    const newerMock = schmock();
+    newerMock("GET /api/newer", { source: "newer" });
+    const newerHandle = newerMock.intercept();
+
+    olderHandle.restore();
+    expect(olderHandle.active).toBe(false);
+    expect(newerHandle.active).toBe(true);
+
+    try {
+      const mockedResponse = await fetch("http://localhost/api/newer");
+      expect(await mockedResponse.json()).toEqual({ source: "newer" });
+
+      const passthroughResponse = await fetch("http://localhost/real-backend");
+      expect(await passthroughResponse.text()).toBe("third-party backend");
+      expect(replacementFetch).toHaveBeenCalledOnce();
+    } finally {
+      newerHandle.restore();
+    }
+
+    expect(globalThis.fetch).toBe(replacementFetch);
   });
 });

@@ -1,5 +1,6 @@
 /// <reference path="../../core/schmock.d.ts" />
 
+import { isStatusTuple } from "@schmock/core";
 import type { ParsedCallback } from "./parser.js";
 import { isRecord } from "./utils.js";
 
@@ -12,31 +13,34 @@ export function getRouteCallbacks(
 }
 
 /**
- * Fire callbacks in a fire-and-forget manner.
- * Silently ignores failures — callbacks are best-effort.
+ * Resolve and deliver callbacks through the application-owned dispatcher.
+ * Schmock deliberately performs no network I/O itself.
  */
-export function fireCallbacks(
+export async function dispatchCallbacks(
   callbacks: ParsedCallback[],
+  dispatcher: Schmock.OpenApiCallbackOptions["dispatch"],
   context: Schmock.PluginContext,
   response: unknown,
-): void {
+): Promise<void> {
   for (const callback of callbacks) {
     const url = resolveCallbackUrl(callback.urlExpression, context, response);
-    if (!url?.startsWith("http")) continue;
+    if (!url) continue;
 
-    const body = Array.isArray(response) ? response[1] : response;
+    const body = getResponseBody(response);
 
-    // Fire and forget
-    void fetch(url, {
-      method: callback.method,
-      headers: { "content-type": "application/json" },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    }).catch((error: unknown) => {
+    try {
+      await dispatcher({
+        url,
+        method: callback.method,
+        headers: { "content-type": "application/json" },
+        body,
+      });
+    } catch (error) {
       console.warn(
-        `[@schmock/openapi] Callback ${callback.method} ${url} failed:`,
+        `[@schmock/openapi] Callback dispatcher failed for ${callback.method} ${url}:`,
         error instanceof Error ? error.message : error,
       );
-    });
+    }
   }
 }
 
@@ -79,7 +83,7 @@ function resolveCallbackUrl(
     // $response.body#/path — JSON pointer into response body
     if (expr.startsWith("response.body#")) {
       const pointer = expr.slice("response.body#".length);
-      const responseBody = Array.isArray(response) ? response[1] : response;
+      const responseBody = getResponseBody(response);
       const value = resolveJsonPointer(responseBody, pointer);
       return typeof value === "string" ? value : "";
     }
@@ -88,13 +92,39 @@ function resolveCallbackUrl(
   });
 }
 
+function getResponseBody(response: unknown): unknown {
+  if (isStatusTuple(response)) return response[1];
+  if (
+    isRecord(response) &&
+    typeof response.status === "number" &&
+    "body" in response
+  ) {
+    return response.body;
+  }
+  return response;
+}
+
 function resolveJsonPointer(obj: unknown, pointer: string): unknown {
-  if (!isRecord(obj) || !pointer.startsWith("/")) return undefined;
+  if (pointer === "") return obj;
+  if (!pointer.startsWith("/")) return undefined;
 
   const parts = pointer.slice(1).split("/");
   let current: unknown = obj;
-  for (const part of parts) {
-    if (!isRecord(current)) return undefined;
+  for (const encodedPart of parts) {
+    if (/~(?:[^01]|$)/.test(encodedPart)) return undefined;
+    const part = encodedPart.replace(/~1/g, "/").replace(/~0/g, "~");
+
+    if (Array.isArray(current)) {
+      if (!/^(?:0|[1-9]\d*)$/.test(part)) return undefined;
+      const index = Number(part);
+      if (!Number.isSafeInteger(index) || index >= current.length) {
+        return undefined;
+      }
+      current = current[index];
+      continue;
+    }
+
+    if (!isRecord(current) || !Object.hasOwn(current, part)) return undefined;
     current = current[part];
   }
   return current;

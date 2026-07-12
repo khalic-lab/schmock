@@ -1,6 +1,11 @@
 /// <reference path="../../core/schmock.d.ts" />
 
-import { isRouteNotFound, SchmockError, toHttpMethod } from "@schmock/core";
+import {
+  isBinaryBody,
+  isRouteNotFound,
+  SchmockError,
+  toHttpMethod,
+} from "@schmock/core";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 /**
@@ -63,6 +68,16 @@ export interface ExpressAdapterOptions {
   ) => Schmock.Response | undefined | Promise<Schmock.Response | undefined>;
 }
 
+function toExpressBinaryBody(body: ArrayBuffer | ArrayBufferView): Buffer {
+  if (body instanceof ArrayBuffer) {
+    return Buffer.from(new Uint8Array(body));
+  }
+
+  return Buffer.from(
+    new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
+  );
+}
+
 /**
  * Convert Schmock response to Express response
  */
@@ -76,9 +91,13 @@ function schmockToExpressResponse(
   }
 
   // Set headers
+  let hasContentType = false;
   if (schmockResponse.headers) {
     Object.entries(schmockResponse.headers).forEach(([key, value]) => {
       if (typeof value === "string") {
+        if (key.toLowerCase() === "content-type") {
+          hasContentType = true;
+        }
         res.set(key, value);
       }
     });
@@ -86,7 +105,12 @@ function schmockToExpressResponse(
 
   // Send body
   if (schmockResponse.body !== undefined) {
-    if (typeof schmockResponse.body === "string") {
+    if (isBinaryBody(schmockResponse.body)) {
+      if (!hasContentType) {
+        res.set("content-type", "application/octet-stream");
+      }
+      res.send(toExpressBinaryBody(schmockResponse.body));
+    } else if (typeof schmockResponse.body === "string") {
       res.send(schmockResponse.body);
     } else {
       res.json(schmockResponse.body);

@@ -1,15 +1,16 @@
 /// <reference path="../../core/schmock.d.ts" />
 
 import { readFileSync, watch } from "node:fs";
-import type { Server } from "node:http";
+import type { Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import { parseArgs } from "node:util";
 import {
   collectBody,
+  HTTP_METHODS,
+  isHttpMethod,
   parseNodeHeaders,
   parseNodeQuery,
   schmock,
-  toHttpMethod,
   writeSchmockResponse,
 } from "@schmock/core";
 import { openapi } from "@schmock/openapi";
@@ -34,11 +35,35 @@ export interface CliServer {
   close(): void;
 }
 
+const MAX_REQUEST_BODY_SIZE = 10 * 1024 * 1024;
+const ALLOWED_METHODS = HTTP_METHODS.join(", ");
+
 const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+  "access-control-allow-methods": ALLOWED_METHODS,
   "access-control-allow-headers": "Content-Type, Authorization",
 };
+
+type CliIncomingMessage = Parameters<typeof collectBody>[0] & {
+  readonly headers: {
+    readonly host?: string;
+    readonly [header: string]: string | string[] | undefined;
+  };
+  readonly method?: string;
+  readonly url?: string;
+};
+
+class CliHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly headers: Record<string, string> = {},
+  ) {
+    super(message);
+    this.name = "CliHttpError";
+  }
+}
 
 function isSeedSource(value: unknown): value is Schmock.SeedConfig[string] {
   return (
@@ -69,7 +94,7 @@ function handleAdminRequest(
   method: string,
   path: string,
   mock: Schmock.CallableMockInstance,
-  res: import("node:http").ServerResponse,
+  res: ServerResponse,
   headers: Record<string, string>,
 ): void {
   const route = path.replace("/schmock-admin/", "");
@@ -106,7 +131,126 @@ function handleAdminRequest(
   );
 }
 
-export async function createCliServer(options: CliOptions): Promise<CliServer> {
+function parseRequestUrl(req: CliIncomingMessage): URL {
+  const host = req.headers.host;
+  if (!host) {
+    throw new CliHttpError(400, "BAD_REQUEST", "Missing Host header");
+  }
+
+  try {
+    return new URL(req.url ?? "/", `http://${host}`);
+  } catch {
+    throw new CliHttpError(400, "BAD_REQUEST", "Malformed request target");
+  }
+}
+
+function parseRequestMethod(req: CliIncomingMessage): Schmock.HttpMethod {
+  const method = (req.method ?? "GET").toUpperCase();
+  if (!isHttpMethod(method)) {
+    throw new CliHttpError(
+      405,
+      "METHOD_NOT_ALLOWED",
+      `Unsupported HTTP method: ${method}`,
+      { allow: ALLOWED_METHODS },
+    );
+  }
+  return method;
+}
+
+function assertBodySize(headers: Record<string, string>): void {
+  const contentLength = headers["content-length"];
+  if (contentLength === undefined) return;
+
+  const declaredSize = Number(contentLength);
+  if (Number.isFinite(declaredSize) && declaredSize > MAX_REQUEST_BODY_SIZE) {
+    throw new CliHttpError(413, "PAYLOAD_TOO_LARGE", "Request body too large");
+  }
+}
+
+function toCliHttpError(error: unknown): CliHttpError {
+  if (error instanceof CliHttpError) return error;
+
+  if (
+    error !== null &&
+    typeof error === "object" &&
+    "status" in error &&
+    error.status === 413
+  ) {
+    return new CliHttpError(
+      413,
+      "PAYLOAD_TOO_LARGE",
+      error instanceof Error ? error.message : "Request body too large",
+    );
+  }
+
+  return new CliHttpError(
+    500,
+    "SERVER_ERROR",
+    error instanceof Error ? error.message : "Internal Server Error",
+  );
+}
+
+async function handleCliRequest(
+  req: CliIncomingMessage,
+  res: ServerResponse,
+  mock: Schmock.CallableMockInstance,
+  options: { admin: boolean; cors: boolean },
+): Promise<void> {
+  try {
+    const url = parseRequestUrl(req);
+    const method = parseRequestMethod(req);
+    const path = url.pathname;
+
+    if (options.cors && method === "OPTIONS") {
+      res.writeHead(204, CORS_HEADERS);
+      res.end();
+      return;
+    }
+
+    if (options.admin && path.startsWith("/schmock-admin/")) {
+      const adminHeaders: Record<string, string> = {
+        "content-type": "application/json",
+        ...(options.cors ? CORS_HEADERS : {}),
+      };
+      handleAdminRequest(method, path, mock, res, adminHeaders);
+      return;
+    }
+
+    const headers = parseNodeHeaders(req);
+    assertBodySize(headers);
+    const query = parseNodeQuery(url);
+    const body = await collectBody(req, headers, MAX_REQUEST_BODY_SIZE);
+    const schmockResponse = await mock.handle(method, path, {
+      headers,
+      body,
+      query,
+    });
+    const extraHeaders = options.cors ? CORS_HEADERS : undefined;
+    writeSchmockResponse(res, schmockResponse, extraHeaders);
+  } catch (error) {
+    const cliError = toCliHttpError(error);
+    try {
+      if (!res.headersSent) {
+        res.writeHead(cliError.status, {
+          "content-type": "application/json",
+          ...(options.cors ? CORS_HEADERS : {}),
+          ...cliError.headers,
+        });
+      }
+      if (!res.writableEnded) {
+        res.end(
+          JSON.stringify({ error: cliError.message, code: cliError.code }),
+        );
+      }
+    } catch {
+      res.destroy();
+    }
+  }
+}
+
+async function createCliMock(
+  options: CliOptions,
+): Promise<Schmock.CallableMockInstance> {
   const mock = schmock({ debug: options.debug, state: {} });
 
   const openapiOptions: Parameters<typeof openapi>[0] = {
@@ -122,6 +266,13 @@ export async function createCliServer(options: CliOptions): Promise<CliServer> {
   const plugin = await openapi(openapiOptions);
   mock.pipe(plugin);
 
+  return mock;
+}
+
+function listenWithMock(
+  options: CliOptions,
+  mock: Schmock.CallableMockInstance,
+): Promise<CliServer> {
   const hostname = options.hostname ?? "127.0.0.1";
   const port = options.port ?? 3000;
   const cors = options.cors ?? false;
@@ -129,51 +280,7 @@ export async function createCliServer(options: CliOptions): Promise<CliServer> {
   const admin = options.admin ?? false;
 
   const httpServer = createServer((req, res) => {
-    // Handle CORS preflight
-    if (cors && req.method === "OPTIONS") {
-      res.writeHead(204, CORS_HEADERS);
-      res.end();
-      return;
-    }
-
-    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-    const path = url.pathname;
-
-    // Admin API intercept
-    if (admin && path.startsWith("/schmock-admin/")) {
-      const adminHeaders: Record<string, string> = {
-        "content-type": "application/json",
-        ...(cors ? CORS_HEADERS : {}),
-      };
-      handleAdminRequest(req.method ?? "GET", path, mock, res, adminHeaders);
-      return;
-    }
-
-    const method = toHttpMethod(req.method ?? "GET");
-    const headers = parseNodeHeaders(req);
-    const query = parseNodeQuery(url);
-
-    void collectBody(req, headers)
-      .then((body) =>
-        mock
-          .handle(method, path, { headers, body, query })
-          .then((schmockResponse) => {
-            const extra = cors ? CORS_HEADERS : undefined;
-            writeSchmockResponse(res, schmockResponse, extra);
-          }),
-      )
-      .catch((error) => {
-        if (!res.headersSent) {
-          res.writeHead(500, { "content-type": "application/json" });
-        }
-        res.end(
-          JSON.stringify({
-            error:
-              error instanceof Error ? error.message : "Internal Server Error",
-            code: "SERVER_ERROR",
-          }),
-        );
-      });
+    void handleCliRequest(req, res, mock, { admin, cors });
   });
 
   return new Promise((resolve, reject) => {
@@ -193,6 +300,11 @@ export async function createCliServer(options: CliOptions): Promise<CliServer> {
       });
     });
   });
+}
+
+export async function createCliServer(options: CliOptions): Promise<CliServer> {
+  const mock = await createCliMock(options);
+  return listenWithMock(options, mock);
 }
 
 function validatePort(value: string): number {
@@ -268,19 +380,23 @@ export interface WatchHandle {
 }
 
 /**
- * Reload a CLI server: close the old one, create a new one on the same port.
+ * Prepare a replacement before closing the live server, then bind it to the
+ * same port. Invalid spec changes therefore leave the current server online.
  */
 export async function reloadServer(
   current: CliServer,
   options: CliOptions,
 ): Promise<CliServer> {
   const port = current.port;
+  const nextOptions = { ...options, port };
+  const replacementMock = await createCliMock(nextOptions);
+
   // Close existing connections and wait for the server to fully close
   current.server.closeAllConnections();
   await new Promise<void>((resolve) => {
     current.server.close(() => resolve());
   });
-  return createCliServer({ ...options, port });
+  return listenWithMock(nextOptions, replacementMock);
 }
 
 /**
@@ -293,27 +409,37 @@ export function startWatch(
   onReload: (server: CliServer) => void,
 ): WatchHandle {
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
+  let reloadQueue = Promise.resolve();
 
   const watcher = watch(specPath, () => {
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(async () => {
-      process.stderr.write("\nSpec changed, reloading...\n");
-      try {
-        const newServer = await reloadServer(getCurrentServer(), options);
-        onReload(newServer);
-        process.stderr.write(
-          `Schmock server reloaded on http://${newServer.hostname}:${newServer.port}\n`,
-        );
-      } catch (err) {
-        process.stderr.write(
-          `Reload failed: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
-      }
+    debounceTimer = setTimeout(() => {
+      reloadQueue = reloadQueue.then(async () => {
+        if (closed) return;
+        process.stderr.write("\nSpec changed, reloading...\n");
+        try {
+          const newServer = await reloadServer(getCurrentServer(), options);
+          if (closed) {
+            newServer.close();
+            return;
+          }
+          onReload(newServer);
+          process.stderr.write(
+            `Schmock server reloaded on http://${newServer.hostname}:${newServer.port}\n`,
+          );
+        } catch (err) {
+          process.stderr.write(
+            `Reload failed: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
+      });
     }, WATCH_DEBOUNCE_MS);
   });
 
   return {
     close() {
+      closed = true;
       watcher.close();
       if (debounceTimer) clearTimeout(debounceTimer);
     },

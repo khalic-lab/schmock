@@ -5,6 +5,10 @@ import type { CallableMockInstance, Plugin } from "../types";
 
 const feature = await loadFeature("../../features/http-methods.feature");
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: CallableMockInstance;
   let response: any;
@@ -299,14 +303,21 @@ describeFeature(feature, ({ Scenario }) => {
       mock = schmock();
       const loggerPlugin: Plugin = {
         name: 'method-logger',
-        process: (ctx, response) => ({
-          context: ctx,
-          response: {
-            ...response,
-            method: ctx.method,
-            logged: true,
-          },
-        }),
+        process: (ctx, pluginResponse) => {
+          if (!isRecord(pluginResponse)) {
+            throw new Error(
+              "Expected the logger plugin response to be an object",
+            );
+          }
+          return {
+            context: ctx,
+            response: {
+              ...pluginResponse,
+              method: ctx.method,
+              logged: true,
+            },
+          };
+        },
       };
       mock('GET /logged', { data: 'get' }).pipe(loggerPlugin);
       mock('POST /logged', { data: 'post' }).pipe(loggerPlugin);

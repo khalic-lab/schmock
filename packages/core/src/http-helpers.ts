@@ -1,10 +1,26 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { ServerResponse } from "node:http";
+import { isBinaryBody } from "./binary.js";
+
+interface RequestWithHeaders {
+  readonly headers: {
+    readonly [header: string]: string | string[] | undefined;
+  };
+}
+
+interface BodyReadable {
+  on(event: "error", listener: (error: Error) => void): this;
+  on(event: "data", listener: (chunk: Buffer) => void): this;
+  on(event: "end", listener: () => void): this;
+  destroy(error?: Error): this;
+}
 
 /**
  * Convert Node.js IncomingMessage headers to a flat Record<string, string>.
  * Drops array-valued headers (keeps only string values).
  */
-export function parseNodeHeaders(req: IncomingMessage): Record<string, string> {
+export function parseNodeHeaders(
+  req: RequestWithHeaders,
+): Record<string, string> {
   const headers: Record<string, string> = {};
   for (const [key, value] of Object.entries(req.headers)) {
     if (typeof value === "string") {
@@ -37,7 +53,7 @@ const DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024;
  * @param maxBodySize - Maximum body size in bytes (default: 10 MB)
  */
 export function collectBody(
-  req: IncomingMessage,
+  req: BodyReadable,
   headers: Record<string, string>,
   maxBodySize = DEFAULT_MAX_BODY_SIZE,
 ): Promise<unknown> {
@@ -93,20 +109,40 @@ export function writeSchmockResponse(
     ...extraHeaders,
   };
 
+  const hasContentType = Object.keys(responseHeaders).some(
+    (header) => header.toLowerCase() === "content-type",
+  );
+
   if (
-    !responseHeaders["content-type"] &&
+    !hasContentType &&
+    response.body !== undefined &&
+    isBinaryBody(response.body)
+  ) {
+    responseHeaders["content-type"] = "application/octet-stream";
+  } else if (
+    !hasContentType &&
     response.body !== undefined &&
     typeof response.body !== "string"
   ) {
     responseHeaders["content-type"] = "application/json";
   }
 
-  const responseBody =
-    response.body === undefined
-      ? undefined
-      : typeof response.body === "string"
-        ? response.body
-        : JSON.stringify(response.body);
+  let responseBody: string | Uint8Array | undefined;
+  if (response.body === undefined) {
+    responseBody = undefined;
+  } else if (typeof response.body === "string") {
+    responseBody = response.body;
+  } else if (response.body instanceof ArrayBuffer) {
+    responseBody = new Uint8Array(response.body);
+  } else if (ArrayBuffer.isView(response.body)) {
+    responseBody = new Uint8Array(
+      response.body.buffer,
+      response.body.byteOffset,
+      response.body.byteLength,
+    );
+  } else {
+    responseBody = JSON.stringify(response.body);
+  }
 
   res.writeHead(response.status, responseHeaders);
   res.end(responseBody);

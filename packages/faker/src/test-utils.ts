@@ -6,6 +6,10 @@ interface FakerSchema extends JSONSchema7 {
   faker?: string;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 // Schema Factory Functions
 export const schemas = {
   simple: {
@@ -117,19 +121,29 @@ export const validators = {
     };
 
     // Generate multiple samples to check for patterns
-    const mappedSamples: any[] = [];
+    const mappedSamples: unknown[] = [];
     for (let i = 0; i < 10; i++) {
-      const result = (await generateFromSchema({
+      const result = await generateFromSchema({
         schema: mappedSchema,
-      })) as Record<string, unknown>;
+      });
+      if (!isRecord(result)) {
+        throw new Error(
+          "Expected mapped schema generation to return an object",
+        );
+      }
       mappedSamples.push(result[fieldName]);
     }
 
-    const unmappedSamples: any[] = [];
+    const unmappedSamples: unknown[] = [];
     for (let i = 0; i < 10; i++) {
-      const result = (await generateFromSchema({
+      const result = await generateFromSchema({
         schema: unmappedSchema,
-      })) as Record<string, unknown>;
+      });
+      if (!isRecord(result)) {
+        throw new Error(
+          "Expected unmapped schema generation to return an object",
+        );
+      }
       unmappedSamples.push(result.unmappedRandomField12345);
     }
 
@@ -142,13 +156,13 @@ export const validators = {
   },
 
   // Analyze uniqueness of generated data
-  uniquenessRatio: (samples: any[]): number => {
+  uniquenessRatio: (samples: unknown[]): number => {
     const unique = new Set(samples);
     return unique.size / samples.length;
   },
 
   // Check if all samples match a basic pattern without being too specific
-  allMatch: (samples: any[], validator: (sample: any) => boolean): boolean => {
+  allMatch: <T>(samples: T[], validator: (sample: T) => boolean): boolean => {
     return samples.every(validator);
   },
 
@@ -229,7 +243,7 @@ export const performance = {
 
   benchmark: async (
     _name: string,
-    fn: () => any,
+    fn: () => unknown | Promise<unknown>,
     iterations = 100,
   ): Promise<{ mean: number; min: number; max: number }> => {
     const times: number[] = [];
@@ -251,37 +265,35 @@ export const performance = {
 
 // Test Data Generators
 export const generate = {
-  samples: async <T>(
+  samples: async (
     schema: JSONSchema7,
     count = 10,
-    options?: any,
-  ): Promise<T[]> => {
-    const results: T[] = [];
+    options?: Omit<Schmock.SchemaGenerationContext, "schema">,
+  ): Promise<unknown[]> => {
+    const results: unknown[] = [];
     for (let i = 0; i < count; i++) {
-      results.push((await generateFromSchema({ schema, ...options })) as T);
+      results.push(await generateFromSchema({ schema, ...options }));
     }
     return results;
   },
 
-  withSeed: async (schema: JSONSchema7, _seed?: number): Promise<any> => {
-    // Note: faker.js doesn't support seeding in the same way,
-    // but we can at least ensure consistent test behavior
-    return await generateFromSchema({ schema });
+  withSeed: async (schema: JSONSchema7, seed?: number): Promise<unknown> => {
+    return await generateFromSchema({ schema, seed });
   },
 };
 
 // Statistical Analysis
 export const stats = {
-  distribution: (samples: any[]): Map<any, number> => {
-    const dist = new Map<any, number>();
+  distribution: (samples: unknown[]): Map<string, number> => {
+    const dist = new Map<string, number>();
     for (const sample of samples) {
-      const key = JSON.stringify(sample);
+      const key = JSON.stringify(sample) ?? "undefined";
       dist.set(key, (dist.get(key) || 0) + 1);
     }
     return dist;
   },
 
-  entropy: (samples: any[]): number => {
+  entropy: (samples: unknown[]): number => {
     const dist = stats.distribution(samples);
     const total = samples.length;
     let entropy = 0;
@@ -304,7 +316,7 @@ export const schemaTests = {
   },
 
   expectInvalid: async (
-    schema: any,
+    schema: JSONSchema7,
     errorMessage?: string | RegExp,
   ): Promise<void> => {
     if (errorMessage) {
@@ -317,17 +329,25 @@ export const schemaTests = {
   },
 
   expectSchemaError: async (
-    schema: any,
+    schema: JSONSchema7,
     path: string,
     issue?: string,
   ): Promise<void> => {
     try {
       await generateFromSchema({ schema });
       throw new Error("Expected schema validation to fail");
-    } catch (error: any) {
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(Error);
+      if (!(error instanceof Error)) {
+        throw new Error("Expected schema validation to throw an Error");
+      }
       expect(error.name).toBe("SchemaValidationError");
       // The schemaPath is in the context
-      if (error.context?.schemaPath) {
+      if (
+        "context" in error &&
+        isRecord(error.context) &&
+        error.context.schemaPath
+      ) {
         expect(error.context.schemaPath).toBe(path);
       }
       if (issue) {
@@ -338,13 +358,13 @@ export const schemaTests = {
 };
 
 // Helper to analyze data characteristics without hardcoding patterns
-function analyzeDataCharacteristics(samples: any[]): string {
+function analyzeDataCharacteristics(samples: unknown[]): string {
   if (samples.length === 0) return "empty";
 
   const first = samples[0];
   const type = typeof first;
 
-  if (type !== "string") return type;
+  if (!samples.every((sample) => typeof sample === "string")) return type;
 
   // Analyze string characteristics
   const characteristics: string[] = [type];

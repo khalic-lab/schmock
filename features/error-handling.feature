@@ -60,6 +60,12 @@ Feature: Error Handling
     Then I should receive status 500
     And the response should contain error 'Plugin "broken-handler" failed'
 
+  Scenario: Downstream error handler recovers an earlier plugin failure
+    Given I create a failing plugin followed by a recovery plugin
+    When I request "GET /downstream-recovery"
+    Then I should receive status 503
+    And the response should have error code "RECOVERED_DOWNSTREAM"
+
   Scenario: Empty parameter in route returns 404
     Given I create a mock with a parameterized route "GET /users/:id"
     When I request "GET /users/"
@@ -77,7 +83,7 @@ Feature: Error Handling
     When I request "GET /error"
     Then I should receive status 500
     And the content-type should be "application/json"
-    And the response body should be valid JSON
+    And the response body should be a structured "INTERNAL_ERROR" error for "Test error"
 
   Scenario: Plugin onError returns response with status 0
     Given I create a mock with a plugin whose error handler returns status 0

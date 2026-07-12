@@ -98,8 +98,7 @@ Plugins add behavior through a linear pipeline:
 ```typescript
 import { validationPlugin } from '@schmock/validation'
 
-mock('POST /users', handler)
-  .pipe(validationPlugin({
+mock.pipe(validationPlugin({
     request: {
       body: {
         type: 'object',
@@ -111,9 +110,11 @@ mock('POST /users', handler)
       },
     },
   }))
+mock('POST /users', handler)
 ```
 
-Plugins execute in `.pipe()` order. The first plugin to set a response becomes the generator; later plugins can transform it.
+Plugins are global to the mock. Pre-request hooks can reject before route code;
+response processors then run in `.pipe()` order after the generator.
 
 ## State Management
 

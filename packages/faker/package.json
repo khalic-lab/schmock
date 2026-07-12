@@ -21,7 +21,7 @@
     "build": "bun build:lib && bun build:types",
     "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts --external @faker-js/faker --external json-schema-faker --external @schmock/core",
     "build:types": "tsc -p tsconfig.json",
-    "test": "vitest",
+    "test": "vitest run",
     "test:watch": "vitest --watch",
     "test:bdd": "vitest run --config vitest.config.bdd.ts",
     "lint": "biome check src/*.ts",
@@ -30,6 +30,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@types/json-schema": "^7.0.15",
     "@faker-js/faker": "^10.5.0",
     "json-schema-faker": "^0.6.2"
   },
@@ -38,7 +39,6 @@
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",
-    "@types/json-schema": "^7.0.15",
     "@types/node": "^26.1.0",
     "vitest": "^4.1.9"
   }

@@ -8,6 +8,7 @@ const feature = await loadFeature("../../features/plugin-integration.feature");
 describeFeature(feature, ({ Scenario }) => {
   let mock: CallableMockInstance;
   let requestResponses: any[] = [];
+  let guardedGeneratorExecutions = 0;
 
   Scenario("Plugin state sharing with pipeline", ({ Given, When, Then, And }) => {
     requestResponses = [];
@@ -166,6 +167,59 @@ describeFeature(feature, ({ Scenario }) => {
       expect(requestResponses[0].body).toEqual(expected);
     });
   });
+
+  Scenario(
+    "Request guard prevents route side effects",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a mock whose guarded generator records each execution",
+        () => {
+          guardedGeneratorExecutions = 0;
+          mock = schmock();
+          mock("POST /guarded", () => {
+            guardedGeneratorExecutions += 1;
+            return [201, { created: true }];
+          });
+
+          const guardPlugin = {
+            name: "pre-request-auth",
+            beforeRequest(context: Schmock.PluginContext) {
+              if (!context.headers.authorization) {
+                return {
+                  context,
+                  response: [
+                    401,
+                    { error: "Unauthorized", code: "AUTH_REQUIRED" },
+                  ],
+                };
+              }
+              return { context };
+            },
+            process(context: Schmock.PluginContext, response?: unknown) {
+              return { context, response };
+            },
+          };
+
+          mock.pipe(guardPlugin);
+        },
+      );
+
+      When(
+        "I request the guarded route without authorization",
+        async () => {
+          requestResponses = [await mock.handle("POST", "/guarded")];
+        },
+      );
+
+      Then("the guarded response status should be {int}", (_, status: number) => {
+        expect(requestResponses[0].status).toBe(status);
+      });
+
+      And("the guarded generator should not have executed", () => {
+        expect(guardedGeneratorExecutions).toBe(0);
+      });
+    },
+  );
 
   Scenario(
     "Pipeline order and response transformation",
