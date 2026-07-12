@@ -80,6 +80,7 @@ export function schmock(
   return callableInstance;
 }
 
+export { isBinaryBody } from "./binary.js";
 // Re-export constants and utilities
 export {
   HTTP_METHODS,

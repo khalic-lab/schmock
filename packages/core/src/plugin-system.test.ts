@@ -86,6 +86,57 @@ describe("plugin system", () => {
   });
 
   describe("plugin execution pipeline", () => {
+    it("runs request guards before the route generator", async () => {
+      const mock = schmock();
+      const generator = vi.fn(() => ({ created: true }));
+      const guard: Schmock.Plugin = {
+        name: "guard",
+        beforeRequest(context) {
+          return {
+            context,
+            response: [401, { code: "AUTH_REQUIRED" }],
+          };
+        },
+        process: (context, currentResponse) => ({
+          context,
+          response: currentResponse,
+        }),
+      };
+
+      mock("POST /guarded", generator).pipe(guard);
+
+      const response = await mock.handle("POST", "/guarded");
+      expect(response.status).toBe(401);
+      expect(response.body).toEqual({ code: "AUTH_REQUIRED" });
+      expect(generator).not.toHaveBeenCalled();
+    });
+
+    it("passes pre-request context changes into the generator", async () => {
+      const mock = schmock();
+      const plugin: Schmock.Plugin = {
+        name: "request-transformer",
+        beforeRequest(context) {
+          return {
+            context: {
+              ...context,
+              headers: { ...context.headers, "x-added": "yes" },
+            },
+          };
+        },
+        process: (context, currentResponse) => ({
+          context,
+          response: currentResponse,
+        }),
+      };
+
+      mock("GET /context", ({ headers }) => ({
+        added: headers["x-added"],
+      })).pipe(plugin);
+
+      const response = await mock.handle("GET", "/context");
+      expect(response.body).toEqual({ added: "yes" });
+    });
+
     it("passes context between plugins", async () => {
       const mock = schmock();
       let receivedContext: any;
@@ -251,6 +302,50 @@ describe("plugin system", () => {
   });
 
   describe("plugin error handling", () => {
+    it("allows a downstream error handler to recover an earlier failure", async () => {
+      const mock = schmock();
+      const failingPlugin: Schmock.Plugin = {
+        name: "failing",
+        process() {
+          throw new Error("failed");
+        },
+      };
+      const recoveryPlugin: Schmock.Plugin = {
+        name: "recovery",
+        process: (context, currentResponse) => ({
+          context,
+          response: currentResponse,
+        }),
+        onError: () => [503, { code: "RECOVERED" }],
+      };
+
+      mock("GET /recover", "original").pipe(failingPlugin).pipe(recoveryPlugin);
+
+      const response = await mock.handle("GET", "/recover");
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ code: "RECOVERED" });
+    });
+
+    it("allows a plugin error handler to recover a generator failure", async () => {
+      const mock = schmock();
+      const recoveryPlugin: Schmock.Plugin = {
+        name: "generator-recovery",
+        process: (context, currentResponse) => ({
+          context,
+          response: currentResponse,
+        }),
+        onError: () => [502, { code: "GENERATOR_RECOVERED" }],
+      };
+
+      mock("GET /generator-failure", () => {
+        throw new Error("generator failed");
+      }).pipe(recoveryPlugin);
+
+      const response = await mock.handle("GET", "/generator-failure");
+      expect(response.status).toBe(502);
+      expect(response.body).toEqual({ code: "GENERATOR_RECOVERED" });
+    });
+
     it("throws PluginError when plugin process fails", async () => {
       const mock = schmock();
 

@@ -64,13 +64,16 @@ openapi({
   schemas: { ... },            // replace response schemas for specific routes
   onSchema: (schema, ctx) => { ... },  // modify schemas before generation
   resources: { ... },          // override CRUD detection per resource
-  queryFeatures: {             // enable query features for list endpoints
-    pagination: true,
-    sorting: true,
-    filtering: true,
+  callbacks: {                 // callbacks are disabled unless supplied
+    dispatch: async (request) => {
+      await callbackQueue.publish(request)
+    },
   },
 })
 ```
+
+`queryFeatures` is currently unsupported. Supplying it throws
+`OPENAPI_UNSUPPORTED_OPTION` instead of silently doing nothing.
 
 ## CRUD Detection
 
@@ -78,12 +81,12 @@ The plugin analyzes path patterns to detect CRUD resources. Given a spec with `/
 
 | Operation | Route | Behavior |
 |-----------|-------|----------|
-| List | `GET /users` | Returns the in-memory collection |
-| Create | `POST /users` | Adds to collection, returns 201 |
-| Read | `GET /users/:id` | Finds by ID, returns 404 if missing |
-| Update | `PUT /users/:id` | Merges with existing, returns 404 if missing |
-| Patch | `PATCH /users/:id` | Merges with existing, returns 404 if missing |
-| Delete | `DELETE /users/:id` | Removes from collection, returns 204 |
+| List | `GET /users` | Returns the in-memory collection with the declared success status |
+| Create | `POST /users` | Adds to collection and uses the declared success status (commonly 201) |
+| Read | `GET /users/:id` | Finds by ID using the declared success status, or returns 404 if missing |
+| Update | `PUT /users/:id` | Merges with existing using the declared success status, or returns 404 |
+| Patch | `PATCH /users/:id` | Merges with existing using the declared success status, or returns 404 |
+| Delete | `DELETE /users/:id` | Removes from collection and uses the declared success status (commonly 204) |
 
 Non-CRUD routes (e.g., `GET /health`, `POST /auth/login`) get schema-generated static responses.
 
@@ -164,11 +167,17 @@ const res = await mock.handle('GET', '/protected-resource', {
 })
 ```
 
-Supported schemes: Bearer, Basic, API Key (header), OAuth2, OpenID Connect.
+Supported schemes: Bearer, Basic, API Key (header, query, or cookie), OAuth2,
+and OpenID Connect. Security simulation verifies that credentials are present;
+it does not authenticate their value. An operation-level `security: []`
+explicitly overrides global security and makes that operation public.
 
 ## Content Negotiation
 
-The plugin validates `Accept` headers against content types defined in the spec:
+The plugin validates `Accept` against the content types declared for the
+selected response status. A media type that exists only on another status does
+not make it acceptable. Schema generation uses the negotiated media-type entry,
+so the response body and `Content-Type` cannot silently diverge:
 
 ```typescript
 const res = await mock.handle('GET', '/users', {
@@ -192,6 +201,43 @@ const res = await mock.handle('POST', '/users', {
 })
 // → { status: 400, body: { error: 'Request validation failed', code: 'VALIDATION_ERROR', details: [...] } }
 ```
+
+Request validation and security run before route generators, so rejected CRUD
+requests cannot mutate their collections. A missing body is rejected when the
+OpenAPI operation declares `requestBody.required: true`.
+
+## Response Validation
+
+With `validateResponses: true`, the final OpenAPI response is validated against
+the schema selected by its actual status code and negotiated media type. A
+mismatch becomes a structured 500 response with code `RESPONSE_VALIDATION_ERROR`.
+Response definitions are resolved in OpenAPI order: exact status, status-class
+wildcard such as `2XX`, then `default`. Schema-less statuses are still honored;
+for example, an operation declaring only `201` returns 201, and a declared `204`
+has no body.
+
+## OpenAPI Callbacks
+
+Callbacks never perform implicit network requests. They are disabled by
+default and require an application-owned dispatcher:
+
+```typescript
+mock.pipe(await openapi({
+  spec: './api.yaml',
+  callbacks: {
+    dispatch: async ({ url, method, headers, body }) => {
+      await callbackQueue.publish({ url, method, headers, body })
+    },
+  },
+}))
+```
+
+The dispatcher runs only after request and response validation succeed. The
+application therefore controls whether delivery uses an in-memory queue, a
+test spy, or an explicitly secured network client.
+
+Callback runtime expressions support RFC 6901 JSON Pointers, including array
+indices and escaped `~0`/`~1` tokens, for request and response bodies.
 
 ## Schema Patching
 

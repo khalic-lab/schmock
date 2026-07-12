@@ -18,6 +18,7 @@ export type SeedConfig = Record<string, SeedSource>;
 export async function loadSeed(
   config: SeedConfig,
   resources: CrudResource[],
+  fakerSeed?: number,
 ): Promise<Map<string, unknown[]>> {
   const result = new Map<string, unknown[]>();
 
@@ -70,6 +71,7 @@ export async function loadSeed(
         resource.schema,
         rawCount,
         resource.idParam,
+        fakerSeed,
       );
       result.set(resourceName, items);
     }

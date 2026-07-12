@@ -37,6 +37,28 @@ function createRes() {
   } as unknown as Response;
 }
 
+function arrayBufferViewCases(): Array<[string, ArrayBufferView]> {
+  const buffer = Uint8Array.from({ length: 32 }, (_, index) => index).buffer;
+  const sharedBytes = new Uint8Array(new SharedArrayBuffer(4));
+  sharedBytes.set([31, 32, 33, 34]);
+
+  return [
+    ["DataView", new DataView(buffer, 1, 5)],
+    ["Int8Array", new Int8Array(buffer, 1, 5)],
+    ["Uint8Array", new Uint8Array(buffer, 1, 5)],
+    ["Uint8ClampedArray", new Uint8ClampedArray(buffer, 1, 5)],
+    ["Int16Array", new Int16Array(buffer, 2, 2)],
+    ["Uint16Array", new Uint16Array(buffer, 2, 2)],
+    ["Int32Array", new Int32Array(buffer, 4, 2)],
+    ["Uint32Array", new Uint32Array(buffer, 4, 2)],
+    ["Float32Array", new Float32Array(buffer, 4, 2)],
+    ["Float64Array", new Float64Array(buffer, 8, 1)],
+    ["BigInt64Array", new BigInt64Array(buffer, 8, 1)],
+    ["BigUint64Array", new BigUint64Array(buffer, 8, 1)],
+    ["SharedArrayBuffer view", sharedBytes],
+  ];
+}
+
 describe("toExpress", () => {
   it("converts Schmock mock to Express middleware", () => {
     const middleware = toExpress(createMock(() => ({})));
@@ -84,6 +106,51 @@ describe("toExpress", () => {
 
     expect(res.send).toHaveBeenCalledWith("Plain text");
     expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it("converts ArrayBuffer bodies to Buffer for Express 4 compatibility", async () => {
+    const body = new Uint8Array([1, 2, 3]).buffer;
+    const mock = createMock(() =>
+      Promise.resolve({ status: 200, body, headers: {} }),
+    );
+    const res = createRes();
+
+    await toExpress(mock)(createReq(), res, vi.fn());
+
+    const sentBody = vi.mocked(res.send).mock.calls[0]?.[0];
+    expect(res.set).toHaveBeenCalledWith(
+      "content-type",
+      "application/octet-stream",
+    );
+    expect(Buffer.isBuffer(sentBody)).toBe(true);
+    if (!Buffer.isBuffer(sentBody)) {
+      throw new Error("Expected Express to receive a Buffer");
+    }
+    expect([...sentBody]).toEqual([1, 2, 3]);
+  });
+
+  it.each(
+    arrayBufferViewCases(),
+  )("converts %s bodies to Buffer for Express 4 compatibility", async (_name, body) => {
+    const mock = createMock(() =>
+      Promise.resolve({ status: 200, body, headers: {} }),
+    );
+    const res = createRes();
+
+    await toExpress(mock)(createReq(), res, vi.fn());
+
+    const sentBody = vi.mocked(res.send).mock.calls[0]?.[0];
+    expect(res.set).toHaveBeenCalledWith(
+      "content-type",
+      "application/octet-stream",
+    );
+    expect(Buffer.isBuffer(sentBody)).toBe(true);
+    if (!Buffer.isBuffer(sentBody)) {
+      throw new Error("Expected Express to receive a Buffer");
+    }
+    expect([...sentBody]).toEqual([
+      ...new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
+    ]);
   });
 
   it("handles empty body with res.end", async () => {

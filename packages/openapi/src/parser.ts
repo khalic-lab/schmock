@@ -5,6 +5,10 @@ import { toHttpMethod } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import type { OpenAPI } from "openapi-types";
 import { normalizeSchema } from "./normalizer.js";
+import {
+  parseResponseStatusKey,
+  type ResponseStatusKey,
+} from "./response-status.js";
 import { isRecord } from "./utils.js";
 
 export interface SecurityScheme {
@@ -32,6 +36,13 @@ export interface ParsedResponseEntry {
   headers?: Record<string, Schmock.ResponseHeaderDef>;
   examples?: Map<string, unknown>;
   contentTypes?: string[];
+  /** Response schemas and examples keyed by their declared media type. */
+  content?: Map<string, ParsedResponseContent>;
+}
+
+interface ParsedResponseContent {
+  schema?: JSONSchema7;
+  examples?: Map<string, unknown>;
 }
 
 export interface ParsedCallback {
@@ -50,7 +61,8 @@ export interface ParsedPath {
   operationId?: string;
   parameters: ParsedParameter[];
   requestBody?: JSONSchema7;
-  responses: Map<number, ParsedResponseEntry>;
+  requestBodyRequired: boolean;
+  responses: Map<ResponseStatusKey, ParsedResponseEntry>;
   tags: string[];
   /** Per-operation security requirements (each entry is OR, keys within are AND) */
   security?: string[][];
@@ -58,7 +70,7 @@ export interface ParsedPath {
   callbacks?: ParsedCallback[];
 }
 
-export interface ParsedParameter {
+interface ParsedParameter {
   name: string;
   in: "path" | "query" | "header";
   required: boolean;
@@ -207,12 +219,20 @@ export async function parseSpec(source: string | object): Promise<ParsedSpec> {
 
       // Extract request body
       let requestBody: JSONSchema7 | undefined;
+      let requestBodyRequired = false;
       if (isSwagger2) {
         requestBody = extractSwagger2RequestBody(mergedParams);
+        requestBodyRequired =
+          mergedParams.find((parameter) => parameter.in === "body")?.required ??
+          false;
       } else {
-        requestBody = extractOpenApi3RequestBody(
-          isRecord(operation.requestBody) ? operation.requestBody : undefined,
-        );
+        const rawRequestBody = isRecord(operation.requestBody)
+          ? operation.requestBody
+          : undefined;
+        requestBody = extractOpenApi3RequestBody(rawRequestBody);
+        requestBodyRequired = rawRequestBody
+          ? getBoolean(rawRequestBody.required, false)
+          : false;
       }
 
       // Extract responses
@@ -248,6 +268,7 @@ export async function parseSpec(source: string | object): Promise<ParsedSpec> {
         operationId: getString(operation.operationId),
         parameters: filteredParams,
         requestBody,
+        requestBodyRequired,
         responses,
         tags,
         security: operationSecurity,
@@ -376,23 +397,23 @@ function extractOpenApi3RequestBody(
 function extractResponses(
   responses: Record<string, unknown> | undefined,
   isSwagger2: boolean,
-): Map<number, ParsedResponseEntry> {
-  const result = new Map<number, ParsedResponseEntry>();
+): Map<ResponseStatusKey, ParsedResponseEntry> {
+  const result = new Map<ResponseStatusKey, ParsedResponseEntry>();
 
   if (!responses) return result;
 
   for (const [statusCode, response] of Object.entries(responses)) {
-    if (statusCode === "default") continue;
     if (!isRecord(response)) continue;
 
-    const code = Number.parseInt(statusCode, 10);
-    if (Number.isNaN(code)) continue;
+    const code = parseResponseStatusKey(statusCode);
+    if (code === undefined) continue;
 
     const description = getString(response.description) ?? "";
 
     let schema: JSONSchema7 | undefined;
     let examples: Map<string, unknown> | undefined;
     let contentTypes: string[] | undefined;
+    let responseContent: Map<string, ParsedResponseContent> | undefined;
 
     if (isSwagger2) {
       if (isRecord(response.schema)) {
@@ -409,6 +430,7 @@ function extractResponses(
       const content = isRecord(response.content) ? response.content : undefined;
       if (content) {
         contentTypes = Object.keys(content);
+        responseContent = extractResponseContent(content);
         const jsonEntry = findJsonContent(content);
         if (jsonEntry && isRecord(jsonEntry.schema)) {
           schema = normalizeSchema(jsonEntry.schema, "response");
@@ -421,10 +443,35 @@ function extractResponses(
     }
 
     const headers = extractResponseHeaders(response, isSwagger2);
-    result.set(code, { schema, description, headers, examples, contentTypes });
+    result.set(code, {
+      schema,
+      description,
+      headers,
+      examples,
+      contentTypes,
+      content: responseContent,
+    });
   }
 
   return result;
+}
+
+function extractResponseContent(
+  content: Record<string, unknown>,
+): Map<string, ParsedResponseContent> | undefined {
+  const result = new Map<string, ParsedResponseContent>();
+
+  for (const [mediaType, entryRaw] of Object.entries(content)) {
+    if (!isRecord(entryRaw)) continue;
+
+    const schema = isRecord(entryRaw.schema)
+      ? normalizeSchema(entryRaw.schema, "response")
+      : undefined;
+    const examples = extractExamples(entryRaw);
+    result.set(mediaType, { schema, examples });
+  }
+
+  return result.size > 0 ? result : undefined;
 }
 
 function extractExamples(
@@ -604,7 +651,7 @@ function toSecurityScheme(
     }
     scheme.name = getString(def.name);
   } else if (type === "http") {
-    scheme.scheme = getString(def.scheme);
+    scheme.scheme = getString(def.scheme)?.toLowerCase();
   }
 
   return scheme;
@@ -620,7 +667,8 @@ function toSecurityScheme(
 function extractSecurityRequirements(
   security: unknown[] | undefined,
 ): string[][] | undefined {
-  if (!security || security.length === 0) return undefined;
+  if (!security) return undefined;
+  if (security.length === 0) return [];
 
   const result: string[][] = [];
   for (const entry of security) {

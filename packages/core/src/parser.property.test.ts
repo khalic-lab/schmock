@@ -83,8 +83,6 @@ const doubleSlashPath = fc
   .array(safeSeg, { minLength: 2, maxLength: 4 })
   .map((segs) => `/${segs.join("//")}`);
 
-const trailingSlashPath = safePath.map((p) => `${p}/`);
-
 const deepPath = fc
   .array(safeSeg, { minLength: 10, maxLength: 30 })
   .map((segs) => `/${segs.join("/")}`);
@@ -106,14 +104,55 @@ const paramRouteKey = fc
     return `${m} /${parts.join("/")}`;
   });
 
-// Route keys with hostile characters in the path portion
-const hostileRouteKey = fc
-  .tuple(method, hostilePath)
-  .map(([m, p]) => `${m} ${p}`);
+const parameterizedRouteCase = fc
+  .tuple(
+    method,
+    fc.uniqueArray(
+      fc.record({
+        literal: safeSeg,
+        parameter: safeSeg,
+        value: safeSeg,
+      }),
+      {
+        minLength: 1,
+        maxLength: 4,
+        selector: (part) => part.parameter,
+      },
+    ),
+  )
+  .map(([httpMethod, parts]) => ({
+    key: `${httpMethod} /${parts
+      .map((part) => `${part.literal}/:${part.parameter}`)
+      .join("/")}`,
+    concretePath: `/${parts
+      .map((part) => `${part.literal}/${part.value}`)
+      .join("/")}`,
+    parameterNames: parts.map((part) => part.parameter),
+    parameterValues: parts.map((part) => part.value),
+  }));
 
 // --- Arbitrary inputs ---
 
-const arbitraryString = fc.string({ minLength: 0, maxLength: 200 });
+const asciiString = fc
+  .array(fc.integer({ min: 0, max: 0x7f }), {
+    minLength: 0,
+    maxLength: 200,
+  })
+  .map((codePoints) => String.fromCharCode(...codePoints));
+const unicodeString = fc.string({ minLength: 0, maxLength: 200 });
+
+function expectParseResultOrRouteError(input: string): void {
+  let result: ReturnType<typeof parseRouteKey>;
+  try {
+    result = parseRouteKey(input);
+  } catch (error) {
+    expect(error).toBeInstanceOf(RouteParseError);
+    return;
+  }
+
+  expect(`${result.method} ${result.path}`).toBe(input);
+  expect(result.pattern.test(result.path)).toBe(true);
+}
 
 // --- Namespace generators ---
 
@@ -133,42 +172,35 @@ const namespace = fc.oneof(
 
 describe("parseRouteKey — fuzz", () => {
   it("never throws an unhandled error on arbitrary ASCII input", () => {
-    fc.assert(
-      fc.property(arbitraryString, (input) => {
-        try {
-          parseRouteKey(input);
-        } catch (e) {
-          expect(e).toBeInstanceOf(RouteParseError);
-        }
-      }),
-      { numRuns: 1000 },
-    );
+    fc.assert(fc.property(asciiString, expectParseResultOrRouteError), {
+      numRuns: 1000,
+    });
   });
 
   it("never throws an unhandled error on arbitrary unicode input", () => {
-    fc.assert(
-      fc.property(arbitraryString, (input) => {
-        try {
-          parseRouteKey(input);
-        } catch (e) {
-          expect(e).toBeInstanceOf(RouteParseError);
-        }
-      }),
-      { numRuns: 1000 },
-    );
+    fc.assert(fc.property(unicodeString, expectParseResultOrRouteError), {
+      numRuns: 1000,
+    });
   });
 
-  it("rejects inputs that look like methods but have hostile paths", () => {
+  it("escapes regex metacharacters in literal path segments", () => {
     fc.assert(
-      fc.property(hostileRouteKey, (key) => {
-        try {
-          const result = parseRouteKey(key);
-          // If it parses, the regex must be valid
-          expect(result.pattern).toBeInstanceOf(RegExp);
-        } catch (e) {
-          expect(e).toBeInstanceOf(RouteParseError);
-        }
-      }),
+      fc.property(
+        method,
+        safeSeg,
+        regexMetaSeg,
+        safeSeg,
+        (httpMethod, prefix, literal, suffix) => {
+          const result = parseRouteKey(
+            `${httpMethod} /${prefix}/${literal}/${suffix}`,
+          );
+
+          expect(result.pattern.test(result.path)).toBe(true);
+          expect(result.pattern.test(`/${prefix}/literal/${suffix}`)).toBe(
+            false,
+          );
+        },
+      ),
       { numRuns: 500 },
     );
   });
@@ -195,36 +227,40 @@ describe("parseRouteKey — fuzz", () => {
     );
   });
 
-  it("produced regex is safe against hostile test paths", () => {
+  it("matches concrete parameterized paths and captures every value", () => {
     fc.assert(
-      fc.property(routeKey, hostilePath, (key, reqPath) => {
-        const result = parseRouteKey(key);
-        const matched = result.pattern.test(reqPath);
-        expect(typeof matched).toBe("boolean");
+      fc.property(parameterizedRouteCase, (routeCase) => {
+        const result = parseRouteKey(routeCase.key);
+        const match = result.pattern.exec(routeCase.concretePath);
+
+        expect(match).not.toBeNull();
+        expect(match?.slice(1)).toEqual(routeCase.parameterValues);
+        expect(result.params).toEqual(routeCase.parameterNames);
       }),
       { numRuns: 1000 },
     );
   });
 
-  it("produced regex handles double-slash paths without crashing", () => {
+  it("rejects slash-delimited near misses for parameterized paths", () => {
     fc.assert(
-      fc.property(routeKey, doubleSlashPath, (key, reqPath) => {
-        const result = parseRouteKey(key);
-        const matched = result.pattern.test(reqPath);
-        expect(typeof matched).toBe("boolean");
+      fc.property(parameterizedRouteCase, safeSeg, (routeCase, extra) => {
+        const result = parseRouteKey(routeCase.key);
+        const nearMiss = `${routeCase.concretePath}/${extra}`;
+
+        expect(result.pattern.test(nearMiss)).toBe(false);
       }),
-      { numRuns: 300 },
+      { numRuns: 500 },
     );
   });
 
-  it("produced regex handles trailing-slash paths without crashing", () => {
+  it("does not normalize malformed separators while matching", () => {
     fc.assert(
-      fc.property(routeKey, trailingSlashPath, (key, reqPath) => {
+      fc.property(routeKey, (key) => {
         const result = parseRouteKey(key);
-        const matched = result.pattern.test(reqPath);
-        expect(typeof matched).toBe("boolean");
+        const doubledLeadingSlash = `/${result.path}`;
+        expect(result.pattern.test(doubledLeadingSlash)).toBe(false);
       }),
-      { numRuns: 300 },
+      { numRuns: 500 },
     );
   });
 
@@ -287,7 +323,7 @@ describe("handle() — fuzz", () => {
     mock("DELETE /items/:id/comments/:cid", () => ({ deleted: true }));
 
     fc.assert(
-      fc.asyncProperty(method, arbitraryString, async (m, reqPath) => {
+      fc.asyncProperty(method, asciiString, async (m, reqPath) => {
         const response = await mock.handle(m, reqPath);
         expect(response).toBeDefined();
         expect(typeof response.status).toBe("number");
@@ -302,7 +338,7 @@ describe("handle() — fuzz", () => {
     mock("GET /data/:key", () => ({ ok: true }));
 
     fc.assert(
-      fc.asyncProperty(arbitraryString, async (reqPath) => {
+      fc.asyncProperty(unicodeString, async (reqPath) => {
         const response = await mock.handle("GET", reqPath);
         expect(response).toBeDefined();
         expect(typeof response.status).toBe("number");

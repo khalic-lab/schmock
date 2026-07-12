@@ -26,7 +26,7 @@ declare namespace Schmock {
    * 'DELETE /api/posts/:postId/comments/:commentId'
    */
   type RouteKey = `${HttpMethod} ${string}`;
-  
+
   /**
    * Plugin interface for extending Schmock functionality
    */
@@ -44,22 +44,37 @@ declare namespace Schmock {
     install?(instance: CallableMockInstance): void;
 
     /**
+     * Inspect or transform a request before its route generator executes.
+     * Returning a response short-circuits the generator, while returning only
+     * a context allows request changes to flow into the generator.
+     */
+    beforeRequest?(
+      context: PluginContext,
+    ): PluginResult | void | Promise<PluginResult | void>;
+
+    /**
      * Process the request through this plugin
      * First plugin to set response becomes the generator, others transform
      * @param context - Plugin context with request details
      * @param response - Response from previous plugin (if any)
      * @returns Updated context and response
      */
-    process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>;
+    process(
+      context: PluginContext,
+      response?: unknown,
+    ): PluginResult | Promise<PluginResult>;
 
     /**
-     * Called when an error occurs
-     * Can handle, transform, or suppress errors
+     * Called when this plugin or an earlier pipeline stage fails. If this hook
+     * does not recover, downstream handlers are tried in registration order.
      * @param error - The error that occurred
      * @param context - Plugin context
      * @returns Modified error, response data, or void to continue error propagation
      */
-    onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
+    onError?(
+      error: Error,
+      context: PluginContext,
+    ): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
   }
 
   /**
@@ -97,6 +112,8 @@ declare namespace Schmock {
     body?: unknown;
     /** Shared state between plugins for this request */
     state: Map<string, unknown>;
+    /** True when a beforeRequest hook supplied the response instead of the route generator. */
+    requestShortCircuited?: boolean;
     /** Route-specific state */
     routeState?: Record<string, unknown>;
   }
@@ -146,20 +163,28 @@ declare namespace Schmock {
   /**
    * Generator types that can be passed to route definitions
    */
-  type Generator = 
-    | GeneratorFunction
-    | StaticData
-    | JSONSchema7;
+  type Generator = GeneratorFunction | StaticData | JSONSchema7;
 
   /**
    * Function that generates responses
    */
-  type GeneratorFunction = (context: RequestContext) => ResponseResult | Promise<ResponseResult>;
+  type GeneratorFunction = (
+    context: RequestContext,
+  ) => ResponseResult | Promise<ResponseResult>;
 
   /**
    * Static data (non-function) that gets returned as-is
    */
-  type StaticData = string | number | boolean | null | undefined | Record<string, unknown> | unknown[];
+  type StaticData =
+    | string
+    | number
+    | boolean
+    | null
+    | undefined
+    | Record<string, unknown>
+    | unknown[]
+    | ArrayBuffer
+    | ArrayBufferView;
 
   /**
    * Context passed to generator functions
@@ -238,12 +263,12 @@ declare namespace Schmock {
   interface CallableMockInstance {
     /**
      * Define a route by calling the instance directly
-     * 
+     *
      * @param route - Route pattern in format 'METHOD /path'
      * @param generator - Response generator (function, static data, or schema)
      * @param config - Route-specific configuration
      * @returns The same instance for method chaining
-     * 
+     *
      * @example
      * ```typescript
      * const mock = schmock()
@@ -251,19 +276,22 @@ declare namespace Schmock {
      * mock('POST /users', userData, { contentType: 'application/json' })
      * ```
      */
-    (route: RouteKey, generator: Generator, config?: RouteConfig): CallableMockInstance;
+    (
+      route: RouteKey,
+      generator: Generator,
+      config?: RouteConfig,
+    ): CallableMockInstance;
 
     /**
      * Add a plugin to the pipeline
-     * 
+     *
      * @param plugin - Plugin to add to the pipeline
      * @returns The same instance for method chaining
-     * 
+     *
      * @example
      * ```typescript
+     * mock.pipe(authPlugin()).pipe(corsPlugin())
      * mock('GET /users', generator, config)
-     *   .pipe(authPlugin())
-     *   .pipe(corsPlugin())
      * ```
      */
     pipe(plugin: Plugin): CallableMockInstance;
@@ -283,7 +311,11 @@ declare namespace Schmock {
      * })
      * ```
      */
-    handle(method: HttpMethod, path: string, options?: RequestOptions): Promise<Response>;
+    handle(
+      method: HttpMethod,
+      path: string,
+      options?: RequestOptions,
+    ): Promise<Response>;
 
     // ===== Request Spy / History API =====
 
@@ -345,12 +377,18 @@ declare namespace Schmock {
     /**
      * Register an event listener
      */
-    on<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => void): CallableMockInstance;
+    on<E extends SchmockEvent>(
+      event: E,
+      listener: (data: SchmockEventMap[E]) => void,
+    ): CallableMockInstance;
 
     /**
      * Remove an event listener
      */
-    off<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => void): CallableMockInstance;
+    off<E extends SchmockEvent>(
+      event: E,
+      listener: (data: SchmockEventMap[E]) => void,
+    ): CallableMockInstance;
 
     // ===== Introspection =====
 
@@ -553,6 +591,8 @@ declare namespace Schmock {
   interface CrudOperationMeta {
     /** Full success response schema (wrapper + items) */
     responseSchema?: JSONSchema7;
+    /** Concrete success status selected from the operation contract. */
+    responseStatus?: number;
     /** Response headers from spec */
     responseHeaders?: Record<string, ResponseHeaderDef>;
     /** Error response schemas keyed by status code */
@@ -625,13 +665,23 @@ declare namespace Schmock {
     passthrough?: boolean;
     errorFormatter?: (error: Error, request: unknown) => unknown;
     transformRequest?: (request: unknown) => AdapterRequestOverride;
-    transformResponse?: (
-      response: Response,
-      request: unknown,
-    ) => Response;
+    transformResponse?: (response: Response, request: unknown) => Response;
   }
 
   // ===== OpenAPI Plugin Options =====
+
+  /** A callback request resolved from an OpenAPI callback expression. */
+  interface OpenApiCallbackRequest {
+    url: string;
+    method: HttpMethod;
+    headers: Record<string, string>;
+    body?: unknown;
+  }
+
+  /** Explicit application-owned delivery for OpenAPI callbacks. */
+  interface OpenApiCallbackOptions {
+    dispatch(request: OpenApiCallbackRequest): void | Promise<void>;
+  }
 
   /**
    * Options for the OpenAPI plugin
@@ -641,6 +691,7 @@ declare namespace Schmock {
     seed?: SeedConfig;
     validateRequests?: boolean;
     validateResponses?: boolean;
+    /** @deprecated Unsupported. Supplying this option throws OPENAPI_UNSUPPORTED_OPTION. */
     queryFeatures?: {
       pagination?: boolean;
       sorting?: boolean;
@@ -650,12 +701,24 @@ declare namespace Schmock {
     debug?: boolean;
     fakerSeed?: number;
     security?: boolean;
+    /**
+     * Enable callback delivery through an application-supplied dispatcher.
+     * Callbacks are disabled when this option is omitted; Schmock never
+     * performs callback network requests implicitly.
+     */
+    callbacks?: OpenApiCallbackOptions;
     /** Replace response schemas for specific routes. Key format: "METHOD /path" or "METHOD /path STATUS" */
     schemas?: Record<string, import("json-schema").JSONSchema7>;
     /** Called before generating a response body. Return a schema to replace the original, or void to keep it. */
     onSchema?: (
       schema: import("json-schema").JSONSchema7,
-      context: { method: string; path: string; params: Record<string, string>; query: Record<string, string>; headers: Record<string, string> },
+      context: {
+        method: string;
+        path: string;
+        params: Record<string, string>;
+        query: Record<string, string>;
+        headers: Record<string, string>;
+      },
     ) => import("json-schema").JSONSchema7 | undefined;
   }
 
@@ -696,5 +759,4 @@ declare namespace Schmock {
     hostname: string;
     close(): void;
   }
-
 }

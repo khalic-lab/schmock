@@ -32,16 +32,18 @@
     "lint:fix": "bun run --filter '*' lint:fix",
     "build:quiet": "bash -c 'set -o pipefail; bun run build 2>&1 | tail -1'",
     "build:silent": "bun run build > /dev/null 2>&1",
-    "typecheck:quiet": "bun run --filter @schmock/core build:types > /dev/null && bun run --filter @schmock/faker build:types > /dev/null && bun run --filter @schmock/express build:types > /dev/null && bun run --filter @schmock/angular build:types > /dev/null && bun run --filter @schmock/validation build:types > /dev/null && bun run --filter @schmock/query build:types > /dev/null && bun run --filter @schmock/openapi build:types > /dev/null && bun run --filter @schmock/cli build:types > /dev/null && bun run --filter @schmock/react build:types > /dev/null && bun run --filter @schmock/vue build:types > /dev/null && bun run --filter @schmock/schmock build:types > /dev/null",
+    "typecheck:quiet": "bun run --filter @schmock/core build:types > /dev/null && bun run --filter @schmock/faker build:types > /dev/null && bun run --filter @schmock/express build:types > /dev/null && bun run --filter @schmock/angular build:types > /dev/null && bun run --filter @schmock/validation build:types > /dev/null && bun run --filter @schmock/query build:types > /dev/null && bun run --filter @schmock/openapi build:types > /dev/null && bun run --filter @schmock/cli build:types > /dev/null && bun run --filter @schmock/react build:types > /dev/null && bun run --filter @schmock/vue build:types > /dev/null && bun run --filter @schmock/schmock build:types > /dev/null && bun run typecheck:bdd > /dev/null",
     "typecheck:silent": "bun run typecheck > /dev/null 2>&1",
-    "typecheck": "bun run --filter @schmock/core build:types && bun run --filter @schmock/faker build:types && bun run --filter @schmock/express build:types && bun run --filter @schmock/angular build:types && bun run --filter @schmock/validation build:types && bun run --filter @schmock/query build:types && bun run --filter @schmock/openapi build:types && bun run --filter @schmock/cli build:types && bun run --filter @schmock/react build:types && bun run --filter @schmock/vue build:types && bun run --filter @schmock/schmock build:types",
+    "typecheck": "bun run --filter @schmock/core build:types && bun run --filter @schmock/faker build:types && bun run --filter @schmock/express build:types && bun run --filter @schmock/angular build:types && bun run --filter @schmock/validation build:types && bun run --filter @schmock/query build:types && bun run --filter @schmock/openapi build:types && bun run --filter @schmock/cli build:types && bun run --filter @schmock/react build:types && bun run --filter @schmock/vue build:types && bun run --filter @schmock/schmock build:types && bun run typecheck:bdd",
+    "typecheck:bdd": "tsc --noEmit -p tsconfig.tests.json",
     "bench": "bun run benchmarks/handle-throughput.ts",
     "bench:size": "bun run build && bun run benchmarks/bundle-size.ts",
     "knip": "knip",
     "knip:quiet": "knip --no-progress",
     "eslint": "eslint",
     "eslint:quiet": "eslint --quiet",
-    "check:publish": "bun run --filter '*' check:publish"
+    "test:pack": "bash scripts/check-release-candidate.sh",
+    "check:publish": "bun run build && bun run test:pack"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",

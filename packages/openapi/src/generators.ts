@@ -3,9 +3,11 @@
 import { randomUUID } from "node:crypto";
 import { generateFromSchema } from "@schmock/faker";
 import type { JSONSchema7 } from "json-schema";
+import { negotiateContentType } from "./content-negotiation.js";
 import type { CrudResource } from "./crud-detector.js";
-import type { ParsedPath } from "./parser.js";
+import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
 import type { OnSchemaCallback } from "./plugin.js";
+import { findSuccessResponse } from "./response-status.js";
 import { isRecord, toJsonSchema } from "./utils.js";
 
 const COLLECTION_STATE_PREFIX = "openapi:collections:";
@@ -144,6 +146,14 @@ function toTuple(status: number, body: unknown): [number, unknown] {
   return [status, body];
 }
 
+function toDeclaredResponse(
+  status: number | undefined,
+  body: unknown,
+): Schmock.ResponseResult {
+  if (status === undefined) return body;
+  return toTuple(status, status === 204 ? undefined : body);
+}
+
 function collectionKey(resourceName: string): string {
   return `${COLLECTION_STATE_PREFIX}${resourceName}`;
 }
@@ -184,6 +194,7 @@ export function createListGenerator(
     ? findArrayProperty(meta.responseSchema)
     : undefined;
   const headerDefs = meta?.responseHeaders;
+  const responseStatus = meta?.responseStatus;
 
   return async (ctx: Schmock.RequestContext) => {
     const collection = getCollection(ctx.state, resource.name);
@@ -191,17 +202,20 @@ export function createListGenerator(
 
     // If no wrapper detected or flat array, return items directly
     if (!wrapperInfo?.property || !meta?.responseSchema) {
-      return addHeaders(items, headerDefs);
+      const result = toDeclaredResponse(responseStatus, items);
+      return addHeaders(result, headerDefs);
     }
 
     // Generate the full wrapper skeleton from schema, then inject live data
     const skeleton = await generateWrapperSkeleton(meta.responseSchema);
     if (isRecord(skeleton)) {
       skeleton[wrapperInfo.property] = items;
-      return addHeaders(skeleton, headerDefs);
+      const result = toDeclaredResponse(responseStatus, skeleton);
+      return addHeaders(result, headerDefs);
     }
 
-    return addHeaders(items, headerDefs);
+    const result = toDeclaredResponse(responseStatus, items);
+    return addHeaders(result, headerDefs);
   };
 }
 
@@ -210,6 +224,7 @@ export function createCreateGenerator(
   meta?: Schmock.CrudOperationMeta,
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
+  const responseStatus = meta?.responseStatus ?? 201;
 
   return (ctx: Schmock.RequestContext) => {
     const collection = getCollection(ctx.state, resource.name);
@@ -226,7 +241,7 @@ export function createCreateGenerator(
     }
 
     collection.push(item);
-    return addHeaders(toTuple(201, item), headerDefs);
+    return addHeaders(toDeclaredResponse(responseStatus, item), headerDefs);
   };
 }
 
@@ -235,6 +250,7 @@ export function createReadGenerator(
   meta?: Schmock.CrudOperationMeta,
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
+  const responseStatus = meta?.responseStatus;
 
   return async (ctx: Schmock.RequestContext) => {
     const collection = getCollection(ctx.state, resource.name);
@@ -245,7 +261,8 @@ export function createReadGenerator(
       return await generateErrorResponse(404, meta);
     }
 
-    return addHeaders(item, headerDefs);
+    const result = toDeclaredResponse(responseStatus, item);
+    return addHeaders(result, headerDefs);
   };
 }
 
@@ -254,6 +271,7 @@ export function createUpdateGenerator(
   meta?: Schmock.CrudOperationMeta,
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
+  const responseStatus = meta?.responseStatus;
 
   return async (ctx: Schmock.RequestContext) => {
     const collection = getCollection(ctx.state, resource.name);
@@ -272,7 +290,8 @@ export function createUpdateGenerator(
       [resource.idParam]: existing[resource.idParam], // Preserve ID
     };
     collection[index] = updated;
-    return addHeaders(updated, headerDefs);
+    const result = toDeclaredResponse(responseStatus, updated);
+    return addHeaders(result, headerDefs);
   };
 }
 
@@ -280,6 +299,9 @@ export function createDeleteGenerator(
   resource: CrudResource,
   meta?: Schmock.CrudOperationMeta,
 ): Schmock.GeneratorFunction {
+  const headerDefs = meta?.responseHeaders;
+  const responseStatus = meta?.responseStatus ?? 204;
+
   return async (ctx: Schmock.RequestContext) => {
     const collection = getCollection(ctx.state, resource.name);
     const idValue = ctx.params[resource.idParam];
@@ -289,8 +311,8 @@ export function createDeleteGenerator(
       return await generateErrorResponse(404, meta);
     }
 
-    collection.splice(index, 1);
-    return toTuple(204, undefined);
+    const [deleted] = collection.splice(index, 1);
+    return addHeaders(toDeclaredResponse(responseStatus, deleted), headerDefs);
   };
 }
 
@@ -299,31 +321,13 @@ export function createStaticGenerator(
   seed?: number,
   onSchema?: OnSchemaCallback,
 ): Schmock.GeneratorFunction {
-  // Get the success response schema and track which status code it came from
-  // so we can return it as a tuple — otherwise parseResponse will flip 200 -> 204
-  // when generation produces null (possible for degenerate schemas like
-  // { allOf: [] } where any value is a valid output).
-  let responseSchema: JSONSchema7 | undefined;
-  let responseStatus = 200;
-  for (const code of [200, 201]) {
-    const resp = parsedPath.responses.get(code);
-    if (resp?.schema) {
-      responseSchema = resp.schema;
-      responseStatus = code;
-      break;
-    }
-  }
-  if (!responseSchema) {
-    for (const [code, resp] of parsedPath.responses) {
-      if (code >= 200 && code < 300 && resp.schema) {
-        responseSchema = resp.schema;
-        responseStatus = code;
-        break;
-      }
-    }
-  }
+  const successResponse = findSuccessResponse(parsedPath.responses);
 
   return async (ctx: Schmock.RequestContext) => {
+    if (!successResponse) return toTuple(200, {});
+
+    const [responseStatus, responseEntry] = successResponse;
+    const responseSchema = selectResponseSchema(responseEntry, ctx.headers);
     if (responseSchema) {
       let schema = responseSchema;
       if (onSchema) {
@@ -347,8 +351,28 @@ export function createStaticGenerator(
         return toTuple(responseStatus, {});
       }
     }
-    return toTuple(200, {});
+    return toTuple(responseStatus, responseStatus === 204 ? undefined : {});
   };
+}
+
+function selectResponseSchema(
+  entry: ParsedResponseEntry,
+  headers: Record<string, string>,
+): JSONSchema7 | undefined {
+  const accept = Object.entries(headers).find(
+    ([name]) => name.toLowerCase() === "accept",
+  )?.[1];
+  const mediaType = entry.contentTypes?.length
+    ? accept
+      ? negotiateContentType(accept, entry.contentTypes)
+      : entry.contentTypes[0]
+    : undefined;
+
+  if (entry.content && entry.content.size > 0) {
+    return mediaType ? entry.content.get(mediaType)?.schema : undefined;
+  }
+
+  return entry.schema;
 }
 
 /**

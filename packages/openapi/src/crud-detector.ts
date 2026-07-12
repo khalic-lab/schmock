@@ -3,6 +3,7 @@
 import type { JSONSchema7 } from "json-schema";
 import { findArrayProperty } from "./generators.js";
 import type { ParsedPath } from "./parser.js";
+import { findSuccessResponse } from "./response-status.js";
 import { isRecord, toJsonSchema } from "./utils.js";
 
 export type CrudOperation = "list" | "create" | "read" | "update" | "delete";
@@ -206,24 +207,18 @@ function buildResource(
 function buildOperationMeta(p: ParsedPath): Schmock.CrudOperationMeta {
   const meta: Schmock.CrudOperationMeta = {};
 
-  // Capture full success response schema
-  const responseSchema = getSuccessResponseSchema(p);
-  if (responseSchema) {
-    meta.responseSchema = responseSchema;
-  }
-
-  // Capture success response headers
-  for (const [code, resp] of p.responses) {
-    if (code >= 200 && code < 300 && resp.headers) {
-      meta.responseHeaders = resp.headers;
-      break;
-    }
+  const successResponse = findSuccessResponse(p.responses);
+  if (successResponse) {
+    const [status, response] = successResponse;
+    meta.responseStatus = status;
+    if (response.schema) meta.responseSchema = response.schema;
+    if (response.headers) meta.responseHeaders = response.headers;
   }
 
   // Capture error response schemas (4xx)
   const errorSchemas = new Map<number, JSONSchema7>();
   for (const [code, resp] of p.responses) {
-    if (code >= 400 && code < 600 && resp.schema) {
+    if (typeof code === "number" && code >= 400 && code < 600 && resp.schema) {
       errorSchemas.set(code, resp.schema);
     }
   }
@@ -235,15 +230,5 @@ function buildOperationMeta(p: ParsedPath): Schmock.CrudOperationMeta {
 }
 
 function getSuccessResponseSchema(p: ParsedPath): JSONSchema7 | undefined {
-  // Try 200, then 201, then first 2xx
-  for (const code of [200, 201]) {
-    const resp = p.responses.get(code);
-    if (resp?.schema) return resp.schema;
-  }
-
-  for (const [code, resp] of p.responses) {
-    if (code >= 200 && code < 300 && resp.schema) return resp.schema;
-  }
-
-  return undefined;
+  return findSuccessResponse(p.responses)?.[1].schema;
 }

@@ -8,11 +8,10 @@ Feature: onError tuple recovery in plugin pipeline
     When I handle a request to "GET /fail"
     Then the response status is 503
     And the response body is '{"error":"recovered"}'
-    And no error is thrown
 
   Scenario: 3-element tuple from onError recovers and includes custom headers
     Given a mock with a plugin whose process throws and onError returns a 3-element tuple with headers
     When I handle a request to "GET /fail-with-headers"
     Then the response status is 503
     And the response body is '{"error":"recovered with headers"}'
-    And no error is thrown
+    And the response header "x-recovery" is "true"

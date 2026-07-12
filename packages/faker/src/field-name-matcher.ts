@@ -93,7 +93,6 @@ export function findBestMapping(
   schema: JSONSchema7,
   mappings: FieldMapping[] = ALL_FIELD_MAPPINGS,
 ): MatchResult | undefined {
-  const schemaAny = schema as Record<string, unknown>;
   const schemaType = typeof schema.type === "string" ? schema.type : undefined;
 
   // Priority: format:uuid always maps to string.uuid
@@ -115,10 +114,10 @@ export function findBestMapping(
   // constraints, so they'd produce out-of-range strings ~20% of the time.
   // Mirrors the numeric constraint skip just below.
   if (
-    schemaAny.pattern ||
-    schemaAny.enum ||
-    schemaAny.faker ||
-    schemaAny.$ref ||
+    schema.pattern ||
+    schema.enum ||
+    ("faker" in schema && schema.faker) ||
+    schema.$ref ||
     (schemaType === "string" &&
       (schema.minLength !== undefined || schema.maxLength !== undefined))
   ) {

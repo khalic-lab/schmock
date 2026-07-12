@@ -73,5 +73,13 @@ Feature: Request History & Spy API
 
   Scenario: maxHistorySize bounds the history with FIFO eviction
     Given I create a mock with maxHistorySize 3 and a users route
-    When I issue 5 requests to "GET /users"
+    When I issue 5 sequenced requests to "GET /users"
     Then the call count should be 3
+    And the retained request sequence should be "3,4,5"
+
+  Scenario: Resetting history preserves routes and shared state
+    Given I create a stateful mock and record a request
+    When I reset only the request history
+    Then the call count should be 0
+    And the registered route should still respond
+    And the shared state marker should still be "preserved"

@@ -31,3 +31,18 @@ Feature: OpenAPI CRUD Operations
     Given a mock with the Petstore spec loaded
     When I delete pet with id 999
     Then the response status is 404
+
+  Scenario: CRUD operations honor contract-declared success statuses
+    Given a mock with CRUD operations declaring custom success statuses
+    When I create an item under the custom status contract
+    Then the custom create response has status 202
+    When I read the item under the custom status contract
+    Then the custom read response has status 203
+    When I update the item under the custom status contract
+    Then the custom update response has status 202
+    When I patch the item under the custom status contract
+    Then the custom patch response has status 204 without a body
+    When I list items under the custom status contract
+    Then the custom list response has status 206
+    When I delete the item under the custom status contract
+    Then the custom delete response has status 200

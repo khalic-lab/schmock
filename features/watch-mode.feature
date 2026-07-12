@@ -3,16 +3,15 @@ Feature: Watch Mode
   I want the CLI server to reload when the spec file changes
   So that I can iterate on my API spec without restarting
 
-  Scenario: Server reloads with new routes after spec change
+  Scenario: Spec changes reload automatically on the same port
     Given a temp spec file with one route
-    And a CLI server is started
+    And a CLI server is started with file watching
     When the spec file is updated to include a new route
-    And the server is reloaded
-    Then the reloaded server is listening
+    Then the server reloads automatically on the original port
     And the new route responds successfully
 
-  Scenario: Reload preserves the port
+  Scenario: Invalid spec changes keep the current server online
     Given a temp spec file with one route
-    And a CLI server is started on a random port
-    When the server is reloaded
-    Then the port number is the same as before
+    And a CLI server is started with file watching
+    When the spec file is changed to invalid JSON
+    Then the original route remains available after the failed reload

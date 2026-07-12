@@ -52,6 +52,132 @@ describe("queryPlugin", () => {
     });
   });
 
+  it("paginates the array body of a two-element status tuple", async () => {
+    const plugin = queryPlugin({
+      pagination: { defaultLimit: 2, maxLimit: 10 },
+    });
+    const items = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }];
+    const context: Schmock.PluginContext = {
+      path: "/test",
+      route: {},
+      method: "GET",
+      params: {},
+      query: { page: "2", limit: "2" },
+      headers: {},
+      state: new Map(),
+    };
+
+    const result = await plugin.process(context, [206, items] satisfies [
+      number,
+      unknown,
+    ]);
+
+    expect(result.response).toEqual([
+      206,
+      {
+        data: [{ id: 3 }, { id: 4 }],
+        pagination: { page: 2, limit: 2, total: 5, totalPages: 3 },
+      },
+    ]);
+  });
+
+  it("paginates a status tuple body without changing its headers", async () => {
+    const plugin = queryPlugin({
+      pagination: { defaultLimit: 2, maxLimit: 10 },
+    });
+    const items = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }];
+    const headers = {
+      "content-type": "application/json",
+      "x-response-source": "tuple",
+    };
+    const context: Schmock.PluginContext = {
+      path: "/test",
+      route: {},
+      method: "GET",
+      params: {},
+      query: { page: "2", limit: "2" },
+      headers: {},
+      state: new Map(),
+    };
+
+    const result = await plugin.process(context, [
+      206,
+      items,
+      headers,
+    ] satisfies [number, unknown, Record<string, string>]);
+
+    expect(result.response).toEqual([
+      206,
+      {
+        data: [{ id: 3 }, { id: 4 }],
+        pagination: { page: 2, limit: 2, total: 5, totalPages: 3 },
+      },
+      headers,
+    ]);
+  });
+
+  it("paginates a structured response body without changing metadata", async () => {
+    const plugin = queryPlugin({
+      pagination: { defaultLimit: 2, maxLimit: 10 },
+    });
+    const items = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }];
+    const response = {
+      status: 206,
+      body: items,
+      headers: { "x-response-source": "structured" },
+    };
+    const context: Schmock.PluginContext = {
+      path: "/test",
+      route: {},
+      method: "GET",
+      params: {},
+      query: { page: "2", limit: "2" },
+      headers: {},
+      state: new Map(),
+    };
+
+    const result = await plugin.process(context, response);
+
+    expect(result.response).toEqual({
+      status: 206,
+      body: {
+        data: [{ id: 3 }, { id: 4 }],
+        pagination: { page: 2, limit: 2, total: 5, totalPages: 3 },
+      },
+      headers: { "x-response-source": "structured" },
+    });
+  });
+
+  it("passes response containers through when their semantic body is not an array", async () => {
+    const plugin = queryPlugin({ pagination: { defaultLimit: 2 } });
+    const context: Schmock.PluginContext = {
+      path: "/test",
+      route: {},
+      method: "GET",
+      params: {},
+      query: { page: "2", limit: "2" },
+      headers: {},
+      state: new Map(),
+    };
+    const responses: unknown[] = [
+      [
+        202,
+        { message: "accepted" },
+        { "x-response-source": "tuple" },
+      ] satisfies [number, unknown, Record<string, string>],
+      {
+        status: 202,
+        body: { message: "accepted" },
+        headers: { "x-response-source": "structured" },
+      },
+    ];
+
+    for (const response of responses) {
+      const result = await plugin.process(context, response);
+      expect(result.response).toBe(response);
+    }
+  });
+
   it("sorts array responses", async () => {
     const plugin = queryPlugin({
       sorting: { allowed: ["name"], default: "name" },

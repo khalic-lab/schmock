@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { connect } from "node:net";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -99,7 +100,7 @@ describe("createCliServer error handling", () => {
     server = undefined;
   });
 
-  it("returns 500 JSON when request body stream errors", async () => {
+  it("remains available when a request body stream aborts", async () => {
     server = await createCliServer({ spec: PETSTORE_SPEC, port: 0 });
     const { port } = server;
 
@@ -132,5 +133,28 @@ describe("createCliServer error handling", () => {
     // Verify the server is still alive after the error
     const healthCheck = await fetch(`http://127.0.0.1:${port}/pets`);
     expect(healthCheck.status).toBe(200);
+  });
+});
+
+describe("CLI binary", () => {
+  it("reports a rejected run and exits unsuccessfully", async () => {
+    const missingSpec = resolve(__dirname, "__fixtures__/missing-spec.json");
+    const child = spawn(
+      "bun",
+      [resolve(__dirname, "bin.ts"), "--spec", missingSpec],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    );
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    const exitCode = await new Promise<number | null>((resolveExit) => {
+      child.on("close", resolveExit);
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Schmock failed:");
   });
 });

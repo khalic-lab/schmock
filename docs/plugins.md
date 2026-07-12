@@ -9,6 +9,7 @@ interface Plugin {
   name: string
   version?: string
   install?(instance: CallableMockInstance): void
+  beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
 }
@@ -16,17 +17,20 @@ interface Plugin {
 
 ## Pipeline Execution
 
-Plugins execute in `.pipe()` order. Each receives the context and the response from the previous plugin:
+Plugins are global to a mock instance and execute in `.pipe()` order. Request
+guards run before route code; response processors run after it:
 
 ```
-Request → Plugin A → Plugin B → Plugin C → Response
-              ↓           ↓           ↓
-          (validate)  (generate)  (transform)
+Request → beforeRequest hooks → Route generator → process hooks → Response
+                 │
+                 └─ a response skips the route generator
 ```
 
-1. First plugin to set a `response` becomes the generator
-2. Later plugins can transform the response
-3. All plugins can modify the context (headers, state)
+1. A `beforeRequest` response rejects the request before route side effects.
+2. Context changes made in `beforeRequest` flow into the route generator.
+3. `process` receives the generated or short-circuit response and may transform
+   it; `context.requestShortCircuited` identifies the latter.
+4. All phases share the same per-request plugin state.
 
 ## Plugin Patterns
 
@@ -36,12 +40,15 @@ Request → Plugin A → Plugin B → Plugin C → Response
 function authPlugin(validTokens: string[]): Schmock.Plugin {
   return {
     name: 'auth',
-    process(context, response) {
+    beforeRequest(context) {
       const token = context.headers.authorization?.replace('Bearer ', '')
       if (!token || !validTokens.includes(token)) {
         return { context, response: [401, { error: 'Unauthorized' }] }
       }
       context.state.set('user', { token })
+      return { context }
+    },
+    process(context, response) {
       return { context, response }
     },
   }
@@ -128,7 +135,9 @@ const requestId = context.state.get('requestId')
 
 ## Error Handling
 
-The `onError` hook handles errors from previous plugins:
+The `onError` hook first handles errors from its own plugin. If it does not
+recover, downstream error handlers are tried in registration order. Generator
+errors are offered to registered error handlers in the same order.
 
 ```typescript
 function errorPlugin(): Schmock.Plugin {
@@ -155,10 +164,12 @@ Return values from `onError`:
 Order matters:
 
 ```typescript
-mock('GET /data', handler)
-  .pipe(authPlugin(['valid-token']))   // 1st: reject unauthorized
+mock
+  .pipe(authPlugin(['valid-token']))   // global pre-request guard
   .pipe(wrapPlugin('data'))            // 2nd: wrap response
   .pipe(errorPlugin())                 // 3rd: catch errors from above
+
+mock('GET /data', handler)
 ```
 
 ## Testing Plugins
@@ -177,7 +188,9 @@ describe('authPlugin', () => {
       params: {}, query: {}, headers: {},
       state: new Map(),
     }
-    const result = await plugin.process(ctx, undefined)
+    if (!plugin.beforeRequest) throw new Error('guard hook missing')
+    const result = await plugin.beforeRequest(ctx)
+    if (!result) throw new Error('guard result missing')
     expect(result.response).toEqual([401, { error: 'Unauthorized' }])
   })
 
@@ -187,8 +200,10 @@ describe('authPlugin', () => {
       params: {}, query: {}, headers: { authorization: 'Bearer valid' },
       state: new Map(),
     }
-    const result = await plugin.process(ctx, { data: 'ok' })
-    expect(result.response).toEqual({ data: 'ok' })
+    if (!plugin.beforeRequest) throw new Error('guard hook missing')
+    const result = await plugin.beforeRequest(ctx)
+    if (!result) throw new Error('guard result missing')
+    expect(result.response).toBeUndefined()
     expect(ctx.state.get('user')).toEqual({ token: 'valid' })
   })
 })
@@ -199,8 +214,8 @@ Integration test in a real pipeline:
 ```typescript
 it('works end to end', async () => {
   const mock = schmock()
+  mock.pipe(authPlugin(['abc']))
   mock('GET /test', { secret: 'value' })
-    .pipe(authPlugin(['abc']))
 
   const denied = await mock.handle('GET', '/test')
   expect(denied.status).toBe(401)

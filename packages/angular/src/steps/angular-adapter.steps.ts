@@ -4,13 +4,15 @@ import "@angular/compiler";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import {
   HttpErrorResponse,
+  type HttpEvent,
   type HttpHandler,
   HttpHeaders,
+  type HttpInterceptor,
   HttpRequest,
   HttpResponse,
 } from "@angular/common/http";
 import type { CallableMockInstance } from "@schmock/core";
-import { schmock } from "@schmock/core";
+import { isHttpMethod, schmock } from "@schmock/core";
 import { of } from "rxjs";
 import { expect } from "vitest";
 import type { AngularAdapterOptions } from "../index";
@@ -23,13 +25,17 @@ const feature = await loadFeature("../../features/angular-adapter.feature");
 
 describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   let mock: CallableMockInstance;
-  let response: HttpResponse<any> | null = null;
+  let response: HttpResponse<unknown> | null = null;
   let errorResponse: HttpErrorResponse | null = null;
   let interceptorOptions: AngularAdapterOptions | undefined;
 
   const mockNext: HttpHandler = {
     handle: () => of(new HttpResponse({ body: "passthrough" })),
   };
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
 
   function resetState() {
     mock = schmock();
@@ -41,27 +47,29 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   async function makeRequest(
     method: string,
     url: string,
-    body?: any,
+    body?: unknown,
     headers?: Record<string, string>,
   ) {
     const InterceptorClass = createSchmockInterceptor(mock, interceptorOptions);
     const interceptor = new InterceptorClass();
 
-    const requestOptions: any = {};
-    if (headers) {
-      requestOptions.headers = new HttpHeaders(headers);
-    }
-
-    const request = new HttpRequest(method, url, body, requestOptions);
+    const request = new HttpRequest<unknown>(method, url, body, {
+      headers: new HttpHeaders(headers),
+    });
 
     return new Promise<void>((resolve) => {
       interceptor.intercept(request, mockNext).subscribe({
-        next: (res: any) => {
-          response = res;
+        next: (event: HttpEvent<unknown>) => {
+          if (event instanceof HttpResponse) {
+            response = event;
+          }
           resolve();
         },
-        error: (err: any) => {
-          errorResponse = err;
+        error: (error: unknown) => {
+          errorResponse =
+            error instanceof HttpErrorResponse
+              ? error
+              : new HttpErrorResponse({ error });
           resolve();
         },
       });
@@ -79,7 +87,11 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           resetState();
           const [method, path] = variables.route.split(" ");
           const status = Number(variables.status);
-          mock(`${method} ${path}` as any, [
+          const normalizedMethod = method.toUpperCase();
+          if (!isHttpMethod(normalizedMethod)) {
+            throw new Error(`Unsupported scenario method: ${method}`);
+          }
+          mock(`${normalizedMethod} ${path}`, [
             status,
             { error: `Error ${status}` },
           ]);
@@ -161,6 +173,60 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           resetState();
           interceptorOptions = { baseUrl };
           mock("GET /api/users", [200, { users: [] }]);
+        },
+      );
+
+      When(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          await makeRequest(method, path);
+        },
+      );
+
+      Then("the request should pass through to the real backend", () => {
+        expect(response?.body).toBe("passthrough");
+      });
+    },
+  );
+
+  Scenario(
+    "Base URL only matches an exact path segment",
+    ({ Given, When, Then }) => {
+      Given(
+        "I create a strict Angular mock with baseUrl {string}",
+        (_, baseUrl: string) => {
+          resetState();
+          interceptorOptions = { baseUrl, passthrough: false };
+          mock("GET /users", [200, { source: "mock" }]);
+        },
+      );
+
+      When(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          await makeRequest(method, path);
+        },
+      );
+
+      Then("the request should pass through to the real backend", () => {
+        expect(response?.body).toBe("passthrough");
+      });
+    },
+  );
+
+  Scenario(
+    "Unsupported HTTP methods are passed through",
+    ({ Given, When, Then }) => {
+      Given(
+        "I create a strict Angular mock for {string}",
+        (_, route: string) => {
+          resetState();
+          interceptorOptions = { passthrough: false };
+          if (route === "GET /api/users") {
+            mock("GET /api/users", [200, { source: "mock" }]);
+          }
         },
       );
 
@@ -271,7 +337,10 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
         "the response body should contain the transformed authorization header",
         () => {
           expect(response?.body).toHaveProperty("auth");
-          expect(response?.body.auth).not.toBe("none");
+          if (!isRecord(response?.body)) {
+            throw new Error("Expected response body to be an object");
+          }
+          expect(response.body.auth).not.toBe("none");
         },
       );
     },
@@ -283,9 +352,12 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       Given("I create an Angular mock with transformResponse:", () => {
         resetState();
         interceptorOptions = {
-          transformResponse: (response) => ({
-            ...response,
-            body: { ...response.body, transformed: true },
+          transformResponse: (schmockResponse) => ({
+            ...schmockResponse,
+            body: {
+              ...(isRecord(schmockResponse.body) ? schmockResponse.body : {}),
+              transformed: true,
+            },
           }),
         };
         mock("GET /api/users", [200, { users: [] }]);
@@ -388,7 +460,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   Scenario(
     "Auto-created interceptor respects baseUrl option",
     ({ Given, When, Then }) => {
-      let InterceptorClass: new () => any;
+      let InterceptorClass: new () => HttpInterceptor;
 
       Given(
         "I create an Angular interceptor from spec with baseUrl {string}",
@@ -406,16 +478,26 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
         "I make an Angular request to {string}",
         async (_, request: string) => {
           const [method, path] = request.split(" ");
+          if (!method || !path || !isHttpMethod(method)) {
+            throw new Error(
+              `Expected a supported METHOD /path request, got: ${request}`,
+            );
+          }
           const interceptor = new InterceptorClass();
-          const req = new HttpRequest(method, path);
+          const req = new HttpRequest(method, path, null);
           await new Promise<void>((resolve) => {
             interceptor.intercept(req, mockNext).subscribe({
-              next: (res: any) => {
-                response = res;
+              next: (event: HttpEvent<unknown>) => {
+                if (event instanceof HttpResponse) {
+                  response = event;
+                }
                 resolve();
               },
-              error: (err: any) => {
-                errorResponse = err;
+              error: (error: unknown) => {
+                errorResponse =
+                  error instanceof HttpErrorResponse
+                    ? error
+                    : new HttpErrorResponse({ error });
                 resolve();
               },
             });

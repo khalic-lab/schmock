@@ -412,7 +412,14 @@ const text: FieldMapping[] = [
 // ── Business/Commerce ───────────────────────────────────────────────
 const business: FieldMapping[] = [
   {
-    keywords: ["company", "organization", "org", "employer", "brand"],
+    keywords: [
+      "company",
+      "organization",
+      "org",
+      "employer",
+      "brand",
+      "operator",
+    ],
     fakerMethod: "company.name",
     schemaType: "string",
     minScore: 0.6,

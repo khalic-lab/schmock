@@ -3,6 +3,9 @@ import tsPlugin from "@typescript-eslint/eslint-plugin";
 
 export default [
   {
+    ignores: ["**/coverage/**", "**/dist/**"],
+  },
+  {
     files: ["packages/*/src/**/*.ts"],
     ignores: ["**/*.test.ts", "**/*.steps.ts", "**/dist/**"],
     languageOptions: {

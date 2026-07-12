@@ -2,6 +2,8 @@
 
 export type {
   OnSchemaCallback,
+  OpenApiCallbackOptions,
+  OpenApiCallbackRequest,
   OpenApiOptions,
   SeedConfig,
   SeedSource,

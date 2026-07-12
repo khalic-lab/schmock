@@ -1,13 +1,115 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
+import { schmock, toHttpMethod } from "../index";
 import type { CallableMockInstance } from "../types";
-import { schmock } from "../index";
 
 const feature = await loadFeature("../../features/request-history.feature");
 
+interface HistoryTableRow {
+  field: string;
+  value: string;
+}
+
+function parseRequest(request: string): {
+  method: Schmock.HttpMethod;
+  path: string;
+} {
+  const separator = request.indexOf(" ");
+  const methodText = request.slice(0, separator);
+  const path = request.slice(separator + 1);
+  if (separator <= 0 || !path.startsWith("/")) {
+    throw new Error(`Expected request in METHOD /path format, got: ${request}`);
+  }
+  return { method: toHttpMethod(methodText), path };
+}
+
+function requireRecord(
+  value: unknown,
+  description: string,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Expected ${description} to be an object`);
+  }
+  return Object.fromEntries(Object.entries(value));
+}
+
+function requireStringRecord(
+  value: unknown,
+  description: string,
+): Record<string, string> {
+  const record = requireRecord(value, description);
+  const strings: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    if (typeof entry !== "string") {
+      throw new Error(`Expected ${description}.${key} to be a string`);
+    }
+    strings[key] = entry;
+  }
+  return strings;
+}
+
+function parseJson(docString: string): unknown {
+  const parsed: unknown = JSON.parse(docString);
+  return parsed;
+}
+
+function parseRequestOptions(docString: string): Schmock.RequestOptions {
+  const parsed = requireRecord(parseJson(docString), "request options");
+  const options: Schmock.RequestOptions = {};
+  if (parsed.headers !== undefined) {
+    options.headers = requireStringRecord(parsed.headers, "request headers");
+  }
+  if (parsed.query !== undefined) {
+    options.query = requireStringRecord(parsed.query, "request query");
+  }
+  if ("body" in parsed) {
+    options.body = parsed.body;
+  }
+  return options;
+}
+
+function requireHistoryTable(table: unknown): HistoryTableRow[] {
+  if (!Array.isArray(table)) {
+    throw new Error("Expected request history table rows");
+  }
+  return table.map((candidate) => {
+    const row = requireRecord(candidate, "request history table row");
+    if (typeof row.field !== "string" || typeof row.value !== "string") {
+      throw new Error("Expected request history table field and value strings");
+    }
+    return { field: row.field, value: row.value };
+  });
+}
+
+function requestRecordField(
+  record: Schmock.RequestRecord,
+  field: string,
+): unknown {
+  switch (field) {
+    case "method":
+      return record.method;
+    case "path":
+      return record.path;
+    case "params":
+      return record.params;
+    case "query":
+      return record.query;
+    case "headers":
+      return record.headers;
+    case "body":
+      return record.body;
+    case "timestamp":
+      return record.timestamp;
+    case "response":
+      return record.response;
+    default:
+      throw new Error(`Unknown request record field: ${field}`);
+  }
+}
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: CallableMockInstance;
-  let response: any;
+  let response: Schmock.Response;
 
   Scenario("Record multiple requests", ({ Given, When, And, Then }) => {
     Given("I create a mock with GET and POST user routes", () => {
@@ -17,22 +119,22 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     When("I request {string}", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      response = await mock.handle(method as any, path);
+      const { method, path } = parseRequest(request);
+      response = await mock.handle(method, path);
     });
 
     And(
       "I request {string} with body:",
       async (_, request: string, docString: string) => {
-        const [method, path] = request.split(" ");
-        const body = JSON.parse(docString);
-        response = await mock.handle(method as any, path, { body });
+        const { method, path } = parseRequest(request);
+        const body = parseJson(docString);
+        response = await mock.handle(method, path, { body });
       },
     );
 
     And("I request {string}", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      response = await mock.handle(method as any, path);
+      const { method, path } = parseRequest(request);
+      response = await mock.handle(method, path);
     });
 
     Then("the call count should be 3", () => {
@@ -42,235 +144,315 @@ describeFeature(feature, ({ Scenario }) => {
     And(
       "the call count for {string} should be {int}",
       (_, route: string, count: number) => {
-        const [method, path] = route.split(" ");
-        expect(mock.callCount(method as any, path)).toBe(count);
+        const { method, path } = parseRequest(route);
+        expect(mock.callCount(method, path)).toBe(count);
       },
     );
 
     And(
       "the call count for {string} should be {int} request",
       (_, route: string, count: number) => {
-        const [method, path] = route.split(" ");
-        expect(mock.callCount(method as any, path)).toBe(count);
+        const { method, path } = parseRequest(route);
+        expect(mock.callCount(method, path)).toBe(count);
       },
     );
   });
 
-  Scenario("Filter history by method and path", ({ Given, When, And, Then }) => {
-    Given("I create a mock with users and posts routes", () => {
-      mock = schmock();
-      mock("GET /users", []);
-      mock("POST /users", ({ body }) => [201, body]);
-      mock("GET /posts", []);
-    });
+  Scenario(
+    "Filter history by method and path",
+    ({ Given, When, And, Then }) => {
+      Given("I create a mock with users and posts routes", () => {
+        mock = schmock();
+        mock("GET /users", []);
+        mock("POST /users", ({ body }) => [201, body]);
+        mock("GET /posts", []);
+      });
 
-    When("I request {string}", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      response = await mock.handle(method as any, path);
-    });
+      When("I request {string}", async (_, request: string) => {
+        const { method, path } = parseRequest(request);
+        response = await mock.handle(method, path);
+      });
 
-    And(
-      "I request {string} with body:",
-      async (_, request: string, docString: string) => {
-        const [method, path] = request.split(" ");
-        const body = JSON.parse(docString);
-        response = await mock.handle(method as any, path, { body });
-      },
-    );
+      And(
+        "I request {string} with body:",
+        async (_, request: string, docString: string) => {
+          const { method, path } = parseRequest(request);
+          const body = parseJson(docString);
+          response = await mock.handle(method, path, { body });
+        },
+      );
 
-    And("I request {string}", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      response = await mock.handle(method as any, path);
-    });
+      And("I request {string}", async (_, request: string) => {
+        const { method, path } = parseRequest(request);
+        response = await mock.handle(method, path);
+      });
 
-    Then(
-      "the history for {string} should have {int} record",
-      (_, route: string, count: number) => {
-        const [method, path] = route.split(" ");
-        expect(mock.history(method as any, path)).toHaveLength(count);
-      },
-    );
+      Then(
+        "the history for {string} should have {int} record",
+        (_, route: string, count: number) => {
+          const { method, path } = parseRequest(route);
+          expect(mock.history(method, path)).toHaveLength(count);
+        },
+      );
 
-    And(
-      "the history for {string} should have {int} record",
-      (_, route: string, count: number) => {
-        const [method, path] = route.split(" ");
-        expect(mock.history(method as any, path)).toHaveLength(count);
-      },
-    );
+      And(
+        "the history for {string} should have {int} record",
+        (_, route: string, count: number) => {
+          const { method, path } = parseRequest(route);
+          expect(mock.history(method, path)).toHaveLength(count);
+        },
+      );
 
-    And(
-      "the history for {string} should have {int} entry",
-      (_, route: string, count: number) => {
-        const [method, path] = route.split(" ");
-        expect(mock.history(method as any, path)).toHaveLength(count);
-      },
-    );
+      And(
+        "the history for {string} should have {int} entry",
+        (_, route: string, count: number) => {
+          const { method, path } = parseRequest(route);
+          expect(mock.history(method, path)).toHaveLength(count);
+        },
+      );
 
-    And(
-      "the history for {string} should have {int} entries",
-      (_, route: string, count: number) => {
-        const [method, path] = route.split(" ");
-        expect(mock.history(method as any, path)).toHaveLength(count);
-      },
-    );
-  });
+      And(
+        "the history for {string} should have {int} entries",
+        (_, route: string, count: number) => {
+          const { method, path } = parseRequest(route);
+          expect(mock.history(method, path)).toHaveLength(count);
+        },
+      );
+    },
+  );
 
-  Scenario("Check if specific route was called", ({ Given, When, Then, And }) => {
-    Given("I create a mock with users and posts list routes", () => {
-      mock = schmock();
-      mock("GET /users", []);
-      mock("GET /posts", []);
-    });
+  Scenario(
+    "Check if specific route was called",
+    ({ Given, When, Then, And }) => {
+      Given("I create a mock with users and posts list routes", () => {
+        mock = schmock();
+        mock("GET /users", []);
+        mock("GET /posts", []);
+      });
 
-    When("I request {string}", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      response = await mock.handle(method as any, path);
-    });
+      When("I request {string}", async (_, request: string) => {
+        const { method, path } = parseRequest(request);
+        response = await mock.handle(method, path);
+      });
 
-    Then("{string} should have been called", (_, route: string) => {
-      const [method, path] = route.split(" ");
-      expect(mock.called(method as any, path)).toBe(true);
-    });
+      Then("{string} should have been called", (_, route: string) => {
+        const { method, path } = parseRequest(route);
+        expect(mock.called(method, path)).toBe(true);
+      });
 
-    And("{string} should not have been called", (_, route: string) => {
-      const [method, path] = route.split(" ");
-      expect(mock.called(method as any, path)).toBe(false);
-    });
-  });
+      And("{string} should not have been called", (_, route: string) => {
+        const { method, path } = parseRequest(route);
+        expect(mock.called(method, path)).toBe(false);
+      });
+    },
+  );
 
-  Scenario("Request record captures full details", ({ Given, When, Then, And }) => {
-    Given("I create a mock with a parameterized POST route", () => {
-      mock = schmock();
-      mock("POST /users/:id", ({ params, body }) => [
-        200,
-        { ...(body as Record<string, unknown>), id: params.id },
-      ]);
-    });
+  Scenario(
+    "Request record captures full details",
+    ({ Given, When, Then, And }) => {
+      Given("I create a mock with a parameterized POST route", () => {
+        mock = schmock();
+        mock("POST /users/:id", ({ params, body }) => {
+          const requestBody = requireRecord(body, "request body");
+          return [200, { ...requestBody, id: params.id }];
+        });
+      });
 
-    When(
-      "I request {string} with headers and body:",
-      async (_, request: string, docString: string) => {
-        const [method, path] = request.split(" ");
-        const options = JSON.parse(docString);
-        response = await mock.handle(method as any, path, options);
-      },
-    );
+      When(
+        "I request {string} with headers and body:",
+        async (_, request: string, docString: string) => {
+          const { method, path } = parseRequest(request);
+          const options = parseRequestOptions(docString);
+          response = await mock.handle(method, path, options);
+        },
+      );
 
-    Then("the last request should have:", (_, table: any) => {
-      const record = mock.lastRequest();
-      expect(record).toBeDefined();
-      for (const row of table) {
-        const field = row.field as keyof typeof record;
-        expect(record![field]).toBe(row.value);
-      }
-    });
+      Then("the last request should have:", (_, table: unknown) => {
+        const record = mock.lastRequest();
+        if (!record) {
+          throw new Error("Expected a recorded request");
+        }
+        for (const row of requireHistoryTable(table)) {
+          expect(requestRecordField(record, row.field)).toBe(row.value);
+        }
+      });
 
-    And(
-      "the last request params should include {string} = {string}",
-      (_, key: string, value: string) => {
-        expect(mock.lastRequest()?.params[key]).toBe(value);
-      },
-    );
+      And(
+        "the last request params should include {string} = {string}",
+        (_, key: string, value: string) => {
+          expect(mock.lastRequest()?.params[key]).toBe(value);
+        },
+      );
 
-    And(
-      "the last request headers should include {string} = {string}",
-      (_, key: string, value: string) => {
-        expect(mock.lastRequest()?.headers[key]).toBe(value);
-      },
-    );
+      And(
+        "the last request headers should include {string} = {string}",
+        (_, key: string, value: string) => {
+          expect(mock.lastRequest()?.headers[key]).toBe(value);
+        },
+      );
 
-    And(
-      "the last request body should have property {string} with value {string}",
-      (_, prop: string, value: string) => {
-        expect((mock.lastRequest()?.body as any)?.[prop]).toBe(value);
-      },
-    );
+      And(
+        "the last request body should have property {string} with value {string}",
+        (_, prop: string, value: string) => {
+          const record = mock.lastRequest();
+          if (!record) {
+            throw new Error("Expected a recorded request");
+          }
+          expect(requireRecord(record.body, "request body")[prop]).toBe(value);
+        },
+      );
 
-    And("the last request should have a timestamp", () => {
-      const record = mock.lastRequest();
-      expect(record?.timestamp).toBeDefined();
-      expect(typeof record?.timestamp).toBe("number");
-      expect(record!.timestamp).toBeGreaterThan(0);
-    });
+      And("the last request should have a timestamp", () => {
+        const record = mock.lastRequest();
+        if (!record) {
+          throw new Error("Expected a recorded request");
+        }
+        expect(typeof record.timestamp).toBe("number");
+        expect(record.timestamp).toBeGreaterThan(0);
+      });
 
-    And(
-      "the last request response status should be {int}",
-      (_, status: number) => {
-        expect(mock.lastRequest()?.response.status).toBe(status);
-      },
-    );
-  });
+      And(
+        "the last request response status should be {int}",
+        (_, status: number) => {
+          expect(mock.lastRequest()?.response.status).toBe(status);
+        },
+      );
+    },
+  );
 
-  Scenario("Get last request for a specific route", ({ Given, When, And, Then }) => {
-    Given("I create a mock echoing POST body at {string}", (_, path: string) => {
-      mock = schmock();
-      mock(`POST ${path}`, ({ body }) => [201, body]);
-    });
+  Scenario(
+    "Get last request for a specific route",
+    ({ Given, When, And, Then }) => {
+      Given(
+        "I create a mock echoing POST body at {string}",
+        (_, path: string) => {
+          mock = schmock();
+          mock(`POST ${path}`, ({ body }) => [201, body]);
+        },
+      );
 
-    When(
-      "I request {string} with body:",
-      async (_, request: string, docString: string) => {
-        const [method, path] = request.split(" ");
-        const body = JSON.parse(docString);
-        response = await mock.handle(method as any, path, { body });
-      },
-    );
+      When(
+        "I request {string} with body:",
+        async (_, request: string, docString: string) => {
+          const { method, path } = parseRequest(request);
+          const body = parseJson(docString);
+          response = await mock.handle(method, path, { body });
+        },
+      );
 
-    And(
-      "I request {string} with body:",
-      async (_, request: string, docString: string) => {
-        const [method, path] = request.split(" ");
-        const body = JSON.parse(docString);
-        response = await mock.handle(method as any, path, { body });
-      },
-    );
+      And(
+        "I request {string} with body:",
+        async (_, request: string, docString: string) => {
+          const { method, path } = parseRequest(request);
+          const body = parseJson(docString);
+          response = await mock.handle(method, path, { body });
+        },
+      );
 
-    Then(
-      "the last request for {string} body should have property {string} with value {string}",
-      (_, route: string, prop: string, value: string) => {
-        const [method, path] = route.split(" ");
-        const record = mock.lastRequest(method as any, path);
-        expect((record?.body as any)?.[prop]).toBe(value);
-      },
-    );
-  });
+      Then(
+        "the last request for {string} body should have property {string} with value {string}",
+        (_, route: string, prop: string, value: string) => {
+          const { method, path } = parseRequest(route);
+          const record = mock.lastRequest(method, path);
+          if (!record) {
+            throw new Error(`Expected a recorded request for ${route}`);
+          }
+          expect(requireRecord(record.body, "request body")[prop]).toBe(value);
+        },
+      );
+    },
+  );
 
-  Scenario("404 requests are not recorded in history", ({ Given, When, Then, And }) => {
-    Given("I create a mock with only a users route", () => {
-      mock = schmock();
-      mock("GET /users", []);
-    });
+  Scenario(
+    "404 requests are not recorded in history",
+    ({ Given, When, Then, And }) => {
+      Given("I create a mock with only a users route", () => {
+        mock = schmock();
+        mock("GET /users", []);
+      });
 
-    When("I request {string}", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      response = await mock.handle(method as any, path);
-    });
+      When("I request {string}", async (_, request: string) => {
+        const { method, path } = parseRequest(request);
+        response = await mock.handle(method, path);
+      });
 
-    Then("the mock should not have been called", () => {
-      expect(mock.called()).toBe(false);
-    });
+      Then("the mock should not have been called", () => {
+        expect(mock.called()).toBe(false);
+      });
 
-    And("the call count should be 0", () => {
-      expect(mock.callCount()).toBe(0);
-    });
-  });
+      And("the call count should be 0", () => {
+        expect(mock.callCount()).toBe(0);
+      });
+    },
+  );
 
-  Scenario("maxHistorySize bounds the history with FIFO eviction", ({ Given, When, Then }) => {
-    Given("I create a mock with maxHistorySize {int} and a users route", (_, maxHistorySize: number) => {
-      mock = schmock({ maxHistorySize });
-      mock("GET /users", []);
-    });
+  Scenario(
+    "maxHistorySize bounds the history with FIFO eviction",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a mock with maxHistorySize {int} and a users route",
+        (_, maxHistorySize: number) => {
+          mock = schmock({ maxHistorySize });
+          mock("GET /users", []);
+        },
+      );
 
-    When("I issue {int} requests to {string}", async (_, count: number, request: string) => {
-      const [method, path] = request.split(" ");
-      for (let i = 0; i < count; i++) {
-        await mock.handle(method as any, path);
-      }
-    });
+      When(
+        "I issue {int} sequenced requests to {string}",
+        async (_, count: number, request: string) => {
+          const { method, path } = parseRequest(request);
+          for (let i = 0; i < count; i++) {
+            await mock.handle(method, path, {
+              query: { sequence: String(i + 1) },
+            });
+          }
+        },
+      );
 
-    Then("the call count should be {int}", (_, expected: number) => {
-      expect(mock.callCount()).toBe(expected);
-    });
-  });
+      Then("the call count should be {int}", (_, expected: number) => {
+        expect(mock.callCount()).toBe(expected);
+      });
+
+      And(
+        "the retained request sequence should be {string}",
+        (_, sequence: string) => {
+          expect(mock.history().map((record) => record.query.sequence)).toEqual(
+            sequence.split(","),
+          );
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Resetting history preserves routes and shared state",
+    ({ Given, When, Then, And }) => {
+      Given("I create a stateful mock and record a request", async () => {
+        mock = schmock({ state: { marker: "preserved" } });
+        mock("GET /stateful", ({ state }) => ({ marker: state.marker }));
+        await mock.handle("GET", "/stateful");
+        expect(mock.callCount()).toBe(1);
+      });
+
+      When("I reset only the request history", () => {
+        mock.resetHistory();
+      });
+
+      Then("the call count should be {int}", (_, expected: number) => {
+        expect(mock.callCount()).toBe(expected);
+      });
+
+      And("the registered route should still respond", async () => {
+        response = await mock.handle("GET", "/stateful");
+        expect(response.status).toBe(200);
+      });
+
+      And(
+        "the shared state marker should still be {string}",
+        (_, marker: string) => {
+          expect(mock.getState().marker).toBe(marker);
+        },
+      );
+    },
+  );
 });

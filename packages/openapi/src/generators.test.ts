@@ -112,6 +112,84 @@ describe("generators", () => {
       const afterDelete = await list(makeContext({ state }));
       expect(afterDelete).toEqual([]);
     });
+
+    it("uses contract-declared success statuses for every CRUD operation", async () => {
+      const resource = makeResource();
+      const state: Record<string, unknown> = {
+        "openapi:collections:pets": [],
+        "openapi:counter:pets": 0,
+      };
+
+      const created = await createCreateGenerator(resource, {
+        responseStatus: 202,
+      })(makeContext({ method: "POST", body: { name: "Buddy" }, state }));
+      expect(created).toEqual([202, { name: "Buddy", petId: 1 }]);
+
+      const read = await createReadGenerator(resource, { responseStatus: 203 })(
+        makeContext({ params: { petId: "1" }, state }),
+      );
+      expect(read).toEqual([203, { name: "Buddy", petId: 1 }]);
+
+      const updated = await createUpdateGenerator(resource, {
+        responseStatus: 202,
+      })(
+        makeContext({
+          method: "PUT",
+          params: { petId: "1" },
+          body: { name: "Max" },
+          state,
+        }),
+      );
+      expect(updated).toEqual([202, { name: "Max", petId: 1 }]);
+
+      const listed = await createListGenerator(resource, {
+        responseStatus: 206,
+      })(makeContext({ state }));
+      expect(listed).toEqual([206, [{ name: "Max", petId: 1 }]]);
+
+      const deleted = await createDeleteGenerator(resource, {
+        responseStatus: 200,
+      })(makeContext({ method: "DELETE", params: { petId: "1" }, state }));
+      expect(deleted).toEqual([200, { name: "Max", petId: 1 }]);
+    });
+
+    it("omits bodies for CRUD operations that declare 204", async () => {
+      const resource = makeResource();
+      const state: Record<string, unknown> = {
+        "openapi:collections:pets": [{ name: "Buddy", petId: 1 }],
+        "openapi:counter:pets": 1,
+      };
+      const noContent = { responseStatus: 204 };
+
+      const created = await createCreateGenerator(
+        resource,
+        noContent,
+      )(makeContext({ method: "POST", body: { name: "New" }, state }));
+      const read = await createReadGenerator(
+        resource,
+        noContent,
+      )(makeContext({ params: { petId: "1" }, state }));
+      const updated = await createUpdateGenerator(
+        resource,
+        noContent,
+      )(
+        makeContext({
+          method: "PUT",
+          params: { petId: "1" },
+          body: { name: "Updated" },
+          state,
+        }),
+      );
+      const listed = await createListGenerator(
+        resource,
+        noContent,
+      )(makeContext({ state }));
+
+      expect(created).toEqual([204, undefined]);
+      expect(read).toEqual([204, undefined]);
+      expect(updated).toEqual([204, undefined]);
+      expect(listed).toEqual([204, undefined]);
+    });
   });
 
   describe("read generator", () => {

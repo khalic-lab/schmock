@@ -398,7 +398,7 @@ export function validateFakerMethod(fakerMethod: string): void {
   let current: unknown = faker;
   for (const part of parts) {
     if (current && typeof current === "object" && part in current) {
-      current = (current as Record<string, unknown>)[part];
+      current = Reflect.get(current, part);
     } else {
       throw new SchemaValidationError(
         "$.faker",

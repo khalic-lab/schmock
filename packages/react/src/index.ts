@@ -5,8 +5,7 @@ import {
   createElement,
   type ReactNode,
   useContext,
-  useEffect,
-  useRef,
+  useLayoutEffect,
 } from "react";
 
 // ===== Context =====
@@ -22,41 +21,55 @@ export interface SchmockProviderProps {
   children: ReactNode;
 }
 
+interface InterceptionInstallerProps {
+  mock: Schmock.CallableMockInstance;
+  options?: Schmock.InterceptOptions;
+}
+
+function InterceptionInstaller({ mock, options }: InterceptionInstallerProps) {
+  const {
+    baseUrl,
+    passthrough,
+    beforeRequest,
+    beforeResponse,
+    errorFormatter,
+  } = options ?? {};
+
+  useLayoutEffect(() => {
+    const handle = mock.intercept({
+      baseUrl,
+      passthrough,
+      beforeRequest,
+      beforeResponse,
+      errorFormatter,
+    });
+
+    return () => {
+      handle.restore();
+    };
+  }, [
+    mock,
+    baseUrl,
+    passthrough,
+    beforeRequest,
+    beforeResponse,
+    errorFormatter,
+  ]);
+
+  return null;
+}
+
 export function SchmockProvider({
   mock,
   options,
   children,
 }: SchmockProviderProps) {
-  // Intercept synchronously so child effects already see the patched fetch.
-  // Re-intercept whenever the mock reference or options change (by value).
-  const handleRef = useRef<Schmock.InterceptHandle | null>(null);
-  const prevMockRef = useRef<Schmock.CallableMockInstance | null>(null);
-  const prevOptionsRef = useRef<string | undefined>(undefined);
-
-  const serializedOptions =
-    options !== undefined ? JSON.stringify(options) : undefined;
-
-  if (
-    handleRef.current === null ||
-    prevMockRef.current !== mock ||
-    prevOptionsRef.current !== serializedOptions
-  ) {
-    handleRef.current?.restore();
-    handleRef.current = mock.intercept(options);
-    prevMockRef.current = mock;
-    prevOptionsRef.current = serializedOptions;
-  }
-
-  useEffect(() => {
-    return () => {
-      handleRef.current?.restore();
-      handleRef.current = null;
-      prevMockRef.current = null;
-      prevOptionsRef.current = undefined;
-    };
-  }, []);
-
-  return createElement(SchmockContext.Provider, { value: mock }, children);
+  return createElement(
+    SchmockContext.Provider,
+    { value: mock },
+    createElement(InterceptionInstaller, { mock, options }),
+    children,
+  );
 }
 
 // ===== Hook =====

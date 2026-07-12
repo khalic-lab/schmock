@@ -69,8 +69,7 @@ import { validationPlugin } from '@schmock/validation'
 beforeEach(() => {
   mock = schmock()
 
-  mock('POST /users', ({ body }) => [201, body])
-    .pipe(validationPlugin({
+  mock.pipe(validationPlugin({
       request: {
         body: {
           type: 'object',
@@ -82,6 +81,7 @@ beforeEach(() => {
         },
       },
     }))
+  mock('POST /users', ({ body }) => [201, body])
 })
 
 it('rejects invalid request bodies', async () => {
@@ -331,3 +331,20 @@ describe('paginated list', () => {
 - Use `fakerSeed` in OpenAPI tests for deterministic data
 - Use `mock.listen(0)` when you need a real HTTP server — port 0 picks a random available port
 - Use `mock.history()` to verify the exact requests your code made, not just the responses
+
+## Repository Quality Gates
+
+Run the complete local verification matrix before submitting a change:
+
+```bash
+bash .agents/skills/code-quality/scripts/validate.sh
+```
+
+BDD step definitions are also compiled under the repository's strict TypeScript
+configuration. Run that gate alone while editing scenarios or steps:
+
+```bash
+bun run typecheck:bdd
+```
+
+The root `typecheck` and CI typecheck jobs include this BDD gate automatically.

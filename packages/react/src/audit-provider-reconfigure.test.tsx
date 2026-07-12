@@ -46,4 +46,35 @@ describe("SchmockProvider — prop changes (fix 3.4)", () => {
     const resB = await fetch("http://localhost/api/data").then((r) => r.json());
     expect(resB).toEqual({ v: "B" });
   });
+
+  it("re-intercepts when a callback option changes identity", async () => {
+    const mock = schmock();
+    mock("GET /api/data", ({ headers }) => ({ marker: headers["x-marker"] }));
+
+    const provider = (marker: string) => (
+      <SchmockProvider
+        mock={mock}
+        options={{
+          beforeRequest: (request) => ({
+            ...request,
+            headers: { ...request.headers, "x-marker": marker },
+          }),
+        }}
+      >
+        <div />
+      </SchmockProvider>
+    );
+
+    const { rerender } = render(provider("first"));
+    const first = await fetch("http://localhost/api/data").then((response) =>
+      response.json(),
+    );
+    expect(first).toEqual({ marker: "first" });
+
+    rerender(provider("second"));
+    const second = await fetch("http://localhost/api/data").then((response) =>
+      response.json(),
+    );
+    expect(second).toEqual({ marker: "second" });
+  });
 });

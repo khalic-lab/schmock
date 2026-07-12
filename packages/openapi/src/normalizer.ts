@@ -48,8 +48,7 @@ function normalizeNode(
   if (node.nullable === true) {
     delete node.nullable;
     const normalized = normalizeNode({ ...node }, direction, visited);
-    (normalized as Record<string, unknown>).schmockNullable = true;
-    return normalized;
+    return toJsonSchema({ ...normalized, schmockNullable: true });
   }
   delete node.nullable;
 

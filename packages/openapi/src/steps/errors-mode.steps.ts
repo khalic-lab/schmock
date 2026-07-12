@@ -5,6 +5,10 @@ import { openapi } from "../plugin";
 
 const feature = await loadFeature("../../features/errors-mode.feature");
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 const specWithRequestBody = {
   openapi: "3.0.3",
   info: { title: "Test", version: "1.0.0" },
@@ -67,11 +71,12 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     And('the error body has a "details" array', () => {
-      const body = response.body as Record<string, unknown>;
-      expect(body.code).toBe("VALIDATION_ERROR");
-      expect(Array.isArray(body.details)).toBe(true);
-      const details = body.details as unknown[];
-      expect(details.length).toBeGreaterThan(0);
+      expect(isRecord(response.body)).toBe(true);
+      if (!isRecord(response.body)) return;
+      expect(response.body.code).toBe("VALIDATION_ERROR");
+      expect(Array.isArray(response.body.details)).toBe(true);
+      if (!Array.isArray(response.body.details)) return;
+      expect(response.body.details.length).toBeGreaterThan(0);
     });
   });
 
@@ -92,4 +97,81 @@ describeFeature(feature, ({ Scenario }) => {
       expect(response.status).toBe(201);
     });
   });
+
+  Scenario(
+    "Missing required request body returns 400",
+    ({ Given, When, Then, And }) => {
+      Given("a mock with validateRequests enabled", async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(
+          await openapi({
+            spec: specWithRequestBody,
+            validateRequests: true,
+          }),
+        );
+      });
+
+      When(
+        "I POST without a body to a route with a required requestBody",
+        async () => {
+          response = await mock.handle("POST", "/items", {
+            headers: { "content-type": "application/json" },
+          });
+        },
+      );
+
+      Then("the response status is 400", () => {
+        expect(response.status).toBe(400);
+      });
+
+      And('the error body has a "details" array', () => {
+        expect(isRecord(response.body)).toBe(true);
+        if (!isRecord(response.body)) return;
+        expect(response.body.code).toBe("VALIDATION_ERROR");
+        expect(Array.isArray(response.body.details)).toBe(true);
+        if (!Array.isArray(response.body.details)) return;
+        expect(response.body.details.length).toBeGreaterThan(0);
+      });
+    },
+  );
+
+  Scenario(
+    "Invalid request body does not mutate the collection",
+    ({ Given, When, Then, And }) => {
+      let invalidResponse: Schmock.Response;
+      let listResponse: Schmock.Response;
+
+      Given("a mock with validateRequests enabled", async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(
+          await openapi({
+            spec: specWithRequestBody,
+            validateRequests: true,
+          }),
+        );
+      });
+
+      When(
+        "I POST an invalid body to a route with a requestBody schema",
+        async () => {
+          invalidResponse = await mock.handle("POST", "/items", {
+            body: { name: 123 },
+            headers: { "content-type": "application/json" },
+          });
+        },
+      );
+
+      And("I list the validated collection", async () => {
+        listResponse = await mock.handle("GET", "/items");
+      });
+
+      Then("the invalid create response status is 400", () => {
+        expect(invalidResponse.status).toBe(400);
+      });
+
+      And("the validated collection is empty", () => {
+        expect(listResponse.body).toEqual([]);
+      });
+    },
+  );
 });

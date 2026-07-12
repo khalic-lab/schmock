@@ -25,7 +25,11 @@ function App() {
 }
 ```
 
-`SchmockProvider` patches `globalThis.fetch` on mount and restores it on unmount. Any `fetch()` call inside the tree — whether from your code, React Query, SWR, or axios — is intercepted automatically.
+`SchmockProvider` patches `globalThis.fetch` on mount and restores it on unmount. Any `fetch()` call inside the tree — whether from your code, React Query, SWR, or axios — is intercepted automatically. The installer commits before descendant layout effects, so a child may safely fetch from `useLayoutEffect` on its first mount.
+
+If another library replaces `globalThis.fetch`, a later Schmock provider wraps
+that current implementation as its passthrough boundary. Cleanup never
+overwrites a third-party replacement it no longer owns.
 
 > **Strict Mode:** In React 18+ development mode, components mount → unmount → remount. `SchmockProvider` handles this correctly (it restores fetch on unmount and re-intercepts on remount), but there is a brief window between unmount and remount where fetch is unpatched. If you see intermittent failures in Strict Mode, this is why — they won't occur in production builds.
 

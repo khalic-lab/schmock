@@ -76,6 +76,36 @@ const specWithExamples = {
   },
 };
 
+const specWithMediaExamples = {
+  openapi: "3.0.3",
+  info: { title: "Media examples", version: "1.0.0" },
+  paths: {
+    "/media-example": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { type: "object" },
+                examples: {
+                  json: { value: { representation: "json" } },
+                },
+              },
+              "text/plain": {
+                schema: { type: "string" },
+                examples: {
+                  plain: { value: "plain-example" },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -137,4 +167,37 @@ describeFeature(feature, ({ Scenario }) => {
       expect(typeof body.name).toBe("string");
     });
   });
+
+  Scenario(
+    "Prefer example selects from the negotiated media type",
+    ({ Given, When, Then, And }) => {
+      Given("a mock with media-specific named examples", async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(await openapi({ spec: specWithMediaExamples }));
+      });
+
+      When(
+        "I request the text example with Prefer and Accept headers",
+        async () => {
+          response = await mock.handle("GET", "/media-example", {
+            headers: {
+              accept: "text/plain",
+              prefer: "example=plain",
+            },
+          });
+        },
+      );
+
+      Then("the preferred response body is {string}", (_, body: string) => {
+        expect(response.body).toBe(body);
+      });
+
+      And(
+        "the preferred response content type is {string}",
+        (_, contentType: string) => {
+          expect(response.headers["content-type"]).toBe(contentType);
+        },
+      );
+    },
+  );
 });

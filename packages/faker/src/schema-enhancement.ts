@@ -9,6 +9,20 @@ interface FakerSchema extends JSONSchema7 {
   schmockTrueProbability?: number;
 }
 
+function needsStringFallback(schema: FakerSchema): boolean {
+  return (
+    schema.type === "string" &&
+    schema.faker === undefined &&
+    schema.format === undefined &&
+    schema.pattern === undefined &&
+    schema.enum === undefined &&
+    schema.const === undefined &&
+    schema.$ref === undefined &&
+    schema.minLength === undefined &&
+    schema.maxLength === undefined
+  );
+}
+
 export function enhanceSchemaWithSmartMapping(
   schema: JSONSchema7,
 ): JSONSchema7 {
@@ -16,7 +30,7 @@ export function enhanceSchemaWithSmartMapping(
     return schema;
   }
 
-  const enhanced = { ...schema } as FakerSchema;
+  const enhanced: FakerSchema = { ...schema };
 
   // Handle object properties
   if (enhanced.properties) {
@@ -38,7 +52,7 @@ export function enhanceSchemaWithSmartMapping(
   for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
     const branches = enhanced[keyword];
     if (Array.isArray(branches)) {
-      (enhanced as Record<string, unknown>)[keyword] = branches.map((branch) =>
+      enhanced[keyword] = branches.map((branch) =>
         isJSONSchema7(branch) ? enhanceSchemaWithSmartMapping(branch) : branch,
       );
     }
@@ -56,14 +70,14 @@ export function enhanceSchemaWithSmartMapping(
   }
 
   // Recurse into additionalProperties
-  if (
-    enhanced.additionalProperties &&
-    typeof enhanced.additionalProperties === "object" &&
-    !Array.isArray(enhanced.additionalProperties)
-  ) {
+  if (isJSONSchema7(enhanced.additionalProperties)) {
     enhanced.additionalProperties = enhanceSchemaWithSmartMapping(
-      enhanced.additionalProperties as JSONSchema7,
+      enhanced.additionalProperties,
     );
+  }
+
+  if (needsStringFallback(enhanced)) {
+    enhanced.faker = "lorem.word";
   }
 
   return enhanced;
@@ -122,6 +136,8 @@ function enhanceFieldSchema(
     if (trueProbability !== undefined) {
       enhanced.schmockTrueProbability = trueProbability;
     }
+  } else if (needsStringFallback(enhanced)) {
+    enhanced.faker = "lorem.word";
   }
 
   return enhanced;

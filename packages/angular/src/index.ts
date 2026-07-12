@@ -16,15 +16,12 @@ import { Injectable } from "@angular/core";
 import { isHttpMethod, isRouteNotFound } from "@schmock/core";
 import { Observable } from "rxjs";
 
-function toSafeHttpMethod(method: string): Schmock.HttpMethod {
+function toSupportedHttpMethod(method: string): Schmock.HttpMethod | undefined {
   const upper = method.toUpperCase();
   if (isHttpMethod(upper)) {
     return upper;
   }
-  console.warn(
-    `[@schmock/angular] Unknown HTTP method "${method}", defaulting to GET`,
-  );
-  return "GET";
+  return undefined;
 }
 
 const statusTexts: Record<number, string> = {
@@ -103,7 +100,9 @@ export interface AngularAdapterOptions {
  * Extract query parameters from Angular HttpRequest
  * Uses Angular's built-in params which are already parsed
  */
-function extractQueryParams(request: HttpRequest<any>): Record<string, string> {
+function extractQueryParams(
+  request: HttpRequest<unknown>,
+): Record<string, string> {
   const result: Record<string, string> = {};
 
   // Use Angular's HttpParams which are already parsed
@@ -196,7 +195,9 @@ function parseBaseUrl(baseUrl: string): {
 /**
  * Convert Angular headers to plain object
  */
-function headersToObject(request: HttpRequest<any>): Record<string, string> {
+function headersToObject(
+  request: HttpRequest<unknown>,
+): Record<string, string> {
   const headers: Record<string, string> = {};
 
   request.headers.keys().forEach((key) => {
@@ -227,9 +228,9 @@ export function createSchmockInterceptor(
   @Injectable()
   class SchmockInterceptor implements HttpInterceptor {
     intercept(
-      req: HttpRequest<any>,
+      req: HttpRequest<unknown>,
       next: HttpHandler,
-    ): Observable<HttpEvent<any>> {
+    ): Observable<HttpEvent<unknown>> {
       // Extract pathname from URL (handles full URLs like http://localhost:4200/api/users)
       const path = extractPathname(req.url);
 
@@ -246,7 +247,7 @@ export function createSchmockInterceptor(
             return next.handle(req);
           }
         }
-        if (basePath && !path.startsWith(basePath)) {
+        if (basePath && path !== basePath && !path.startsWith(`${basePath}/`)) {
           return next.handle(req);
         }
         effectiveBasePath = basePath;
@@ -260,8 +261,13 @@ export function createSchmockInterceptor(
       // Extract request data using Angular's built-in params
       const query = extractQueryParams(req);
 
+      const method = toSupportedHttpMethod(req.method);
+      if (!method) {
+        return next.handle(req);
+      }
+
       let requestData = {
-        method: toSafeHttpMethod(req.method),
+        method,
         path: routePath,
         headers: headersToObject(req),
         body: req.body,
@@ -271,15 +277,21 @@ export function createSchmockInterceptor(
       // Apply request transformation if provided
       if (transformRequest) {
         const transformed = transformRequest(req);
+        const transformedMethod = toSupportedHttpMethod(
+          transformed.method ?? req.method,
+        );
+        if (!transformedMethod) {
+          return next.handle(req);
+        }
         requestData = {
           ...requestData,
           ...transformed,
-          method: toSafeHttpMethod(transformed.method ?? req.method),
+          method: transformedMethod,
         };
       }
 
       // Handle with Schmock
-      return new Observable<HttpEvent<any>>((observer) => {
+      return new Observable<HttpEvent<unknown>>((observer) => {
         let innerSub: { unsubscribe(): void } | undefined;
         let aborted = false;
 
@@ -455,12 +467,12 @@ export async function createSchmockInterceptorFromSpec(
   // prevents TypeScript from resolving the module at build time.
   const coreMod = "@schmock/core";
   const openapiMod = "@schmock/openapi";
-  const { schmock } = await (import(coreMod) as Promise<
-    typeof import("@schmock/core")
-  >);
-  const { openapi } = await (import(openapiMod) as Promise<{
+  const coreImport: Promise<typeof import("@schmock/core")> = import(coreMod);
+  const openapiImport: Promise<{
     openapi: (opts: Schmock.OpenApiOptions) => Promise<Schmock.Plugin>;
-  }>);
+  }> = import(openapiMod);
+  const { schmock } = await coreImport;
+  const { openapi } = await openapiImport;
   const mock = schmock({ debug: openapiOptions.debug, state: {} });
   mock.pipe(await openapi(openapiOptions));
   return createSchmockInterceptor(mock, adapterOptions);

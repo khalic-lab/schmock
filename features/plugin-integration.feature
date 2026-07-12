@@ -36,6 +36,12 @@ Feature: Plugin Pipeline Integration
       { "error": "Unauthorized", "code": "AUTH_REQUIRED" }
       """
 
+  Scenario: Request guard prevents route side effects
+    Given I create a mock whose guarded generator records each execution
+    When I request the guarded route without authorization
+    Then the guarded response status should be 401
+    And the guarded generator should not have executed
+
   Scenario: Pipeline order and response transformation
     Given I create a mock with three ordered step plugins
     When I request "GET /data"

@@ -21,9 +21,9 @@
   },
   "scripts": {
     "build": "bun build:lib && bun build:types",
-    "build:lib": "bun build --target node --outdir=dist src/index.ts src/bin.ts",
+    "build:lib": "bun build --target node --format esm --outdir=dist src/index.ts src/bin.ts --external @schmock/core --external @schmock/openapi",
     "build:types": "tsc -p tsconfig.json",
-    "test": "vitest",
+    "test": "vitest run",
     "test:watch": "vitest --watch",
     "test:bdd": "vitest run --config vitest.config.bdd.ts",
     "lint": "biome check src/*.ts",

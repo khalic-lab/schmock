@@ -1,8 +1,9 @@
 /// <reference path="../../core/schmock.d.ts" />
 
+import { SchmockError } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { version as packageVersion } from "../package.json";
-import { fireCallbacks, getRouteCallbacks } from "./callbacks.js";
+import { dispatchCallbacks, getRouteCallbacks } from "./callbacks.js";
 import { detectCrudResources } from "./crud-detector.js";
 import {
   applyOverrides,
@@ -10,15 +11,18 @@ import {
   registerCrudRoutes,
   registerNonCrudRoutes,
 } from "./crud-registration.js";
-import type { ParsedPath } from "./parser.js";
+import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
 import { parseSpec } from "./parser.js";
 import {
+  applyResponseContentType,
   createBodyValidatorContext,
   processContentNegotiation,
   processPreferHeader,
   validateRequestBody,
+  validateResponse,
   validateSecurity,
 } from "./request-pipeline.js";
+import { isStatusInRange } from "./response-status.js";
 import type { SeedConfig, SeedSource } from "./seed.js";
 import { loadSeed } from "./seed.js";
 
@@ -36,6 +40,10 @@ export type OnSchemaCallback = (
 ) => JSONSchema7 | undefined;
 
 export type OpenApiOptions = Schmock.OpenApiOptions;
+export type OpenApiCallbackOptions = Schmock.OpenApiCallbackOptions;
+export type OpenApiCallbackRequest = Schmock.OpenApiCallbackRequest;
+
+const REQUEST_REJECTED_STATE = "openapi:requestRejected";
 
 /**
  * Create an OpenAPI plugin that auto-registers CRUD routes from a spec.
@@ -52,10 +60,18 @@ export type OpenApiOptions = Schmock.OpenApiOptions;
 export async function openapi(
   options: OpenApiOptions,
 ): Promise<Schmock.Plugin> {
+  if (options.queryFeatures !== undefined) {
+    throw new SchmockError(
+      'OpenAPI option "queryFeatures" is not implemented',
+      "OPENAPI_UNSUPPORTED_OPTION",
+      { option: "queryFeatures" },
+    );
+  }
+
   const spec = await parseSpec(options.spec);
   const { resources, nonCrudPaths } = detectCrudResources(spec.paths);
   const seedData = options.seed
-    ? await loadSeed(options.seed, resources)
+    ? await loadSeed(options.seed, resources, options.fakerSeed)
     : new Map<string, unknown[]>();
 
   // Build a lookup of all parsed paths for process() to reference
@@ -68,9 +84,10 @@ export async function openapi(
   const securitySchemes = spec.securitySchemes;
   const globalSecurity = spec.globalSecurity;
 
-  // Per-plugin AJV instance so multiple openapi() plugins in the same
-  // process can't collide on duplicate \$id values from their specs.
-  const bodyValidatorCtx = createBodyValidatorContext();
+  // Separate request/response AJV instances prevent duplicate schema IDs in
+  // one spec and isolate validators belonging to different plugin instances.
+  const requestValidatorCtx = createBodyValidatorContext();
+  const responseValidatorCtx = createBodyValidatorContext();
 
   return {
     name: "@schmock/openapi",
@@ -92,15 +109,15 @@ export async function openapi(
           if (status !== undefined) {
             const entry = parsedPath.responses.get(status);
             if (entry) {
-              entry.schema = schema;
+              replaceResponseSchema(entry, schema);
             } else {
               parsedPath.responses.set(status, { schema, description: "" });
             }
           } else {
             let patched = false;
             for (const [code, entry] of parsedPath.responses) {
-              if (code >= 200 && code < 300) {
-                entry.schema = schema;
+              if (isStatusInRange(code, 200, 300)) {
+                replaceResponseSchema(entry, schema);
                 patched = true;
                 break;
               }
@@ -146,47 +163,103 @@ export async function openapi(
       );
     },
 
-    async process(
+    beforeRequest(
       context: Schmock.PluginContext,
-      response?: unknown,
-    ): Promise<Schmock.PluginResult> {
-      // 1. Security validation (if enabled)
-      if (options.security && securitySchemes) {
+    ): Schmock.PluginResult | undefined {
+      if (options.security) {
         const securityResult = validateSecurity(
           context,
-          securitySchemes,
+          securitySchemes ?? new Map(),
           globalSecurity,
         );
-        if (securityResult) return securityResult;
+        if (securityResult) return rejectRequest(context, securityResult);
       }
 
-      // 2. Content negotiation
-      const contentResult = processContentNegotiation(context);
-      if (contentResult) return contentResult;
+      const preflightResponseStatus =
+        context.route["openapi:preflightResponseStatus"];
+      if (typeof preflightResponseStatus === "number") {
+        const contentResult = processContentNegotiation(
+          context,
+          preflightResponseStatus,
+        );
+        if (contentResult) return rejectRequest(context, contentResult);
+      }
 
-      // 3. Request validation (if enabled)
       if (options.validateRequests) {
-        const validationResult = validateRequestBody(context, bodyValidatorCtx);
-        if (validationResult) {
-          return validationResult;
-        }
+        const validationResult = validateRequestBody(
+          context,
+          requestValidatorCtx,
+        );
+        if (validationResult) return rejectRequest(context, validationResult);
       }
 
-      // 4. Prefer header handling
+      return undefined;
+    },
+
+    async process(
+      context: Schmock.PluginContext,
+      incomingResponse?: unknown,
+    ): Promise<Schmock.PluginResult> {
+      if (
+        context.requestShortCircuited === true ||
+        context.state.get(REQUEST_REJECTED_STATE) === true
+      ) {
+        return { context, response: incomingResponse };
+      }
+
       const result = await processPreferHeader(
         context,
-        response,
+        incomingResponse,
         options.fakerSeed,
         options.onSchema,
       );
-
-      // 5. Fire callbacks (fire-and-forget, after response is determined)
-      const callbacks = getRouteCallbacks(context.route);
-      if (callbacks && callbacks.length > 0) {
-        fireCallbacks(callbacks, context, result.response);
+      const negotiated = applyResponseContentType(context, result.response);
+      const response = negotiated.response;
+      if (negotiated.rejected) {
+        return { context, response };
       }
 
-      return result;
+      if (options.validateResponses) {
+        const validationResult = validateResponse(
+          context,
+          response,
+          responseValidatorCtx,
+        );
+        if (validationResult) return validationResult;
+      }
+
+      if (options.callbacks) {
+        const callbacks = getRouteCallbacks(context.route);
+        if (callbacks && callbacks.length > 0) {
+          await dispatchCallbacks(
+            callbacks,
+            options.callbacks.dispatch,
+            context,
+            response,
+          );
+        }
+      }
+
+      return { context, response };
     },
   };
+}
+
+function rejectRequest(
+  context: Schmock.PluginContext,
+  result: Schmock.PluginResult,
+): Schmock.PluginResult {
+  context.state.set(REQUEST_REJECTED_STATE, true);
+  return result;
+}
+
+function replaceResponseSchema(
+  entry: ParsedResponseEntry,
+  schema: JSONSchema7,
+): void {
+  entry.schema = schema;
+  if (!entry.content) return;
+  for (const content of entry.content.values()) {
+    content.schema = schema;
+  }
 }

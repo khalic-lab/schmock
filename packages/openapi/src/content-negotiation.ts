@@ -20,10 +20,12 @@ export function negotiateContentType(
       for (const param of params) {
         const match = param.trim().match(/^q\s*=\s*([\d.]+)$/);
         if (match) {
-          q = Number.parseFloat(match[1]);
+          const parsed = Number.parseFloat(match[1]);
+          q =
+            Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 1;
         }
       }
-      return { type: type.trim(), q };
+      return { type: type.trim().toLowerCase(), q };
     })
     .sort((a, b) => b.q - a.q);
 
@@ -38,15 +40,16 @@ export function negotiateContentType(
     // Type wildcard (e.g., "application/*")
     if (entry.type.endsWith("/*")) {
       const prefix = entry.type.slice(0, -1);
-      const match = available.find((ct) => ct.startsWith(prefix));
+      const match = available.find((ct) => ct.toLowerCase().startsWith(prefix));
       if (match) return match;
       continue;
     }
 
     // Exact match
-    if (available.includes(entry.type)) {
-      return entry.type;
-    }
+    const exact = available.find(
+      (contentType) => contentType.toLowerCase() === entry.type,
+    );
+    if (exact) return exact;
   }
 
   return null;

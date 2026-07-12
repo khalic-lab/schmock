@@ -9,6 +9,8 @@ import { version as packageVersion } from "../package.json";
 interface ValidationRules {
   request?: {
     body?: JSONSchema7;
+    /** Reject an absent body before the route generator executes. */
+    bodyRequired?: boolean;
     query?: JSONSchema7;
     headers?: JSONSchema7;
   };
@@ -22,6 +24,24 @@ interface ValidationPluginOptions extends ValidationRules {
   requestErrorStatus?: number;
   /** Custom status code for response validation failures (default: 500) */
   responseErrorStatus?: number;
+}
+
+function isStructuredResponse(
+  value: unknown,
+): value is { status: number; body: unknown } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "status" in value &&
+    typeof value.status === "number" &&
+    "body" in value
+  );
+}
+
+function getResponseBody(response: unknown): unknown {
+  if (isStatusTuple(response)) return response[1];
+  if (isStructuredResponse(response)) return response.body;
+  return response;
 }
 
 export function validationPlugin(
@@ -57,11 +77,29 @@ export function validationPlugin(
     name: "validation",
     version: packageVersion,
 
-    process(
-      context: Schmock.PluginContext,
-      response?: unknown,
-    ): Schmock.PluginResult {
-      // Validate request body (skip when no body provided, e.g. GET requests)
+    beforeRequest(context: Schmock.PluginContext): Schmock.PluginResult {
+      if (context.body === undefined && options.request?.bodyRequired) {
+        return {
+          context,
+          response: {
+            status: requestErrorStatus,
+            body: {
+              error: "Request validation failed",
+              code: "REQUEST_VALIDATION_ERROR",
+              details: [
+                {
+                  instancePath: "",
+                  keyword: "required",
+                  message: "request body is required",
+                },
+              ],
+            },
+          },
+        };
+      }
+
+      // Optional bodies are skipped when absent, but every supplied body is
+      // validated before route code can observe or mutate state from it.
       if (validators.requestBody && context.body !== undefined) {
         if (!validators.requestBody(context.body)) {
           return {
@@ -117,10 +155,22 @@ export function validationPlugin(
         }
       }
 
-      // Validate response body (if response exists)
-      if (validators.responseBody && response !== undefined) {
-        // Unwrap tuple responses: [status, body] or [status, body, headers]
-        const responseBody = isStatusTuple(response) ? response[1] : response;
+      return { context };
+    },
+
+    process(
+      context: Schmock.PluginContext,
+      response?: unknown,
+    ): Schmock.PluginResult {
+      if (context.requestShortCircuited === true) {
+        return { context, response };
+      }
+
+      // Validate the semantic response body, including explicit no-content
+      // results. Supported tuple and structured response forms carry metadata
+      // around the body and must not be validated as the payload itself.
+      if (validators.responseBody) {
+        const responseBody = getResponseBody(response);
 
         if (!validators.responseBody(responseBody)) {
           return {

@@ -14,6 +14,7 @@ import {
 } from "./generators.js";
 import type { ParsedPath } from "./parser.js";
 import type { OnSchemaCallback } from "./plugin.js";
+import { findSuccessResponse } from "./response-status.js";
 import { isRecord } from "./utils.js";
 
 export function registerCrudRoutes(
@@ -28,19 +29,27 @@ export function registerCrudRoutes(
     const meta = resource.operationMeta?.get(op);
     const routeEntries = getCrudRouteEntries(op, resource);
 
-    for (const { routeKey, method } of routeEntries) {
-      const gen = createCrudGenerator(op, resource, meta);
-      const parsedPath =
-        allParsedPaths.get(`${method} ${resource.basePath}`) ??
-        allParsedPaths.get(`${method} ${resource.itemPath}`);
+    for (const { routeKey } of routeEntries) {
+      const parsedPath = allParsedPaths.get(routeKey);
+      const successResponse = parsedPath
+        ? findSuccessResponse(parsedPath.responses)
+        : undefined;
+      const routeMeta = successResponse
+        ? { ...meta, responseStatus: successResponse[0] }
+        : meta;
+      const gen = createCrudGenerator(op, resource, routeMeta);
 
       const config: Schmock.RouteConfig = {};
       if (parsedPath) {
         config["openapi:responses"] = parsedPath.responses;
         config["openapi:path"] = parsedPath.path;
         config["openapi:requestBody"] = parsedPath.requestBody;
+        config["openapi:requestBodyRequired"] = parsedPath.requestBodyRequired;
         config["openapi:security"] = parsedPath.security;
         config["openapi:callbacks"] = parsedPath.callbacks;
+        if (op === "create" && routeMeta?.responseStatus !== undefined) {
+          config["openapi:preflightResponseStatus"] = routeMeta.responseStatus;
+        }
       }
 
       instance(routeKey, wrapWithSeeder(ensureSeeded, gen), config);
@@ -60,9 +69,14 @@ export function registerNonCrudRoutes(
       "openapi:responses": parsedPath.responses,
       "openapi:path": parsedPath.path,
       "openapi:requestBody": parsedPath.requestBody,
+      "openapi:requestBodyRequired": parsedPath.requestBodyRequired,
       "openapi:security": parsedPath.security,
       "openapi:callbacks": parsedPath.callbacks,
     };
+    const successResponse = findSuccessResponse(parsedPath.responses);
+    if (successResponse) {
+      config["openapi:preflightResponseStatus"] = successResponse[0];
+    }
     instance(
       routeKey,
       createStaticGenerator(parsedPath, fakerSeed, onSchema),
