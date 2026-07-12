@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  "ignore": ["**/*.d.ts", ".claude/**", "examples/**"],
+  "ignore": ["**/*.d.ts", ".claude/**", ".agents/**", "examples/**"],
   "ignoreDependencies": [
     "@tsconfig/strictest",
     "@vitest/coverage-v8",

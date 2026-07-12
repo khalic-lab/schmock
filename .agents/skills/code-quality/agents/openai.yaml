@@ -1,0 +1,4 @@
+interface:
+  display_name: "Schmock Code Quality"
+  short_description: "Run focused and full Schmock quality checks"
+  default_prompt: "Use $code-quality to verify my Schmock changes with the smallest appropriate checks."
