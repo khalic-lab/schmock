@@ -86,6 +86,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "[publint $step/$TOTAL] ${PACKAGE_NAMES[$index]}"
     echo "[attw $step/$TOTAL] ${PACKAGE_NAMES[$index]}"
   done
+  echo "[ranges 1/1] Validate internal dependency ranges"
   echo "[install 1/1] Install all $TOTAL local tarballs and their opt-in test peers in one isolated consumer"
   echo "[exports 1/1] Import every candidate entry point and exercise the CLI"
   echo "[browser 1/1] Bundle the validation candidate for a browser target"
@@ -126,6 +127,7 @@ for ((index = 0; index < TOTAL; index += 1)); do
   safe_name="${safe_name//\//-}"
   filename="$safe_name-$package_version.tgz"
   tarball="$PACK_DIR/$filename"
+  packed_manifest="$PACK_DIR/$safe_name-$package_version.package.json"
 
   echo "[pack $step/$TOTAL] $package_name@$package_version"
   (
@@ -141,8 +143,17 @@ for ((index = 0; index < TOTAL; index += 1)); do
     exit 1
   fi
 
+  tar -xOf "$tarball" package/package.json > "$packed_manifest"
+  if [[ ! -s "$packed_manifest" ]]; then
+    echo "Packing $package_name did not include package/package.json" >&2
+    exit 1
+  fi
+
   TARBALLS+=("$tarball")
-  printf '%s\t%s\n' "$package_name" "$package_version" >> "$CANDIDATES_FILE"
+  printf '%s\t%s\t%s\n' \
+    "$package_name" \
+    "$package_version" \
+    "$packed_manifest" >> "$CANDIDATES_FILE"
 done
 
 if [[ "${#TARBALLS[@]}" -ne "$TOTAL" ]]; then
@@ -161,13 +172,61 @@ for ((index = 0; index < TOTAL; index += 1)); do
     --profile esm-only
 done
 
-node -e '
-  const { writeFileSync } = require("node:fs");
-  writeFileSync(
-    process.argv[1],
-    `${JSON.stringify({ name: "schmock-release-candidate-consumer", private: true, type: "module" }, null, 2)}\n`,
-  );
-' "$FIXTURE_DIR/package.json"
+echo "[ranges 1/1] Validating internal dependency ranges"
+bun -e '
+  const { readFileSync, writeFileSync } = require("node:fs");
+  const { join } = require("node:path");
+  const [manifestPath, candidatesPath, packDir, ...extraSpecs] = process.argv.slice(1);
+  const candidates = new Map();
+  const dependencies = {};
+  const overrides = {};
+
+  for (const line of readFileSync(candidatesPath, "utf8").trim().split("\n")) {
+    if (!line) continue;
+    const [name, version, packedManifestPath] = line.split("\t");
+    const safeName = name.replace("@", "").replace("/", "-");
+    const tarball = `file:${join(packDir, `${safeName}-${version}.tgz`)}`;
+    candidates.set(name, { version, packedManifestPath });
+    dependencies[name] = tarball;
+    overrides[name] = tarball;
+  }
+
+  const dependencyFields = ["dependencies", "optionalDependencies", "peerDependencies"];
+  for (const [packageName, candidate] of candidates) {
+    const manifest = JSON.parse(readFileSync(candidate.packedManifestPath, "utf8"));
+    for (const field of dependencyFields) {
+      for (const [dependencyName, range] of Object.entries(manifest[field] ?? {})) {
+        const dependency = candidates.get(dependencyName);
+        if (!dependency) continue;
+        if (typeof range !== "string" || !Bun.semver.satisfies(dependency.version, range)) {
+          throw new Error(
+            `${packageName} declares ${field}.${dependencyName} as ${JSON.stringify(range)}, ` +
+              `which does not accept release candidate ${dependency.version}`,
+          );
+        }
+      }
+    }
+  }
+
+  for (const spec of extraSpecs) {
+    const separator = spec.lastIndexOf("@");
+    if (separator <= 0) throw new Error(`Invalid consumer dependency: ${spec}`);
+    dependencies[spec.slice(0, separator)] = spec.slice(separator + 1);
+  }
+
+  const manifest = {
+    name: "schmock-release-candidate-consumer",
+    private: true,
+    type: "module",
+    dependencies,
+    overrides,
+  };
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+' \
+  "$FIXTURE_DIR/package.json" \
+  "$CANDIDATES_FILE" \
+  "$PACK_DIR" \
+  "${EXTRA_CONSUMER_DEPENDENCIES[@]}"
 
 cp "$ROOT_DIR/scripts/release-candidate-consumer.js" "$FIXTURE_DIR/consumer.mjs"
 cp "$ROOT_DIR/scripts/release-candidate-browser.js" "$FIXTURE_DIR/browser-consumer.mjs"
@@ -175,7 +234,7 @@ cp "$ROOT_DIR/scripts/release-candidate-browser.js" "$FIXTURE_DIR/browser-consum
 echo "[install 1/1] Installing all $TOTAL local tarballs in an isolated consumer"
 (
   cd "$FIXTURE_DIR"
-  bun add --exact "${TARBALLS[@]}" "${EXTRA_CONSUMER_DEPENDENCIES[@]}"
+  bun install --linker isolated
 )
 
 echo "[exports 1/1] Importing every candidate entry point and exercising the CLI"
