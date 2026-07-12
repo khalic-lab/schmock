@@ -1,0 +1,32 @@
+/**
+ * {{PLUGIN_TITLE}} plugin for Schmock.
+ */
+
+import type { Plugin, PluginContext, PluginResult } from "@schmock/core";
+import { version as packageVersion } from "../package.json";
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false;
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+export function {{PLUGIN_CAMEL}}Plugin(): Plugin {
+  return {
+    name: "{{PLUGIN_NAME}}",
+    version: packageVersion,
+
+    process(context: PluginContext, response?: unknown): PluginResult {
+      if (!isPlainRecord(response)) return { context, response };
+
+      return {
+        context,
+        response: {
+          ...response,
+          processedBy: "{{PLUGIN_NAME}}",
+        },
+      };
+    },
+  };
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Schmock Development"
+  short_description: "Build Schmock changes with its BDD-first workflow"
+  default_prompt: "Use $development to implement this Schmock change with focused BDD and unit tests."
