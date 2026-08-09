@@ -1,5 +1,3 @@
-/// <reference path="../../core/schmock.d.ts" />
-
 export type {
   OnSchemaCallback,
   OpenApiCallbackOptions,

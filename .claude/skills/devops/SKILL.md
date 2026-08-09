@@ -2,7 +2,9 @@
 name: devops
 description: >
   Release management for Schmock packages. Version bumping, npm publishing,
-  and GitHub release creation.
+  and GitHub release creation. Use when cutting a release, bumping a package
+  version, publishing an @schmock/* package to npm, or creating a GitHub
+  release in this monorepo.
 argument-hint: "bump patch|minor|major | publish [package]"
 allowed-tools:
   - Bash(bun .claude/skills/devops/scripts/bump.ts *)

@@ -1,5 +1,3 @@
-/// <reference path="../../core/schmock.d.ts" />
-
 import type { JSONSchema7 } from "json-schema";
 import { isRecord, toJsonSchema } from "./utils.js";
 

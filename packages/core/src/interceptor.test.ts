@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { schmock } from "./index.js";
+import { createFetchInterceptor } from "./interceptor.js";
 
 describe("mock.intercept()", () => {
   let originalFetch: typeof globalThis.fetch;
@@ -154,10 +155,53 @@ describe("mock.intercept()", () => {
     handle.restore();
   });
 
+  it("does not give relative inputs a synthetic origin for baseUrl matching", async () => {
+    mock("GET /api/users", [{ id: 1 }]);
+    const savedFetch = globalThis.fetch;
+    const handle = mock.intercept({
+      baseUrl: "https://api.example.com",
+    });
+
+    try {
+      await fetch("/api/users");
+      expect(savedFetch).toHaveBeenCalledOnce();
+      const [passthroughInput, ...remainingArguments] =
+        savedFetch.mock.calls[0];
+      expect(remainingArguments).toEqual([]);
+      expect(passthroughInput).toBeInstanceOf(Request);
+      if (!(passthroughInput instanceof Request)) {
+        throw new Error("Expected passthrough to receive a Request snapshot");
+      }
+      expect(new URL(passthroughInput.url).pathname).toBe("/api/users");
+    } finally {
+      handle.restore();
+    }
+  });
+
   it("throws when intercepting twice", () => {
     const handle = mock.intercept();
     expect(() => mock.intercept()).toThrow(/already intercepting/i);
     handle.restore();
+  });
+
+  it("does not leak an admission for unsupported fetch methods", async () => {
+    const uninstall = vi.fn();
+    mock.pipe({
+      name: "cleanup",
+      process: (context, response) => ({ context, response }),
+      uninstall,
+    });
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      await expect(
+        fetch("http://localhost/resource", { method: "PROPFIND" }),
+      ).rejects.toThrow('Invalid HTTP method: "PROPFIND"');
+      mock.reset();
+      expect(uninstall).toHaveBeenCalledOnce();
+    } finally {
+      handle.restore();
+    }
   });
 
   it("applies beforeRequest hook", async () => {
@@ -202,6 +246,59 @@ describe("mock.intercept()", () => {
     expect(await res.json()).toEqual([{ id: 1 }]);
 
     handle.restore();
+  });
+
+  it("resolves relative references against the document base URI", async () => {
+    vi.stubGlobal("document", {
+      baseURI: "https://app.example.test/app/page.html",
+    });
+    mock("GET /app/users", { matched: true });
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const response = await fetch("users");
+      expect(await response.json()).toEqual({ matched: true });
+    } finally {
+      handle.restore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([
+    ["?page=2", "/app/page.html", "page=2"],
+    ["#details", "/app/page.html", ""],
+    ["/root", "/root", ""],
+  ])("resolves relative reference %s using browser URL semantics", async (reference, expectedPath, expectedQuery) => {
+    vi.stubGlobal("document", {
+      baseURI: "https://app.example.test/app/page.html",
+    });
+    const baselineFetch = vi.fn().mockResolvedValue(new Response("backend"));
+    globalThis.fetch = baselineFetch;
+    const handle = mock.intercept({ baseUrl: "https://api.example.test" });
+
+    try {
+      await fetch(reference);
+      const [input] = baselineFetch.mock.calls[0];
+      if (!(input instanceof Request)) {
+        throw new Error("Expected passthrough to receive a Request");
+      }
+      const url = new URL(input.url);
+      expect(url.pathname).toBe(expectedPath);
+      expect(url.searchParams.toString()).toBe(expectedQuery);
+    } finally {
+      handle.restore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rejects malformed absolute URLs instead of treating them as paths", async () => {
+    const handle = mock.intercept();
+
+    try {
+      await expect(fetch("http://[")).rejects.toBeDefined();
+    } finally {
+      handle.restore();
+    }
   });
 
   it("applies errorFormatter when beforeRequest throws", async () => {
@@ -356,7 +453,7 @@ describe("mock.intercept()", () => {
 
     const res = await fetch("http://localhost/api/text", {
       method: "POST",
-      headers: { "content-type": "text/plain" },
+      headers: { "content-type": "application/json" },
       body: "not-json-{broken",
     });
 
@@ -364,6 +461,456 @@ describe("mock.intercept()", () => {
     expect(json.received).toBe("not-json-{broken");
 
     handle.restore();
+  });
+
+  it("passes unmatched malformed JSON through without entering history", async () => {
+    const baselineFetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request =
+          input instanceof Request ? input : new Request(input, init);
+        return new Response(await request.text());
+      },
+    );
+    globalThis.fetch = baselineFetch;
+    mock("POST /api/matched", { mocked: true });
+    const errorFormatter = vi.fn(() => ({ formatted: true }));
+    const handle = mock.intercept({ passthrough: true, errorFormatter });
+
+    try {
+      const response = await fetch("http://localhost/api/unmatched", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "not-json-{broken",
+      });
+      expect(await response.text()).toBe("not-json-{broken");
+      expect(baselineFetch).toHaveBeenCalledOnce();
+      expect(errorFormatter).not.toHaveBeenCalled();
+      expect(mock.history()).toHaveLength(0);
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("removes absolute URL fragments before extracting query values", async () => {
+    mock("GET /api/fragmented", ({ query }) => ({ query }));
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const response = await fetch(
+        "http://localhost/api/fragmented?kept=yes#ignored",
+      );
+      expect(await response.json()).toEqual({ query: { kept: "yes" } });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("parses structured JSON media types after normalizing parameters", async () => {
+    mock("POST /api/problem", ({ body }) => body);
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const response = await fetch("http://localhost/api/problem", {
+        method: "POST",
+        headers: {
+          "content-type": "Application/Problem+JSON; Charset=UTF-8",
+        },
+        body: JSON.stringify({ title: "Invalid request" }),
+      });
+      expect(await response.json()).toEqual({ title: "Invalid request" });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("passes multipart bodies to handlers as FormData", async () => {
+    mock("POST /api/upload", ({ body }) => ({
+      isFormData: body instanceof FormData,
+      name: body instanceof FormData ? body.get("name") : undefined,
+    }));
+    const handle = mock.intercept({ passthrough: false });
+    const form = new FormData();
+    form.set("name", "Alice");
+
+    try {
+      const response = await fetch("http://localhost/api/upload", {
+        method: "POST",
+        body: form,
+      });
+      expect(await response.json()).toEqual({
+        isFormData: true,
+        name: "Alice",
+      });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("passes unrecognized body media as an ArrayBuffer", async () => {
+    mock("POST /api/bytes", ({ body }) => ({
+      isArrayBuffer: body instanceof ArrayBuffer,
+      bytes:
+        body instanceof ArrayBuffer
+          ? Array.from(new Uint8Array(body))
+          : undefined,
+    }));
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const response = await fetch("http://localhost/api/bytes", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new Uint8Array([1, 2, 3]),
+      });
+      expect(await response.json()).toEqual({
+        isArrayBuffer: true,
+        bytes: [1, 2, 3],
+      });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("delivers an unlabeled string body as text on every runtime", async () => {
+    // The Fetch standard stamps text/plain;charset=UTF-8 onto a string body.
+    // Node's Request constructor conforms while Bun's omits the header, so
+    // without normalization the same call yields a string on Node and an
+    // opaque ArrayBuffer on Bun.
+    mock("POST /api/unlabeled", ({ body, headers }) => ({
+      bodyKind: body instanceof ArrayBuffer ? "arraybuffer" : typeof body,
+      receivedBody: typeof body === "string" ? body : undefined,
+      contentType: headers["content-type"] ?? null,
+    }));
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const payload = JSON.stringify({ a: 1 });
+      const response = await fetch("http://localhost/api/unlabeled", {
+        method: "POST",
+        body: payload,
+      });
+      const result = (await response.json()) as {
+        bodyKind: string;
+        receivedBody?: string;
+        contentType: string | null;
+      };
+      expect(result.bodyKind).toBe("string");
+      expect(result.receivedBody).toBe(payload);
+      expect(result.contentType?.toLowerCase()).toContain("text/plain");
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("keeps the inherited body's content type when init headers replace the header list", async () => {
+    // fetch(request, { headers }) replaces the whole header list, which
+    // drops the content type stamped when the input Request extracted its
+    // string body. The interceptor restores it from the input so the
+    // handler still receives the body as text. (Node stamps string bodies
+    // at Request construction; Bun never does, so on Bun this relies on an
+    // explicit content type on the input Request.)
+    mock("POST /api/inherited", ({ body, headers }) => ({
+      bodyKind: body instanceof ArrayBuffer ? "arraybuffer" : typeof body,
+      receivedBody: typeof body === "string" ? body : undefined,
+      contentType: headers["content-type"] ?? null,
+    }));
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const input = new Request("http://localhost/api/inherited", {
+        method: "POST",
+        body: "hello",
+        headers: { "content-type": "text/plain;charset=UTF-8" },
+      });
+      const response = await fetch(input, { headers: { "x-trace": "1" } });
+      const result = (await response.json()) as {
+        bodyKind: string;
+        receivedBody?: string;
+        contentType: string | null;
+      };
+      expect(result.bodyKind).toBe("string");
+      expect(result.receivedBody).toBe("hello");
+      expect(result.contentType?.toLowerCase()).toContain("text/plain");
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("forwards the effective AbortSignal to handle request options", async () => {
+    const handleRequest = vi.fn(
+      async (): Promise<Schmock.Response> => ({
+        status: 200,
+        body: { ok: true },
+        headers: {},
+      }),
+    );
+    const interceptor = createFetchInterceptor(handleRequest, {
+      passthrough: false,
+    });
+    const controller = new AbortController();
+
+    try {
+      await fetch("http://localhost/api/signal", {
+        signal: controller.signal,
+      });
+      expect(handleRequest).toHaveBeenCalledWith(
+        "GET",
+        "/api/signal",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    } finally {
+      interceptor.restore();
+    }
+  });
+
+  it("constructs a bodyless Fetch response for no-content statuses", async () => {
+    mock("GET /api/no-content", () => [204, { forbidden: true }]);
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const response = await fetch("http://localhost/api/no-content");
+      expect(response.status).toBe(204);
+      expect(await response.text()).toBe("");
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("emits string bodies verbatim under the default JSON content type", async () => {
+    mock("GET /api/json-string", () => JSON.stringify({ a: 1 }));
+    const handle = mock.intercept({ passthrough: false });
+
+    // A string body is pre-serialized wire bytes: quoting it would
+    // double-encode routes that return JSON.stringify(...) themselves.
+    try {
+      const response = await fetch("http://localhost/api/json-string");
+      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(await response.json()).toEqual({ a: 1 });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("emits bare tuple strings as untyped raw text", async () => {
+    mock("GET /api/tuple-string", () => [200, "hello"]);
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const response = await fetch("http://localhost/api/tuple-string");
+      expect(response.headers.get("content-type")).toBeNull();
+      expect(await response.text()).toBe("hello");
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("keeps unmatched HEAD passthrough after body normalization", async () => {
+    const baselineFetch = vi.fn().mockResolvedValue(new Response(null));
+    globalThis.fetch = baselineFetch;
+    const handle = mock.intercept({ passthrough: true });
+
+    try {
+      await fetch("http://localhost/api/missing", { method: "HEAD" });
+      expect(baselineFetch).toHaveBeenCalledOnce();
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("returns a bodyless strict 404 for unmatched HEAD requests", async () => {
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const response = await fetch("http://localhost/api/missing", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(404);
+      expect(await response.text()).toBe("");
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("uses a method rewritten to HEAD when formatting adapter errors", async () => {
+    mock("HEAD /api/failure", { ok: true });
+    const handle = mock.intercept({
+      passthrough: false,
+      beforeRequest: (request) => ({ ...request, method: "HEAD" }),
+      beforeResponse: () => {
+        throw new Error("response hook failed");
+      },
+      errorFormatter: (error) => ({ error: error.message }),
+    });
+
+    try {
+      const response = await fetch("http://localhost/api/failure");
+      expect(response.status).toBe(500);
+      expect(await response.text()).toBe("");
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("rejects an abort while an async hook remains pending", async () => {
+    mock("GET /api/slow-hook", { completed: true });
+    let announceHookStart = () => {};
+    let releaseHook = () => {};
+    const hookStarted = new Promise<void>((resolve) => {
+      announceHookStart = () => resolve();
+    });
+    const hookBarrier = new Promise<void>((resolve) => {
+      releaseHook = () => resolve();
+    });
+    const errorFormatter = vi.fn(() => ({ formatted: true }));
+    const handle = mock.intercept({
+      passthrough: false,
+      beforeRequest: async (request) => {
+        announceHookStart();
+        await hookBarrier;
+        return request;
+      },
+      errorFormatter,
+    });
+    const controller = new AbortController();
+
+    try {
+      const responsePromise = fetch("http://localhost/api/slow-hook", {
+        signal: controller.signal,
+      });
+      await hookStarted;
+      controller.abort();
+
+      await expect(
+        Promise.race([
+          responsePromise,
+          new Promise<Response>((_, reject) => {
+            setTimeout(() => reject(new Error("abort timed out")), 100);
+          }),
+        ]),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(errorFormatter).not.toHaveBeenCalled();
+      expect(mock.history()).toHaveLength(0);
+    } finally {
+      releaseHook();
+      handle.restore();
+    }
+  });
+
+  it("keeps the route generation admitted before an async request hook", async () => {
+    let announceHookStart = () => {};
+    let releaseHook = () => {};
+    const hookStarted = new Promise<void>((resolve) => {
+      announceHookStart = resolve;
+    });
+    const hookBarrier = new Promise<void>((resolve) => {
+      releaseHook = resolve;
+    });
+    mock("GET /api/generation", { generation: "old" });
+    const handle = mock.intercept({
+      passthrough: false,
+      async beforeRequest(request) {
+        announceHookStart();
+        await hookBarrier;
+        return request;
+      },
+    });
+
+    try {
+      const pending = fetch("http://localhost/api/generation");
+      await hookStarted;
+      mock.reset();
+      const staleStart = vi.fn();
+      mock.on("request:start", staleStart);
+      mock("GET /api/generation", { generation: "new" });
+      releaseHook();
+
+      expect(await (await pending).json()).toEqual({ generation: "old" });
+      expect(mock.history()).toHaveLength(0);
+      expect(staleStart).not.toHaveBeenCalled();
+    } finally {
+      releaseHook();
+      handle.restore();
+    }
+  });
+
+  it("keeps a streamed request body readable for baseline passthrough", async () => {
+    const baselineFetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request =
+          input instanceof Request ? input : new Request(input, init);
+        return new Response(await request.text());
+      },
+    );
+    globalThis.fetch = baselineFetch;
+    mock("POST /api/matched", { mocked: true });
+    const handle = mock.intercept({ passthrough: true });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("passthrough body"));
+        controller.close();
+      },
+    });
+    const requestInit: RequestInit & { duplex: "half" } = {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body,
+      duplex: "half",
+    };
+
+    try {
+      const response = await fetch(
+        "http://localhost/api/unmatched",
+        requestInit,
+      );
+      expect(await response.text()).toBe("passthrough body");
+      expect(baselineFetch).toHaveBeenCalledOnce();
+      const [passthroughInput, ...remainingArguments] =
+        baselineFetch.mock.calls[0];
+      expect(passthroughInput).toBeInstanceOf(Request);
+      expect(remainingArguments).toEqual([]);
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("passes an immutable effective Request snapshot to baseline fetch", async () => {
+    const baselineFetch = vi.fn().mockResolvedValue(new Response("backend"));
+    globalThis.fetch = baselineFetch;
+    let announceHookStart = () => {};
+    let releaseHook = () => {};
+    const hookStarted = new Promise<void>((resolve) => {
+      announceHookStart = resolve;
+    });
+    const hookBarrier = new Promise<void>((resolve) => {
+      releaseHook = resolve;
+    });
+    const headers = new Headers({ "x-snapshot": "original" });
+    const handle = mock.intercept({
+      passthrough: true,
+      async beforeRequest(request) {
+        announceHookStart();
+        await hookBarrier;
+        return request;
+      },
+    });
+
+    try {
+      const pending = fetch("http://localhost/api/unmatched", { headers });
+      await hookStarted;
+      headers.set("x-snapshot", "mutated");
+      releaseHook();
+      await pending;
+
+      const [input, ...remainingArguments] = baselineFetch.mock.calls[0];
+      expect(remainingArguments).toEqual([]);
+      if (!(input instanceof Request)) {
+        throw new Error("Expected passthrough to receive a Request snapshot");
+      }
+      expect(input.headers.get("x-snapshot")).toBe("original");
+    } finally {
+      releaseHook();
+      handle.restore();
+    }
   });
 
   it("composes mock instances newest-first and chains passthrough", async () => {

@@ -13,9 +13,8 @@ schmock petstore.yaml
 ```
 
 ```
-[@schmock/cli] Loaded spec: petstore.yaml
-[@schmock/cli] Detected 3 CRUD resources
-[@schmock/cli] Server running at http://127.0.0.1:3000
+Schmock server running on http://127.0.0.1:3000
+Spec: petstore.yaml
 ```
 
 ## Options
@@ -91,6 +90,17 @@ When started with `--admin`, additional endpoints are available:
 | `GET /schmock-admin/state` | Get current shared state |
 | `GET /schmock-admin/history` | Get request history |
 | `POST /schmock-admin/reset` | Reset state and history |
+
+## Request Handling
+
+Request bodies are limited to 10 MiB using both declared `Content-Length` and
+the bytes actually received. Oversized requests return structured 413
+`PAYLOAD_TOO_LARGE`, close that connection, and do not execute routes or enter
+history. Malformed JSON for `application/json` or `+json` media types returns
+structured 400 `MALFORMED_JSON`. Media-type matching is case-insensitive.
+
+If a client disconnects, the CLI aborts pending plugin hooks, delays, and route
+generators while keeping the server available for later requests.
 
 ## Programmatic Usage
 

@@ -16,7 +16,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "bun build:lib && bun build:types",
+    "clean": "rm -rf dist && rm -f tsconfig.tsbuildinfo",
+    "build": "bun run clean && bun run build:lib && bun run build:types",
     "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts --external @schmock/core --external vue",
     "build:types": "tsc -p tsconfig.json",
     "test": "vitest run",

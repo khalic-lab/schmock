@@ -87,7 +87,7 @@ toExpress(mock, {
 
 ### `errorFormatter`
 
-Custom error response format:
+Custom internal-error response format:
 
 ```typescript
 toExpress(mock, {
@@ -96,6 +96,20 @@ toExpress(mock, {
   }),
 })
 ```
+
+The formatter receives core-marked internal exceptions and errors thrown by
+adapter hooks or request handling. It does not reinterpret an ordinary
+user-defined 500 route response.
+
+## Response Behavior
+
+- Final statuses must be integers from 200 through 599.
+- HEAD, 204, 205, and 304 responses are sent without a body.
+- Ordinary response framing headers are adapter-owned. HEAD may retain an
+  explicit representation `Content-Length`, and 304 headers are preserved.
+- If the client disconnects, pending adapter-hook awaits settle early and core
+  plugins, delays, and route generators receive an aborted signal. Adapter
+  hooks do not receive the signal directly, and no response is written.
 
 ## OpenAPI with Express
 

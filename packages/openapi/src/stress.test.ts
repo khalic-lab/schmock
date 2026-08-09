@@ -1958,6 +1958,7 @@ describe("stress: boundary conditions", () => {
     expect(updated.status).toBe(200);
     const body = updated.body as Record<string, unknown>;
     expect(body.name).toBeNull();
+    expect(body).not.toHaveProperty("extra");
   });
 
   it("seed with zero items — collection starts empty", async () => {

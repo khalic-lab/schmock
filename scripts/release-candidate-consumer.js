@@ -3,10 +3,30 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { JSDOM } from "jsdom";
 
 const require = createRequire(import.meta.url);
 const angularCompilerSpecifier = "@angular/compiler";
+const reactSpecifier = "react";
 await import(angularCompilerSpecifier);
+
+const dom = new JSDOM("<!doctype html><html><body></body></html>", {
+  url: "http://localhost",
+});
+for (const [name, value] of Object.entries({
+  document: dom.window.document,
+  HTMLElement: dom.window.HTMLElement,
+  navigator: dom.window.navigator,
+  Node: dom.window.Node,
+  window: dom.window,
+})) {
+  Object.defineProperty(globalThis, name, {
+    configurable: true,
+    writable: true,
+    value,
+  });
+}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const candidates = readFileSync("candidates.tsv", "utf8")
   .trim()
@@ -89,11 +109,43 @@ const response = await mock.handle("GET", "/release-candidate");
 assert.equal(response.status, 200);
 assert.deepEqual(response.body, { ok: true });
 
+process.stdout.write(
+  "[react-context 1/1] Checking root/testing context identity\n",
+);
+const { createElement } = await import(reactSpecifier);
+const { useSchmock } = await import("@schmock/react");
+const { renderWithSchmock } = await import("@schmock/react/testing");
+const contextMock = schmock();
+const savedFetch = globalThis.fetch;
+let observedMock;
+let rendered;
+
+function ContextConsumer() {
+  observedMock = useSchmock();
+  return null;
+}
+
+try {
+  rendered = renderWithSchmock(createElement(ContextConsumer), {
+    mock: contextMock,
+  });
+  assert.strictEqual(
+    observedMock,
+    contextMock,
+    "@schmock/react/testing did not provide the @schmock/react context",
+  );
+} finally {
+  rendered?.unmount();
+  globalThis.fetch = savedFetch;
+}
+
 const cli = spawnSync(resolve("node_modules/.bin/schmock"), ["--help"], {
   encoding: "utf8",
 });
 assert.equal(cli.status, 0, cli.stderr || cli.stdout);
 assert.match(`${cli.stdout}${cli.stderr}`, /Usage: schmock/);
+
+dom.window.close();
 
 process.stdout.write(
   `Imported and exercised all ${candidates.length} release candidates\n`,

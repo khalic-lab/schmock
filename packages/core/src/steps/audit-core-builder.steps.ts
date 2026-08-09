@@ -185,4 +185,70 @@ describeFeature(feature, ({ Scenario }) => {
       });
     },
   );
+
+  Scenario(
+    "Default shared state persists across requests",
+    ({ Given, When, Then, And }) => {
+      let mock: Schmock.CallableMockInstance;
+      let responses: Schmock.Response[];
+
+      Given("a mock with no configured state and an incrementing route", () => {
+        mock = schmock();
+        mock("GET /counter", ({ state }) => {
+          const counter =
+            typeof state.counter === "number" ? state.counter + 1 : 1;
+          state.counter = counter;
+          return { counter };
+        });
+      });
+
+      When("I request the default-state route twice", async () => {
+        responses = [
+          await mock.handle("GET", "/counter"),
+          await mock.handle("GET", "/counter"),
+        ];
+      });
+
+      Then("the counter responses should be 1 and 2", () => {
+        expect(responses.map((response) => response.body)).toEqual([
+          { counter: 1 },
+          { counter: 2 },
+        ]);
+      });
+
+      And("the mock shared counter state should be 2", () => {
+        expect(mock.getState().counter).toBe(2);
+      });
+    },
+  );
+
+  Scenario(
+    "Resetting state does not replace state on the caller config",
+    ({ Given, When, Then, And }) => {
+      let config: Schmock.GlobalConfig;
+      let externalState: Record<string, unknown>;
+      let mock: Schmock.CallableMockInstance;
+
+      Given("a caller config containing external state", () => {
+        externalState = { preserved: true };
+        config = { state: externalState };
+      });
+
+      When("I create a mock from the config and reset its state", () => {
+        mock = schmock(config);
+        mock.resetState();
+      });
+
+      Then(
+        "the caller config should still reference the external state",
+        () => {
+          expect(config.state).toBe(externalState);
+        },
+      );
+
+      And("the mock internal state is empty after resetState", () => {
+        expect(mock.getState()).toEqual({});
+      });
+    },
+  );
 });

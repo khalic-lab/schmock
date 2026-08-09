@@ -1,5 +1,4 @@
-/// <reference path="../../core/schmock.d.ts" />
-
+import type * as Schmock from "@schmock/core";
 import { toRouteKey } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import type { CrudOperation, CrudResource } from "./crud-detector.js";

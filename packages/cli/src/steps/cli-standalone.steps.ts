@@ -16,6 +16,7 @@ const fixturesDir = resolve(
 interface RawHttpResponse {
   status: number;
   headers: Record<string, string>;
+  body: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -25,6 +26,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function sendRawHttpRequest(
   port: number,
   request: string,
+  keepWritableOpen = false,
 ): Promise<RawHttpResponse> {
   return new Promise((resolveResponse, rejectResponse) => {
     const socket = connect(port, "127.0.0.1");
@@ -34,24 +36,107 @@ function sendRawHttpRequest(
     socket.setTimeout(5_000, () => {
       socket.destroy(new Error("Timed out waiting for raw CLI response"));
     });
-    socket.on("connect", () => socket.end(request));
+    socket.on("connect", () => {
+      if (keepWritableOpen) socket.write(request);
+      else socket.end(request);
+    });
     socket.on("data", (chunk: string) => {
       rawResponse += chunk;
     });
     socket.on("error", rejectResponse);
     socket.on("close", () => {
-      const [head = ""] = rawResponse.split("\r\n\r\n", 1);
+      const responseSeparator = rawResponse.indexOf("\r\n\r\n");
+      const head =
+        responseSeparator === -1
+          ? rawResponse
+          : rawResponse.slice(0, responseSeparator);
+      const body =
+        responseSeparator === -1
+          ? ""
+          : rawResponse.slice(responseSeparator + 4);
       const [statusLine = "", ...headerLines] = head.split("\r\n");
       const status = Number(statusLine.split(" ")[1]);
       const headers: Record<string, string> = {};
       for (const line of headerLines) {
-        const separator = line.indexOf(":");
-        if (separator === -1) continue;
-        headers[line.slice(0, separator).toLowerCase()] = line
-          .slice(separator + 1)
+        const headerSeparator = line.indexOf(":");
+        if (headerSeparator === -1) continue;
+        headers[line.slice(0, headerSeparator).toLowerCase()] = line
+          .slice(headerSeparator + 1)
           .trim();
       }
-      resolveResponse({ status, headers });
+      resolveResponse({ status, headers, body });
+    });
+  });
+}
+
+/**
+ * Send a request head and keep uploading body bytes until the server's
+ * response arrives. Exercises the overflow-during-upload path: the 413 must
+ * survive while the client is still transmitting, which a headers-only
+ * request cannot verify.
+ */
+function sendRawHttpRequestWhileUploading(
+  port: number,
+  requestHead: string,
+  totalBodyBytes: number,
+): Promise<RawHttpResponse> {
+  return new Promise((resolveResponse, rejectResponse) => {
+    const socket = connect(port, "127.0.0.1");
+    const chunk = Buffer.alloc(64 * 1024, 0x61);
+    let written = 0;
+    let rawResponse = "";
+    let responseComplete = false;
+
+    const pump = (): void => {
+      while (!responseComplete && written < totalBodyBytes) {
+        const next = chunk.subarray(
+          0,
+          Math.min(chunk.length, totalBodyBytes - written),
+        );
+        written += next.length;
+        if (!socket.write(next)) {
+          socket.once("drain", pump);
+          return;
+        }
+      }
+    };
+
+    socket.setTimeout(10_000, () => {
+      socket.destroy(new Error("Timed out waiting for raw CLI response"));
+    });
+    socket.on("connect", () => {
+      socket.write(requestHead);
+      pump();
+    });
+    socket.on("data", (data: Buffer) => {
+      rawResponse += data.toString("utf8");
+      if (!responseComplete && rawResponse.includes("\r\n\r\n")) {
+        responseComplete = true;
+        socket.end();
+      }
+    });
+    socket.on("error", rejectResponse);
+    socket.on("close", () => {
+      const responseSeparator = rawResponse.indexOf("\r\n\r\n");
+      const head =
+        responseSeparator === -1
+          ? rawResponse
+          : rawResponse.slice(0, responseSeparator);
+      const body =
+        responseSeparator === -1
+          ? ""
+          : rawResponse.slice(responseSeparator + 4);
+      const [statusLine = "", ...headerLines] = head.split("\r\n");
+      const status = Number(statusLine.split(" ")[1]);
+      const headers: Record<string, string> = {};
+      for (const line of headerLines) {
+        const headerSeparator = line.indexOf(":");
+        if (headerSeparator === -1) continue;
+        headers[line.slice(0, headerSeparator).toLowerCase()] = line
+          .slice(headerSeparator + 1)
+          .trim();
+      }
+      resolveResponse({ status, headers, body });
     });
   });
 }
@@ -436,16 +521,19 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
   Scenario(
     "Reject an oversized declared request body",
-    ({ Given, When, Then }) => {
+    ({ Given, When, Then, And }) => {
       Given("I have a running CLI petstore server", async () => {
         specPath = resolve(fixturesDir, "petstore-openapi3.json");
         cliServer = await createCliServer({ spec: specPath, port: 0 });
       });
 
       When("I send a raw CLI request declaring an oversized body", async () => {
-        rawHttpResponse = await sendRawHttpRequest(
+        // Transmit the declared body while waiting: the 413 must reach a
+        // client that is still uploading, not only one that sent bare headers.
+        rawHttpResponse = await sendRawHttpRequestWhileUploading(
           requireServer().port,
-          "POST /pets HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 10485761\r\nConnection: close\r\n\r\n",
+          "POST /pets HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 10485761\r\nConnection: keep-alive\r\n\r\n",
+          10_485_761,
         );
       });
 
@@ -456,9 +544,92 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         },
       );
 
+      And("the raw CLI response should close the connection", () => {
+        expect(requireRawHttpResponse().headers.connection).toBe("close");
+      });
+
+      And(
+        "the CLI server should accept a valid request afterward",
+        async () => {
+          const response = await fetch(`${baseUrl()}/pets`);
+          expect(response.status).toBe(200);
+        },
+      );
+
       When("I stop the CLI server", async () => {
         await stopServerThroughPublicApi();
       });
+    },
+  );
+
+  Scenario(
+    "Reject an oversized chunked request body",
+    ({ Given, When, Then, And }) => {
+      Given("I have a running CLI petstore server", async () => {
+        specPath = resolve(fixturesDir, "petstore-openapi3.json");
+        cliServer = await createCliServer({ spec: specPath, port: 0 });
+      });
+
+      When(
+        "I send a raw CLI request with an oversized chunked body",
+        async () => {
+          const chunk = "0".repeat(1024 * 1024);
+          const encodedChunks = Array.from(
+            { length: 11 },
+            () => `${chunk.length.toString(16)}\r\n${chunk}\r\n`,
+          ).join("");
+          rawHttpResponse = await sendRawHttpRequest(
+            requireServer().port,
+            `POST /pets HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n${encodedChunks}0\r\n\r\n`,
+          );
+        },
+      );
+
+      Then(
+        "the raw CLI response status should be {int}",
+        (_, status: number) => {
+          expect(requireRawHttpResponse().status).toBe(status);
+        },
+      );
+
+      And(
+        "the raw CLI response body should contain code {string}",
+        (_, code: string) => {
+          expect(requireRawHttpResponse().body).toContain(`"code":"${code}"`);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Reject malformed JSON before OpenAPI handling",
+    ({ Given, When, Then, And }) => {
+      Given("I have a running CLI petstore server", async () => {
+        specPath = resolve(fixturesDir, "petstore-openapi3.json");
+        cliServer = await createCliServer({ spec: specPath, port: 0 });
+      });
+
+      When("I send a raw CLI request with malformed JSON", async () => {
+        const body = '{"broken":';
+        rawHttpResponse = await sendRawHttpRequest(
+          requireServer().port,
+          `POST /pets HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+        );
+      });
+
+      Then(
+        "the raw CLI response status should be {int}",
+        (_, status: number) => {
+          expect(requireRawHttpResponse().status).toBe(status);
+        },
+      );
+
+      And(
+        "the raw CLI response body should contain code {string}",
+        (_, code: string) => {
+          expect(requireRawHttpResponse().body).toContain(`"code":"${code}"`);
+        },
+      );
     },
   );
 });

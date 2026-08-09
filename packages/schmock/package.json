@@ -16,7 +16,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "bun build:lib && bun build:types",
+    "clean": "rm -rf dist && rm -f tsconfig.tsbuildinfo",
+    "build": "bun run clean && bun run build:lib && bun run build:types",
     "build:lib": "bun build --minify --target node --outdir=dist src/index.ts --external @schmock/core --external @schmock/faker --external @schmock/validation --external @schmock/query --external @schmock/openapi --external @schmock/cli",
     "build:types": "tsc -p tsconfig.json",
     "lint": "biome check src/",

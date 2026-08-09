@@ -1,5 +1,4 @@
-/// <reference path="../../core/schmock.d.ts" />
-
+import type * as Schmock from "@schmock/core";
 import { type App, type InjectionKey, inject, type Plugin } from "vue";
 
 // ===== Injection Key =====

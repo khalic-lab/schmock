@@ -61,6 +61,19 @@ export class ResponseGenerationError extends SchmockError {
 }
 
 /**
+ * Error thrown when a response cannot be represented safely by transports
+ */
+export class InvalidResponseError extends SchmockError {
+  constructor(reason: string, context: Record<string, unknown> = {}) {
+    super(`Invalid response: ${reason}`, "INVALID_RESPONSE", {
+      ...context,
+      reason,
+    });
+    this.name = "InvalidResponseError";
+  }
+}
+
+/**
  * Error thrown when a plugin fails
  */
 export class PluginError extends SchmockError {

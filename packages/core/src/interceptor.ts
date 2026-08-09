@@ -1,28 +1,42 @@
 /// <reference path="../schmock.d.ts" />
 
+import { awaitWithAbort, throwIfAborted } from "./abort.js";
 import { isBinaryBody } from "./binary.js";
 import { isRouteNotFound, toHttpMethod } from "./constants.js";
+import {
+  normalizeResponse,
+  serializeResponseBody,
+} from "./response-normalizer.js";
 
 const PASSTHROUGH = Symbol("schmock.fetch.passthrough");
+const RELATIVE_REQUEST_BASE = "http://schmock.invalid/";
 
 type InterceptorResult = Response | typeof PASSTHROUGH;
 
-function toFetchBinaryBody(
-  body: ArrayBuffer | ArrayBufferView,
-): ArrayBuffer | Uint8Array<ArrayBuffer> {
-  if (body instanceof ArrayBuffer) return body;
-
-  const bytes = new Uint8Array(body.byteLength);
-  bytes.set(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
-  return bytes;
+interface NormalizedFetchRequest {
+  request: Request;
+  url: URL;
+  origin: string | null;
 }
+
+interface InterceptorRequestOptions extends Schmock.RequestOptions {
+  signal: AbortSignal;
+}
+
+type InterceptRequestHandler = (
+  method: Schmock.HttpMethod,
+  path: string,
+  requestOptions?: Schmock.RequestOptions,
+) => Promise<Schmock.Response>;
 
 interface RegisteredInterceptor {
   token: symbol;
-  intercept: (
-    input: RequestInfo | URL,
-    init?: RequestInit,
-  ) => Promise<InterceptorResult>;
+  intercept: (request: NormalizedFetchRequest) => Promise<InterceptorResult>;
+}
+
+interface InterceptRequestAdmission {
+  handle: InterceptRequestHandler;
+  release(): void;
 }
 
 interface InterceptorSession {
@@ -33,20 +47,128 @@ interface InterceptorSession {
 
 let activeSession: InterceptorSession | undefined;
 
+function getRelativeRequestBase(): string {
+  const candidates = [
+    typeof document === "undefined" ? undefined : document.baseURI,
+    typeof location === "undefined" ? undefined : location.href,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      return new URL(candidate).href;
+    } catch {
+      // Ignore invalid environment globals and use the next fallback.
+    }
+  }
+  return RELATIVE_REQUEST_BASE;
+}
+
+// The Fetch standard stamps a content type when the body is extracted from a
+// string or URLSearchParams. Node's Request constructor conforms; Bun's omits
+// the header, so identical consumer code would otherwise deliver a string
+// body on Node and an opaque ArrayBuffer on Bun.
+function stampBodyContentType(
+  request: Request,
+  body: BodyInit | null | undefined,
+): void {
+  if (body == null || request.headers.has("content-type")) return;
+  if (typeof body === "string") {
+    request.headers.set("content-type", "text/plain;charset=UTF-8");
+  } else if (body instanceof URLSearchParams) {
+    request.headers.set(
+      "content-type",
+      "application/x-www-form-urlencoded;charset=UTF-8",
+    );
+  }
+}
+
+function normalizeFetchRequest(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): NormalizedFetchRequest {
+  if (input instanceof Request) {
+    // Constructing a Request from another Request transfers its body. Use a
+    // clone when the body is inherited so the original remains passthrough-safe.
+    const source = init?.body == null ? input.clone() : input;
+    const request = new Request(source, init);
+    if (init?.body != null) {
+      stampBodyContentType(request, init.body);
+    } else if (request.body != null && !request.headers.has("content-type")) {
+      // The body was inherited from the input Request, but init.headers
+      // replaces the whole header list, dropping the content type stamped
+      // when that body was extracted. Restore it so the handler still sees
+      // the body as its original kind. (Bun never stamps at construction,
+      // so a string body on a type-less input Request stays opaque there.)
+      const inheritedType = input.headers.get("content-type");
+      if (inheritedType !== null) {
+        request.headers.set("content-type", inheritedType);
+      }
+    }
+    const url = new URL(request.url);
+    return {
+      request,
+      url,
+      origin: url.origin,
+    };
+  }
+
+  if (input instanceof URL) {
+    const request = new Request(input, init);
+    stampBodyContentType(request, init?.body);
+    const url = new URL(request.url);
+    return {
+      request,
+      url,
+      origin: url.origin,
+    };
+  }
+
+  let inputUrl: URL;
+  let origin: string | null;
+  try {
+    inputUrl = new URL(input);
+    origin = inputUrl.origin;
+  } catch {
+    inputUrl = new URL(input, getRelativeRequestBase());
+    origin = null;
+  }
+
+  const request = new Request(inputUrl, init);
+  stampBodyContentType(request, init?.body);
+  return {
+    request,
+    url: new URL(request.url),
+    origin,
+  };
+}
+
 function createInterceptorSession(): InterceptorSession {
   const baselineFetch = globalThis.fetch;
   const interceptors: RegisteredInterceptor[] = [];
   const dispatchFetch: typeof globalThis.fetch = async (input, init) => {
     const snapshot = interceptors.slice();
+    if (snapshot.length === 0) {
+      return baselineFetch(input, init);
+    }
+
+    const normalizedRequest = normalizeFetchRequest(input, init);
+    throwIfAborted(normalizedRequest.request.signal);
 
     for (let index = snapshot.length - 1; index >= 0; index -= 1) {
-      const result = await snapshot[index].intercept(input, init);
+      const result = await awaitWithAbort(
+        snapshot[index].intercept(normalizedRequest),
+        normalizedRequest.request.signal,
+      );
+      throwIfAborted(normalizedRequest.request.signal);
       if (result !== PASSTHROUGH) {
         return result;
       }
     }
 
-    return baselineFetch(input, init);
+    return awaitWithAbort(
+      baselineFetch(normalizedRequest.request),
+      normalizedRequest.request.signal,
+    );
   };
 
   return { baselineFetch, dispatchFetch, interceptors };
@@ -96,41 +218,6 @@ function registerInterceptor(
 }
 
 /**
- * Extract pathname from a URL string, handling both absolute and relative URLs.
- */
-function extractPathname(url: string): string {
-  const queryStart = url.indexOf("?");
-  const urlWithoutQuery = queryStart === -1 ? url : url.slice(0, queryStart);
-
-  if (urlWithoutQuery.includes("://")) {
-    try {
-      return new URL(urlWithoutQuery).pathname;
-    } catch {
-      // Fall through to simple extraction
-    }
-  }
-
-  if (!urlWithoutQuery.startsWith("/")) {
-    return `/${urlWithoutQuery}`;
-  }
-
-  return urlWithoutQuery;
-}
-
-/**
- * Extract origin (scheme + host + port) from a URL string, or null for
- * relative URLs that don't carry one.
- */
-function extractOrigin(url: string): string | null {
-  if (!url.includes("://")) return null;
-  try {
-    return new URL(url).origin;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Parse the user-supplied baseUrl option into its origin and path parts.
  * - "/api"                  → { origin: null, path: "/api" }
  * - "https://x.com/api/v1"  → { origin: "https://x.com", path: "/api/v1" }
@@ -156,106 +243,90 @@ function parseBaseUrl(baseUrl: string): {
   return { origin: null, path: baseUrl.replace(/\/$/, "") };
 }
 
-/**
- * Extract query parameters from a URL string.
- */
-function extractQuery(url: string): Record<string, string> {
-  const queryStart = url.indexOf("?");
-  if (queryStart === -1) return {};
-
-  const params = new URLSearchParams(url.slice(queryStart + 1));
-  const result: Record<string, string> = {};
-  params.forEach((value, key) => {
-    result[key] = value;
-  });
-  return result;
+function extractQuery(url: URL): Record<string, string> {
+  return Object.fromEntries(url.searchParams);
 }
 
-/**
- * Extract headers from fetch init or Request object.
- */
-function extractHeaders(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Record<string, string> {
+function extractHeaders(request: Request): Record<string, string> {
   const headers: Record<string, string> = {};
-
-  const raw =
-    init?.headers ?? (input instanceof Request ? input.headers : undefined);
-  if (!raw) return headers;
-
-  if (raw instanceof Headers) {
-    raw.forEach((value, key) => {
-      headers[key.toLowerCase()] = value;
-    });
-  } else if (Array.isArray(raw)) {
-    for (const [key, value] of raw) {
-      headers[key.toLowerCase()] = value;
-    }
-  } else {
-    for (const key of Object.keys(raw)) {
-      headers[key.toLowerCase()] = (raw as Record<string, string>)[key];
-    }
-  }
-
+  request.headers.forEach((value, key) => {
+    headers[key.toLowerCase()] = value;
+  });
   return headers;
 }
 
-/**
- * Extract body from fetch init, parsing JSON when possible.
- */
-async function extractBody(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<unknown> {
-  // Per Fetch spec, init.body overrides Request.body when both are present
-  const bodyInit = init?.body ?? (input instanceof Request ? input.body : null);
-  if (bodyInit === null || bodyInit === undefined) return undefined;
+function normalizeMediaType(contentType: string | null): string {
+  return contentType?.split(";", 1)[0].trim().toLowerCase() ?? "";
+}
 
-  // String body — try to parse as JSON
-  if (typeof bodyInit === "string") {
+async function extractBody(request: Request): Promise<unknown> {
+  if (request.body === null) return undefined;
+
+  const body = request.clone();
+  const mediaType = normalizeMediaType(request.headers.get("content-type"));
+  if (mediaType === "application/json" || mediaType.endsWith("+json")) {
+    const text = await body.text();
     try {
-      return JSON.parse(bodyInit);
+      return JSON.parse(text);
     } catch {
-      return bodyInit;
+      return text;
+    }
+  }
+  if (mediaType === "application/x-www-form-urlencoded") {
+    return Object.fromEntries(new URLSearchParams(await body.text()));
+  }
+  if (mediaType.startsWith("text/")) {
+    return body.text();
+  }
+  if (mediaType.startsWith("multipart/")) {
+    return body.formData();
+  }
+  return body.arrayBuffer();
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "AbortError"
+  );
+}
+
+function toFetchResponse(
+  response: Schmock.Response,
+  method: Schmock.HttpMethod,
+): Response {
+  const headers = { ...response.headers };
+  const hasContentType = Object.keys(headers).some(
+    (name) => name.toLowerCase() === "content-type",
+  );
+  if (
+    !hasContentType &&
+    response.body !== null &&
+    response.body !== undefined
+  ) {
+    if (isBinaryBody(response.body)) {
+      headers["content-type"] = "application/octet-stream";
+    } else if (typeof response.body !== "string") {
+      headers["content-type"] = "application/json";
     }
   }
 
-  // URLSearchParams — convert to key/value object
-  if (bodyInit instanceof URLSearchParams) {
-    const result: Record<string, string> = {};
-    bodyInit.forEach((value, key) => {
-      result[key] = value;
-    });
-    return result;
-  }
-
-  // Request with body — clone and read
-  if (input instanceof Request && !init?.body && input.body) {
-    try {
-      return await input.clone().json();
-    } catch {
-      try {
-        return await input.clone().text();
-      } catch {
-        return undefined;
-      }
-    }
-  }
-
-  return undefined;
+  const normalized = normalizeResponse({ ...response, headers }, method);
+  return new Response(serializeResponseBody(normalized) ?? null, {
+    status: normalized.status,
+    headers: normalized.headers,
+  });
 }
 
 /**
  * Create a fetch interceptor that routes requests through mock.handle().
  */
 export function createFetchInterceptor(
-  handle: (
-    method: Schmock.HttpMethod,
-    path: string,
-    requestOptions?: Schmock.RequestOptions,
-  ) => Promise<Schmock.Response>,
+  handle: InterceptRequestHandler,
   options: Schmock.InterceptOptions = {},
+  admitRequest?: () => InterceptRequestAdmission,
 ): Schmock.InterceptHandle {
   const {
     baseUrl,
@@ -266,19 +337,8 @@ export function createFetchInterceptor(
   } = options;
 
   return registerInterceptor(
-    async (
-      input: RequestInfo | URL,
-      init?: RequestInit,
-    ): Promise<InterceptorResult> => {
-      // Resolve the URL string
-      const urlString =
-        input instanceof Request
-          ? input.url
-          : input instanceof URL
-            ? input.href
-            : input;
-
-      const path = extractPathname(urlString);
+    async ({ request, url, origin }): Promise<InterceptorResult> => {
+      const path = url.pathname;
 
       // BaseUrl filter — non-matching requests go straight to real fetch.
       // Two modes:
@@ -288,11 +348,8 @@ export function createFetchInterceptor(
       // Both enforce a segment boundary so "/api" doesn't match "/apiv2".
       if (baseUrl) {
         const { origin: baseOrigin, path: basePath } = parseBaseUrl(baseUrl);
-        if (baseOrigin) {
-          const reqOrigin = extractOrigin(urlString);
-          if (reqOrigin !== baseOrigin) {
-            return PASSTHROUGH;
-          }
+        if (baseOrigin && origin !== baseOrigin) {
+          return PASSTHROUGH;
         }
         if (basePath) {
           const isMatch = path === basePath || path.startsWith(`${basePath}/`);
@@ -302,105 +359,106 @@ export function createFetchInterceptor(
         }
       }
 
-      // Build adapter request
-      const method =
-        input instanceof Request ? input.method : (init?.method ?? "GET");
-      const headers = extractHeaders(input, init);
-      const query = extractQuery(urlString);
-      const body = await extractBody(input, init);
-
-      let adapterRequest: Schmock.AdapterRequest = {
-        method,
-        path,
-        headers,
-        body,
-        query,
-      };
+      throwIfAborted(request.signal);
+      const initialMethod = toHttpMethod(request.method);
+      const admission = admitRequest?.();
+      const admittedHandle = admission?.handle ?? handle;
+      let effectiveMethod = initialMethod;
 
       try {
+        const body = await awaitWithAbort(extractBody(request), request.signal);
+        throwIfAborted(request.signal);
+
+        let adapterRequest: Schmock.AdapterRequest = {
+          method: request.method,
+          path,
+          headers: extractHeaders(request),
+          body,
+          query: extractQuery(url),
+        };
+
         // Apply beforeRequest hook
         if (beforeRequest) {
-          const modified = await beforeRequest(adapterRequest);
+          throwIfAborted(request.signal);
+          const modified = await awaitWithAbort(
+            beforeRequest(adapterRequest),
+            request.signal,
+          );
+          throwIfAborted(request.signal);
           if (modified) {
             adapterRequest = modified;
           }
         }
 
-        const schmockResponse = await handle(
-          toHttpMethod(adapterRequest.method),
-          adapterRequest.path,
-          {
-            headers: adapterRequest.headers,
-            body: adapterRequest.body,
-            query: adapterRequest.query,
-          },
+        throwIfAborted(request.signal);
+        const requestOptions: InterceptorRequestOptions = {
+          headers: adapterRequest.headers,
+          body: adapterRequest.body,
+          query: adapterRequest.query,
+          signal: request.signal,
+        };
+        effectiveMethod = toHttpMethod(adapterRequest.method);
+        const schmockResponse = await awaitWithAbort(
+          admittedHandle(effectiveMethod, adapterRequest.path, requestOptions),
+          request.signal,
         );
+        throwIfAborted(request.signal);
 
         // Route not found — passthrough or 404
         if (isRouteNotFound(schmockResponse)) {
           if (passthrough) {
             return PASSTHROUGH;
           }
-          return new Response(
-            JSON.stringify({
-              error: "No matching mock route found",
-              code: "ROUTE_NOT_FOUND",
-            }),
+          return toFetchResponse(
             {
               status: 404,
+              body: {
+                error: "No matching mock route found",
+                code: "ROUTE_NOT_FOUND",
+              },
               headers: { "content-type": "application/json" },
             },
+            effectiveMethod,
           );
         }
 
         // Apply beforeResponse hook
         let response: Schmock.AdapterResponse = schmockResponse;
         if (beforeResponse) {
-          const modified = await beforeResponse(response, adapterRequest);
+          throwIfAborted(request.signal);
+          const modified = await awaitWithAbort(
+            beforeResponse(response, adapterRequest),
+            request.signal,
+          );
+          throwIfAborted(request.signal);
           if (modified) {
             response = modified;
           }
         }
 
-        // Build fetch Response
-        const responseHeaders = new Headers(response.headers);
-        if (
-          !responseHeaders.has("content-type") &&
-          response.body !== null &&
-          response.body !== undefined
-        ) {
-          responseHeaders.set(
-            "content-type",
-            isBinaryBody(response.body)
-              ? "application/octet-stream"
-              : "application/json",
-          );
-        }
-
-        const responseBody =
-          response.body === null || response.body === undefined
-            ? null
-            : typeof response.body === "string"
-              ? response.body
-              : isBinaryBody(response.body)
-                ? toFetchBinaryBody(response.body)
-                : JSON.stringify(response.body);
-
-        return new Response(responseBody, {
-          status: response.status,
-          headers: responseHeaders,
-        });
+        return toFetchResponse(response, effectiveMethod);
       } catch (error) {
+        throwIfAborted(request.signal);
+        if (isAbortError(error)) {
+          throw error;
+        }
         if (errorFormatter) {
           const formatted = errorFormatter(
             error instanceof Error ? error : new Error(String(error)),
           );
-          return new Response(JSON.stringify(formatted), {
-            status: 500,
-            headers: { "content-type": "application/json" },
-          });
+          throwIfAborted(request.signal);
+          return toFetchResponse(
+            {
+              status: 500,
+              body: formatted,
+              headers: { "content-type": "application/json" },
+            },
+            effectiveMethod,
+          );
         }
         throw error;
+      } finally {
+        admission?.release();
       }
     },
   );

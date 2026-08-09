@@ -1,6 +1,12 @@
 import type { Server } from "node:http";
+import { awaitWithAbort, throwIfAborted } from "./abort.js";
 import { isBinaryBody } from "./binary.js";
-import { normalizePath, toHttpMethod } from "./constants.js";
+import {
+  markResponseException,
+  markRouteNotFound,
+  normalizePath,
+  toHttpMethod,
+} from "./constants.js";
 import {
   errorMessage,
   RouteDefinitionError,
@@ -9,8 +15,10 @@ import {
 } from "./errors.js";
 import {
   collectBody,
+  HttpIngressError,
   parseNodeHeaders,
   parseNodeQuery,
+  writeRejectedSchmockResponse,
   writeSchmockResponse,
 } from "./http-helpers.js";
 import { createFetchInterceptor } from "./interceptor.js";
@@ -20,6 +28,7 @@ import {
   runPluginBeforeRequest,
   runPluginPipeline,
 } from "./plugin-pipeline.js";
+import { normalizeResponse } from "./response-normalizer.js";
 import { parseResponse } from "./response-parser.js";
 import type { CompiledCallableRoute } from "./route-matcher.js";
 import {
@@ -27,6 +36,128 @@ import {
   findRoute,
   isGeneratorFunction,
 } from "./route-matcher.js";
+
+type InternalGlobalConfig = Omit<Schmock.GlobalConfig, "state"> & {
+  state: Record<string, unknown>;
+};
+
+interface PendingServerStart {
+  readonly token: symbol;
+  readonly port: number;
+  readonly hostname: string;
+  readonly resolve: (info: Schmock.ServerInfo) => void;
+  readonly reject: (error: unknown) => void;
+  server?: Server;
+  settled: boolean;
+}
+
+interface RequestAdmission {
+  readonly requestGeneration: RequestGeneration;
+  readonly historyGeneration: symbol;
+  readonly plugins: readonly Schmock.Plugin[];
+  readonly routes: CompiledCallableRoute[];
+  readonly staticRoutes: Map<string, CompiledCallableRoute>;
+  readonly state: Record<string, unknown>;
+  readonly namespace?: string;
+  readonly globalDelay?: number | [number, number];
+  readonly maxHistorySize?: number;
+  released: boolean;
+}
+
+interface RequestGeneration {
+  activeAdmissions: number;
+  retiredPlugins?: readonly Schmock.Plugin[];
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof value.then === "function"
+  );
+}
+
+function unavailableHistoryValue(value: unknown): Record<string, string> {
+  let type: string = typeof value;
+  if (typeof value === "object" && value !== null) {
+    try {
+      type = Object.prototype.toString.call(value);
+    } catch {
+      type = "object";
+    }
+  }
+  return {
+    kind: "unavailable",
+    reason: "not-structured-cloneable",
+    type,
+  };
+}
+
+function removeSharedMemory(
+  value: unknown,
+  seen = new WeakMap<object, unknown>(),
+): unknown {
+  if (typeof value !== "object" || value === null) return value;
+
+  const existing = seen.get(value);
+  if (existing !== undefined) return existing;
+
+  if (
+    typeof SharedArrayBuffer !== "undefined" &&
+    value instanceof SharedArrayBuffer
+  ) {
+    const copy = Uint8Array.from(new Uint8Array(value)).buffer;
+    seen.set(value, copy);
+    return copy;
+  }
+
+  if (
+    ArrayBuffer.isView(value) &&
+    typeof SharedArrayBuffer !== "undefined" &&
+    value.buffer instanceof SharedArrayBuffer
+  ) {
+    const copy = Uint8Array.from(
+      new Uint8Array(value.buffer, value.byteOffset, value.byteLength),
+    );
+    seen.set(value, copy);
+    return copy;
+  }
+
+  seen.set(value, value);
+  if (value instanceof Map) {
+    const entries = [...value.entries()];
+    value.clear();
+    for (const [key, entryValue] of entries) {
+      value.set(
+        removeSharedMemory(key, seen),
+        removeSharedMemory(entryValue, seen),
+      );
+    }
+    return value;
+  }
+  if (value instanceof Set) {
+    const entries = [...value.values()];
+    value.clear();
+    for (const entryValue of entries) {
+      value.add(removeSharedMemory(entryValue, seen));
+    }
+    return value;
+  }
+
+  for (const key of Reflect.ownKeys(value)) {
+    Reflect.set(value, key, removeSharedMemory(Reflect.get(value, key), seen));
+  }
+  return value;
+}
+
+function snapshotHistoryValue(value: unknown): unknown {
+  try {
+    return removeSharedMemory(structuredClone(value));
+  } catch {
+    return unavailableHistoryValue(value);
+  }
+}
 
 /**
  * Debug logger that respects debug mode configuration
@@ -71,12 +202,20 @@ export class CallableMockInstance {
   private requestHistory: Schmock.RequestRecord[] = [];
   private callableRef: Schmock.CallableMockInstance | undefined;
   private server: Server | undefined;
-  private serverInfo: Schmock.ServerInfo | undefined;
+  private pendingServerStart: PendingServerStart | undefined;
+  private serverCloseBarrier: Promise<void> | undefined;
   private interceptHandle: Schmock.InterceptHandle | null = null;
+  private requestGeneration: RequestGeneration = { activeAdmissions: 0 };
+  private historyGeneration = Symbol("schmock.history.generation");
+  private globalConfig: InternalGlobalConfig;
   // biome-ignore lint/complexity/noBannedTypes: internal storage for event listeners with varying signatures
   private listeners = new Map<string, Set<Function>>();
 
-  constructor(private globalConfig: Schmock.GlobalConfig = {}) {
+  constructor(globalConfig: Schmock.GlobalConfig = {}) {
+    this.globalConfig = {
+      ...globalConfig,
+      state: globalConfig.state ?? {},
+    };
     this.logger = new DebugLogger(globalConfig.debug || false);
     if (globalConfig.debug) {
       this.logger.log("config", "Debug mode enabled");
@@ -184,6 +323,101 @@ export class CallableMockInstance {
   }
 
   pipe(plugin: Schmock.Plugin): this {
+    if (plugin.install && this.callableRef) {
+      const previousRoutes = this.routes;
+      const previousStaticRoutes = this.staticRoutes;
+      this.routes = previousRoutes.slice();
+      this.staticRoutes = new Map(previousStaticRoutes);
+
+      let installActive = true;
+      let installFacade: Schmock.CallableMockInstance;
+      const requireInstallScope = () => {
+        if (installActive) return;
+        throw new SchmockError(
+          `Plugin "${plugin.name}" used its install instance outside install()`,
+          "PLUGIN_INSTALL_SCOPE_EXPIRED",
+          { plugin: plugin.name },
+        );
+      };
+      const rejectInstallOperation = (operation: string): never => {
+        requireInstallScope();
+        throw new SchmockError(
+          `Plugin "${plugin.name}" cannot call ${operation} during install()`,
+          "PLUGIN_INSTALL_OPERATION_UNSUPPORTED",
+          { operation, plugin: plugin.name },
+        );
+      };
+      const registerRoute = (
+        route: Schmock.RouteKey,
+        generator: Schmock.Generator,
+        config: Schmock.RouteConfig = {},
+      ) => {
+        requireInstallScope();
+        this.defineRoute(route, generator, config);
+        return installFacade;
+      };
+      installFacade = Object.assign(registerRoute, {
+        pipe: () => rejectInstallOperation("pipe()"),
+        handle: () => rejectInstallOperation("handle()"),
+        history: (method?: Schmock.HttpMethod, path?: string) => {
+          requireInstallScope();
+          return this.history(method, path);
+        },
+        called: (method?: Schmock.HttpMethod, path?: string) => {
+          requireInstallScope();
+          return this.called(method, path);
+        },
+        callCount: (method?: Schmock.HttpMethod, path?: string) => {
+          requireInstallScope();
+          return this.callCount(method, path);
+        },
+        lastRequest: (method?: Schmock.HttpMethod, path?: string) => {
+          requireInstallScope();
+          return this.lastRequest(method, path);
+        },
+        reset: () => rejectInstallOperation("reset()"),
+        resetHistory: () => rejectInstallOperation("resetHistory()"),
+        resetState: () => rejectInstallOperation("resetState()"),
+        on: () => rejectInstallOperation("on()"),
+        off: () => rejectInstallOperation("off()"),
+        getRoutes: () => {
+          requireInstallScope();
+          return this.getRoutes();
+        },
+        getState: () => {
+          requireInstallScope();
+          return this.getState();
+        },
+        listen: () => rejectInstallOperation("listen()"),
+        close: () => rejectInstallOperation("close()"),
+        intercept: () => rejectInstallOperation("intercept()"),
+      });
+
+      try {
+        const installResult: unknown = plugin.install(installFacade);
+        installActive = false;
+        if (isThenable(installResult)) {
+          void Promise.resolve(installResult).catch((error) => {
+            this.logger.log(
+              "plugin",
+              `Rejected async install for ${plugin.name}: ${errorMessage(error)}`,
+            );
+          });
+          throw new SchmockError(
+            `Plugin "${plugin.name}" returned a Promise from install()`,
+            "PLUGIN_ASYNC_INSTALL_UNSUPPORTED",
+            { plugin: plugin.name },
+          );
+        }
+      } catch (error) {
+        this.routes = previousRoutes;
+        this.staticRoutes = previousStaticRoutes;
+        throw error;
+      } finally {
+        installActive = false;
+      }
+    }
+
     this.plugins.push(plugin);
     this.logger.log(
       "plugin",
@@ -195,29 +429,53 @@ export class CallableMockInstance {
         hasOnError: typeof plugin.onError === "function",
       },
     );
-    if (plugin.install && this.callableRef) {
-      plugin.install(this.callableRef);
-    }
     return this;
+  }
+
+  private uninstallPlugins(plugins: readonly Schmock.Plugin[]): void {
+    for (let index = plugins.length - 1; index >= 0; index -= 1) {
+      const plugin = plugins[index];
+      if (!plugin.uninstall || !this.callableRef) continue;
+
+      try {
+        const uninstallResult: unknown = plugin.uninstall(this.callableRef);
+        if (isThenable(uninstallResult)) {
+          void Promise.resolve(uninstallResult).catch((error) => {
+            this.logger.log(
+              "plugin",
+              `Async uninstall for ${plugin.name} failed: ${errorMessage(error)}`,
+            );
+          });
+          this.logger.log(
+            "plugin",
+            `Plugin ${plugin.name} returned an unsupported Promise from uninstall()`,
+          );
+        }
+      } catch (error) {
+        this.logger.log(
+          "plugin",
+          `Plugin ${plugin.name} uninstall failed: ${errorMessage(error)}`,
+        );
+      }
+    }
   }
 
   // ===== Request Spy / History API =====
 
-  /**
-   * FIX 2.3: Deep-clone a request record so callers cannot corrupt internal
-   * history by mutating nested body/response objects.
-   * Falls back to a shallow spread for bodies that are not structuredClone-able
-   * (e.g. Buffers, streams — rare in practice but defensively handled).
-   */
   private cloneRecord(r: Schmock.RequestRecord): Schmock.RequestRecord {
-    try {
-      return structuredClone(r);
-    } catch {
-      return {
-        ...r,
-        response: { ...r.response },
-      };
-    }
+    return {
+      method: r.method,
+      path: r.path,
+      params: { ...r.params },
+      query: { ...r.query },
+      headers: { ...r.headers },
+      body: snapshotHistoryValue(r.body),
+      timestamp: r.timestamp,
+      response: {
+        status: r.response.status,
+        body: snapshotHistoryValue(r.response.body),
+      },
+    };
   }
 
   history(method?: Schmock.HttpMethod, path?: string): Schmock.RequestRecord[] {
@@ -303,11 +561,38 @@ export class CallableMockInstance {
     return this;
   }
 
-  private emit(event: string, data: unknown): void {
+  private emit<E extends Schmock.SchmockEvent>(
+    event: E,
+    data: Schmock.SchmockEventMap[E],
+  ): void {
     const set = this.listeners.get(event);
-    if (set) {
-      for (const listener of set) {
-        listener(data);
+    if (!set) return;
+
+    const snapshot: Record<string, unknown> = { ...data };
+    if ("headers" in data) {
+      snapshot.headers = Object.freeze({ ...data.headers });
+    }
+    if ("params" in data) {
+      snapshot.params = Object.freeze({ ...data.params });
+    }
+    const eventData = Object.freeze(snapshot);
+
+    for (const listener of [...set]) {
+      try {
+        const listenerResult: unknown = listener(eventData);
+        if (isThenable(listenerResult)) {
+          void Promise.resolve(listenerResult).catch((error) => {
+            this.logger.log(
+              "event",
+              `${event} listener rejected: ${errorMessage(error)}`,
+            );
+          });
+        }
+      } catch (error) {
+        this.logger.log(
+          "event",
+          `${event} listener failed: ${errorMessage(error)}`,
+        );
       }
     }
   }
@@ -315,118 +600,301 @@ export class CallableMockInstance {
   // ===== Reset / Lifecycle =====
 
   reset(): void {
-    this.interceptHandle?.restore();
-    this.interceptHandle = null;
+    const retiredGeneration = this.requestGeneration;
+    this.requestGeneration = { activeAdmissions: 0 };
+    this.historyGeneration = Symbol("schmock.history.generation");
     this.close();
+    const installedPlugins = this.plugins;
+    this.plugins = [];
+    this.#retireRequestGeneration(retiredGeneration, installedPlugins);
     this.routes = [];
     this.staticRoutes.clear();
-    this.plugins = [];
     this.requestHistory = [];
     this.listeners.clear();
-    // FIX 3.3: assign a fresh object instead of deleting keys off the caller's
-    // reference — this avoids mutating the external state object passed by the user
-    if (this.globalConfig.state) {
-      this.globalConfig.state = {};
-    }
+    this.globalConfig.state = {};
     this.logger.log("lifecycle", "Mock fully reset");
   }
 
   resetHistory(): void {
+    this.historyGeneration = Symbol("schmock.history.generation");
     this.requestHistory = [];
     this.logger.log("lifecycle", "Request history cleared");
   }
 
   resetState(): void {
-    // FIX 3.3: assign a fresh object instead of deleting keys off the caller's
-    // reference — this avoids mutating the external state object passed by the user
-    if (this.globalConfig.state) {
-      this.globalConfig.state = {};
-    }
+    this.globalConfig.state = {};
     this.logger.log("lifecycle", "State cleared");
+  }
+
+  #captureRequestAdmission(): RequestAdmission {
+    const requestGeneration = this.requestGeneration;
+    requestGeneration.activeAdmissions += 1;
+    return {
+      requestGeneration,
+      historyGeneration: this.historyGeneration,
+      plugins: this.plugins.slice(),
+      routes: this.routes.slice(),
+      staticRoutes: new Map(this.staticRoutes),
+      state: this.globalConfig.state,
+      namespace: this.globalConfig.namespace,
+      globalDelay: this.globalConfig.delay,
+      maxHistorySize: this.globalConfig.maxHistorySize,
+      released: false,
+    };
+  }
+
+  #releaseRequestAdmission(admission: RequestAdmission): void {
+    if (admission.released) return;
+    admission.released = true;
+
+    const generation = admission.requestGeneration;
+    generation.activeAdmissions -= 1;
+    if (
+      generation.activeAdmissions === 0 &&
+      generation.retiredPlugins !== undefined
+    ) {
+      const plugins = generation.retiredPlugins;
+      generation.retiredPlugins = undefined;
+      this.uninstallPlugins(plugins);
+    }
+  }
+
+  #retireRequestGeneration(
+    generation: RequestGeneration,
+    plugins: readonly Schmock.Plugin[],
+  ): void {
+    generation.retiredPlugins = plugins;
+    if (generation.activeAdmissions === 0) {
+      generation.retiredPlugins = undefined;
+      this.uninstallPlugins(plugins);
+    }
+  }
+
+  createRequestAdmission() {
+    const admission = this.#captureRequestAdmission();
+    return {
+      handle: (
+        method: Schmock.HttpMethod,
+        path: string,
+        options?: Schmock.RequestOptions,
+      ) => this.handle(method, path, options, admission),
+      release: () => this.#releaseRequestAdmission(admission),
+    };
   }
 
   // ===== Standalone Server =====
 
   listen(port = 0, hostname = "127.0.0.1"): Promise<Schmock.ServerInfo> {
-    if (this.server) {
+    if (this.server || this.pendingServerStart) {
       throw new SchmockError(
         "Server is already running",
         "SERVER_ALREADY_RUNNING",
       );
     }
 
-    // Lazy-load node:http so browser bundles never pull it in. See issue #395.
-    return import("node:http").then(({ createServer }) =>
-      this.#startHttpServer(createServer, port, hostname),
-    );
+    let resolveStart = (_info: Schmock.ServerInfo) => {};
+    let rejectStart = (_error: unknown) => {};
+    const startPromise = new Promise<Schmock.ServerInfo>((resolve, reject) => {
+      resolveStart = resolve;
+      rejectStart = reject;
+    });
+    const operation: PendingServerStart = {
+      token: Symbol("schmock.server.start"),
+      port,
+      hostname,
+      resolve: resolveStart,
+      reject: rejectStart,
+      settled: false,
+    };
+    this.pendingServerStart = operation;
+
+    const closeBarrier = this.serverCloseBarrier ?? Promise.resolve();
+    void closeBarrier
+      // Lazy-load node:http so browser bundles never pull it in. See issue #395.
+      .then(() => import("node:http"))
+      .then(({ createServer }) => {
+        if (!this.#ownsServerStart(operation)) return;
+        this.#startHttpServer(operation, createServer);
+      })
+      .catch((error) => {
+        this.#rejectServerStart(operation, error);
+      });
+
+    return startPromise;
+  }
+
+  #ownsServerStart(operation: PendingServerStart): boolean {
+    return this.pendingServerStart === operation && !operation.settled;
   }
 
   #startHttpServer(
+    operation: PendingServerStart,
     createServer: typeof import("node:http").createServer,
-    port: number,
-    hostname: string,
-  ): Promise<Schmock.ServerInfo> {
+  ): void {
     const httpServer = createServer((req, res) => {
+      const admittedRequest = this.createRequestAdmission();
+      const abortController = new AbortController();
+      const abortRequest = () => abortController.abort();
+      req.once("aborted", abortRequest);
+      res.once("close", abortRequest);
+      let requestMethod: Schmock.HttpMethod =
+        req.method?.toUpperCase() === "HEAD" ? "HEAD" : "GET";
       const handleRequest = async () => {
-        const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-        const method = toHttpMethod(req.method ?? "GET");
-        const path = url.pathname;
-        const headers = parseNodeHeaders(req);
-        const query = parseNodeQuery(url);
-        const body = await collectBody(req, headers);
-        const schmockResponse = await this.handle(method, path, {
-          headers,
-          body,
-          query,
-        });
-        writeSchmockResponse(res, schmockResponse);
+        try {
+          const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+          const method = toHttpMethod(req.method ?? "GET");
+          requestMethod = method;
+          const path = url.pathname;
+          const headers = parseNodeHeaders(req);
+          const query = parseNodeQuery(url);
+          const body = await collectBody(req, headers);
+          const schmockResponse = await admittedRequest.handle(method, path, {
+            headers,
+            body,
+            query,
+            signal: abortController.signal,
+          });
+          writeSchmockResponse(res, schmockResponse);
+        } finally {
+          req.off("aborted", abortRequest);
+          res.off("close", abortRequest);
+          admittedRequest.release();
+        }
       };
 
       handleRequest().catch((error) => {
-        if (!res.headersSent) {
-          res.writeHead(500, { "content-type": "application/json" });
+        // A failing error-response write must never escape this handler as an
+        // unhandled rejection: destroy the socket so the client is not left
+        // hanging on a response that will never arrive.
+        try {
+          const ingressError =
+            error instanceof HttpIngressError ? error : undefined;
+          const status = ingressError?.status ?? 500;
+          const code = ingressError?.code ?? "SERVER_ERROR";
+          if (!res.headersSent && !res.writableEnded) {
+            if (ingressError) res.shouldKeepAlive = false;
+            const response = normalizeResponse(
+              {
+                status,
+                body: {
+                  error:
+                    error instanceof Error
+                      ? error.message
+                      : "Internal Server Error",
+                  code,
+                },
+                headers: {
+                  "content-type": "application/json",
+                  ...(ingressError ? { connection: "close" } : {}),
+                },
+              },
+              requestMethod,
+            );
+            if (ingressError?.status === 413) {
+              writeRejectedSchmockResponse(req, res, response);
+            } else {
+              writeSchmockResponse(res, response);
+            }
+          } else if (!res.writableEnded) {
+            res.end();
+          }
+        } catch {
+          res.destroy();
         }
-        res.end(
-          JSON.stringify({
-            error:
-              error instanceof Error ? error.message : "Internal Server Error",
-            code: "SERVER_ERROR",
-          }),
-        );
       });
     });
 
-    this.server = httpServer;
+    operation.server = httpServer;
 
-    return new Promise((resolve, reject) => {
-      const handleStartupError = (error: Error) => {
-        if (this.server === httpServer) {
-          this.server = undefined;
-          this.serverInfo = undefined;
-        }
-        reject(error);
-      };
-      httpServer.once("error", handleStartupError);
-      httpServer.listen(port, hostname, () => {
+    const handleStartupError = (error: Error) => {
+      this.#rejectServerStart(operation, error);
+    };
+    httpServer.once("error", handleStartupError);
+
+    try {
+      httpServer.listen(operation.port, operation.hostname, () => {
         httpServer.off("error", handleStartupError);
+        if (!this.#ownsServerStart(operation)) {
+          this.#beginServerClose(httpServer);
+          return;
+        }
+
         const addr = httpServer.address();
         const actualPort =
-          addr !== null && typeof addr === "object" ? addr.port : port;
-        this.serverInfo = { port: actualPort, hostname };
-        this.logger.log("server", `Listening on ${hostname}:${actualPort}`);
-        resolve(this.serverInfo);
+          addr !== null && typeof addr === "object"
+            ? addr.port
+            : operation.port;
+        const info = { port: actualPort, hostname: operation.hostname };
+        operation.settled = true;
+        this.pendingServerStart = undefined;
+        this.server = httpServer;
+        this.logger.log(
+          "server",
+          `Listening on ${operation.hostname}:${actualPort}`,
+        );
+        operation.resolve(info);
       });
+    } catch (error) {
+      httpServer.off("error", handleStartupError);
+      this.#rejectServerStart(operation, error);
+    }
+  }
+
+  #rejectServerStart(operation: PendingServerStart, error: unknown): void {
+    if (operation.settled) return;
+
+    operation.settled = true;
+    if (this.pendingServerStart === operation) {
+      this.pendingServerStart = undefined;
+    }
+    if (operation.server) {
+      this.#beginServerClose(operation.server);
+    }
+    operation.reject(error);
+  }
+
+  #cancelServerStart(): void {
+    const operation = this.pendingServerStart;
+    if (!operation) return;
+
+    this.#rejectServerStart(
+      operation,
+      new SchmockError("Server start was cancelled", "SERVER_START_CANCELLED"),
+    );
+  }
+
+  #beginServerClose(server: Server): void {
+    const closePromise = new Promise<void>((resolve) => {
+      try {
+        server.close(() => resolve());
+      } catch {
+        resolve();
+      }
+    });
+    try {
+      server.closeAllConnections();
+    } catch {
+      // A not-yet-listening server has no connections to close.
+    }
+    const previousBarrier = this.serverCloseBarrier ?? Promise.resolve();
+    const combinedBarrier = Promise.all([previousBarrier, closePromise]).then(
+      () => undefined,
+    );
+    this.serverCloseBarrier = combinedBarrier;
+    void combinedBarrier.finally(() => {
+      if (this.serverCloseBarrier === combinedBarrier) {
+        this.serverCloseBarrier = undefined;
+      }
     });
   }
 
   close(): void {
-    if (!this.server) {
-      return;
-    }
-    this.server.closeAllConnections();
-    this.server.close();
+    this.#cancelServerStart();
+    const server = this.server;
+    if (!server) return;
+
     this.server = undefined;
-    this.serverInfo = undefined;
+    this.#beginServerClose(server);
     this.logger.log("server", "Server stopped");
   }
 
@@ -443,6 +911,7 @@ export class CallableMockInstance {
     this.interceptHandle = createFetchInterceptor(
       (method, path, opts) => this.handle(method, path, opts),
       options,
+      () => this.createRequestAdmission(),
     );
 
     return this.interceptHandle;
@@ -452,11 +921,44 @@ export class CallableMockInstance {
     method: Schmock.HttpMethod,
     path: string,
     options?: Schmock.RequestOptions,
+    admission?: RequestAdmission,
   ): Promise<Schmock.Response> {
+    const requestAdmission = admission ?? this.#captureRequestAdmission();
+    try {
+      return await this.#handleAdmittedRequest(
+        method,
+        path,
+        options,
+        requestAdmission,
+      );
+    } finally {
+      this.#releaseRequestAdmission(requestAdmission);
+    }
+  }
+
+  async #handleAdmittedRequest(
+    method: Schmock.HttpMethod,
+    path: string,
+    options: Schmock.RequestOptions | undefined,
+    admission: RequestAdmission,
+  ): Promise<Schmock.Response> {
+    const requestGeneration = admission.requestGeneration;
+    const historyGeneration = admission.historyGeneration;
+    const requestPlugins = admission.plugins;
+    const requestRoutes = admission.routes;
+    const requestStaticRoutes = admission.staticRoutes;
+    const requestState = admission.state;
+    const namespace = admission.namespace;
+    const globalDelay = admission.globalDelay;
+    const maxHistorySize = admission.maxHistorySize;
+    const signal = options?.signal;
+    throwIfAborted(signal);
+
     const handleStart = performance.now();
     const requestId = this.globalConfig.debug ? crypto.randomUUID() : "";
-    const reqQuery = options?.query || {};
-    const reqHeaders = options?.headers || {};
+    const reqQuery = { ...(options?.query ?? {}) };
+    const reqHeaders = { ...(options?.headers ?? {}) };
+    const requestBody = options?.body;
     this.logger.log("request", `[${requestId}] ${method} ${path}`, {
       headers: reqHeaders,
       query: reqQuery,
@@ -464,19 +966,21 @@ export class CallableMockInstance {
     });
     this.logger.time(`request-${requestId}`);
 
-    this.emit("request:start", {
-      method,
-      path,
-      headers: reqHeaders,
-    });
+    if (this.requestGeneration === requestGeneration) {
+      this.emit("request:start", {
+        method,
+        path,
+        headers: reqHeaders,
+      });
+    }
 
     try {
       // Apply namespace if configured
       let requestPath = path;
-      if (this.globalConfig.namespace && this.globalConfig.namespace !== "/") {
-        const namespace = this.globalConfig.namespace.startsWith("/")
-          ? this.globalConfig.namespace
-          : `/${this.globalConfig.namespace}`;
+      if (namespace && namespace !== "/") {
+        const normalizedNamespace = namespace.startsWith("/")
+          ? namespace
+          : `/${namespace}`;
 
         const pathToCheck = path.startsWith("/") ? path : `/${path}`;
 
@@ -484,34 +988,43 @@ export class CallableMockInstance {
         // handle both "/api/users" (starts with /api) and "/api" (exact match)
         // but NOT "/apiv2" (prefix match but wrong segment)
         const isMatch =
-          pathToCheck === namespace ||
+          pathToCheck === normalizedNamespace ||
           pathToCheck.startsWith(
-            namespace.endsWith("/") ? namespace : `${namespace}/`,
+            normalizedNamespace.endsWith("/")
+              ? normalizedNamespace
+              : `${normalizedNamespace}/`,
           );
 
         if (!isMatch) {
           this.logger.log(
             "route",
-            `[${requestId}] Path doesn't match namespace ${namespace}`,
+            `[${requestId}] Path doesn't match namespace ${normalizedNamespace}`,
           );
           const error = new RouteNotFoundError(method, path);
-          const response = {
-            status: 404,
-            body: { error: error.message, code: error.code },
-            headers: { "content-type": "application/json" },
-          };
-          this.emit("request:end", {
-            method,
-            path,
-            status: 404,
-            duration: performance.now() - handleStart,
-          });
+          const response = markRouteNotFound(
+            normalizeResponse(
+              {
+                status: 404,
+                body: { error: error.message, code: error.code },
+                headers: { "content-type": "application/json" },
+              },
+              method,
+            ),
+          );
+          if (this.requestGeneration === requestGeneration) {
+            this.emit("request:end", {
+              method,
+              path,
+              status: 404,
+              duration: performance.now() - handleStart,
+            });
+          }
           this.logger.timeEnd(`request-${requestId}`);
           return response;
         }
 
         // Remove namespace prefix, ensuring we always start with /
-        const stripped = pathToCheck.slice(namespace.length);
+        const stripped = pathToCheck.slice(normalizedNamespace.length);
         requestPath = stripped.startsWith("/") ? stripped : `/${stripped}`;
       }
 
@@ -519,8 +1032,8 @@ export class CallableMockInstance {
       const matchedRoute = findRoute(
         method,
         requestPath,
-        this.staticRoutes,
-        this.routes,
+        requestStaticRoutes,
+        requestRoutes,
       );
 
       if (!matchedRoute) {
@@ -528,19 +1041,28 @@ export class CallableMockInstance {
           "route",
           `[${requestId}] No route found for ${method} ${requestPath}`,
         );
-        this.emit("request:notfound", { method, path: requestPath });
+        if (this.requestGeneration === requestGeneration) {
+          this.emit("request:notfound", { method, path: requestPath });
+        }
         const error = new RouteNotFoundError(method, path);
-        const response = {
-          status: 404,
-          body: { error: error.message, code: error.code },
-          headers: { "content-type": "application/json" },
-        };
-        this.emit("request:end", {
-          method,
-          path: requestPath,
-          status: 404,
-          duration: performance.now() - handleStart,
-        });
+        const response = markRouteNotFound(
+          normalizeResponse(
+            {
+              status: 404,
+              body: { error: error.message, code: error.code },
+              headers: { "content-type": "application/json" },
+            },
+            method,
+          ),
+        );
+        if (this.requestGeneration === requestGeneration) {
+          this.emit("request:end", {
+            method,
+            path: requestPath,
+            status: 404,
+            duration: performance.now() - handleStart,
+          });
+        }
         this.logger.timeEnd(`request-${requestId}`);
         return response;
       }
@@ -553,12 +1075,15 @@ export class CallableMockInstance {
       // Extract parameters from the matched route
       const params = extractParams(matchedRoute, requestPath);
 
-      this.emit("request:match", {
-        method,
-        path: requestPath,
-        routePath: matchedRoute.path,
-        params,
-      });
+      if (this.requestGeneration === requestGeneration) {
+        this.emit("request:match", {
+          method,
+          path: requestPath,
+          routePath: matchedRoute.path,
+          params,
+        });
+      }
+      throwIfAborted(signal);
 
       // Build plugin context before route code so request guards can reject
       // invalid or unauthorized requests without triggering side effects.
@@ -569,16 +1094,19 @@ export class CallableMockInstance {
         params,
         query: reqQuery,
         headers: reqHeaders,
-        body: options?.body,
+        body: requestBody,
         state: new Map(),
-        routeState: this.globalConfig.state || {},
+        routeState: requestState,
+        signal,
       };
 
       const preflightResult = await runPluginBeforeRequest(
-        this.plugins,
+        requestPlugins,
         pluginContext,
         this.logger,
+        signal,
       );
+      throwIfAborted(signal);
       pluginContext = preflightResult.context;
       if (preflightResult.requestShortCircuited === true) {
         pluginContext = { ...pluginContext, requestShortCircuited: true };
@@ -595,22 +1123,30 @@ export class CallableMockInstance {
           query: pluginContext.query,
           headers: pluginContext.headers,
           body: pluginContext.body,
-          state: pluginContext.routeState ?? this.globalConfig.state ?? {},
+          state: pluginContext.routeState ?? requestState,
+          signal,
         };
 
         try {
           if (isGeneratorFunction(matchedRoute.generator)) {
-            result = await matchedRoute.generator(context);
+            result = await awaitWithAbort(
+              matchedRoute.generator(context),
+              signal,
+            );
           } else {
             result = matchedRoute.generator;
           }
+          throwIfAborted(signal);
         } catch (error) {
+          throwIfAborted(signal);
           const recovery = await recoverGeneratorError(
-            this.plugins,
+            requestPlugins,
             pluginContext,
             error,
             this.logger,
+            signal,
           );
+          throwIfAborted(signal);
           pluginContext = recovery.context;
           result = recovery.response;
           skipPostProcessing = recovery.recoveredFromError === true;
@@ -626,11 +1162,13 @@ export class CallableMockInstance {
           );
         } else {
           const pipelineResult = await runPluginPipeline(
-            this.plugins,
+            requestPlugins,
             pluginContext,
             result,
             this.logger,
+            signal,
           );
+          throwIfAborted(signal);
           pluginContext = pipelineResult.context;
           result = pipelineResult.response;
         }
@@ -643,40 +1181,54 @@ export class CallableMockInstance {
       }
 
       // Parse and prepare response
-      const response = parseResponse(result, matchedRoute.config);
+      const response = normalizeResponse(
+        parseResponse(result, matchedRoute.config),
+        method,
+      );
 
       // Apply delay (route-level overrides global)
-      await this.applyDelay(matchedRoute.config.delay);
+      await this.applyDelay(matchedRoute.config.delay, globalDelay, signal);
+      throwIfAborted(signal);
 
       // Record request in history (FIFO-bounded when maxHistorySize is set)
-      this.requestHistory.push({
-        method,
-        path: requestPath,
-        params,
-        query: reqQuery,
-        headers: reqHeaders,
-        body: options?.body,
-        timestamp: Date.now(),
-        response: { status: response.status, body: response.body },
-      });
-      const maxHistorySize = this.globalConfig.maxHistorySize;
       if (
-        typeof maxHistorySize === "number" &&
-        maxHistorySize >= 0 &&
-        this.requestHistory.length > maxHistorySize
+        this.requestGeneration === requestGeneration &&
+        this.historyGeneration === historyGeneration &&
+        maxHistorySize !== 0
       ) {
-        this.requestHistory.splice(
-          0,
-          this.requestHistory.length - maxHistorySize,
-        );
+        this.requestHistory.push({
+          method,
+          path: requestPath,
+          params: { ...params },
+          query: { ...reqQuery },
+          headers: { ...reqHeaders },
+          body: snapshotHistoryValue(requestBody),
+          timestamp: Date.now(),
+          response: {
+            status: response.status,
+            body: snapshotHistoryValue(response.body),
+          },
+        });
+        if (
+          typeof maxHistorySize === "number" &&
+          maxHistorySize >= 0 &&
+          this.requestHistory.length > maxHistorySize
+        ) {
+          this.requestHistory.splice(
+            0,
+            this.requestHistory.length - maxHistorySize,
+          );
+        }
       }
 
-      this.emit("request:end", {
-        method,
-        path: requestPath,
-        status: response.status,
-        duration: performance.now() - handleStart,
-      });
+      if (this.requestGeneration === requestGeneration) {
+        this.emit("request:end", {
+          method,
+          path: requestPath,
+          status: response.status,
+          duration: performance.now() - handleStart,
+        });
+      }
 
       // Log successful response
       this.logger.log(
@@ -692,6 +1244,7 @@ export class CallableMockInstance {
 
       return response;
     } catch (error) {
+      throwIfAborted(signal);
       this.logger.log(
         "error",
         `[${requestId}] Error processing request: ${errorMessage(error)}`,
@@ -699,24 +1252,36 @@ export class CallableMockInstance {
       );
 
       // Return error response
-      const errorResponse = {
-        status: 500,
-        body: {
-          error: errorMessage(error),
-          code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
-        },
-        headers: { "content-type": "application/json" },
-      };
+      const responseError =
+        error instanceof Error ? error : new Error(errorMessage(error));
+      const errorResponse = markResponseException(
+        normalizeResponse(
+          {
+            status: 500,
+            body: {
+              error: responseError.message,
+              code:
+                error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
+            },
+            headers: { "content-type": "application/json" },
+          },
+          method,
+        ),
+        responseError,
+      );
 
       // Apply delay even for error responses
-      await this.applyDelay();
+      await this.applyDelay(undefined, globalDelay, signal);
+      throwIfAborted(signal);
 
-      this.emit("request:end", {
-        method,
-        path,
-        status: 500,
-        duration: performance.now() - handleStart,
-      });
+      if (this.requestGeneration === requestGeneration) {
+        this.emit("request:end", {
+          method,
+          path,
+          status: 500,
+          duration: performance.now() - handleStart,
+        });
+      }
 
       this.logger.log("error", `[${requestId}] Returning error response 500`);
       this.logger.timeEnd(`request-${requestId}`);
@@ -731,9 +1296,12 @@ export class CallableMockInstance {
    */
   private async applyDelay(
     routeDelay?: number | [number, number],
+    globalDelay?: number | [number, number],
+    signal?: AbortSignal,
   ): Promise<void> {
-    const effectiveDelay = routeDelay ?? this.globalConfig.delay;
+    const effectiveDelay = routeDelay ?? globalDelay;
     if (!effectiveDelay) {
+      throwIfAborted(signal);
       return;
     }
 
@@ -743,6 +1311,22 @@ export class CallableMockInstance {
       : effectiveDelay;
     const ms = Math.max(0, configuredMs);
 
-    await new Promise((resolve) => setTimeout(resolve, ms));
+    throwIfAborted(signal);
+    await new Promise<void>((resolve, reject) => {
+      const finish = () => {
+        signal?.removeEventListener("abort", abort);
+        resolve();
+      };
+      const abort = () => {
+        clearTimeout(timer);
+        try {
+          throwIfAborted(signal);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      const timer = setTimeout(finish, ms);
+      signal?.addEventListener("abort", abort, { once: true });
+    });
   }
 }

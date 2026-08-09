@@ -1,5 +1,3 @@
-/// <reference path="../../core/schmock.d.ts" />
-
 import type {
   HttpEvent,
   HttpHandler,
@@ -13,8 +11,30 @@ import {
   HttpResponse,
 } from "@angular/common/http";
 import { Injectable } from "@angular/core";
-import { isHttpMethod, isRouteNotFound } from "@schmock/core";
+import type * as Schmock from "@schmock/core";
+import {
+  isHttpMethod,
+  isRouteNotFound,
+  normalizeResponse,
+} from "@schmock/core";
 import { Observable } from "rxjs";
+
+const RESPONSE_ORIGIN = Symbol.for("@schmock/core.response-origin");
+
+function responseException(response: Schmock.Response): Error | undefined {
+  const origin: unknown = Reflect.get(response, RESPONSE_ORIGIN);
+  if (
+    typeof origin === "object" &&
+    origin !== null &&
+    "kind" in origin &&
+    origin.kind === "exception" &&
+    "error" in origin &&
+    origin.error instanceof Error
+  ) {
+    return origin.error;
+  }
+  return undefined;
+}
 
 function toSupportedHttpMethod(method: string): Schmock.HttpMethod | undefined {
   const upper = method.toUpperCase();
@@ -294,12 +314,14 @@ export function createSchmockInterceptor(
       return new Observable<HttpEvent<unknown>>((observer) => {
         let innerSub: { unsubscribe(): void } | undefined;
         let aborted = false;
+        const abortController = new AbortController();
 
         mock
           .handle(requestData.method, requestData.path, {
             headers: requestData.headers,
             body: requestData.body,
             query: requestData.query,
+            signal: abortController.signal,
           })
           .then((schmockResponse: Schmock.Response) => {
             if (aborted) return;
@@ -312,12 +334,21 @@ export function createSchmockInterceptor(
               innerSub = next.handle(req).subscribe(observer);
             } else if (routeNotFound) {
               // No matching route and passthrough disabled
+              const response = normalizeResponse(
+                {
+                  status: 404,
+                  body: { message: "No matching mock route found" },
+                  headers: {},
+                },
+                requestData.method,
+              );
               observer.error(
                 new HttpErrorResponse({
-                  error: { message: "No matching mock route found" },
-                  status: 404,
+                  error: response.body,
+                  status: response.status,
                   statusText: "Not Found",
                   url: req.url,
+                  headers: new HttpHeaders(response.headers),
                 }),
               );
             } else {
@@ -326,32 +357,27 @@ export function createSchmockInterceptor(
               if (transformResponse) {
                 response = transformResponse(response, req);
               }
+              const internalError = responseException(response);
+              response = normalizeResponse(response, requestData.method);
 
-              const status = response.status ?? 200;
+              const status = response.status;
 
-              // Auto-convert error status codes (>= 400) to HttpErrorResponse
-              if (status >= 400) {
+              // Angular treats only final 2xx responses as successful emissions.
+              if (status < 200 || status >= 300) {
                 let errorBody = response.body;
 
-                // Check if this is a 500 error from a handler that threw an exception
-                // and if errorFormatter is configured
-                const respBody = response.body;
-                if (
-                  status === 500 &&
-                  errorFormatter &&
-                  respBody !== null &&
-                  typeof respBody === "object" &&
-                  "error" in respBody &&
-                  "code" in respBody
-                ) {
-                  // This is an error from Schmock core (handler threw an error)
-                  // Apply the custom errorFormatter
-                  const errMsg =
-                    typeof respBody.error === "string"
-                      ? respBody.error
-                      : "Unknown error";
-                  const error = new Error(errMsg);
-                  errorBody = errorFormatter(error, req);
+                // Format only core-marked exceptions, not domain 500 bodies.
+                // A throwing formatter must not propagate into .catch, where
+                // it would be invoked a second time with its own exception.
+                if (status === 500 && errorFormatter && internalError) {
+                  try {
+                    errorBody = errorFormatter(internalError, req);
+                  } catch {
+                    errorBody = {
+                      error: "Internal Server Error",
+                      code: "INTERNAL_ERROR",
+                    };
+                  }
                 }
 
                 observer.error(
@@ -383,13 +409,22 @@ export function createSchmockInterceptor(
 
             // Handle errors
             let errorBody: unknown;
+            let formatterFailed = false;
 
             if (errorFormatter) {
-              errorBody = errorFormatter(
-                error instanceof Error ? error : new Error(String(error)),
-                req,
-              );
-            } else {
+              // A throwing formatter would leave the promise rejected with
+              // nothing downstream to catch it, so the Observable would
+              // never settle. Fall back to the unformatted body instead.
+              try {
+                errorBody = errorFormatter(
+                  error instanceof Error ? error : new Error(String(error)),
+                  req,
+                );
+              } catch {
+                formatterFailed = true;
+              }
+            }
+            if (!errorFormatter || formatterFailed) {
               const hasCode =
                 error !== null &&
                 typeof error === "object" &&
@@ -404,18 +439,44 @@ export function createSchmockInterceptor(
               };
             }
 
+            // The Observable must always settle: if the formatter returned a
+            // value the normalizer rejects (for example an embedded Error),
+            // fall back to a minimal safe body instead of throwing inside
+            // this handler and hanging the HttpClient request forever.
+            let response: Schmock.Response;
+            try {
+              response = normalizeResponse(
+                {
+                  status: 500,
+                  body: errorBody,
+                  headers: { "content-type": "application/json" },
+                },
+                requestData.method,
+              );
+            } catch {
+              response = {
+                status: 500,
+                body: {
+                  error: "Internal Server Error",
+                  code: "INTERNAL_ERROR",
+                },
+                headers: { "content-type": "application/json" },
+              };
+            }
             observer.error(
               new HttpErrorResponse({
-                error: errorBody,
-                status: 500,
+                error: response.body,
+                status: response.status,
                 statusText: "Internal Server Error",
                 url: req.url,
+                headers: new HttpHeaders(response.headers),
               }),
             );
           });
 
         return () => {
           aborted = true;
+          abortController.abort();
           innerSub?.unsubscribe();
         };
       });

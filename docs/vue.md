@@ -22,7 +22,11 @@ app.use(schmockPlugin, { mock })
 app.mount('#app')
 ```
 
-`schmockPlugin` patches `globalThis.fetch` when the plugin is installed and restores it when the app unmounts. Any `fetch()` call — whether from your code, pinia actions, or any HTTP library — is intercepted automatically.
+`schmockPlugin` patches `globalThis.fetch` when the plugin is installed and restores it when the app unmounts. Calls from your code, Pinia actions, or other clients are intercepted only when they use `globalThis.fetch`; clients using another transport are not intercepted.
+
+Calling `mock.reset()` while the app is mounted clears routes, state, history,
+plugins, and listeners but preserves the Vue plugin's explicit interception
+lease. Re-register routes on the same mock without reinstalling the plugin.
 
 ## Options
 
@@ -108,10 +112,10 @@ describe('UserList', () => {
 
   beforeEach(() => {
     mock = schmock()
-    mock('GET /api/users', [{ id: 1, name: 'Alice' }])
   })
 
   it('renders users', async () => {
+    mock('GET /api/users', [{ id: 1, name: 'Alice' }])
     const wrapper = mount(UserList, {
       global: { plugins: [[schmockPlugin, { mock }]] },
     })

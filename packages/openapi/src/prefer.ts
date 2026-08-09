@@ -1,5 +1,3 @@
-/// <reference path="../../core/schmock.d.ts" />
-
 interface PreferDirectives {
   code?: number;
   example?: string;

@@ -71,9 +71,28 @@ for manifest in "${MANIFESTS[@]}"; do
     EXTRA_CONSUMER_DEPENDENCIES+=("@angular/compiler@$compiler_version")
   fi
 
+  if [[ "$package_name" == "@schmock/core" ]]; then
+    node_types_version="$(read_manifest_dependency "$manifest" devDependencies @types/node)"
+    EXTRA_CONSUMER_DEPENDENCIES+=("@types/node@$node_types_version")
+  fi
+
+  if [[ "$package_name" == "@schmock/express" ]]; then
+    for dependency in express @types/express; do
+      dependency_version="$(
+        read_manifest_dependency "$manifest" devDependencies "$dependency"
+      )"
+      EXTRA_CONSUMER_DEPENDENCIES+=("$dependency@$dependency_version")
+    done
+  fi
+
   if [[ "$package_name" == "@schmock/react" ]]; then
-    testing_library_version="$(read_manifest_dependency "$manifest" devDependencies @testing-library/react)"
-    EXTRA_CONSUMER_DEPENDENCIES+=("@testing-library/react@$testing_library_version")
+    for dependency in @testing-library/react @types/react jsdom react react-dom; do
+      dependency_version="$(
+        read_manifest_dependency "$manifest" devDependencies "$dependency"
+      )"
+      EXTRA_CONSUMER_DEPENDENCIES+=("$dependency@$dependency_version")
+    done
+    EXTRA_CONSUMER_DEPENDENCIES+=("@types/react-dom@^19.0.0")
   fi
 done
 
@@ -88,7 +107,10 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   done
   echo "[ranges 1/1] Validate internal dependency ranges"
   echo "[install 1/1] Install all $TOTAL local tarballs and their opt-in test peers in one isolated consumer"
-  echo "[exports 1/1] Import every candidate entry point and exercise the CLI"
+  echo "[exports-node 1/1] Import every candidate entry point with Node and exercise the CLI"
+  echo "[exports-bun 1/1] Import every candidate entry point with Bun and exercise the CLI"
+  echo "[types 1/1] Compile every declaration-bearing entry in isolation"
+  echo "[types-ts56 1/1] Compile the Core declaration entry with TypeScript 5.6"
   echo "[browser 1/1] Bundle the validation candidate for a browser target"
   exit 0
 fi
@@ -229,6 +251,7 @@ bun -e '
   "${EXTRA_CONSUMER_DEPENDENCIES[@]}"
 
 cp "$ROOT_DIR/scripts/release-candidate-consumer.js" "$FIXTURE_DIR/consumer.mjs"
+cp "$ROOT_DIR/scripts/release-candidate-types.js" "$FIXTURE_DIR/types-consumer.mjs"
 cp "$ROOT_DIR/scripts/release-candidate-browser.js" "$FIXTURE_DIR/browser-consumer.mjs"
 
 echo "[install 1/1] Installing all $TOTAL local tarballs in an isolated consumer"
@@ -237,10 +260,28 @@ echo "[install 1/1] Installing all $TOTAL local tarballs in an isolated consumer
   bun install --linker isolated
 )
 
-echo "[exports 1/1] Importing every candidate entry point and exercising the CLI"
+echo "[exports-node 1/1] Importing every candidate entry point with Node and exercising the CLI"
+(
+  cd "$FIXTURE_DIR"
+  node ./consumer.mjs
+)
+
+echo "[exports-bun 1/1] Importing every candidate entry point with Bun and exercising the CLI"
 (
   cd "$FIXTURE_DIR"
   bun run ./consumer.mjs
+)
+
+echo "[types 1/1] Compiling every declaration-bearing entry in isolation"
+(
+  cd "$FIXTURE_DIR"
+  TSC_BIN="$ROOT_DIR/node_modules/.bin/tsc" node ./types-consumer.mjs
+)
+
+echo "[types-ts56 1/1] Compiling the Core declaration entry with TypeScript 5.6"
+(
+  cd "$FIXTURE_DIR"
+  node "$ROOT_DIR/scripts/check-typescript-5-6.mjs"
 )
 
 echo "[browser 1/1] Bundling the validation candidate for a browser target"

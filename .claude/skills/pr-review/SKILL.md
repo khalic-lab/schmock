@@ -2,7 +2,9 @@
 name: pr-review
 description: >
   Review pull requests against Schmock project standards. Checks BDD coverage,
-  code quality, conventions, and documentation.
+  code quality, conventions, and documentation. Use when asked to review a PR,
+  check whether a branch meets project standards before merging, or assess BDD
+  test coverage on a change.
 argument-hint: "[pr-number]"
 ---
 

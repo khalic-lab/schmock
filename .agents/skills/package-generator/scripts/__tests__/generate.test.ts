@@ -258,6 +258,13 @@ describe("package generator", () => {
     const peerDependencies = requiredObject(pkg, "peerDependencies");
     expect(requiredString(peerDependencies, "@schmock/core")).toBe("^2.2.2");
     expect(requiredObject(pkg, "devDependencies")).toEqual(toolDependencies);
+    const scripts = requiredObject(pkg, "scripts");
+    expect(requiredString(scripts, "clean")).toBe(
+      "rm -rf dist && rm -f tsconfig.tsbuildinfo",
+    );
+    expect(requiredString(scripts, "build")).toBe(
+      "bun run clean && bun run build:lib && bun run build:types",
+    );
 
     const packageTsconfig = readJsonObject(join(pkgDir, "tsconfig.json"));
     expect(packageTsconfig.extends).toBe("../../tsconfig.json");

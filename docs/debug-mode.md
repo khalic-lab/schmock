@@ -31,6 +31,7 @@ const mock = schmock({ debug: true })
 ```
 [SCHMOCK:ERROR] [def456] Error processing request: Authentication required
 [SCHMOCK:PIPELINE] Plugin auth handled error
+[SCHMOCK:EVENT] request:end listener rejected: metrics backend unavailable
 [SCHMOCK] request-def456: 15.234ms
 ```
 
@@ -46,6 +47,7 @@ const mock = schmock({ debug: true })
 | `PIPELINE` | Plugin pipeline execution |
 | `RESPONSE` | Response generation |
 | `ERROR` | Error handling |
+| `EVENT` | Isolated lifecycle-listener failures and rejected promises |
 
 ## Filtering
 

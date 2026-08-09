@@ -1,5 +1,6 @@
+import { EventEmitter } from "node:events";
 import type { CallableMockInstance } from "@schmock/core";
-import { ROUTE_NOT_FOUND_CODE, SchmockError } from "@schmock/core";
+import { ROUTE_NOT_FOUND_CODE, SchmockError, schmock } from "@schmock/core";
 import type { NextFunction, Request, Response } from "express";
 import { describe, expect, it, vi } from "vitest";
 import { toExpress } from "./index";
@@ -35,6 +36,23 @@ function createRes() {
     send: vi.fn(),
     end: vi.fn(),
   } as unknown as Response;
+}
+
+function endedBody(res: Response): Buffer {
+  const body: unknown = vi.mocked(res.end).mock.calls.at(-1)?.[0];
+  if (!Buffer.isBuffer(body)) {
+    throw new Error("Expected Express to end with a Buffer body");
+  }
+  return body;
+}
+
+function endedText(res: Response): string {
+  return endedBody(res).toString("utf8");
+}
+
+function endedJson(res: Response): unknown {
+  const parsed: unknown = JSON.parse(endedText(res));
+  return parsed;
 }
 
 function arrayBufferViewCases(): Array<[string, ArrayBufferView]> {
@@ -88,14 +106,15 @@ describe("toExpress", () => {
       headers: { authorization: "Bearer token" },
       body: undefined,
       query: { page: "1" },
+      signal: expect.any(AbortSignal),
     });
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.set).toHaveBeenCalledWith("Content-Type", "application/json");
-    expect(res.json).toHaveBeenCalledWith({ message: "Hello" });
+    expect(endedJson(res)).toEqual({ message: "Hello" });
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("handles string responses with res.send", async () => {
+  it("writes string responses as serialized bytes", async () => {
     const mock = createMock(() =>
       Promise.resolve({ status: 200, body: "Plain text", headers: {} }),
     );
@@ -104,7 +123,7 @@ describe("toExpress", () => {
 
     await toExpress(mock)(createReq(), res, next);
 
-    expect(res.send).toHaveBeenCalledWith("Plain text");
+    expect(endedText(res)).toBe("Plain text");
     expect(res.json).not.toHaveBeenCalled();
   });
 
@@ -117,15 +136,11 @@ describe("toExpress", () => {
 
     await toExpress(mock)(createReq(), res, vi.fn());
 
-    const sentBody = vi.mocked(res.send).mock.calls[0]?.[0];
+    const sentBody = endedBody(res);
     expect(res.set).toHaveBeenCalledWith(
       "content-type",
       "application/octet-stream",
     );
-    expect(Buffer.isBuffer(sentBody)).toBe(true);
-    if (!Buffer.isBuffer(sentBody)) {
-      throw new Error("Expected Express to receive a Buffer");
-    }
     expect([...sentBody]).toEqual([1, 2, 3]);
   });
 
@@ -139,15 +154,11 @@ describe("toExpress", () => {
 
     await toExpress(mock)(createReq(), res, vi.fn());
 
-    const sentBody = vi.mocked(res.send).mock.calls[0]?.[0];
+    const sentBody = endedBody(res);
     expect(res.set).toHaveBeenCalledWith(
       "content-type",
       "application/octet-stream",
     );
-    expect(Buffer.isBuffer(sentBody)).toBe(true);
-    if (!Buffer.isBuffer(sentBody)) {
-      throw new Error("Expected Express to receive a Buffer");
-    }
     expect([...sentBody]).toEqual([
       ...new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
     ]);
@@ -251,6 +262,49 @@ describe("toExpress", () => {
         expect.any(Object),
       );
     });
+
+    it("retains the admitted generation across an async adapter hook", async () => {
+      const realMock = schmock();
+      const uninstall = vi.fn();
+      realMock("GET /generation", "old").pipe({
+        name: "old-generation",
+        process: (context, response) => ({ context, response }),
+        uninstall,
+      });
+      let announceHookStart = () => {};
+      let releaseHook = () => {};
+      const hookStarted = new Promise<void>((resolve) => {
+        announceHookStart = resolve;
+      });
+      const hookBarrier = new Promise<void>((resolve) => {
+        releaseHook = resolve;
+      });
+      const res = createRes();
+      const staleStart = vi.fn();
+      const middleware = toExpress(realMock, {
+        async beforeRequest() {
+          announceHookStart();
+          await hookBarrier;
+        },
+      });
+
+      const pending = middleware(
+        createReq({ path: "/generation" }),
+        res,
+        vi.fn(),
+      );
+      await hookStarted;
+      realMock.reset();
+      expect(uninstall).not.toHaveBeenCalled();
+      realMock.on("request:start", staleStart);
+      realMock("GET /generation", "new");
+      releaseHook();
+      await pending;
+
+      expect(endedText(res)).toBe("old");
+      expect(uninstall).toHaveBeenCalledOnce();
+      expect(staleStart).not.toHaveBeenCalled();
+    });
   });
 
   describe("beforeResponse interceptor", () => {
@@ -270,8 +324,47 @@ describe("toExpress", () => {
       })(createReq(), res, next);
 
       expect(res.status).toHaveBeenCalledWith(201);
-      expect(res.send).toHaveBeenCalledWith("modified");
+      expect(endedText(res)).toBe("modified");
       expect(res.set).toHaveBeenCalledWith("x-modified", "true");
+    });
+
+    it("drops stale framing when a response hook changes the body", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({
+          status: 200,
+          body: "x",
+          headers: { "Content-Length": "1" },
+        }),
+      );
+      const res = createRes();
+
+      await toExpress(mock, {
+        beforeResponse: (response) => ({
+          ...response,
+          body: "a longer body",
+        }),
+      })(createReq(), res, vi.fn());
+
+      expect(endedText(res)).toBe("a longer body");
+      expect(res.set).not.toHaveBeenCalledWith("Content-Length", "1");
+    });
+
+    it("suppresses a body added to a 204 response", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "original", headers: {} }),
+      );
+      const res = createRes();
+
+      await toExpress(mock, {
+        beforeResponse: () => ({
+          status: 204,
+          body: { forbidden: true },
+          headers: {},
+        }),
+      })(createReq(), res, vi.fn());
+
+      expect(res.status).toHaveBeenCalledWith(204);
+      expect(vi.mocked(res.end).mock.calls[0]?.[0]).toBeUndefined();
     });
 
     it("does nothing when interceptor returns undefined", async () => {
@@ -286,7 +379,7 @@ describe("toExpress", () => {
       })(createReq(), res, next);
 
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({ data: true });
+      expect(endedJson(res)).toEqual({ data: true });
     });
   });
 
@@ -302,9 +395,86 @@ describe("toExpress", () => {
       })(createReq(), res, next);
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({
+      expect(endedJson(res)).toEqual({
         custom: true,
         msg: "Test error",
+      });
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it("falls back to a safe 500 when the formatter output is not serializable", async () => {
+      const schmockError = new SchmockError("Test error", "TEST_CODE");
+      const mock = createMock(() => Promise.reject(schmockError));
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+      // An embedded Error is rejected by the response normalizer; the
+      // adapter must not re-invoke the formatter or escape to Express's
+      // default HTML error handler (which leaks a stack trace).
+      const errorFormatter = vi.fn((err: Error) => ({ cause: err }));
+
+      await toExpress(mock, { errorFormatter })(createReq(), res, next);
+
+      expect(errorFormatter).toHaveBeenCalledTimes(1);
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(endedJson(res)).toEqual({
+        error: "Internal Server Error",
+        code: "INTERNAL_ERROR",
+      });
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it("sends the safe 500 fallback when the formatter itself throws", async () => {
+      const mock = createMock(() => Promise.reject(new Error("boom")));
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+      // The formatter runs inside the send guard: it must fire exactly once
+      // and never escape into Express's default HTML error handler.
+      const errorFormatter = vi.fn(() => {
+        throw new Error("formatter exploded");
+      });
+
+      await toExpress(mock, { errorFormatter })(createReq(), res, next);
+
+      expect(errorFormatter).toHaveBeenCalledTimes(1);
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(endedJson(res)).toEqual({
+        error: "Internal Server Error",
+        code: "INTERNAL_ERROR",
+      });
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it("formats a core exception response once even when the formatter throws", async () => {
+      // A resolved 500 marked as a core exception reaches the formatter on
+      // the success path; a throw there must not re-invoke the formatter
+      // from the outer catch with its own exception.
+      const marked = {
+        status: 500,
+        body: { error: "route blew up", code: "INTERNAL_ERROR" },
+        headers: { "content-type": "application/json" },
+      };
+      Object.defineProperty(
+        marked,
+        Symbol.for("@schmock/core.response-origin"),
+        {
+          configurable: true,
+          value: { kind: "exception", error: new Error("route blew up") },
+        },
+      );
+      const mock = createMock(() => Promise.resolve(marked));
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+      const errorFormatter = vi.fn(() => {
+        throw new Error("formatter exploded");
+      });
+
+      await toExpress(mock, { errorFormatter })(createReq(), res, next);
+
+      expect(errorFormatter).toHaveBeenCalledTimes(1);
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(endedJson(res)).toEqual({
+        error: "Internal Server Error",
+        code: "INTERNAL_ERROR",
       });
       expect(next).not.toHaveBeenCalled();
     });
@@ -322,7 +492,7 @@ describe("toExpress", () => {
       );
 
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({
+      expect(endedJson(res)).toEqual({
         error: "Direct error",
         code: "INTERNAL_ERROR",
       });
@@ -344,7 +514,7 @@ describe("toExpress", () => {
         next,
       );
 
-      expect(res.json).toHaveBeenCalledWith({
+      expect(endedJson(res)).toEqual({
         error: "Schmock fail",
         code: "ROUTE_PARSE_ERROR",
       });
@@ -361,7 +531,7 @@ describe("toExpress", () => {
         next,
       );
 
-      expect(res.json).toHaveBeenCalledWith({
+      expect(endedJson(res)).toEqual({
         error: "Internal Server Error",
         code: "INTERNAL_ERROR",
       });
@@ -443,7 +613,7 @@ describe("toExpress", () => {
   });
 
   describe("edge cases", () => {
-    it("sends status 0 when status is explicitly 0", async () => {
+    it("rejects status 0 before writing an Express response", async () => {
       const mock = createMock(() =>
         Promise.resolve({ status: 0, body: "ok", headers: {} }),
       );
@@ -452,11 +622,13 @@ describe("toExpress", () => {
 
       await toExpress(mock)(createReq(), res, next);
 
-      expect(res.status).toHaveBeenCalledWith(0);
-      expect(res.send).toHaveBeenCalledWith("ok");
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "INVALID_RESPONSE" }),
+      );
+      expect(res.status).not.toHaveBeenCalled();
     });
 
-    it("skips non-string header values in response", async () => {
+    it("rejects non-string response header values", async () => {
       const mock = createMock(() =>
         Promise.resolve({
           status: 200,
@@ -469,8 +641,100 @@ describe("toExpress", () => {
 
       await toExpress(mock)(createReq(), res, next);
 
-      expect(res.set).toHaveBeenCalledWith("valid", "yes");
-      expect(res.set).toHaveBeenCalledTimes(1);
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "INVALID_RESPONSE" }),
+      );
+      expect(res.set).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { "Content-Type": "text/plain", "content-type": "application/json" },
+      { "x-invalid": "before\u0001after" },
+    ])("rejects transport-invalid response headers", async (headers) => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers }),
+      );
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      await toExpress(mock)(createReq(), res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "INVALID_RESPONSE" }),
+      );
+      expect(res.status).not.toHaveBeenCalled();
+      expect(res.set).not.toHaveBeenCalled();
+    });
+
+    it("does not format a deliberate domain 500 as an exception", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({
+          status: 500,
+          body: { error: "declined", code: "DOMAIN_DECLINED" },
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const errorFormatter = vi.fn(() => ({ formatted: true }));
+      const res = createRes();
+
+      await toExpress(mock, { errorFormatter })(createReq(), res, vi.fn());
+
+      expect(errorFormatter).not.toHaveBeenCalled();
+      expect(endedJson(res)).toEqual({
+        error: "declined",
+        code: "DOMAIN_DECLINED",
+      });
+    });
+
+    it("uses a method rewritten to HEAD for formatted errors", async () => {
+      const mock = createMock(() => Promise.reject(new Error("failed")));
+      const res = createRes();
+
+      await toExpress(mock, {
+        beforeRequest: () => ({ method: "HEAD" }),
+        errorFormatter: (error) => ({ error: error.message }),
+      })(createReq(), res, vi.fn());
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(vi.mocked(res.end).mock.calls[0]?.[0]).toBeUndefined();
+    });
+
+    it("settles without late work when the request disconnects", async () => {
+      const requestEvents = new EventEmitter();
+      const responseEvents = new EventEmitter();
+      const req = createReq();
+      const res = createRes();
+      req.once = requestEvents.once.bind(requestEvents);
+      req.off = requestEvents.off.bind(requestEvents);
+      res.once = responseEvents.once.bind(responseEvents);
+      res.off = responseEvents.off.bind(responseEvents);
+      let announceHookStart = () => {};
+      const hookStarted = new Promise<void>((resolve) => {
+        announceHookStart = resolve;
+      });
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "late", headers: {} }),
+      );
+      const middleware = toExpress(mock, {
+        async beforeRequest() {
+          announceHookStart();
+          await new Promise<void>(() => {});
+        },
+      });
+
+      const pending = middleware(req, res, vi.fn());
+      await hookStarted;
+      requestEvents.emit("aborted");
+      await expect(
+        Promise.race([
+          pending,
+          new Promise<void>((_, reject) => {
+            setTimeout(() => reject(new Error("disconnect timed out")), 100);
+          }),
+        ]),
+      ).resolves.toBeUndefined();
+      expect(mock.handle).not.toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
     });
 
     it("drops undefined header values", async () => {
@@ -522,7 +786,7 @@ describe("toExpress", () => {
 
       expect(next).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(404);
-      expect(res.send).toHaveBeenCalledWith("Not found string");
+      expect(endedText(res)).toBe("Not found string");
     });
 
     it("handles 404 with null body (no passthrough)", async () => {

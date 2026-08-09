@@ -70,4 +70,18 @@ Feature: CLI Standalone Server
     Given I have a running CLI petstore server
     When I send a raw CLI request declaring an oversized body
     Then the raw CLI response status should be 413
+    And the raw CLI response should close the connection
+    And the CLI server should accept a valid request afterward
     When I stop the CLI server
+
+  Scenario: Reject an oversized chunked request body
+    Given I have a running CLI petstore server
+    When I send a raw CLI request with an oversized chunked body
+    Then the raw CLI response status should be 413
+    And the raw CLI response body should contain code "PAYLOAD_TOO_LARGE"
+
+  Scenario: Reject malformed JSON before OpenAPI handling
+    Given I have a running CLI petstore server
+    When I send a raw CLI request with malformed JSON
+    Then the raw CLI response status should be 400
+    And the raw CLI response body should contain code "MALFORMED_JSON"

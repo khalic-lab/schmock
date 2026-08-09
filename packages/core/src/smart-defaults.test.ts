@@ -127,7 +127,11 @@ describe("smart content-type defaults", () => {
       const response = await mock.handle("GET", "/binary");
 
       expect(response.status).toBe(200);
-      expect(response.body).toBe(buffer);
+      // The body is an isolated copy but keeps its Buffer type: consumers
+      // rely on response.body.toString("utf8") for Buffer routes.
+      expect(Buffer.isBuffer(response.body)).toBe(true);
+      expect(response.body).toEqual(buffer);
+      expect(response.body).not.toBe(buffer);
       expect(response.headers["content-type"]).toBe("application/octet-stream");
     });
   });

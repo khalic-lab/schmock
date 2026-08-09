@@ -38,10 +38,18 @@ declare namespace Schmock {
 
     /**
      * Called once when the plugin is added via .pipe()
-     * Use this to register routes or configure the instance at setup time
-     * @param instance - The callable mock instance
+     * Route registrations are committed atomically only when this hook returns
+     * synchronously. The scoped instance must not be retained or used later.
+     * Returning a Promise is unsupported and leaves the plugin inactive.
+     * @param instance - A synchronous, installation-scoped callable instance
      */
     install?(instance: CallableMockInstance): void;
+
+    /**
+     * Called during reset after every request admitted with this plugin settles.
+     * Cleanup runs in reverse registration order and must complete synchronously.
+     */
+    uninstall?(instance: CallableMockInstance): void;
 
     /**
      * Inspect or transform a request before its route generator executes.
@@ -116,6 +124,8 @@ declare namespace Schmock {
     requestShortCircuited?: boolean;
     /** Route-specific state */
     routeState?: Record<string, unknown>;
+    /** Abort signal associated with the admitted request */
+    readonly signal?: AbortSignal;
   }
 
   // ===== Callable API Types =====
@@ -204,6 +214,8 @@ declare namespace Schmock {
     body?: unknown;
     /** Shared mutable state */
     state: Record<string, unknown>;
+    /** Abort signal associated with the request */
+    readonly signal?: AbortSignal;
   }
 
   /**
@@ -233,6 +245,7 @@ declare namespace Schmock {
     headers?: Record<string, string>;
     body?: unknown;
     query?: Record<string, string>;
+    signal?: AbortSignal;
   }
 
   /**
@@ -358,7 +371,9 @@ declare namespace Schmock {
     // ===== Reset / Lifecycle =====
 
     /**
-     * Clear all routes, state, plugins, and history
+     * Clear routes, state, plugins, listeners, and history, and stop the Node
+     * server. An explicitly acquired fetch interception remains active until
+     * its InterceptHandle is restored.
      */
     reset(): void;
 
@@ -474,6 +489,7 @@ declare namespace Schmock {
     headers: Record<string, string>;
     body?: unknown;
     query: Record<string, string>;
+    readonly signal?: AbortSignal;
   }
 
   interface AdapterResponse {
@@ -522,28 +538,28 @@ declare namespace Schmock {
   // ===== Lifecycle Events =====
 
   interface RequestStartEvent {
-    method: HttpMethod;
-    path: string;
-    headers: Record<string, string>;
+    readonly method: HttpMethod;
+    readonly path: string;
+    readonly headers: Readonly<Record<string, string>>;
   }
 
   interface RequestMatchEvent {
-    method: HttpMethod;
-    path: string;
-    routePath: string;
-    params: Record<string, string>;
+    readonly method: HttpMethod;
+    readonly path: string;
+    readonly routePath: string;
+    readonly params: Readonly<Record<string, string>>;
   }
 
   interface RequestNotFoundEvent {
-    method: HttpMethod;
-    path: string;
+    readonly method: HttpMethod;
+    readonly path: string;
   }
 
   interface RequestEndEvent {
-    method: HttpMethod;
-    path: string;
-    status: number;
-    duration: number;
+    readonly method: HttpMethod;
+    readonly path: string;
+    readonly status: number;
+    readonly duration: number;
   }
 
   type SchmockEventMap = {
@@ -750,13 +766,29 @@ declare namespace Schmock {
     admin?: boolean;
   }
 
+  /** Browser-safe subset of the Node server exposed by a CLI instance. */
+  interface CliHttpServer {
+    readonly listening: boolean;
+    address():
+      | string
+      | { address: string; family: string; port: number }
+      | null;
+    close(callback?: (error?: Error) => void): this;
+    closeAllConnections(): void;
+    closeIdleConnections(): void;
+    ref(): this;
+    unref(): this;
+  }
+
   /**
-   * Running CLI server instance
+   * Running CLI server instance. Import `CliServer` from `@schmock/cli` for
+   * the exact Node.js server type.
    */
   interface CliServer {
-    server: import("node:http").Server;
+    server: CliHttpServer;
     port: number;
     hostname: string;
     close(): void;
   }
+
 }

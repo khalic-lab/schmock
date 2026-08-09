@@ -1,6 +1,5 @@
-/// <reference path="../../core/schmock.d.ts" />
-
 import { randomUUID } from "node:crypto";
+import type * as Schmock from "@schmock/core";
 import { generateFromSchema } from "@schmock/faker";
 import type { JSONSchema7 } from "json-schema";
 import { negotiateContentType } from "./content-negotiation.js";
@@ -233,7 +232,9 @@ export function createCreateGenerator(
     let item: Record<string, unknown>;
     if (isRecord(ctx.body)) {
       item = {
-        ...ctx.body,
+        ...Object.fromEntries(
+          Object.entries(ctx.body).filter(([, value]) => value !== undefined),
+        ),
         [resource.idParam]: id,
       };
     } else {
@@ -284,9 +285,14 @@ export function createUpdateGenerator(
 
     const existingRaw = collection[index];
     const existing = isRecord(existingRaw) ? existingRaw : {};
+    const updates = isRecord(ctx.body)
+      ? Object.fromEntries(
+          Object.entries(ctx.body).filter(([, value]) => value !== undefined),
+        )
+      : {};
     const updated = {
       ...existing,
-      ...(isRecord(ctx.body) ? ctx.body : {}),
+      ...updates,
       [resource.idParam]: existing[resource.idParam], // Preserve ID
     };
     collection[index] = updated;

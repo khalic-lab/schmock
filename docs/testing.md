@@ -337,7 +337,12 @@ describe('paginated list', () => {
 Run the complete local verification matrix before submitting a change:
 
 ```bash
-bash .agents/skills/code-quality/scripts/validate.sh
+bun run test:all
+bun run test:e2e
+bun run lint
+bun run eslint
+bun run knip
+bun run build
 ```
 
 BDD step definitions are also compiled under the repository's strict TypeScript
@@ -348,3 +353,16 @@ bun run typecheck:bdd
 ```
 
 The root `typecheck` and CI typecheck jobs include this BDD gate automatically.
+
+Package manifests, exports, build output, or release changes also require the
+packed release-candidate gate:
+
+```bash
+bun run check:publish
+```
+
+It verifies clean/repeated build equality and stale-artifact removal, packs all
+11 workspaces, runs Node and Bun consumers, compiles 12 strict standalone
+declaration entries, compiles packed Core declarations with TypeScript 5.6,
+checks React root/testing context identity, exercises the CLI and browser
+bundle, and runs `publint` plus `attw`.
