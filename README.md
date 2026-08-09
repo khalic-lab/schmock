@@ -19,11 +19,12 @@ const res = await mock.handle('GET', '/pets')
 
 ## Why Schmock?
 
-- **OpenAPI-first**: Point at a spec, get a fully functional CRUD mock with stateful collections, seed data, security validation, and content negotiation
+- **OpenAPI-first**: Point at a spec to register mock routes with stateful CRUD collections, seed data, security validation, and content negotiation
 - **Callable API**: No HTTP server needed — call `mock.handle()` directly in tests
 - **Plugin pipeline**: Chain plugins with `.pipe()` for validation, pagination, filtering, or custom logic
-- **Framework adapters**: Drop into Express middleware or Angular HTTP interceptor
+- **Framework adapters**: Use Express middleware, an Angular interceptor, or React and Vue fetch integration
 - **Smart data generation**: Field-name-aware faker generates realistic data from schemas
+- **Consistent transports**: Core, Fetch, Node HTTP, Express, Angular, and CLI share response validation, body suppression, and cancellation plumbing
 
 ## Packages
 
@@ -36,7 +37,10 @@ const res = await mock.handle('GET', '/pets')
 | [`@schmock/query`](./docs/api.md#query-plugin) | Pagination, sorting, and filtering |
 | [`@schmock/express`](./docs/express.md) | Express middleware adapter |
 | [`@schmock/angular`](./docs/angular.md) | Angular HTTP interceptor adapter |
+| [`@schmock/react`](./docs/react.md) | React provider, hook, and testing utilities |
+| [`@schmock/vue`](./docs/vue.md) | Vue plugin and composable |
 | [`@schmock/cli`](./docs/cli.md) | Standalone CLI mock server |
+| `@schmock/schmock` | Aggregate package for Core, non-framework plugins, and CLI |
 
 ## Quick Start
 
@@ -160,6 +164,8 @@ schmock petstore.yaml --port 8080 --cors --seed seed.json
 | [Testing](./docs/testing.md) | Unit tests, integration tests, Angular & Express testing patterns |
 | [Express Adapter](./docs/express.md) | Express middleware setup and options |
 | [Angular Adapter](./docs/angular.md) | Angular interceptor, helpers, TestBed setup |
+| [React Adapter](./docs/react.md) | Provider, hook, fetch interception, and testing helper |
+| [Vue Adapter](./docs/vue.md) | Plugin, composable, and fetch interception |
 | [CLI](./docs/cli.md) | Command-line mock server |
 | [Plugin Development](./docs/plugins.md) | Writing custom plugins |
 | [API Reference](./docs/api.md) | Complete type and method reference |

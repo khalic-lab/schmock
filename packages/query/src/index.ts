@@ -1,5 +1,4 @@
-/// <reference path="../../core/schmock.d.ts" />
-
+import type * as Schmock from "@schmock/core";
 import { isStatusTuple } from "@schmock/core";
 import { version as packageVersion } from "../package.json";
 

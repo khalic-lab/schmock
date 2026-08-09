@@ -91,3 +91,59 @@ Feature: Fetch Interceptor
     When another library replaces globalThis.fetch
     And I restore the interceptor
     Then the third-party fetch replacement should remain installed
+
+  Scenario: RequestInit overrides the input Request
+    Given an intercepted route that reports the effective fetch request
+    When I fetch a Request with overriding method headers and body
+    Then the route should receive the overriding request values
+
+  Scenario: Relative URL fragments do not affect routing
+    Given an intercepted route at "/fragmented"
+    When I fetch the relative URL "fragmented#ignored"
+    Then the fragmented route should return the mocked response
+
+  Scenario: Text request bodies are not parsed as JSON
+    Given an intercepted route that reports its request body type
+    When I fetch it with a JSON-looking text body
+    Then the route should receive a string body
+
+  Scenario: Pre-aborted requests do not enter the mock
+    Given an intercepted route that records generator executions
+    When I fetch it with a pre-aborted signal
+    Then fetch should reject with an abort error
+    And the aborted request should not execute or enter history
+
+  Scenario: Reset preserves an explicitly acquired interceptor
+    Given an intercepted route returning the first generation
+    When I reset and re-register the intercepted route
+    Then the interceptor handle should remain active
+    And a fetch should return the second generation
+    When I restore the surviving interceptor
+    Then globalThis.fetch should be the original function
+
+  Scenario: Relative URLs use the browser base URI
+    Given a browser base URI and an intercepted route beneath it
+    When I fetch a document-relative route
+    Then the route beneath the browser base should respond
+
+  Scenario: Malformed JSON can pass through unchanged
+    Given an unmatched intercepted JSON request with a passthrough backend
+    When I fetch malformed JSON for the unmatched route
+    Then the passthrough backend should receive the exact malformed body
+    And the malformed passthrough should not be formatted or recorded
+
+  Scenario: Abort settles while an interceptor hook remains pending
+    Given an intercepted request paused in an async hook
+    When I abort the request without releasing the hook
+    Then fetch should settle with an abort error before the hook is released
+
+  Scenario: Passthrough uses the admitted request snapshot
+    Given an unmatched request paused before passthrough
+    When I mutate its caller-owned headers before releasing it
+    Then passthrough should receive the original header snapshot
+
+  Scenario: Strict unmatched HEAD responses are bodyless
+    Given fetch is intercepted with passthrough disabled
+    When I fetch an unmatched HEAD route
+    Then the fetch response status should be 404
+    And the unmatched HEAD response body should be empty

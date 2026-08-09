@@ -1,3 +1,4 @@
+import type * as Schmock from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { expect } from "vitest";
 import { generateFromSchema } from "./index";

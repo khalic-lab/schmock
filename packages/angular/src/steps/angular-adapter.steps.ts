@@ -162,6 +162,36 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
     });
   });
 
+  Scenario(
+    "304 Not Modified returns an empty HttpErrorResponse",
+    ({ Given, When, Then, And }) => {
+      Given("I create an Angular mock returning 304 with a body", () => {
+        resetState();
+        mock("GET /api/cached", [304, { forbidden: true }]);
+      });
+
+      When(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          await makeRequest(method, path);
+        },
+      );
+
+      Then("the response should be an HttpErrorResponse", () => {
+        expect(errorResponse).toBeInstanceOf(HttpErrorResponse);
+      });
+
+      And("the error status should be {int}", (_, status: number) => {
+        expect(errorResponse?.status).toBe(status);
+      });
+
+      And("the Angular error body should be empty", () => {
+        expect(errorResponse?.error).toBeNull();
+      });
+    },
+  );
+
   // Adapter Configuration Options Scenarios
 
   Scenario(

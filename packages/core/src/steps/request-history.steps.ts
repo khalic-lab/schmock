@@ -455,4 +455,216 @@ describeFeature(feature, ({ Scenario }) => {
       );
     },
   );
+
+  Scenario(
+    "Full reset prevents stale requests from entering new history",
+    ({ Given, When, And, Then }) => {
+      let releaseRequest = () => {};
+      let requestEntered: Promise<void>;
+      let pendingRequest: Promise<Schmock.Response>;
+      let admittedResponse: Schmock.Response;
+
+      Given("an admitted request is paused before completion", () => {
+        let markEntered = () => {};
+        requestEntered = new Promise((resolve) => {
+          markEntered = resolve;
+        });
+        const release = new Promise<void>((resolve) => {
+          releaseRequest = resolve;
+        });
+        mock = schmock();
+        mock("GET /generation", async () => {
+          markEntered();
+          await release;
+          return { generation: "old" };
+        });
+      });
+
+      When("I reset and complete a request in the new generation", async () => {
+        pendingRequest = mock.handle("GET", "/generation");
+        await requestEntered;
+        mock.reset();
+        mock("GET /generation", { generation: "new" });
+        await mock.handle("GET", "/generation");
+      });
+
+      And("I release the admitted request", async () => {
+        releaseRequest();
+        admittedResponse = await pendingRequest;
+      });
+
+      Then("the admitted caller should receive its original response", () => {
+        expect(admittedResponse.body).toEqual({ generation: "old" });
+      });
+
+      And("history should contain only the new generation request", () => {
+        expect(mock.history().map((record) => record.response.body)).toEqual([
+          { generation: "new" },
+        ]);
+      });
+    },
+  );
+
+  Scenario(
+    "Resetting history is a barrier for pending commits",
+    ({ Given, When, And, Then }) => {
+      let releaseRequest = () => {};
+      let requestEntered: Promise<void>;
+      let pendingRequest: Promise<Schmock.Response>;
+
+      Given("an admitted request is paused before completion", () => {
+        let markEntered = () => {};
+        requestEntered = new Promise((resolve) => {
+          markEntered = resolve;
+        });
+        const release = new Promise<void>((resolve) => {
+          releaseRequest = resolve;
+        });
+        mock = schmock();
+        mock("GET /pending-history", async () => {
+          markEntered();
+          await release;
+          return { completed: true };
+        });
+      });
+
+      When("I reset history before releasing the request", async () => {
+        pendingRequest = mock.handle("GET", "/pending-history");
+        await requestEntered;
+        mock.resetHistory();
+      });
+
+      And("I release the admitted request", async () => {
+        releaseRequest();
+        await pendingRequest;
+      });
+
+      Then("request history should remain empty", () => {
+        expect(mock.history()).toHaveLength(0);
+      });
+    },
+  );
+
+  Scenario(
+    "History snapshots request and response sources when recorded",
+    ({ Given, When, Then }) => {
+      let options: Schmock.RequestOptions;
+      let returnedResponse: Schmock.Response;
+
+      Given("a route and mutable nested request options", () => {
+        const generatedBody = { nested: { value: "response-original" } };
+        options = {
+          headers: { "x-source": "header-original" },
+          query: { source: "query-original" },
+          body: { nested: { value: "request-original" } },
+        };
+        mock = schmock();
+        mock("POST /snapshots", () => generatedBody);
+      });
+
+      When(
+        "I handle the mutable request and then mutate its sources",
+        async () => {
+          returnedResponse = await mock.handle("POST", "/snapshots", options);
+          if (options.headers) options.headers["x-source"] = "header-mutated";
+          if (options.query) options.query.source = "query-mutated";
+          const requestBody = requireRecord(options.body, "request body");
+          const nestedRequest = requireRecord(
+            requestBody.nested,
+            "nested request body",
+          );
+          nestedRequest.value = "request-mutated";
+          const responseBody = requireRecord(
+            returnedResponse.body,
+            "response body",
+          );
+          const nestedResponse = requireRecord(
+            responseBody.nested,
+            "nested response body",
+          );
+          nestedResponse.value = "response-mutated";
+        },
+      );
+
+      Then(
+        "history should retain the original nested request and response values",
+        () => {
+          const record = mock.lastRequest();
+          expect(record).toBeDefined();
+          if (!record) return;
+          expect(record.headers["x-source"]).toBe("header-original");
+          expect(record.query.source).toBe("query-original");
+          expect(record.body).toEqual({
+            nested: { value: "request-original" },
+          });
+          expect(record.response.body).toEqual({
+            nested: { value: "response-original" },
+          });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Shared memory is copied into isolated history snapshots",
+    ({ Given, When, Then }) => {
+      let sourceBytes: Uint8Array;
+
+      Given("a route and a nested shared-memory request body", () => {
+        const shared = new SharedArrayBuffer(4);
+        sourceBytes = new Uint8Array(shared);
+        sourceBytes.set([1, 2, 3, 4]);
+        mock = schmock();
+        mock("POST /shared-history", { accepted: true });
+      });
+
+      When(
+        "I handle the shared-memory request and mutate its source and first history result",
+        async () => {
+          await mock.handle("POST", "/shared-history", {
+            body: {
+              raw: sourceBytes.buffer,
+              view: new Uint8Array(sourceBytes.buffer, 1, 2),
+            },
+          });
+          sourceBytes.fill(9);
+
+          const firstBody = requireRecord(
+            mock.lastRequest()?.body,
+            "first shared history body",
+          );
+          if (!(firstBody.raw instanceof ArrayBuffer)) {
+            throw new Error("Expected an ordinary ArrayBuffer snapshot");
+          }
+          if (!(firstBody.view instanceof Uint8Array)) {
+            throw new Error("Expected a Uint8Array snapshot");
+          }
+          new Uint8Array(firstBody.raw).fill(8);
+          firstBody.view.fill(7);
+        },
+      );
+
+      Then(
+        "a later history result should contain the original bytes in ordinary memory",
+        () => {
+          const body = requireRecord(
+            mock.lastRequest()?.body,
+            "later shared history body",
+          );
+          expect(body.raw).toBeInstanceOf(ArrayBuffer);
+          expect(body.raw).not.toBeInstanceOf(SharedArrayBuffer);
+          expect(body.view).toBeInstanceOf(Uint8Array);
+          if (!(body.raw instanceof ArrayBuffer)) {
+            throw new Error("Expected an ordinary ArrayBuffer snapshot");
+          }
+          if (!(body.view instanceof Uint8Array)) {
+            throw new Error("Expected a Uint8Array snapshot");
+          }
+          expect([...new Uint8Array(body.raw)]).toEqual([1, 2, 3, 4]);
+          expect(body.view.buffer).toBeInstanceOf(ArrayBuffer);
+          expect([...body.view]).toEqual([2, 3]);
+        },
+      );
+    },
+  );
 });

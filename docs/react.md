@@ -25,11 +25,16 @@ function App() {
 }
 ```
 
-`SchmockProvider` patches `globalThis.fetch` on mount and restores it on unmount. Any `fetch()` call inside the tree — whether from your code, React Query, SWR, or axios — is intercepted automatically. The installer commits before descendant layout effects, so a child may safely fetch from `useLayoutEffect` on its first mount.
+`SchmockProvider` patches `globalThis.fetch` on mount and restores it on unmount. Any client that uses `globalThis.fetch` — including React Query or SWR when configured with fetch — is intercepted automatically. Clients using another transport are not intercepted. The installer commits before descendant layout effects, so a child may safely fetch from `useLayoutEffect` on its first mount.
 
 If another library replaces `globalThis.fetch`, a later Schmock provider wraps
 that current implementation as its passthrough boundary. Cleanup never
 overwrites a third-party replacement it no longer owns.
+
+Calling `mock.reset()` while the provider is mounted clears routes, state,
+history, plugins, and listeners but preserves the provider's explicit
+interception lease. Re-register routes on the same mock without remounting the
+provider.
 
 > **Strict Mode:** In React 18+ development mode, components mount → unmount → remount. `SchmockProvider` handles this correctly (it restores fetch on unmount and re-intercepts on remount), but there is a brief window between unmount and remount where fetch is unpatched. If you see intermittent failures in Strict Mode, this is why — they won't occur in production builds.
 
@@ -141,6 +146,10 @@ it('loads users', async () => {
 ```
 
 `renderWithSchmock` returns the standard `@testing-library/react` `RenderResult` plus a `mock` property for assertions.
+
+The testing entry imports the same provider context as the package root, so
+`useSchmock()` from `@schmock/react` works inside
+`renderWithSchmock()` from `@schmock/react/testing`.
 
 > **Note:** `renderWithSchmock` requires `@testing-library/react` as a peer dependency. It is exported from `@schmock/react/testing` (a separate entry point) so projects that don't use Testing Library are not affected.
 

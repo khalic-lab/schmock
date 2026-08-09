@@ -26,6 +26,9 @@ A lightweight, framework-agnostic tool that provides immediate callable mock API
 | `@schmock/query` | Pagination, filtering, sorting plugin |
 | `@schmock/openapi` | OpenAPI/Swagger auto-mock generation plugin |
 | `@schmock/cli` | Standalone CLI server from OpenAPI specs |
+| `@schmock/react` | React provider, hook, and testing utilities |
+| `@schmock/vue` | Vue plugin and composable |
+| `@schmock/schmock` | Aggregate package for Core, non-framework plugins, and CLI |
 
 ### Package Structure
 ```
@@ -38,7 +41,10 @@ schmock/
 │   ├── validation/     # Request/response validation plugin
 │   ├── query/          # Pagination, filtering, sorting plugin
 │   ├── openapi/        # OpenAPI/Swagger auto-mock generation plugin
-│   └── cli/            # Standalone CLI server
+│   ├── cli/            # Standalone CLI server
+│   ├── react/          # React provider, hook, and testing utilities
+│   ├── vue/            # Vue plugin and composable
+│   └── schmock/        # Core + non-framework plugins + CLI aggregate
 ├── features/           # BDD test specifications
 ├── docs/               # API documentation
 └── benchmarks/         # Performance benchmarks
@@ -46,7 +52,11 @@ schmock/
 
 ## Development Status
 
-### Phase 1 — Complete
+The product milestones below predate the production-hardening phases tracked in
+[`CODEBASE-ANALYSIS.md`](../CODEBASE-ANALYSIS.md). They describe product scope,
+not the audit remediation sequence.
+
+### Product Phase 1 — Complete
 - **Core callable API**: Direct mock instance creation and usage
 - **Plugin pipeline**: `.pipe()` chaining architecture
 - **Route handling**: All HTTP methods with path parameters
@@ -60,8 +70,9 @@ schmock/
 - **Monorepo setup**: Bun workspaces with proper dependencies
 - **Developer experience**: Debug mode, auto content-type detection, delay simulation
 
-### Phase 2 — Complete
-All critical gaps addressed for production readiness:
+### Product Phase 2 — Complete
+The original request-history, lifecycle, validation, query, and performance
+milestone is complete:
 
 #### 2.1 Request Spy / History API
 Full request assertion capabilities implemented:
@@ -99,11 +110,11 @@ Baseline metrics and monitoring:
 - Tree-shaking verification
 - Documented baseline metrics
 
-### Phase 3 — Complete
-**North Star achieved**: throw a `swagger.json` at Schmock and let it manage the rest.
+### Product Phase 3 — Complete
+The original OpenAPI and standalone-server product milestone is complete.
 
 #### 3.1 OpenAPI Plugin
-Full OpenAPI/Swagger auto-mock generation:
+Implemented OpenAPI/Swagger auto-mock generation:
 - `install()` hook for route registration at `.pipe()` time
 - Parser with circular reference handling (using `@apidevtools/swagger-parser`)
 - Normalizer for schema transformation and discriminator mapping
@@ -119,7 +130,29 @@ Full OpenAPI/Swagger auto-mock generation:
 - `@schmock/cli` for starting a mock server from the command line
 - Seed file support for realistic initial data
 
-### Phase 4 — Future
+### Production Hardening — Phases 1 and 2 Complete Locally
+
+The post-v2.3.0 worktree has completed and locally verified:
+
+- Deterministic clean and repeated package builds with stale-artifact removal
+- Standalone public declarations for all package entries, including a packed TypeScript 5.6 Core consumer
+- Shared React context identity across `@schmock/react` and `@schmock/react/testing`
+- Persistent default state, mock-owned global configuration, and atomic, scoped plugin installation
+- Synchronous server-start reservation, pending-start cancellation, and same-port restart barriers
+- Request-admission snapshots across routes, state, plugins, history, and adapters
+- Deferred reverse-order plugin cleanup after admitted requests settle
+- Isolated lifecycle observers and detached request-history snapshots
+- Fetch `RequestInit`, browser-relative URL, passthrough, and cancellation fidelity
+- One final response contract across Core, Fetch, Node HTTP, Express, Angular, and CLI
+- Structured 400/413 Node ingress handling with exact 10 MiB limits
+
+Final local evidence is 1,928 unit, 1,307 BDD, 137 integration, and 14 E2E
+tests, plus lint, build, TypeScript 5.6, reproducibility, packed-consumer,
+`publint`, and `attw` gates. Fresh remote CI is still pending. Audit findings
+M10 onward remain open in whole or in part; see
+[`CODEBASE-ANALYSIS.md`](../CODEBASE-ANALYSIS.md) for the next phases.
+
+### Product Phase 4 — Future
 - **Network error simulation**: Timeouts, connection refused (beyond HTTP error codes)
 - **Sequence responses**: Declarative successive response patterns
 - **Caching plugin**: Response caching with TTL
@@ -133,7 +166,7 @@ Full OpenAPI/Swagger auto-mock generation:
 
 ### Modern Architecture
 - **ESM-first**: Full ES module support
-- **TypeScript 5.9**: Latest TypeScript features
+- **TypeScript 6.0**: Repository compiler, with packed Core declarations also checked under TypeScript 5.6
 - **Bun workspaces**: Fast package management
 - **Biome**: Modern linting and formatting
 - **Vitest**: Fast test execution with BDD support
@@ -153,14 +186,14 @@ Full OpenAPI/Swagger auto-mock generation:
 - Complete user flows (shopping cart, sessions, multi-user isolation)
 - Stateful mocks with shared mutable state
 - Plugin pipeline for extensibility
-- Framework adapters (Express, Angular)
+- Framework adapters (Express, Angular, React, Vue)
 - **Request spy/history** — MSW, nock, WireMock, Mirage JS all have this
 - **Reset/lifecycle** — MSW (`resetHandlers`), nock (`cleanAll`), Mirage JS (`shutdown`)
 - **Validation** — WireMock verification, contract testing
 - **Query helpers** — json-server pagination/filtering
 - **OpenAPI auto-mock** — Prism, Stoplight, Swagger UI
 
-### Future Gaps (Phase 4)
+### Future Product Gaps
 - Network error simulation (timeouts, connection refused)
 - Sequence/multi-response patterns
 - GraphQL support
@@ -168,6 +201,6 @@ Full OpenAPI/Swagger auto-mock generation:
 
 ---
 
-**Status**: Active development
+**Status**: Active development; release-artifact and core lifecycle/transport hardening complete locally, fresh remote CI pending
 **License**: MIT
 **Maintained by**: Khalic Lab

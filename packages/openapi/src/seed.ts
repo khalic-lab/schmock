@@ -1,5 +1,3 @@
-/// <reference path="../../core/schmock.d.ts" />
-
 import type { CrudResource } from "./crud-detector.js";
 import { generateSeedItems } from "./generators.js";
 

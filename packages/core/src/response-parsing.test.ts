@@ -169,7 +169,10 @@ describe("response parsing", () => {
       const response = await mock.handle("GET", "/complex");
 
       expect(response.status).toBe(200);
-      expect(response.body).toEqual(complexObject);
+      expect(response.body).toEqual({
+        ...complexObject,
+        timestamp: "2023-01-01T00:00:00.000Z",
+      });
       expect(response.headers).toEqual({ "content-type": "application/json" });
     });
 
@@ -226,13 +229,13 @@ describe("response parsing", () => {
   });
 
   describe("status code boundaries", () => {
-    it("status code 100 (lower boundary) is accepted as tuple", async () => {
+    it("rejects informational statuses that cannot be final responses", async () => {
       const mock = schmock();
       mock("GET /continue", () => [100, "Continue"]);
 
       const response = await mock.handle("GET", "/continue");
-      expect(response.status).toBe(100);
-      expect(response.body).toBe("Continue");
+      expect(response.status).toBe(500);
+      expect(response.body).toMatchObject({ code: "INVALID_RESPONSE" });
     });
 
     it("status code 599 (upper boundary) is accepted as tuple", async () => {
@@ -244,15 +247,13 @@ describe("response parsing", () => {
       expect(response.body).toEqual({ message: "custom status" });
     });
 
-    it("float status like 200.5 is accepted as tuple (number check)", async () => {
+    it("rejects fractional response statuses", async () => {
       const mock = schmock();
       mock("GET /float", () => [200.5, { ok: true }]);
 
       const response = await mock.handle("GET", "/float");
-      // isStatusTuple checks typeof === 'number' and 100 <= n <= 599
-      // 200.5 passes both checks, so it's treated as a tuple
-      expect(response.status).toBe(200.5);
-      expect(response.body).toEqual({ ok: true });
+      expect(response.status).toBe(500);
+      expect(response.body).toMatchObject({ code: "INVALID_RESPONSE" });
     });
 
     it("array [201, null, undefined] — tuple with undefined headers defaults to empty", async () => {
@@ -300,7 +301,7 @@ describe("response parsing", () => {
   });
 
   describe("edge cases", () => {
-    it("handles response with circular references gracefully", async () => {
+    it("rejects circular response bodies before transport", async () => {
       const mock = schmock();
       mock("GET /circular", () => {
         const obj: any = { name: "test" };
@@ -310,12 +311,11 @@ describe("response parsing", () => {
 
       const response = await mock.handle("GET", "/circular");
 
-      expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty("name", "test");
-      expect(response.body).toHaveProperty("self");
+      expect(response.status).toBe(500);
+      expect(response.body).toMatchObject({ code: "INVALID_RESPONSE" });
     });
 
-    it("preserves functions in response objects", async () => {
+    it("rejects function-valued response properties before transport", async () => {
       const mock = schmock();
       mock("GET /with-functions", () => ({
         data: "test",
@@ -324,10 +324,8 @@ describe("response parsing", () => {
 
       const response = await mock.handle("GET", "/with-functions");
 
-      expect(response.status).toBe(200);
-      expect(response.body.data).toBe("test");
-      expect(typeof response.body.fn).toBe("function");
-      expect(response.body.fn()).toBe("function result");
+      expect(response.status).toBe(500);
+      expect(response.body).toMatchObject({ code: "INVALID_RESPONSE" });
     });
   });
 });

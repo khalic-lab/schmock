@@ -27,3 +27,8 @@ Feature: React Adapter
     Given a Schmock instance with a route for a layout-effect request
     When I render a layout-effect fetcher inside SchmockProvider
     Then the layout-effect fetcher should display the mocked value
+
+  Scenario: A mounted provider keeps interception across mock reset
+    Given a mounted provider with a first-generation route
+    When I reset and re-register the provider route
+    Then the mounted provider should return the second generation

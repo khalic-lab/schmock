@@ -118,3 +118,20 @@ Feature: HTTP Methods Support
       """
       { "data": "post", "method": "POST", "logged": true }
       """
+
+  Scenario: Body-forbidden responses are normalized before adapters
+    Given I create routes with bodies for HEAD and no-content statuses
+    When I request every body-forbidden route
+    Then every body-forbidden response should have no body
+    And bodyless response framing headers should be transport-safe
+
+  Scenario: Generated HEAD failures retain semantics without bodies
+    Given I create a throwing HEAD route
+    When I request unmatched and throwing HEAD routes
+    Then both generated HEAD responses should have no body
+    And only the unmatched HEAD response should be a route miss
+
+  Scenario: Invalid response status becomes a structured server error
+    Given I create a route with a fractional response status
+    When I request the invalid-status route
+    Then the invalid response status should return 500 with code "INVALID_RESPONSE"

@@ -36,6 +36,13 @@ Feature: Angular Adapter
     Then the response should be an HttpResponse
     And the status should be 201
 
+  Scenario: 304 Not Modified returns an empty HttpErrorResponse
+    Given I create an Angular mock returning 304 with a body
+    When I make an Angular request to "GET /api/cached"
+    Then the response should be an HttpErrorResponse
+    And the error status should be 304
+    And the Angular error body should be empty
+
   # Adapter Configuration Options
 
   Scenario: Requests outside baseUrl are passed through

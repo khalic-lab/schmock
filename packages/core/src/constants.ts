@@ -2,6 +2,60 @@ import type { HttpMethod } from "./types.js";
 
 export const ROUTE_NOT_FOUND_CODE = "ROUTE_NOT_FOUND" as const;
 
+interface ResponseLike {
+  status: number;
+  body: unknown;
+}
+
+type ResponseOrigin =
+  | { kind: "route-not-found" }
+  | { kind: "exception"; error: Error };
+
+const RESPONSE_ORIGIN = Symbol.for("@schmock/core.response-origin");
+
+function setResponseOrigin(response: object, origin: ResponseOrigin): void {
+  Object.defineProperty(response, RESPONSE_ORIGIN, {
+    configurable: true,
+    value: origin,
+  });
+}
+
+function getResponseOrigin(response: object): ResponseOrigin | undefined {
+  const origin: unknown = Reflect.get(response, RESPONSE_ORIGIN);
+  if (typeof origin !== "object" || origin === null || !("kind" in origin)) {
+    return undefined;
+  }
+  if (origin.kind === "route-not-found") return { kind: "route-not-found" };
+  if (
+    origin.kind === "exception" &&
+    "error" in origin &&
+    origin.error instanceof Error
+  ) {
+    return { kind: "exception", error: origin.error };
+  }
+  return undefined;
+}
+
+export function markRouteNotFound<T extends ResponseLike>(response: T): T {
+  setResponseOrigin(response, { kind: "route-not-found" });
+  return response;
+}
+
+export function markResponseException<T extends ResponseLike>(
+  response: T,
+  error: Error,
+): T {
+  setResponseOrigin(response, { kind: "exception", error });
+  return response;
+}
+
+export function getResponseException(
+  response: ResponseLike,
+): Error | undefined {
+  const origin = getResponseOrigin(response);
+  return origin?.kind === "exception" ? origin.error : undefined;
+}
+
 export const HTTP_METHODS: readonly HttpMethod[] = [
   "GET",
   "POST",
@@ -41,6 +95,8 @@ export function isRouteNotFound(response: {
   status: number;
   body: unknown;
 }): boolean {
+  if (getResponseOrigin(response)?.kind === "route-not-found") return true;
+
   const { status, body } = response;
   return (
     status === 404 &&

@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "dev": "bun build:lib --watch",
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist && rm -f tsconfig.tsbuildinfo",
     "build": "bun run clean && bun run build:lib && bun run build:types",
     "build:lib": "bun build --minify src/index.ts --outdir dist --target browser --format esm --external @angular/common --external @angular/core --external @schmock/core --external @schmock/openapi --external rxjs",
     "build:types": "rm -f tsconfig.tsbuildinfo && tsc --build",

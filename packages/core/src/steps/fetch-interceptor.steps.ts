@@ -33,6 +33,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     handle = undefined;
     additionalHandles = [];
     globalThis.fetch = originalFetch;
+    vi.unstubAllGlobals();
   });
 
   Scenario(
@@ -197,7 +198,14 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       Then(
         "the original fetch should have been called exactly once for {string}",
         (_, url: string) => {
-          expect(savedFetch.mock.calls).toEqual([[url, undefined]]);
+          expect(savedFetch).toHaveBeenCalledOnce();
+          const [input, ...remainingArguments] = savedFetch.mock.calls[0];
+          expect(remainingArguments).toEqual([]);
+          expect(input).toBeInstanceOf(Request);
+          if (!(input instanceof Request)) {
+            throw new Error("Expected passthrough to receive a Request");
+          }
+          expect(input.url).toBe(url);
         },
       );
     },
@@ -244,7 +252,14 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       Then(
         "the original fetch should have been called exactly once for {string}",
         (_, url: string) => {
-          expect(savedFetch.mock.calls).toEqual([[url, undefined]]);
+          expect(savedFetch).toHaveBeenCalledOnce();
+          const [input, ...remainingArguments] = savedFetch.mock.calls[0];
+          expect(remainingArguments).toEqual([]);
+          expect(input).toBeInstanceOf(Request);
+          if (!(input instanceof Request)) {
+            throw new Error("Expected passthrough to receive a Request");
+          }
+          expect(input.url).toBe(url);
         },
       );
     },
@@ -451,6 +466,378 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
       Then("the third-party fetch replacement should remain installed", () => {
         expect(globalThis.fetch).toBe(replacementFetch);
+      });
+    },
+  );
+
+  Scenario(
+    "RequestInit overrides the input Request",
+    ({ Given, When, Then }) => {
+      Given(
+        "an intercepted route that reports the effective fetch request",
+        () => {
+          setup();
+          mock("PATCH /effective", ({ method, headers, body }) => ({
+            method,
+            source: headers["x-source"],
+            body,
+          }));
+          handle = mock.intercept({ passthrough: false });
+        },
+      );
+
+      When(
+        "I fetch a Request with overriding method headers and body",
+        async () => {
+          const input = new Request("http://localhost/effective", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-source": "input",
+            },
+            body: JSON.stringify({ source: "input" }),
+          });
+          fetchResponse = await fetch(input, {
+            method: "PATCH",
+            headers: {
+              "content-type": "application/json",
+              "x-source": "override",
+            },
+            body: JSON.stringify({ source: "override" }),
+          });
+        },
+      );
+
+      Then(
+        "the route should receive the overriding request values",
+        async () => {
+          expect(await fetchResponse?.json()).toEqual({
+            method: "PATCH",
+            source: "override",
+            body: { source: "override" },
+          });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Relative URL fragments do not affect routing",
+    ({ Given, When, Then }) => {
+      Given('an intercepted route at "/fragmented"', () => {
+        setup();
+        mock("GET /fragmented", { fragmented: false });
+        handle = mock.intercept({ passthrough: false });
+      });
+
+      When(
+        "I fetch the relative URL {string}",
+        async (_, relativeUrl: string) => {
+          fetchResponse = await fetch(relativeUrl);
+        },
+      );
+
+      Then(
+        "the fragmented route should return the mocked response",
+        async () => {
+          expect(await fetchResponse?.json()).toEqual({ fragmented: false });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Text request bodies are not parsed as JSON",
+    ({ Given, When, Then }) => {
+      Given("an intercepted route that reports its request body type", () => {
+        setup();
+        mock("POST /text-body", ({ body }) => ({
+          bodyType: typeof body,
+          body,
+        }));
+        handle = mock.intercept({ passthrough: false });
+      });
+
+      When("I fetch it with a JSON-looking text body", async () => {
+        fetchResponse = await fetch("http://localhost/text-body", {
+          method: "POST",
+          headers: { "content-type": "text/plain" },
+          body: '{"looks":"json"}',
+        });
+      });
+
+      Then("the route should receive a string body", async () => {
+        expect(await fetchResponse?.json()).toEqual({
+          bodyType: "string",
+          body: '{"looks":"json"}',
+        });
+      });
+    },
+  );
+
+  Scenario(
+    "Pre-aborted requests do not enter the mock",
+    ({ Given, When, Then, And }) => {
+      let fetchError: unknown;
+      let generatorExecutions = 0;
+
+      Given("an intercepted route that records generator executions", () => {
+        setup();
+        mock("GET /aborted", () => {
+          generatorExecutions += 1;
+          return { completed: true };
+        });
+        handle = mock.intercept({ passthrough: false });
+      });
+
+      When("I fetch it with a pre-aborted signal", async () => {
+        const controller = new AbortController();
+        controller.abort();
+        try {
+          await fetch("http://localhost/aborted", {
+            signal: controller.signal,
+          });
+        } catch (error) {
+          fetchError = error;
+        }
+      });
+
+      Then("fetch should reject with an abort error", () => {
+        expect(fetchError).toMatchObject({ name: "AbortError" });
+      });
+
+      And("the aborted request should not execute or enter history", () => {
+        expect(generatorExecutions).toBe(0);
+        expect(mock.history()).toHaveLength(0);
+      });
+    },
+  );
+
+  Scenario(
+    "Reset preserves an explicitly acquired interceptor",
+    ({ Given, When, Then, And }) => {
+      Given("an intercepted route returning the first generation", () => {
+        setup();
+        mock("GET /generation", { generation: "first" });
+        handle = mock.intercept({ passthrough: false });
+      });
+
+      When("I reset and re-register the intercepted route", () => {
+        mock.reset();
+        mock("GET /generation", { generation: "second" });
+      });
+
+      Then("the interceptor handle should remain active", () => {
+        expect(handle?.active).toBe(true);
+      });
+
+      And("a fetch should return the second generation", async () => {
+        fetchResponse = await fetch("http://localhost/generation");
+        expect(await fetchResponse.json()).toEqual({ generation: "second" });
+        expect(savedFetch).not.toHaveBeenCalled();
+      });
+
+      When("I restore the surviving interceptor", () => {
+        handle?.restore();
+      });
+
+      Then("globalThis.fetch should be the original function", () => {
+        expect(globalThis.fetch).toBe(savedFetch);
+      });
+    },
+  );
+
+  Scenario(
+    "Relative URLs use the browser base URI",
+    ({ Given, When, Then }) => {
+      Given("a browser base URI and an intercepted route beneath it", () => {
+        setup();
+        vi.stubGlobal("document", {
+          baseURI: "https://app.example.test/app/page.html",
+        });
+        mock("GET /app/users", { matched: true });
+        handle = mock.intercept({ passthrough: false });
+      });
+
+      When("I fetch a document-relative route", async () => {
+        fetchResponse = await fetch("users");
+      });
+
+      Then("the route beneath the browser base should respond", async () => {
+        expect(await fetchResponse?.json()).toEqual({ matched: true });
+      });
+    },
+  );
+
+  Scenario(
+    "Malformed JSON can pass through unchanged",
+    ({ Given, When, Then, And }) => {
+      let errorFormatter: Mock<(error: Error) => unknown>;
+
+      Given(
+        "an unmatched intercepted JSON request with a passthrough backend",
+        () => {
+          setup();
+          savedFetch = vi.fn(async (input: RequestInfo | URL) => {
+            if (!(input instanceof Request)) {
+              throw new Error("Expected a Request snapshot");
+            }
+            return new Response(await input.text());
+          });
+          globalThis.fetch = savedFetch;
+          errorFormatter = vi.fn(() => ({ formatted: true }));
+          mock("POST /matched", { matched: true });
+          handle = mock.intercept({ passthrough: true, errorFormatter });
+        },
+      );
+
+      When("I fetch malformed JSON for the unmatched route", async () => {
+        fetchResponse = await fetch("http://localhost/unmatched", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "not-json-{broken",
+        });
+      });
+
+      Then(
+        "the passthrough backend should receive the exact malformed body",
+        async () => {
+          expect(await fetchResponse?.text()).toBe("not-json-{broken");
+        },
+      );
+
+      And(
+        "the malformed passthrough should not be formatted or recorded",
+        () => {
+          expect(errorFormatter).not.toHaveBeenCalled();
+          expect(mock.history()).toHaveLength(0);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Abort settles while an interceptor hook remains pending",
+    ({ Given, When, Then }) => {
+      let controller: AbortController;
+      let requestError: unknown;
+      let announceHookStart = () => {};
+      let hookStarted: Promise<void>;
+
+      Given("an intercepted request paused in an async hook", () => {
+        setup();
+        hookStarted = new Promise<void>((resolve) => {
+          announceHookStart = resolve;
+        });
+        mock("GET /pending-hook", { completed: true });
+        handle = mock.intercept({
+          passthrough: false,
+          async beforeRequest() {
+            announceHookStart();
+            await new Promise<void>(() => {});
+          },
+        });
+      });
+
+      When("I abort the request without releasing the hook", async () => {
+        controller = new AbortController();
+        const pending = fetch("http://localhost/pending-hook", {
+          signal: controller.signal,
+        });
+        await hookStarted;
+        controller.abort();
+        try {
+          await Promise.race([
+            pending,
+            new Promise<Response>((_, reject) => {
+              setTimeout(() => reject(new Error("abort timed out")), 100);
+            }),
+          ]);
+        } catch (error) {
+          requestError = error;
+        }
+      });
+
+      Then(
+        "fetch should settle with an abort error before the hook is released",
+        () => {
+          expect(requestError).toMatchObject({ name: "AbortError" });
+          expect(mock.history()).toHaveLength(0);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Passthrough uses the admitted request snapshot",
+    ({ Given, When, Then }) => {
+      let headers: Headers;
+      let announceHookStart = () => {};
+      let releaseHook = () => {};
+      let hookStarted: Promise<void>;
+      let pendingFetch: Promise<Response>;
+
+      Given("an unmatched request paused before passthrough", () => {
+        setup();
+        hookStarted = new Promise<void>((resolve) => {
+          announceHookStart = resolve;
+        });
+        const hookBarrier = new Promise<void>((resolve) => {
+          releaseHook = resolve;
+        });
+        headers = new Headers({ "x-snapshot": "original" });
+        handle = mock.intercept({
+          passthrough: true,
+          async beforeRequest(request) {
+            announceHookStart();
+            await hookBarrier;
+            return request;
+          },
+        });
+      });
+
+      When(
+        "I mutate its caller-owned headers before releasing it",
+        async () => {
+          pendingFetch = fetch("http://localhost/unmatched", { headers });
+          await hookStarted;
+          headers.set("x-snapshot", "mutated");
+          releaseHook();
+          await pendingFetch;
+        },
+      );
+
+      Then("passthrough should receive the original header snapshot", () => {
+        const [input, ...remainingArguments] = savedFetch.mock.calls[0];
+        expect(remainingArguments).toEqual([]);
+        if (!(input instanceof Request)) {
+          throw new Error("Expected passthrough to receive a Request snapshot");
+        }
+        expect(input.headers.get("x-snapshot")).toBe("original");
+      });
+    },
+  );
+
+  Scenario(
+    "Strict unmatched HEAD responses are bodyless",
+    ({ Given, When, Then, And }) => {
+      Given("fetch is intercepted with passthrough disabled", () => {
+        setup();
+        handle = mock.intercept({ passthrough: false });
+      });
+
+      When("I fetch an unmatched HEAD route", async () => {
+        fetchResponse = await fetch("http://localhost/missing", {
+          method: "HEAD",
+        });
+      });
+
+      Then("the fetch response status should be 404", () => {
+        expect(fetchResponse?.status).toBe(404);
+      });
+
+      And("the unmatched HEAD response body should be empty", async () => {
+        expect(await fetchResponse?.text()).toBe("");
       });
     },
   );

@@ -1,6 +1,5 @@
-/// <reference path="../../core/schmock.d.ts" />
-
 import SwaggerParser from "@apidevtools/swagger-parser";
+import type * as Schmock from "@schmock/core";
 import { toHttpMethod } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import type { OpenAPI } from "openapi-types";

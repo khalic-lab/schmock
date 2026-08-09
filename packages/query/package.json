@@ -18,7 +18,8 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "bun build:lib && bun build:types",
+    "clean": "rm -rf dist && rm -f tsconfig.tsbuildinfo",
+    "build": "bun run clean && bun run build:lib && bun run build:types",
     "build:lib": "bun build --minify --target node --format esm --outdir=dist src/index.ts --external @schmock/core",
     "build:types": "tsc -p tsconfig.json",
     "test": "vitest run",

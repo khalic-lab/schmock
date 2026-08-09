@@ -488,7 +488,7 @@ describeFeature(feature, ({ Scenario }) => {
   );
 
   Scenario(
-    "Plugin onError returns response with status 0",
+    "Invalid plugin recovery status returns a structured error",
     ({ Given, When, Then, And }) => {
       Given(
         "I create a mock with a plugin whose error handler returns status 0",
@@ -514,8 +514,8 @@ describeFeature(feature, ({ Scenario }) => {
         expect(response.status).toBe(status);
       });
 
-      And("I should receive text {string}", (_, expectedText: string) => {
-        expect(response.body).toBe(expectedText);
+      And("the response should have error code {string}", (_, code: string) => {
+        expect(response.body).toMatchObject({ code });
       });
     },
   );

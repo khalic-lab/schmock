@@ -4,7 +4,7 @@ import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useLayoutEffect, useState } from "react";
-import { expect, vi } from "vitest";
+import { expect, type Mock, vi } from "vitest";
 import { SchmockProvider, useSchmock } from "../index.js";
 
 const feature = await loadFeature("../../features/react-adapter.feature");
@@ -239,6 +239,47 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
               "mocked layout effect",
             );
           });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A mounted provider keeps interception across mock reset",
+    ({ Given, When, Then }) => {
+      let unmountProvider = () => {};
+      let baselineFetch: Mock<typeof globalThis.fetch>;
+
+      Given("a mounted provider with a first-generation route", () => {
+        originalFetch = globalThis.fetch;
+        baselineFetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+          new Response(JSON.stringify({ generation: "real" }), {
+            headers: { "content-type": "application/json" },
+          }),
+        );
+        globalThis.fetch = baselineFetch;
+        mock = schmock();
+        mock("GET /api/generation", { generation: "first" });
+        const rendered = render(
+          <SchmockProvider mock={mock}>
+            <div />
+          </SchmockProvider>,
+        );
+        unmountProvider = rendered.unmount;
+      });
+
+      When("I reset and re-register the provider route", () => {
+        mock.reset();
+        mock("GET /api/generation", { generation: "second" });
+      });
+
+      Then(
+        "the mounted provider should return the second generation",
+        async () => {
+          const response = await fetch("http://localhost/api/generation");
+          expect(await response.json()).toEqual({ generation: "second" });
+          expect(baselineFetch).not.toHaveBeenCalled();
+          unmountProvider();
         },
       );
     },

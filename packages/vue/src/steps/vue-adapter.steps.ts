@@ -3,7 +3,7 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
 import { mount } from "@vue/test-utils";
-import { expect, vi } from "vitest";
+import { expect, type Mock, vi } from "vitest";
 import { defineComponent, h, onMounted, ref } from "vue";
 import { schmockPlugin, useSchmock } from "../index.js";
 
@@ -117,4 +117,42 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       globalThis.fetch = originalFetch;
     });
   });
+
+  Scenario(
+    "A mounted plugin keeps interception across mock reset",
+    ({ Given, When, Then }) => {
+      let wrapper: ReturnType<typeof mount>;
+      let baselineFetch: Mock<typeof globalThis.fetch>;
+
+      Given("a mounted Vue plugin with a first-generation route", () => {
+        originalFetch = globalThis.fetch;
+        baselineFetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+          new Response(JSON.stringify({ generation: "real" }), {
+            headers: { "content-type": "application/json" },
+          }),
+        );
+        globalThis.fetch = baselineFetch;
+        mock = schmock();
+        mock("GET /api/generation", { generation: "first" });
+        wrapper = mount(defineComponent({ render: () => h("div") }), {
+          global: { plugins: [[schmockPlugin, { mock }]] },
+        });
+      });
+
+      When("I reset and re-register the Vue plugin route", () => {
+        mock.reset();
+        mock("GET /api/generation", { generation: "second" });
+      });
+
+      Then(
+        "the mounted Vue plugin should return the second generation",
+        async () => {
+          const response = await fetch("http://localhost/api/generation");
+          expect(await response.json()).toEqual({ generation: "second" });
+          expect(baselineFetch).not.toHaveBeenCalled();
+          wrapper.unmount();
+        },
+      );
+    },
+  );
 });

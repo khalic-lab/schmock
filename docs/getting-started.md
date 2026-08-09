@@ -18,6 +18,7 @@ bun install @schmock/faker      # Schema-based data generation
 bun install @schmock/validation # Request/response validation
 bun install @schmock/query      # Pagination, sorting, filtering
 bun install @schmock/cli        # Standalone CLI server
+bun install @schmock/schmock    # Core + non-framework plugins + CLI
 ```
 
 ## Core Concepts
@@ -38,6 +39,7 @@ const mock = schmock({
   state: { users: [], counter: 0 }, // shared mutable state
   delay: 100,                     // simulate latency (ms)
   debug: true,                    // log request lifecycle
+  maxHistorySize: 1000,           // retain only the newest 1000 requests
 })
 ```
 
@@ -79,17 +81,21 @@ mock('POST /users', ({ body, state }) => {
 ### 3. Handle requests
 
 ```typescript
-const res = await mock.handle('GET', '/health')
+const health = await mock.handle('GET', '/health')
 // → { status: 200, body: { status: 'ok' }, headers: { 'content-type': 'application/json' } }
 
-const res = await mock.handle('POST', '/users', {
+const abortController = new AbortController()
+const created = await mock.handle('POST', '/users', {
   body: { name: 'Alice' },
   headers: { authorization: 'Bearer token' },
   query: { notify: 'true' },
+  signal: abortController.signal,
 })
 ```
 
-`handle()` never throws — errors become response objects with appropriate status codes.
+Ordinary handling errors become response objects with appropriate status codes.
+Cancellation rejects with the signal reason (or an `AbortError`) and does not
+enter request history.
 
 ### 4. Use plugins
 
@@ -118,7 +124,8 @@ response processors then run in `.pipe()` order after the generator.
 
 ## State Management
 
-State is shared across all routes and persists between requests:
+State is shared across all routes and persists between requests. Calling
+`schmock()` without a state still creates one persistent empty state object:
 
 ```typescript
 const mock = schmock({ state: { users: [], nextId: 1 } })
@@ -142,14 +149,23 @@ mock('DELETE /users/:id', ({ params, state }) => {
 Reset state without clearing routes:
 
 ```typescript
-mock.resetState()   // reset state to initial config values
+mock.resetState()   // replace shared state with an empty object
 mock.resetHistory() // clear request history only
 mock.reset()        // full reset: routes, state, history, plugins, stop server
 ```
 
+`reset()` does not release an explicit `mock.intercept()` lease. Call the
+returned handle's `restore()` method when the interceptor owner is unmounted or
+finished. Requests admitted before reset finish against their original route,
+state, and plugin snapshots; plugin cleanup waits for those requests to settle.
+Resetting replaces internal state without mutating the state object originally
+provided by the caller.
+
 ## Request Spying
 
-Every request is recorded for assertions:
+Matched requests that reach a normalized route response are recorded for
+assertions. Route misses, canceled requests, and unrecovered processing errors
+are not:
 
 ```typescript
 await mock.handle('POST', '/users', { body: { name: 'Alice' } })
@@ -165,6 +181,10 @@ const last = mock.lastRequest('POST', '/users')
 const all = mock.history('POST', '/users')
 // Array of all POST /users request records
 ```
+
+History reads return detached snapshots. `resetHistory()` prevents pending
+older requests from committing after the reset, and `maxHistorySize` applies
+FIFO eviction when a bounded history is configured.
 
 ## Lifecycle Events
 
@@ -184,6 +204,10 @@ mock.on('request:notfound', ({ method, path }) => {
 })
 ```
 
+Event payloads and listener sets are snapshotted for each emission. A throwing
+or rejecting listener is logged and isolated from request processing. Full
+reset clears listeners and suppresses stale events from older requests.
+
 ## Route Introspection
 
 ```typescript
@@ -192,21 +216,50 @@ const routes = mock.getRoutes()
 //  { method: 'GET', path: '/users/:id', hasParams: true }]
 ```
 
+## Fetch Interception
+
+Route `globalThis.fetch` through the mock without starting a server:
+
+```typescript
+mock('GET /api/users', [{ id: 1, name: 'Alice' }])
+
+const interception = mock.intercept({ baseUrl: '/api' })
+
+const response = await fetch('/api/users')
+
+// Release the explicit interception lease when its owner is done.
+interception.restore()
+```
+
+The interceptor honors `RequestInit` overrides and abort signals, resolves
+browser-relative URLs, and passes unmatched requests through unchanged by
+default. `baseUrl` filters requests but does not strip the prefix before route
+lookup. A full `mock.reset()` keeps the explicit lease active so mounted UI
+adapters can re-register routes without patching fetch again.
+
 ## Standalone HTTP Server
 
 Run any mock as a real HTTP server:
 
 ```typescript
-const info = await mock.listen(3000)
+const fixed = await mock.listen(3000)
 // Listening on http://127.0.0.1:3000
 
 // Use port 0 for a random available port (great for tests)
-const info = await mock.listen(0)
-console.log(`Running on port ${info.port}`)
+mock.close()
+const random = await mock.listen(0)
+console.log(`Running on port ${random.port}`)
 
 // Stop the server
 mock.close()
 ```
+
+Server starts are reserved immediately, `close()` safely cancels a pending
+start, and an immediate same-port restart waits for shutdown. Node ingress has
+a 10 MiB request limit: malformed JSON returns structured 400
+`MALFORMED_JSON`, oversized bodies return structured 413
+`PAYLOAD_TOO_LARGE`, and neither reaches route code or history. Client
+disconnects cancel admitted work.
 
 ## Next Steps
 

@@ -146,4 +146,133 @@ describeFeature(feature, ({ Scenario }) => {
       expect(events).toHaveLength(0);
     });
   });
+
+  Scenario(
+    "Throwing listeners do not alter request handling",
+    ({ Given, When, Then, And }) => {
+      let response: Schmock.Response;
+      let endCount = 0;
+      const healthyEvents: string[] = [];
+
+      Given(
+        "a successful route with throwing and healthy lifecycle listeners",
+        () => {
+          mock = schmock();
+          mock("GET /listener-isolation", { ok: true });
+          mock.on("request:start", () => {
+            throw new Error("start listener failed");
+          });
+          mock.on("request:start", () => {
+            healthyEvents.push("start");
+          });
+          mock.on("request:end", () => {
+            endCount += 1;
+            healthyEvents.push("end");
+          });
+          mock.on("request:end", () => {
+            throw new Error("end listener failed");
+          });
+        },
+      );
+
+      When("I request the listener isolation route", async () => {
+        response = await mock.handle("GET", "/listener-isolation");
+      });
+
+      Then(
+        "the listener isolation response status should be {int}",
+        (_, status: number) => {
+          expect(response.status).toBe(status);
+        },
+      );
+
+      And("the healthy listeners should still fire in order", () => {
+        expect(healthyEvents).toEqual(["start", "end"]);
+      });
+
+      And("request end should fire exactly once", () => {
+        expect(endCount).toBe(1);
+      });
+    },
+  );
+
+  Scenario(
+    "Lifecycle payloads are observational snapshots",
+    ({ Given, And, When, Then }) => {
+      let response: Schmock.Response;
+
+      Given(
+        "a parameterized route that reports its headers and parameters",
+        () => {
+          mock = schmock();
+          mock("GET /observed/:id", ({ headers, params }) => ({
+            source: headers["x-source"],
+            id: params.id,
+          }));
+        },
+      );
+
+      And(
+        "lifecycle listeners attempt to change headers and parameters",
+        () => {
+          mock.on("request:start", (data) => {
+            Reflect.set(data.headers, "x-source", "listener");
+          });
+          mock.on("request:match", (data) => {
+            Reflect.set(data.params, "id", "listener");
+          });
+        },
+      );
+
+      When(
+        "I request the observational route with original values",
+        async () => {
+          response = await mock.handle("GET", "/observed/original", {
+            headers: { "x-source": "original" },
+          });
+        },
+      );
+
+      Then(
+        "the generator should receive the original header and parameter",
+        () => {
+          expect(response.body).toEqual({ source: "original", id: "original" });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Listener changes take effect on the next event",
+    ({ Given, When, Then }) => {
+      let addedListenerCalls = 0;
+      let registered = false;
+
+      Given("a listener that registers another start listener", () => {
+        mock = schmock();
+        mock("GET /listener-snapshot", { ok: true });
+        const addedListener = () => {
+          addedListenerCalls += 1;
+        };
+        mock.on("request:start", () => {
+          if (!registered) {
+            registered = true;
+            mock.on("request:start", addedListener);
+          }
+        });
+      });
+
+      When("I request the listener snapshot route twice", async () => {
+        await mock.handle("GET", "/listener-snapshot");
+        await mock.handle("GET", "/listener-snapshot");
+      });
+
+      Then(
+        "the added listener should skip the first request and run on the second",
+        () => {
+          expect(addedListenerCalls).toBe(1);
+        },
+      );
+    },
+  );
 });

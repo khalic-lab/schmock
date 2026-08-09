@@ -1,16 +1,18 @@
-/// <reference path="../../core/schmock.d.ts" />
-
 import { readFileSync, watch } from "node:fs";
 import type { Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import { parseArgs } from "node:util";
+import type * as Schmock from "@schmock/core";
 import {
   collectBody,
   HTTP_METHODS,
+  HttpIngressError,
   isHttpMethod,
+  normalizeResponse,
   parseNodeHeaders,
   parseNodeQuery,
   schmock,
+  writeRejectedSchmockResponse,
   writeSchmockResponse,
 } from "@schmock/core";
 import { openapi } from "@schmock/openapi";
@@ -37,6 +39,42 @@ export interface CliServer {
 
 const MAX_REQUEST_BODY_SIZE = 10 * 1024 * 1024;
 const ALLOWED_METHODS = HTTP_METHODS.join(", ");
+const REQUEST_ADMISSION = Symbol.for("@schmock/core.request-admission");
+
+type CoreRequestHandler = (
+  method: Schmock.HttpMethod,
+  path: string,
+  options?: Schmock.RequestOptions,
+) => Promise<Schmock.Response>;
+
+interface RequestAdmission {
+  handle: CoreRequestHandler;
+  release(): void;
+}
+
+function isRequestAdmission(value: unknown): value is RequestAdmission {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "handle" in value &&
+    typeof value.handle === "function" &&
+    "release" in value &&
+    typeof value.release === "function"
+  );
+}
+
+function acquireRequestAdmission(
+  mock: Schmock.CallableMockInstance,
+): RequestAdmission | undefined {
+  const admit: unknown = Reflect.get(mock, REQUEST_ADMISSION);
+  if (typeof admit !== "function") return undefined;
+
+  const admission: unknown = Reflect.apply(admit, mock, []);
+  if (!isRequestAdmission(admission)) {
+    throw new Error("Schmock returned an invalid request admission");
+  }
+  return admission;
+}
 
 const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
@@ -44,14 +82,17 @@ const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-headers": "Content-Type, Authorization",
 };
 
-type CliIncomingMessage = Parameters<typeof collectBody>[0] & {
-  readonly headers: {
-    readonly host?: string;
-    readonly [header: string]: string | string[] | undefined;
+type CliIncomingMessage = Parameters<typeof collectBody>[0] &
+  Parameters<typeof writeRejectedSchmockResponse>[0] & {
+    readonly headers: {
+      readonly host?: string;
+      readonly [header: string]: string | string[] | undefined;
+    };
+    readonly method?: string;
+    readonly url?: string;
+    off(event: "aborted", listener: () => void): unknown;
+    once(event: "aborted", listener: () => void): unknown;
   };
-  readonly method?: string;
-  readonly url?: string;
-};
 
 class CliHttpError extends Error {
   constructor(
@@ -157,29 +198,14 @@ function parseRequestMethod(req: CliIncomingMessage): Schmock.HttpMethod {
   return method;
 }
 
-function assertBodySize(headers: Record<string, string>): void {
-  const contentLength = headers["content-length"];
-  if (contentLength === undefined) return;
-
-  const declaredSize = Number(contentLength);
-  if (Number.isFinite(declaredSize) && declaredSize > MAX_REQUEST_BODY_SIZE) {
-    throw new CliHttpError(413, "PAYLOAD_TOO_LARGE", "Request body too large");
-  }
-}
-
 function toCliHttpError(error: unknown): CliHttpError {
   if (error instanceof CliHttpError) return error;
-
-  if (
-    error !== null &&
-    typeof error === "object" &&
-    "status" in error &&
-    error.status === 413
-  ) {
+  if (error instanceof HttpIngressError) {
     return new CliHttpError(
-      413,
-      "PAYLOAD_TOO_LARGE",
-      error instanceof Error ? error.message : "Request body too large",
+      error.status,
+      error.code,
+      error.message,
+      error.status === 413 ? { connection: "close" } : undefined,
     );
   }
 
@@ -196,9 +222,17 @@ async function handleCliRequest(
   mock: Schmock.CallableMockInstance,
   options: { admin: boolean; cors: boolean },
 ): Promise<void> {
+  const abortController = new AbortController();
+  const abortRequest = () => abortController.abort();
+  req.once("aborted", abortRequest);
+  res.once("close", abortRequest);
+  let admission: RequestAdmission | undefined;
+  let requestMethod: Schmock.HttpMethod =
+    req.method?.toUpperCase() === "HEAD" ? "HEAD" : "GET";
   try {
     const url = parseRequestUrl(req);
     const method = parseRequestMethod(req);
+    requestMethod = method;
     const path = url.pathname;
 
     if (options.cors && method === "OPTIONS") {
@@ -216,35 +250,54 @@ async function handleCliRequest(
       return;
     }
 
+    admission = acquireRequestAdmission(mock);
+    const handleRequest: CoreRequestHandler =
+      admission?.handle ??
+      ((admittedMethod, requestPath, requestOptions) =>
+        mock.handle(admittedMethod, requestPath, requestOptions));
     const headers = parseNodeHeaders(req);
-    assertBodySize(headers);
     const query = parseNodeQuery(url);
     const body = await collectBody(req, headers, MAX_REQUEST_BODY_SIZE);
-    const schmockResponse = await mock.handle(method, path, {
+    const schmockResponse = await handleRequest(method, path, {
       headers,
       body,
       query,
+      signal: abortController.signal,
     });
     const extraHeaders = options.cors ? CORS_HEADERS : undefined;
     writeSchmockResponse(res, schmockResponse, extraHeaders);
   } catch (error) {
     const cliError = toCliHttpError(error);
     try {
-      if (!res.headersSent) {
-        res.writeHead(cliError.status, {
-          "content-type": "application/json",
-          ...(options.cors ? CORS_HEADERS : {}),
-          ...cliError.headers,
-        });
-      }
-      if (!res.writableEnded) {
-        res.end(
-          JSON.stringify({ error: cliError.message, code: cliError.code }),
+      if (cliError.status === 413) res.shouldKeepAlive = false;
+      if (!res.headersSent && !res.writableEnded) {
+        const response = normalizeResponse(
+          {
+            status: cliError.status,
+            body: { error: cliError.message, code: cliError.code },
+            headers: {
+              "content-type": "application/json",
+              ...cliError.headers,
+            },
+          },
+          requestMethod,
         );
+        const extraHeaders = options.cors ? CORS_HEADERS : undefined;
+        if (cliError.status === 413) {
+          writeRejectedSchmockResponse(req, res, response, extraHeaders);
+        } else {
+          writeSchmockResponse(res, response, extraHeaders);
+        }
+      } else if (!res.writableEnded) {
+        res.end();
       }
     } catch {
       res.destroy();
     }
+  } finally {
+    req.off("aborted", abortRequest);
+    res.off("close", abortRequest);
+    admission?.release();
   }
 }
 

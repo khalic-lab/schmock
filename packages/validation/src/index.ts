@@ -1,5 +1,4 @@
-/// <reference path="../../core/schmock.d.ts" />
-
+import type * as Schmock from "@schmock/core";
 import { isStatusTuple } from "@schmock/core";
 import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";

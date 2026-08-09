@@ -16,8 +16,13 @@ interface GlobalConfig {
   delay?: number | [number, number]    // response delay in ms, or [min, max] range
   debug?: boolean                      // enable debug logging
   state?: Record<string, unknown>      // initial shared state
+  maxHistorySize?: number              // FIFO history limit; unbounded by default
 }
 ```
+
+Each mock keeps one persistent state object from creation. A supplied state
+object is used until reset; when `state` is omitted, the default is one empty
+object rather than a new object per request.
 
 ### `CallableMockInstance`
 
@@ -37,7 +42,16 @@ type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTION
 
 type Generator = GeneratorFunction | StaticData | JSONSchema7
 type GeneratorFunction = (ctx: RequestContext) => ResponseResult | Promise<ResponseResult>
-type StaticData = string | number | boolean | null | undefined | Record<string, unknown> | unknown[]
+type StaticData =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | Record<string, unknown>
+  | unknown[]
+  | ArrayBuffer
+  | ArrayBufferView
 
 interface RouteConfig {
   contentType?: string         // MIME type (auto-detected if omitted)
@@ -48,7 +62,9 @@ interface RouteConfig {
 
 #### `.handle(method, path, options?)`
 
-Handle a request. Never throws — errors become response objects.
+Handle a request. Ordinary route, plugin, and response failures become response
+objects. Cancellation rejects with the signal reason (or an `AbortError`) and
+does not commit the request to history.
 
 ```typescript
 handle(method: HttpMethod, path: string, options?: RequestOptions): Promise<Response>
@@ -57,6 +73,7 @@ interface RequestOptions {
   headers?: Record<string, string>
   body?: unknown
   query?: Record<string, string>
+  signal?: AbortSignal
 }
 
 interface Response {
@@ -94,21 +111,35 @@ interface RequestRecord {
 }
 ```
 
+Matched requests that reach a normalized route response are recorded. Route
+misses, canceled requests, and unrecovered processing errors are not. Records
+are detached snapshots created when a request completes. A request or response
+body that cannot be structured-cloned is stored as an `unavailable` descriptor
+instead of retaining a mutable application reference. `resetHistory()` is also
+a barrier: requests admitted before it cannot later repopulate the cleared
+history.
+
 #### Lifecycle
 
 ```typescript
-reset(): void           // clear routes, state, history, plugins; stop server
+reset(): void           // clear routes, state, history, plugins, listeners; stop Node server
 resetHistory(): void    // clear request history only
-resetState(): void      // reset state to initial config values
+resetState(): void      // replace shared state with an empty object
 getState(): Record<string, unknown>
 getRoutes(): RouteInfo[]  // [{ method, path, hasParams }]
 ```
 
+`reset()` and `resetState()` replace internal state without mutating the object
+originally passed by the caller. A full reset retires the current request
+generation: admitted requests finish against their original route, state, and
+plugin snapshots, but cannot emit stale events or enter the new history.
+Explicit fetch-interception leases remain active until restored by their owner.
+
 #### Events
 
 ```typescript
-on<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => void): void
-off<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => void): void
+on<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => void): CallableMockInstance
+off<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => void): CallableMockInstance
 ```
 
 | Event | Data |
@@ -118,6 +149,11 @@ off<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => vo
 | `request:notfound` | `{ method, path }` |
 | `request:end` | `{ method, path, status, duration }` |
 
+Event payloads and listener sets are immutable snapshots for each emission.
+Listener failures are isolated from the request, and returned promises are
+observed for rejection but are not awaited. A full reset clears listeners and
+suppresses events from the retired request generation.
+
 #### HTTP server
 
 ```typescript
@@ -126,6 +162,49 @@ close(): void  // idempotent
 
 interface ServerInfo { port: number; hostname: string }
 ```
+
+Server start is reserved synchronously: a second pending or running start
+throws `SERVER_ALREADY_RUNNING`. `close()` is idempotent, cancels a
+pending start with `SERVER_START_CANCELLED`, stops accepting requests before
+closing connections, and permits an immediate same-port restart after the
+close barrier.
+
+Node ingress accepts at most 10 MiB per request, checked against both declared
+`Content-Length` and observed stream bytes. Oversized payloads return a
+structured 413 `PAYLOAD_TOO_LARGE`; malformed JSON for `application/json` or
+`+json` media types returns a structured 400 `MALFORMED_JSON`. Ingress failures
+close the connection and do not execute a route or enter history. Client
+disconnects abort admitted work.
+
+#### `.intercept(options?)`
+
+Patch `globalThis.fetch` and route matching requests through the mock:
+
+```typescript
+mock('GET /api/users', [{ id: 1, name: 'Alice' }])
+
+const interception = mock.intercept({
+  baseUrl: '/api',
+  passthrough: true,
+})
+
+await fetch('/api/users')
+interception.restore()
+```
+
+`baseUrl` accepts either a pathname prefix or an absolute origin with an
+optional path. Path prefixes enforce segment boundaries. Relative URLs resolve
+against the browser document base when available. The base filters requests but
+does not strip the matching prefix before route lookup.
+
+The interceptor creates one effective `Request`, including `RequestInit`
+overrides, and snapshots it at admission. JSON bodies are parsed only for JSON
+media types; unmatched passthrough receives the original effective body and
+headers. Aborts settle pending request/response hooks, route generators, and
+passthrough fetches. A mock exposes one active lease at a time; leases from
+different mocks stack safely. Restoration does not overwrite a later
+third-party fetch replacement, and `reset()` does not release an explicit
+interception lease.
 
 ### Request Context
 
@@ -140,6 +219,7 @@ interface RequestContext {
   headers: Record<string, string>
   body?: unknown
   state: Record<string, unknown>     // mutable shared state
+  readonly signal?: AbortSignal     // request cancellation
 }
 ```
 
@@ -160,6 +240,24 @@ type ResponseResult =
 > can match that shape, wrap it (`{ value: [200, 300] }`) or return it as a
 > single-element array.
 
+Final response statuses must be finite integers from 200 through 599. Bodies are
+removed for HEAD, 204, 205, and 304 responses. Other bodies must be strings,
+binary values, or losslessly JSON-compatible values. Nested `undefined`, sparse
+arrays, maps, promises, and nested binary values are rejected rather than
+silently altered; unsupported values return a structured `INVALID_RESPONSE`
+500 response. Header names are unique case-insensitively and transport-invalid
+control characters are rejected.
+Transport framing headers are adapter-owned and removed from ordinary
+responses; HEAD may retain an explicit representation `Content-Length`, and
+304 representation metadata is preserved.
+
+A string returned in a bare status tuple such as `[200, "hello"]` is emitted as
+raw, untyped text. Add an explicit JSON content type when the string should be
+JSON encoded.
+
+Advanced adapter authors can import `normalizeResponse()` and
+`serializeResponseBody()` from `@schmock/core` to apply this same contract.
+
 ### Plugin Interface
 
 ```typescript
@@ -167,6 +265,7 @@ interface Plugin {
   name: string
   version?: string
   install?(instance: CallableMockInstance): void
+  uninstall?(instance: CallableMockInstance): void
   beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
@@ -183,6 +282,7 @@ interface PluginContext {
   state: Map<string, unknown>              // shared across plugins per request
   requestShortCircuited?: boolean          // response came from beforeRequest
   routeState?: Record<string, unknown>     // route-level persistent state
+  readonly signal?: AbortSignal            // request cancellation
 }
 
 interface PluginResult {
@@ -190,6 +290,12 @@ interface PluginResult {
   response?: unknown
 }
 ```
+
+`install()` receives a synchronous, installation-scoped callable. Routes it
+registers are committed atomically only after the hook returns successfully;
+the callable must not be retained. Promise-returning installs are rejected.
+During `reset()`, `uninstall()` runs in reverse order after requests admitted
+with that plugin generation have settled.
 
 ### Error Classes
 
@@ -208,6 +314,7 @@ class SchmockError extends Error {
 | `RouteParseError` | `ROUTE_PARSE_ERROR` | `{ routeKey, reason }` |
 | `RouteDefinitionError` | `ROUTE_DEFINITION_ERROR` | `{ routeKey, reason }` |
 | `ResponseGenerationError` | `RESPONSE_GENERATION_ERROR` | `{ route, originalError }` |
+| `InvalidResponseError` | `INVALID_RESPONSE` | `{ reason, ...details }` |
 | `PluginError` | `PLUGIN_ERROR` | `{ pluginName, originalError }` |
 | `SchemaValidationError` | `SCHEMA_VALIDATION_ERROR` | `{ schemaPath, issue, suggestion }` |
 | `SchemaGenerationError` | `SCHEMA_GENERATION_ERROR` | `{ route, originalError, schema }` |

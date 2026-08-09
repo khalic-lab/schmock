@@ -134,6 +134,109 @@ describe("createCliServer error handling", () => {
     const healthCheck = await fetch(`http://127.0.0.1:${port}/pets`);
     expect(healthCheck.status).toBe(200);
   });
+
+  it("closes an oversized keep-alive request and remains available", async () => {
+    server = await createCliServer({ spec: PETSTORE_SPEC, port: 0 });
+    const rawResponse = await new Promise<string>((resolveResponse, reject) => {
+      const socket = connect(server?.port ?? 0, "127.0.0.1", () => {
+        socket.write(
+          "POST /pets HTTP/1.1\r\n" +
+            "Host: 127.0.0.1\r\n" +
+            "Content-Type: application/json\r\n" +
+            "Content-Length: 10485761\r\n" +
+            "Connection: keep-alive\r\n" +
+            "\r\n",
+        );
+      });
+      let received = "";
+      const timeout = setTimeout(() => {
+        socket.destroy();
+        reject(new Error("Timed out waiting for oversized connection close"));
+      }, 1_000);
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk: string) => {
+        received += chunk;
+      });
+      socket.on("error", reject);
+      socket.on("close", () => {
+        clearTimeout(timeout);
+        resolveResponse(received);
+      });
+    });
+
+    expect(rawResponse).toContain(" 413 ");
+    expect(rawResponse.toLowerCase()).toContain("connection: close");
+    const healthCheck = await fetch(`http://127.0.0.1:${server.port}/pets`);
+    expect(healthCheck.status).toBe(200);
+  });
+
+  it("delivers a clean 413 while the client is still uploading the declared body", async () => {
+    server = await createCliServer({ spec: PETSTORE_SPEC, port: 0 });
+    const declaredSize = 10_485_761;
+
+    // Without draining the unread request, closing the socket mid-upload sends
+    // a TCP reset that discards the already-written 413 from the client's
+    // receive buffer; the client then sees ECONNRESET and zero response bytes.
+    const rawResponse = await new Promise<string>((resolveResponse, reject) => {
+      const socket = connect(server?.port ?? 0, "127.0.0.1");
+      const chunk = Buffer.alloc(64 * 1024, 0x61);
+      let written = 0;
+      let received = "";
+      let responseComplete = false;
+
+      const pump = (): void => {
+        while (!responseComplete && written < declaredSize) {
+          const next = chunk.subarray(
+            0,
+            Math.min(chunk.length, declaredSize - written),
+          );
+          written += next.length;
+          if (!socket.write(next)) {
+            socket.once("drain", pump);
+            return;
+          }
+        }
+      };
+
+      const timeout = setTimeout(() => {
+        socket.destroy();
+        reject(new Error("Timed out waiting for the 413 during upload"));
+      }, 10_000);
+      socket.on("connect", () => {
+        socket.write(
+          "POST /pets HTTP/1.1\r\n" +
+            "Host: 127.0.0.1\r\n" +
+            "Content-Type: application/json\r\n" +
+            `Content-Length: ${declaredSize}\r\n` +
+            "Connection: keep-alive\r\n" +
+            "\r\n",
+        );
+        pump();
+      });
+      socket.on("data", (data: Buffer) => {
+        received += data.toString("utf8");
+        if (!responseComplete && received.includes("\r\n\r\n")) {
+          responseComplete = true;
+          socket.end();
+        }
+      });
+      socket.on("error", (error: Error) => {
+        clearTimeout(timeout);
+        socket.destroy();
+        reject(new Error(`socket error during upload: ${error.message}`));
+      });
+      socket.on("close", () => {
+        clearTimeout(timeout);
+        resolveResponse(received);
+      });
+    });
+
+    expect(rawResponse).toContain(" 413 ");
+    expect(rawResponse.toLowerCase()).toContain("connection: close");
+    expect(rawResponse).toContain('"code":"PAYLOAD_TOO_LARGE"');
+    const healthCheck = await fetch(`http://127.0.0.1:${server.port}/pets`);
+    expect(healthCheck.status).toBe(200);
+  });
 });
 
 describe("CLI binary", () => {

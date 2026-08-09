@@ -1,5 +1,5 @@
-import { createServer } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { createServer, Server } from "node:http";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { schmock } from "./index";
 
 describe("Standalone Server", () => {
@@ -70,6 +70,38 @@ describe("Standalone Server", () => {
       method: "DELETE",
     });
     expect(res.status).toBe(204);
+  });
+
+  it("suppresses explicit bodies for no-content statuses", async () => {
+    mock = schmock();
+    mock("GET /no-content", () => [204, { forbidden: true }]);
+    const info = await mock.listen(0);
+
+    const response = await fetch(`http://127.0.0.1:${info.port}/no-content`);
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe("");
+  });
+
+  it("writes string bodies verbatim under the default JSON content type", async () => {
+    mock = schmock();
+    mock("GET /json-string", () => JSON.stringify({ a: 1 }));
+    const info = await mock.listen(0);
+
+    // A string body is pre-serialized wire bytes: quoting it would
+    // double-encode routes that return JSON.stringify(...) themselves.
+    const response = await fetch(`http://127.0.0.1:${info.port}/json-string`);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(await response.json()).toEqual({ a: 1 });
+  });
+
+  it("writes bare tuple strings as untyped raw text", async () => {
+    mock = schmock();
+    mock("GET /tuple-string", () => [200, "hello"]);
+    const info = await mock.listen(0);
+
+    const response = await fetch(`http://127.0.0.1:${info.port}/tuple-string`);
+    expect(response.headers.get("content-type")).toBeNull();
+    expect(await response.text()).toBe("hello");
   });
 
   it("writes binary response bodies without JSON serialization", async () => {
@@ -184,6 +216,42 @@ describe("Standalone Server", () => {
     await mock.listen(0);
     mock.close();
     expect(() => mock.close()).not.toThrow();
+  });
+
+  it("stops accepting connections before force-closing existing ones", async () => {
+    mock = schmock();
+    await mock.listen(0);
+    const closeSpy = vi.spyOn(Server.prototype, "close");
+    const closeAllSpy = vi.spyOn(Server.prototype, "closeAllConnections");
+
+    try {
+      mock.close();
+      expect(closeSpy).toHaveBeenCalledOnce();
+      expect(closeAllSpy).toHaveBeenCalledOnce();
+      expect(closeSpy.mock.invocationCallOrder[0]).toBeLessThan(
+        closeAllSpy.mock.invocationCallOrder[0],
+      );
+    } finally {
+      closeSpy.mockRestore();
+      closeAllSpy.mockRestore();
+    }
+  });
+
+  it("can restart immediately on the same port after close", async () => {
+    mock = schmock();
+    mock("GET /test", { ok: true });
+    const initial = await mock.listen(0);
+    const response = await fetch(`http://127.0.0.1:${initial.port}/test`, {
+      headers: { connection: "keep-alive" },
+    });
+    expect(response.status).toBe(200);
+
+    mock.close();
+    const restarted = await mock.listen(initial.port);
+    expect(restarted.port).toBe(initial.port);
+    expect(
+      await (await fetch(`http://127.0.0.1:${restarted.port}/test`)).json(),
+    ).toEqual({ ok: true });
   });
 
   it("generator that throws synchronously returns 500", async () => {

@@ -85,11 +85,11 @@ Feature: Error Handling
     And the content-type should be "application/json"
     And the response body should be a structured "INTERNAL_ERROR" error for "Test error"
 
-  Scenario: Plugin onError returns response with status 0
+  Scenario: Invalid plugin recovery status returns a structured error
     Given I create a mock with a plugin whose error handler returns status 0
     When I request "GET /zero"
-    Then I should receive status 0
-    And I should receive text "zero status"
+    Then I should receive status 500
+    And the response should have error code "INVALID_RESPONSE"
 
   Scenario: Plugin null/undefined return handling
     Given I create a mock with a plugin that returns null

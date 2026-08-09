@@ -38,3 +38,15 @@ Feature: Core Builder Correctness
     And I mutate the response body of the first history record
     Then history returns the original body unchanged
     And lastRequest returns the original body unchanged
+
+  Scenario: Default shared state persists across requests
+    Given a mock with no configured state and an incrementing route
+    When I request the default-state route twice
+    Then the counter responses should be 1 and 2
+    And the mock shared counter state should be 2
+
+  Scenario: Resetting state does not replace state on the caller config
+    Given a caller config containing external state
+    When I create a mock from the config and reset its state
+    Then the caller config should still reference the external state
+    And the mock internal state is empty after resetState

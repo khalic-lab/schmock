@@ -1,5 +1,4 @@
-/// <reference path="../../core/schmock.d.ts" />
-
+import type * as Schmock from "@schmock/core";
 import { schmock } from "@schmock/core";
 import { type RenderResult, render } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";

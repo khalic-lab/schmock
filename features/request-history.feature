@@ -83,3 +83,26 @@ Feature: Request History & Spy API
     Then the call count should be 0
     And the registered route should still respond
     And the shared state marker should still be "preserved"
+
+  Scenario: Full reset prevents stale requests from entering new history
+    Given an admitted request is paused before completion
+    When I reset and complete a request in the new generation
+    And I release the admitted request
+    Then the admitted caller should receive its original response
+    And history should contain only the new generation request
+
+  Scenario: Resetting history is a barrier for pending commits
+    Given an admitted request is paused before completion
+    When I reset history before releasing the request
+    And I release the admitted request
+    Then request history should remain empty
+
+  Scenario: History snapshots request and response sources when recorded
+    Given a route and mutable nested request options
+    When I handle the mutable request and then mutate its sources
+    Then history should retain the original nested request and response values
+
+  Scenario: Shared memory is copied into isolated history snapshots
+    Given a route and a nested shared-memory request body
+    When I handle the shared-memory request and mutate its source and first history result
+    Then a later history result should contain the original bytes in ordinary memory

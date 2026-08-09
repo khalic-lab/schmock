@@ -14,8 +14,8 @@ import { provideSchmockInterceptor } from '@schmock/angular'
 import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http'
 
 const mock = schmock()
-mock('GET /api/users', [{ id: 1, name: 'Alice' }])
-mock('POST /api/users', ({ body }) => [201, { id: 2, ...body }])
+mock('GET /users', [{ id: 1, name: 'Alice' }])
+mock('POST /users', ({ body }) => [201, { id: 2, ...body }])
 
 export const appConfig = {
   providers: [
@@ -204,7 +204,15 @@ describe('UserService', () => {
 
 ## Response Behavior
 
-- Status >= 400 → Converted to Angular `HttpErrorResponse`
-- Status < 400 → Wrapped in Angular `HttpResponse`
-- ROUTE_NOT_FOUND + `passthrough: true` → Request forwarded to real backend
-- ROUTE_NOT_FOUND + `passthrough: false` → Error returned
+- Final 2xx status → Emitted as an Angular `HttpResponse`
+- 3xx through 5xx status → Emitted through `error` as an `HttpErrorResponse`
+- HEAD, 204, 205, and 304 → Body removed before Angular conversion
+- ROUTE_NOT_FOUND + `passthrough: true` → Request forwarded to the real backend
+- ROUTE_NOT_FOUND + `passthrough: false` → 404 `HttpErrorResponse`
+
+`errorFormatter` formats core-marked internal exceptions and thrown handling
+errors. It does not reinterpret an ordinary route response such as
+`[500, { error: 'domain failure' }]`.
+
+Unsubscribing aborts pending Schmock work and unsubscribes any unmatched
+passthrough request. No response is emitted after teardown.

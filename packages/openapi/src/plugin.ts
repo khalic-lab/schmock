@@ -1,5 +1,4 @@
-/// <reference path="../../core/schmock.d.ts" />
-
+import type * as Schmock from "@schmock/core";
 import { SchmockError } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { version as packageVersion } from "../package.json";

@@ -9,11 +9,23 @@ interface Plugin {
   name: string
   version?: string
   install?(instance: CallableMockInstance): void
+  uninstall?(instance: CallableMockInstance): void
   beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
 }
 ```
+
+The `install()` instance is valid only for the synchronous duration of that
+hook. Route registrations are staged and committed together when installation
+succeeds; thrown errors or Promise-returning installs leave no routes or active
+plugin behind. Do not retain the scoped instance for later use.
+
+`reset()` retires the current plugin generation immediately for new requests.
+Its `uninstall()` hooks then run in reverse registration order after every
+already-admitted request using that generation has settled. Cleanup must be
+synchronous. A plugin piped while a request is running belongs to the next
+request generation and cannot enter the in-flight pipeline.
 
 ## Pipeline Execution
 
@@ -120,8 +132,14 @@ interface PluginContext {
   body?: unknown
   state: Map<string, unknown>       // shared across plugins for this request
   routeState?: Record<string, unknown>
+  readonly signal?: AbortSignal     // admitted request cancellation
 }
 ```
+
+The admitted signal is immutable pipeline context: replacing the context in a
+hook cannot discard it. Pending async hooks settle on abort even if their own
+promise remains unresolved. Plugins should still observe `context.signal` when
+performing cancelable external work.
 
 Plugins share data through `context.state`:
 
