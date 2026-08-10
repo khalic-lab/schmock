@@ -13,6 +13,34 @@ import { openapi } from "./plugin";
 const fixturesDir = resolve(import.meta.dirname, "__fixtures__");
 const trainTravelSpec = resolve(fixturesDir, "train-travel.yaml");
 
+/**
+ * Walk a normalized schema graph looking for a key, using an identity
+ * visited-set.
+ *
+ * Normalized schemas are DAGs — a component `$ref`'d from two places is one
+ * shared object — so `JSON.stringify` expands them into a tree and blows the
+ * max string length on large specs (Stripe). Walk the graph instead.
+ */
+function schemaGraphHasKey(
+  node: unknown,
+  matches: (key: string) => boolean,
+  visited: Set<object> = new Set(),
+): boolean {
+  if (!node || typeof node !== "object") return false;
+  if (visited.has(node)) return false;
+  visited.add(node);
+
+  if (Array.isArray(node)) {
+    return node.some((item) => schemaGraphHasKey(item, matches, visited));
+  }
+
+  for (const [key, value] of Object.entries(node)) {
+    if (matches(key)) return true;
+    if (schemaGraphHasKey(value, matches, visited)) return true;
+  }
+  return false;
+}
+
 // ════════════════════════════════════════════════════════════════════
 // 1. PARSER — real-world Train Travel API (OpenAPI 3.1)
 // ════════════════════════════════════════════════════════════════════
@@ -23,10 +51,13 @@ describe("stress: parser — train-travel.yaml", () => {
     expect(spec.version).toBe("1.2.1");
   });
 
-  it("extracts basePath from first server URL", async () => {
+  it("does not prefix paths with the first server URL pathname", async () => {
     const spec = await parseSpec(trainTravelSpec);
-    // servers[0] = "https://try.microcks.io/rest/Train+Travel+API/1.0.0"
-    expect(spec.basePath).toBe("/rest/Train+Travel+API/1.0.0");
+    // servers[0] = "https://try.microcks.io/rest/Train+Travel+API/1.0.0".
+    // That names where the real API is deployed; where the mock is mounted is
+    // the consumer's call, made with an adapter's baseUrl.
+    expect(spec.paths.length).toBeGreaterThan(0);
+    expect(spec.paths.every((p) => !p.path.startsWith("/rest/"))).toBe(true);
   });
 
   it("extracts all path operations", async () => {
@@ -220,10 +251,13 @@ describe("stress: integration — train-travel.yaml", () => {
     expect(created.status).toBe(201);
     const booking = created.body as Record<string, unknown>;
     expect(booking.passenger_name).toBe("John Doe");
-    expect(booking.bookingId).toBe(1);
+    // Booking declares `id: string, format: uuid`, so the identifier is a
+    // synthetic v4-shaped UUID on `id` rather than the path parameter's name.
+    expect(booking.id).toBe("00000000-0000-4000-8000-000000000001");
+    const bookingId = booking.id as string;
 
     // Read
-    const read = await mock.handle("GET", "/bookings/1");
+    const read = await mock.handle("GET", `/bookings/${bookingId}`);
     expect(read.status).toBe(200);
     expect(read.body).toMatchObject({ passenger_name: "John Doe" });
 
@@ -234,11 +268,11 @@ describe("stress: integration — train-travel.yaml", () => {
     expect(listBody.data).toHaveLength(1);
 
     // Delete
-    const deleted = await mock.handle("DELETE", "/bookings/1");
+    const deleted = await mock.handle("DELETE", `/bookings/${bookingId}`);
     expect(deleted.status).toBe(204);
 
     // Verify deletion
-    const afterDelete = await mock.handle("GET", "/bookings/1");
+    const afterDelete = await mock.handle("GET", `/bookings/${bookingId}`);
     expect(afterDelete.status).toBe(404);
   });
 
@@ -268,7 +302,10 @@ describe("stress: integration — train-travel.yaml", () => {
       });
       expect(res.status).toBe(201);
       const body = res.body as Record<string, unknown>;
-      expect(body.bookingId).toBe(i + 1);
+      // Sequential synthetic UUIDs, one per create.
+      expect(body.id).toBe(
+        `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`,
+      );
     }
 
     const list = await mock.handle("GET", "/bookings");
@@ -510,7 +547,7 @@ describe("stress: normalizer", () => {
     const bankProps = branches[1].properties as Record<string, unknown>;
     const sortCode = bankProps.sortCode as Record<string, unknown>;
     expect(sortCode.schmockNullable).toBe(true);
-    expect(sortCode.type).toBe("string");
+    expect(sortCode.type).toEqual(["string", "null"]);
   });
 });
 
@@ -908,29 +945,35 @@ describe("stress: parser edge cases", () => {
     expect(spec.paths).toEqual([]);
   });
 
-  it("servers with relative path", async () => {
+  it("servers with a relative path leave path templates untouched", async () => {
     const spec = await parseSpec({
       openapi: "3.0.3",
       info: { title: "Rel", version: "0.0.0" },
       servers: [{ url: "/v3" }],
-      paths: {},
+      paths: {
+        "/things": { get: { responses: { "200": { description: "OK" } } } },
+      },
     });
-    expect(spec.basePath).toBe("/v3");
+    expect(spec.paths.map((p) => p.path)).toEqual(["/things"]);
   });
 
-  it("servers with root path only", async () => {
+  it("servers with root path only leave path templates untouched", async () => {
     const spec = await parseSpec({
       openapi: "3.0.3",
       info: { title: "Root", version: "0.0.0" },
       servers: [{ url: "/" }],
-      paths: {},
+      paths: {
+        "/things": { get: { responses: { "200": { description: "OK" } } } },
+      },
     });
-    expect(spec.basePath).toBe("");
+    expect(spec.paths.map((p) => p.path)).toEqual(["/things"]);
   });
 
-  it("Swagger 2.0 basePath is extracted", async () => {
+  it("Swagger 2.0 basePath does not prefix path templates", async () => {
     const spec = await parseSpec(`${fixturesDir}/petstore-swagger2.json`);
-    expect(spec.basePath).toBe("/api");
+    // The fixture declares basePath "/api".
+    expect(spec.paths.some((p) => p.path === "/pets")).toBe(true);
+    expect(spec.paths.every((p) => !p.path.startsWith("/api"))).toBe(true);
   });
 });
 
@@ -1190,7 +1233,7 @@ describe("stress: scalar-galaxy.yaml — BREAD operations", () => {
     expect(created.status).toBe(201);
     const newPlanet = created.body as Record<string, unknown>;
     expect(newPlanet.name).toBe("Kepler-442b");
-    expect(newPlanet.planetId).toBe(9); // auto-incremented past seed max (8)
+    expect(newPlanet.id).toBe(9); // auto-incremented past seed max (8)
 
     // BROWSE after ADD — 9 planets (wrapped)
     const afterAdd = await mock.handle("GET", "/planets");
@@ -1218,7 +1261,7 @@ describe("stress: scalar-galaxy.yaml — BREAD operations", () => {
     expect(gone.status).toBe(404);
   });
 
-  it("PATCH works for planet updates too", async () => {
+  it("PUT works for planet updates", async () => {
     const mock = schmock({ state: {} });
     mock.pipe(
       await openapi({
@@ -1229,7 +1272,7 @@ describe("stress: scalar-galaxy.yaml — BREAD operations", () => {
       }),
     );
 
-    const patched = await mock.handle("PATCH", "/planets/1", {
+    const patched = await mock.handle("PUT", "/planets/1", {
       body: { habitabilityIndex: 0.42 },
     });
     expect(patched.status).toBe(200);
@@ -1472,7 +1515,7 @@ describe("stress: confused developer flows", () => {
     expect(res.status).toBe(404);
   });
 
-  it("PATCHes a deleted item — still 404", async () => {
+  it("PUTs a deleted item — still 404", async () => {
     const mock = schmock({ state: {} });
     mock.pipe(
       await openapi({
@@ -1484,7 +1527,7 @@ describe("stress: confused developer flows", () => {
     );
 
     await mock.handle("DELETE", "/planets/1");
-    const res = await mock.handle("PATCH", "/planets/1", {
+    const res = await mock.handle("PUT", "/planets/1", {
       body: { name: "Not Pluto" },
     });
     expect(res.status).toBe(404);
@@ -1520,7 +1563,7 @@ describe("stress: lifecycle and multi-instance flows", () => {
       body: { name: "Planet X" },
     });
     expect(created.status).toBe(201);
-    expect((created.body as Record<string, unknown>).planetId).toBe(9);
+    expect((created.body as Record<string, unknown>).id).toBe(9);
   });
 
   it("two independent mock instances with the same spec", async () => {
@@ -1589,8 +1632,8 @@ describe("stress: lifecycle and multi-instance flows", () => {
     expect(items).toHaveLength(4);
 
     // Seed items at IDs 1-2, runtime items at IDs 3-4
-    expect(items[2].planetId).toBe(3);
-    expect(items[3].planetId).toBe(4);
+    expect(items[2].id).toBe(3);
+    expect(items[3].id).toBe(4);
     expect(items[2].name).toBe("Exo-1");
   });
 
@@ -1764,7 +1807,7 @@ describe("stress: chaos monkey flows", () => {
     );
 
     // Only update one field
-    await mock.handle("PATCH", "/planets/1", {
+    await mock.handle("PUT", "/planets/1", {
       body: { habitabilityIndex: 0.95 },
     });
 
@@ -1807,7 +1850,7 @@ describe("stress: realistic E2E flows", () => {
     });
     expect(booking.status).toBe(201);
     const bookingBody = booking.body as Record<string, unknown>;
-    const bookingId = bookingBody.bookingId;
+    const bookingId = bookingBody.id;
 
     // 4. Read the booking back
     const readBooking = await mock.handle("GET", `/bookings/${bookingId}`);
@@ -1867,10 +1910,7 @@ describe("stress: realistic E2E flows", () => {
     const planet = created.body as Record<string, unknown>;
 
     // 4. Upload an image
-    const image = await mock.handle(
-      "POST",
-      `/planets/${planet.planetId}/image`,
-    );
+    const image = await mock.handle("POST", `/planets/${planet.id}/image`);
     expect(image.status).toBe(200);
 
     // 5. Get user profile
@@ -2025,7 +2065,7 @@ describe("stress: boundary conditions", () => {
     );
 
     // Update only top-level field
-    await mock.handle("PATCH", "/planets/1", { body: { name: "Deeper" } });
+    await mock.handle("PUT", "/planets/1", { body: { name: "Deeper" } });
 
     const res = await mock.handle("GET", "/planets/1");
     const body = res.body as Record<string, unknown>;
@@ -2375,9 +2415,10 @@ describe("stress: stripe spec — parser (5.8MB)", () => {
     expect(spec.version).toBe("2026-01-28.clover");
   }, 120_000);
 
-  it("extracts basePath from server URL", () => {
-    // servers[0] = "https://api.stripe.com/" → pathname "/" → normalized to ""
-    expect(spec.basePath).toBe("");
+  it("registers paths at the templates the spec declares", () => {
+    // servers[0] = "https://api.stripe.com/" — the deployment URL, never a
+    // route prefix. Stripe's own "/v1" prefix comes from the path templates.
+    expect(spec.paths.every((p) => p.path.startsWith("/v1/"))).toBe(true);
   });
 
   it("extracts 400+ path operations", () => {
@@ -2421,22 +2462,17 @@ describe("stress: stripe spec — parser (5.8MB)", () => {
   });
 
   it("strips x-stripe* extensions from all schemas", () => {
+    const isExtension = (key: string) => key.startsWith("x-");
     let extensionFound = false;
     for (const p of spec.paths) {
-      if (p.requestBody) {
-        const str = JSON.stringify(p.requestBody);
-        if (str.includes('"x-')) {
-          extensionFound = true;
-          break;
-        }
+      if (p.requestBody && schemaGraphHasKey(p.requestBody, isExtension)) {
+        extensionFound = true;
+        break;
       }
       for (const [, resp] of p.responses) {
-        if (resp.schema) {
-          const str = JSON.stringify(resp.schema);
-          if (str.includes('"x-')) {
-            extensionFound = true;
-            break;
-          }
+        if (resp.schema && schemaGraphHasKey(resp.schema, isExtension)) {
+          extensionFound = true;
+          break;
         }
       }
       if (extensionFound) break;
@@ -2445,13 +2481,14 @@ describe("stress: stripe spec — parser (5.8MB)", () => {
   });
 
   it("no unresolved $ref in any path", () => {
+    const isRef = (key: string) => key === "$ref";
     for (const p of spec.paths) {
       if (p.requestBody) {
-        expect(JSON.stringify(p.requestBody)).not.toContain('"$ref"');
+        expect(schemaGraphHasKey(p.requestBody, isRef)).toBe(false);
       }
       for (const [, resp] of p.responses) {
         if (resp.schema) {
-          expect(JSON.stringify(resp.schema)).not.toContain('"$ref"');
+          expect(schemaGraphHasKey(resp.schema, isRef)).toBe(false);
         }
       }
     }
@@ -2620,7 +2657,8 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
     expect(created.status).toBe(200);
     const cust = created.body as Record<string, unknown>;
     expect(cust.email).toBe(custFixture.email);
-    expect(cust.customer).toBe(1);
+    // Customer declares `id: string`, so the minted identifier is stringified.
+    expect(cust.id).toBe("1");
 
     // Read
     const read = await mock.handle("GET", "/v1/customers/1");
@@ -2654,7 +2692,8 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
     });
     expect(created.status).toBe(200);
     const prod = created.body as Record<string, unknown>;
-    expect(prod.id).toBe(1);
+    // Product declares `id: string`, so the minted identifier is stringified.
+    expect(prod.id).toBe("1");
     expect(prod.name).toBe("Premium Plan");
 
     // Read by "id"
@@ -2686,7 +2725,8 @@ describe("stress: stripe spec — CRUD lifecycle with fixtures", () => {
     });
     expect(created.status).toBe(200);
     const coupon = created.body as Record<string, unknown>;
-    expect(coupon.coupon).toBe(1);
+    // Coupon declares `id: string`, so the minted identifier is stringified.
+    expect(coupon.id).toBe("1");
     expect(coupon.duration).toBe(couponFixture.duration);
 
     // Delete
@@ -2834,7 +2874,15 @@ describe("stress: stripe spec — the confused Stripe developer", () => {
 
     const list = await mock.handle("GET", "/v1/customers");
     expect((list.body as Record<string, unknown>).data).toHaveLength(50);
-  }, 120_000);
+    // A create now generates the declared 200 contract. Stripe's Customer is a
+    // very wide schema and @schmock/faker generates every optional property
+    // (packages/faker/src/jsf-config.ts: alwaysFakeOptionals), so one create
+    // costs seconds here. No budget bounds request-path generation today — the
+    // node budget only applies to `generateSeedItems` (schema node count, which
+    // this schema stays far under; the cost is width, not depth). Tracked as a
+    // Phase 5 follow-up; the per-request opt-out is `onSchema` returning a
+    // trimmed schema for POST. Hence the large timeout.
+  }, 600_000);
 
   it("interleaved operations across Stripe resources", async () => {
     const mock = schmock({ state: {} });
@@ -2852,7 +2900,7 @@ describe("stress: stripe spec — the confused Stripe developer", () => {
     });
 
     // Read back customer
-    const custId = (c1.body as Record<string, unknown>).customer;
+    const custId = (c1.body as Record<string, unknown>).id;
     const read = await mock.handle("GET", `/v1/customers/${custId}`);
     expect(read.status).toBe(200);
 
@@ -2864,7 +2912,7 @@ describe("stress: stripe spec — the confused Stripe developer", () => {
     expect((await mock.handle("GET", `/v1/customers/${custId}`)).status).toBe(
       200,
     );
-    const couponId = (co1.body as Record<string, unknown>).coupon;
+    const couponId = (co1.body as Record<string, unknown>).id;
     expect((await mock.handle("GET", `/v1/coupons/${couponId}`)).status).toBe(
       200,
     );

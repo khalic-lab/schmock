@@ -17,6 +17,17 @@ export function isJSONSchema7(value: unknown): value is JSONSchema7 {
 }
 
 /**
+ * Type-aware check that tolerates the union form the OpenAPI normalizer emits
+ * for nullable schemas (`type: ["array", "null"]`).
+ */
+export function hasType(schema: { type?: unknown }, type: string): boolean {
+  return (
+    schema.type === type ||
+    (Array.isArray(schema.type) && schema.type.includes(type))
+  );
+}
+
+/**
  * Validate JSON Schema structure and enforce resource limits
  * Checks for malformed schemas, circular references, excessive nesting,
  * and dangerous patterns that could cause memory issues

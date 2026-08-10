@@ -53,45 +53,58 @@ describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
 
-  Scenario("Invalid request body returns 400 with validation errors", ({ Given, When, Then, And }) => {
-    Given("a mock with validateRequests enabled", async () => {
-      mock = schmock({ state: {} });
-      mock.pipe(await openapi({ spec: specWithRequestBody, validateRequests: true }));
-    });
-
-    When("I POST an invalid body to a route with a requestBody schema", async () => {
-      response = await mock.handle("POST", "/items", {
-        body: { name: 123 }, // name should be string, price missing
-        headers: { "content-type": "application/json" },
+  Scenario(
+    "Invalid request body returns 400 with validation errors",
+    ({ Given, When, Then, And }) => {
+      Given("a mock with validateRequests enabled", async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(
+          await openapi({ spec: specWithRequestBody, validateRequests: true }),
+        );
       });
-    });
 
-    Then("the response status is 400", () => {
-      expect(response.status).toBe(400);
-    });
+      When(
+        "I POST an invalid body to a route with a requestBody schema",
+        async () => {
+          response = await mock.handle("POST", "/items", {
+            body: { name: 123 }, // name should be string, price missing
+            headers: { "content-type": "application/json" },
+          });
+        },
+      );
 
-    And('the error body has a "details" array', () => {
-      expect(isRecord(response.body)).toBe(true);
-      if (!isRecord(response.body)) return;
-      expect(response.body.code).toBe("VALIDATION_ERROR");
-      expect(Array.isArray(response.body.details)).toBe(true);
-      if (!Array.isArray(response.body.details)) return;
-      expect(response.body.details.length).toBeGreaterThan(0);
-    });
-  });
+      Then("the response status is 400", () => {
+        expect(response.status).toBe(400);
+      });
+
+      And('the error body has a "details" array', () => {
+        expect(isRecord(response.body)).toBe(true);
+        if (!isRecord(response.body)) return;
+        expect(response.body.code).toBe("VALIDATION_ERROR");
+        expect(Array.isArray(response.body.details)).toBe(true);
+        if (!Array.isArray(response.body.details)) return;
+        expect(response.body.details.length).toBeGreaterThan(0);
+      });
+    },
+  );
 
   Scenario("Valid request body passes through", ({ Given, When, Then }) => {
     Given("a mock with validateRequests enabled", async () => {
       mock = schmock({ state: {} });
-      mock.pipe(await openapi({ spec: specWithRequestBody, validateRequests: true }));
+      mock.pipe(
+        await openapi({ spec: specWithRequestBody, validateRequests: true }),
+      );
     });
 
-    When("I POST a valid body to a route with a requestBody schema", async () => {
-      response = await mock.handle("POST", "/items", {
-        body: { name: "Widget", price: 9.99 },
-        headers: { "content-type": "application/json" },
-      });
-    });
+    When(
+      "I POST a valid body to a route with a requestBody schema",
+      async () => {
+        response = await mock.handle("POST", "/items", {
+          body: { name: "Widget", price: 9.99 },
+          headers: { "content-type": "application/json" },
+        });
+      },
+    );
 
     Then("the response status is 201", () => {
       expect(response.status).toBe(201);

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
 import { expect } from "vitest";
+import { MAX_SEED_FILE_BYTES, MAX_SEED_ITEMS_PER_RESOURCE } from "../limits.js";
 import { openapi } from "../plugin";
 
 const feature = await loadFeature("../../features/openapi-seed.feature");
@@ -162,4 +163,76 @@ describeFeature(feature, ({ Scenario }) => {
       );
     },
   );
+
+  // Budgets fire at plugin construction, not per request, so the assertions
+  // follow the "Invalid seed count" shape rather than driving a mock.
+  Scenario(
+    "Seed count above the item budget is rejected",
+    ({ Given, Then }) => {
+      Given("a Petstore spec path", () => {
+        specPath = `${fixturesDir}/petstore-swagger2.json`;
+      });
+
+      Then(
+        "creating a mock with an oversized seed count should throw about a resource limit",
+        async () => {
+          await expect(
+            openapi({
+              spec: specPath,
+              seed: { pets: { count: MAX_SEED_ITEMS_PER_RESOURCE + 1 } },
+            }),
+          ).rejects.toThrow(/Resource limit exceeded for seed items/);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Inline seed array above the item budget is rejected",
+    ({ Given, Then }) => {
+      Given("a Petstore spec path", () => {
+        specPath = `${fixturesDir}/petstore-swagger2.json`;
+      });
+
+      Then(
+        "creating a mock with an oversized inline seed array should throw about a resource limit",
+        async () => {
+          const oversized = Array.from(
+            { length: MAX_SEED_ITEMS_PER_RESOURCE + 1 },
+            (_, index) => ({ petId: index + 1, name: "x" }),
+          );
+          await expect(
+            openapi({ spec: specPath, seed: { pets: oversized } }),
+          ).rejects.toThrow(/Resource limit exceeded for seed items/);
+        },
+      );
+    },
+  );
+
+  Scenario("Seed file above the byte budget is rejected", ({ Given, Then }) => {
+    Given("a Petstore spec path", () => {
+      specPath = `${fixturesDir}/petstore-swagger2.json`;
+    });
+
+    Then(
+      "creating a mock with an oversized seed file should throw about a resource limit",
+      async () => {
+        const bigFile = resolve(scratchDir, "__big-seed-temp.json");
+        // One padded row is enough to clear the cap without holding a huge
+        // array in memory.
+        writeFileSync(
+          bigFile,
+          JSON.stringify([{ note: "x".repeat(MAX_SEED_FILE_BYTES) }]),
+        );
+        try {
+          await expect(
+            openapi({ spec: specPath, seed: { pets: bigFile } }),
+          ).rejects.toThrow(/Resource limit exceeded for seed file/);
+        } finally {
+          const { unlinkSync } = await import("node:fs");
+          unlinkSync(bigFile);
+        }
+      },
+    );
+  });
 });

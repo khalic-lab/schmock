@@ -26,6 +26,17 @@ Feature: Content Negotiation
     When I request with Accept header "application/xml"
     Then the response status is 406
 
+  Scenario: Unsupported request content type returns 415
+    Given a validating mock with a spec declaring JSON and XML request bodies
+    When I post an item with Content-Type "text/csv"
+    Then the request response status is 415
+    And the error body has a "supported" array
+
+  Scenario: Missing request content type falls back to the JSON schema
+    Given a validating mock with a spec declaring JSON and XML request bodies
+    When I post an item with no Content-Type header
+    Then the request response status is 201
+
   Scenario: Error responses negotiate their own declared media type
     Given a CRUD mock whose success is JSON and missing response is problem JSON
     When I read a missing negotiated item requesting problem JSON

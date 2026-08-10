@@ -1,6 +1,13 @@
-import { readFileSync, watch } from "node:fs";
+import { readFileSync, realpathSync, statSync, watch } from "node:fs";
 import type { Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
+import {
+  dirname,
+  isAbsolute,
+  relative,
+  resolve as resolvePath,
+  sep,
+} from "node:path";
 import { parseArgs } from "node:util";
 import type * as Schmock from "@schmock/core";
 import {
@@ -11,11 +18,12 @@ import {
   normalizeResponse,
   parseNodeHeaders,
   parseNodeQuery,
+  ResourceLimitError,
   schmock,
   writeRejectedSchmockResponse,
   writeSchmockResponse,
 } from "@schmock/core";
-import { openapi } from "@schmock/openapi";
+import { MAX_SEED_MANIFEST_BYTES, openapi } from "@schmock/openapi";
 
 export interface CliOptions {
   spec: string;
@@ -28,6 +36,15 @@ export interface CliOptions {
   errors?: boolean;
   watch?: boolean;
   admin?: boolean;
+  /** Validate the spec against the OpenAPI schema at startup (`--strict`). */
+  strict?: boolean;
+  /** Resolve `$ref`s outside the spec document (`--refs-external`). */
+  refsExternal?: boolean;
+  /**
+   * Hosts an `http(s)` `$ref` may target (`--refs-allow-http`). Supplying this
+   * also enables http resolution, which still requires `refsExternal`.
+   */
+  refsAllowHttp?: string[];
 }
 
 export interface CliServer {
@@ -106,26 +123,99 @@ class CliHttpError extends Error {
   }
 }
 
-function isSeedSource(value: unknown): value is Schmock.SeedConfig[string] {
+function isCountSource(value: unknown): value is { count: number } {
   return (
-    Array.isArray(value) ||
-    typeof value === "string" ||
-    (typeof value === "object" && value !== null && "count" in value)
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    "count" in value &&
+    typeof (value as { count: unknown }).count === "number"
   );
 }
 
-function loadSeedFile(seedPath: string): Schmock.SeedConfig {
-  const raw = readFileSync(seedPath, "utf-8");
-  const parsed: unknown = JSON.parse(raw);
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+/**
+ * Resolve a manifest file entry against the manifest directory, refusing escapes.
+ *
+ * Entries are resolved *then* checked, so an absolute `"/etc/passwd"` is
+ * rejected rather than exempted, and both sides are `realpathSync`'d so a
+ * symlink planted inside the manifest directory cannot point out of it (and so
+ * a macOS `/tmp` → `/private/tmp` manifest still validates).
+ */
+function resolveSeedEntryPath(
+  entry: string,
+  key: string,
+  baseDir: string,
+): string {
+  let real: string;
+  try {
+    real = realpathSync(resolvePath(baseDir, entry));
+  } catch {
+    throw new Error(`Seed entry "${key}" points to a missing file: ${entry}`);
+  }
+  const rel = relative(baseDir, real);
+  // `relative()` signals an escape only when the FIRST path segment is exactly
+  // `..`. A plain `rel.startsWith("..")` also rejects in-directory files whose
+  // name merely begins with `..` (e.g. `..data.json`, or a Kubernetes
+  // ConfigMap mount whose real path runs through `..2024_.../`), which are
+  // wholly inside baseDir. `rel === ""` guards the self-reference `"."`.
+  if (
+    rel === "" ||
+    rel === ".." ||
+    rel.startsWith(`..${sep}`) ||
+    isAbsolute(rel)
+  ) {
     throw new Error(
-      `Seed file must contain a JSON object, got: ${typeof parsed}`,
+      `Seed entry "${key}" must stay inside the seed manifest directory: ${entry}`,
     );
   }
+  return real;
+}
+
+/**
+ * Read a `--seed` manifest.
+ *
+ * Every entry shape is checked explicitly and anything unrecognised throws:
+ * silently dropping a malformed entry used to start a server whose collections
+ * were quietly empty. File entries resolve relative to the manifest rather than
+ * the process CWD, and may not escape the manifest directory.
+ */
+export function loadSeedFile(seedPath: string): Schmock.SeedConfig {
+  const manifestPath = resolvePath(seedPath);
+  // statSync before readFileSync: measuring after the read does not bound it.
+  const { size } = statSync(manifestPath);
+  if (size > MAX_SEED_MANIFEST_BYTES) {
+    throw new ResourceLimitError(
+      `seed manifest "${seedPath}"`,
+      MAX_SEED_MANIFEST_BYTES,
+      size,
+    );
+  }
+  const baseDir = realpathSync(dirname(manifestPath));
+  const raw = readFileSync(manifestPath, "utf-8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`Seed file "${seedPath}" contains invalid JSON`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(
+      `Seed file must contain a JSON object, got: ${Array.isArray(parsed) ? "array" : typeof parsed}`,
+    );
+  }
+
   const result: Schmock.SeedConfig = {};
   for (const [key, value] of Object.entries(parsed)) {
-    if (isSeedSource(value)) {
+    if (Array.isArray(value)) {
       result[key] = value;
+    } else if (typeof value === "string") {
+      result[key] = resolveSeedEntryPath(value, key, baseDir);
+    } else if (isCountSource(value)) {
+      result[key] = value;
+    } else {
+      throw new Error(
+        `Seed entry "${key}" must be an array, a file path, or { "count": <number> }`,
+      );
     }
   }
   return result;
@@ -310,6 +400,12 @@ async function createCliMock(
     spec: options.spec,
     fakerSeed: options.fakerSeed,
     validateRequests: options.errors,
+    strict: options.strict,
+    refs: {
+      external: options.refsExternal ?? false,
+      allowHttp: options.refsAllowHttp !== undefined,
+      allowedHosts: options.refsAllowHttp,
+    },
   };
 
   if (options.seed) {
@@ -383,6 +479,9 @@ export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
       errors: { type: "boolean", default: false },
       watch: { type: "boolean", default: false },
       admin: { type: "boolean", default: false },
+      strict: { type: "boolean", default: false },
+      "refs-external": { type: "boolean", default: false },
+      "refs-allow-http": { type: "string" },
       "seed-random": { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
@@ -402,11 +501,27 @@ export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
     errors: values.errors,
     watch: values.watch,
     admin: values.admin,
+    strict: values.strict,
+    refsExternal: values["refs-external"],
+    refsAllowHttp: parseAllowedHosts(values["refs-allow-http"]),
     fakerSeed: values["seed-random"]
       ? Number(values["seed-random"])
       : undefined,
     help: values.help ?? false,
   };
+}
+
+/**
+ * `--refs-allow-http a.test,b.test` — an empty list is still meaningful: it
+ * turns http resolution on with no host restriction beyond the built-in block
+ * on loopback, link-local and private addresses.
+ */
+function parseAllowedHosts(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  return value
+    .split(",")
+    .map((host) => host.trim())
+    .filter((host) => host.length > 0);
 }
 
 const USAGE = `Usage: schmock <spec> [options]
@@ -422,6 +537,12 @@ Options:
   --errors            Enable request body validation against spec
   --watch             Watch spec file and hot-reload on changes
   --admin             Enable /schmock-admin/* introspection endpoints
+  --strict            Validate the spec against the OpenAPI schema at startup
+  --refs-external     Resolve $refs to files outside the spec document
+  --refs-allow-http <hosts>
+                      Also resolve http(s) $refs, limited to this comma-separated
+                      host list (empty list = any public host). Requires
+                      --refs-external.
   --seed-random <n>   Seed for deterministic random generation
   -h, --help          Show this help message
 `;

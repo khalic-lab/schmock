@@ -190,6 +190,72 @@ const schemaLessMediaSpec = {
   },
 };
 
+const nullableRequestSpec = {
+  openapi: "3.0.3",
+  info: { title: "Nullable request", version: "1.0.0" },
+  paths: {
+    "/profiles": {
+      post: {
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["nickname"],
+                properties: { nickname: { type: "string", nullable: true } },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { ok: { type: "boolean" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+const nullableResponseSpec = {
+  openapi: "3.0.3",
+  info: { title: "Nullable response", version: "1.0.0" },
+  paths: {
+    "/things": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    a: { type: "string", nullable: true },
+                    b: { type: "string", nullable: true },
+                    c: { type: "string", nullable: true },
+                    d: { type: "string", nullable: true },
+                    e: { type: "string", nullable: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -429,6 +495,78 @@ describeFeature(feature, ({ Scenario }) => {
         expect(isRecord(response.body)).toBe(true);
         if (!isRecord(response.body)) return;
         expect(response.body).not.toHaveProperty("jsonOnly");
+      });
+    },
+  );
+
+  Scenario(
+    "Nullable request field accepts an explicit null",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a mock with request validation and a nullable request field",
+        async () => {
+          mock = schmock();
+          mock.pipe(
+            await openapi({
+              spec: nullableRequestSpec,
+              validateRequests: true,
+            }),
+          );
+        },
+      );
+
+      When("I post an explicit null for the nullable field", async () => {
+        response = await mock.handle("POST", "/profiles", {
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+          },
+          body: { nickname: null },
+        });
+      });
+
+      Then("the response status is 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And("the response is not a validation error", () => {
+        if (!isRecord(response.body)) return;
+        expect(response.body.code).not.toBe("VALIDATION_ERROR");
+      });
+    },
+  );
+
+  Scenario(
+    "Nullable response field passes response validation when generated as null",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a mock with response validation and a seeded nullable response field",
+        async () => {
+          mock = schmock();
+          mock.pipe(
+            await openapi({
+              spec: nullableResponseSpec,
+              validateResponses: true,
+              fakerSeed: 45,
+            }),
+          );
+        },
+      );
+
+      When("I request the seeded nullable response", async () => {
+        response = await mock.handle("GET", "/things", {
+          headers: { accept: "application/json", prefer: "dynamic=true" },
+        });
+      });
+
+      Then("the response status is 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And("the nullable response field is null", () => {
+        expect(isRecord(response.body)).toBe(true);
+        if (!isRecord(response.body)) return;
+        expect(response.body.a).toBeNull();
       });
     },
   );

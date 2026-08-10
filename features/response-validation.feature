@@ -47,3 +47,15 @@ Feature: OpenAPI Response Validation
     When I request the schema-less text response
     Then the response status is 200
     And the text response does not contain the JSON-only field
+
+  Scenario: Nullable request field accepts an explicit null
+    Given a mock with request validation and a nullable request field
+    When I post an explicit null for the nullable field
+    Then the response status is 200
+    And the response is not a validation error
+
+  Scenario: Nullable response field passes response validation when generated as null
+    Given a mock with response validation and a seeded nullable response field
+    When I request the seeded nullable response
+    Then the response status is 200
+    And the nullable response field is null

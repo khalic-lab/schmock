@@ -23,6 +23,62 @@ function needsStringFallback(schema: FakerSchema): boolean {
   );
 }
 
+/**
+ * Collapse a normalizer-emitted nullable schema back to its non-null shape for
+ * the generation pass.
+ *
+ * The OpenAPI normalizer makes nullability visible to AJV (`type: [T, "null"]`,
+ * or `anyOf: [{type:"null"}, rest]` for composition-only schemas). JSF would
+ * read that union as a ~50/50 type choice and it also defeats the
+ * `type === "string"` gates in `needsStringFallback`/`findBestMapping`, so on
+ * the generation path we strip it and let `postProcessGenerated` reintroduce
+ * null at ~5%.
+ *
+ * The `schmockNullable` marker MUST survive: `postProcessGenerated` walks the
+ * ENHANCED schema, so dropping it here would silently stop nulls entirely.
+ *
+ * Contract: the caller passes an already-shallow-copied object; this helper may
+ * mutate it in place, and always returns the object to use.
+ */
+function stripNullableForGeneration(schema: FakerSchema): FakerSchema {
+  if (schema.schmockNullable !== true) return schema;
+
+  // `anyOf: [{type:"null"}, rest]` encoding (composition-only nullable).
+  // The structural match is deliberately strict — do not loosen it to
+  // `anyOf.some(b => b.type === "null")`.
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length === 2) {
+    const [nullBranch, rest] = schema.anyOf;
+    if (
+      isJSONSchema7(nullBranch) &&
+      nullBranch.type === "null" &&
+      Object.keys(nullBranch).length === 1 &&
+      isJSONSchema7(rest)
+    ) {
+      const { anyOf: _dropped, ...wrapper } = schema;
+      return { ...rest, ...wrapper, schmockNullable: true };
+    }
+  }
+
+  // `type: [T, "null"]` encoding
+  if (Array.isArray(schema.type)) {
+    const nonNull = schema.type.filter((t) => t !== "null");
+    if (nonNull.length === 1) {
+      schema.type = nonNull[0];
+    } else if (nonNull.length > 0) {
+      schema.type = nonNull;
+    }
+    // all-null: leave untouched
+  }
+  if (Array.isArray(schema.enum)) {
+    const nonNull = schema.enum.filter((v) => v !== null);
+    if (nonNull.length > 0) {
+      schema.enum = nonNull;
+    }
+  }
+
+  return schema;
+}
+
 export function enhanceSchemaWithSmartMapping(
   schema: JSONSchema7,
 ): JSONSchema7 {
@@ -30,7 +86,9 @@ export function enhanceSchemaWithSmartMapping(
     return schema;
   }
 
-  const enhanced: FakerSchema = { ...schema };
+  const enhanced: FakerSchema = stripNullableForGeneration({
+    ...schema,
+  } as FakerSchema);
 
   // Handle object properties
   if (enhanced.properties) {
@@ -76,6 +134,18 @@ export function enhanceSchemaWithSmartMapping(
     );
   }
 
+  // Recurse into patternProperties — the normalizer recurses into them, so a
+  // nullable schema there would otherwise keep its union and get ~50% nulls.
+  if (enhanced.patternProperties) {
+    const patterned = { ...enhanced.patternProperties };
+    for (const [pattern, subSchema] of Object.entries(patterned)) {
+      if (isJSONSchema7(subSchema)) {
+        patterned[pattern] = enhanceSchemaWithSmartMapping(subSchema);
+      }
+    }
+    enhanced.patternProperties = patterned;
+  }
+
   if (needsStringFallback(enhanced)) {
     enhanced.faker = "lorem.word";
   }
@@ -87,7 +157,9 @@ function enhanceFieldSchema(
   fieldName: string,
   fieldSchema: JSONSchema7,
 ): FakerSchema {
-  const enhanced: FakerSchema = { ...fieldSchema };
+  const enhanced: FakerSchema = stripNullableForGeneration({
+    ...fieldSchema,
+  } as FakerSchema);
 
   // If already has faker extension, validate it and don't override.
   // User-supplied faker values are always strings; the object form is only

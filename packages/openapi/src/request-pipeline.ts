@@ -6,7 +6,12 @@ import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import type { JSONSchema7 } from "json-schema";
 import { negotiateContentType } from "./content-negotiation.js";
-import type { ParsedResponseEntry, SecurityScheme } from "./parser.js";
+import { asSchemaGenerationError } from "./generators.js";
+import type {
+  ParsedResponseContent,
+  ParsedResponseEntry,
+  SecurityScheme,
+} from "./parser.js";
 import type { OnSchemaCallback } from "./plugin.js";
 import { parsePreferHeader } from "./prefer.js";
 import {
@@ -14,7 +19,7 @@ import {
   findSuccessResponse,
   type ResponseStatusKey,
 } from "./response-status.js";
-import { isRecord } from "./utils.js";
+import { isRecord, normalizeMediaType } from "./utils.js";
 
 // Type-safe route config accessors (avoid `as` casts on `[key: string]: unknown`)
 function getRouteSecurity(route: Schmock.RouteConfig): string[][] | undefined {
@@ -38,6 +43,47 @@ function getRouteRequestBody(
 
 function isRouteRequestBodyRequired(route: Schmock.RouteConfig): boolean {
   return route["openapi:requestBodyRequired"] === true;
+}
+
+function getRouteRequestContent(
+  route: Schmock.RouteConfig,
+): Map<string, JSONSchema7 | undefined> | undefined {
+  const value = route["openapi:requestContent"];
+  return value instanceof Map ? value : undefined;
+}
+
+/**
+ * Which declared request media type covers `mediaType`, if any.
+ *
+ * Wildcards are matched the way a spec author means them: an explicit key wins,
+ * then `type/*`, then `*​/*`.
+ */
+function selectRequestMediaType(
+  content: Map<string, JSONSchema7 | undefined>,
+  mediaType: string,
+): string | undefined {
+  if (content.has(mediaType)) return mediaType;
+  const type = mediaType.split("/", 1)[0];
+  if (content.has(`${type}/*`)) return `${type}/*`;
+  if (content.has("*/*")) return "*/*";
+  return undefined;
+}
+
+function unsupportedMediaTypeError(
+  context: Schmock.PluginContext,
+  supported: string[],
+): Schmock.PluginResult {
+  return {
+    context,
+    response: [
+      415,
+      {
+        error: "Unsupported Media Type",
+        code: "UNSUPPORTED_MEDIA_TYPE",
+        supported,
+      },
+    ],
+  };
 }
 
 /**
@@ -260,14 +306,19 @@ export function createBodyValidatorContext(): BodyValidatorContext {
 }
 
 /**
- * Validate request body against the spec's requestBody schema.
- * Returns a PluginResult with 400 status if validation fails, or undefined to continue.
+ * Validate request body against the schema declared for its media type.
+ *
+ * Returns 415 for a media type the operation does not declare, 400 when the
+ * body does not satisfy the selected schema, or undefined to continue.
+ *
+ * 415 lives here, and therefore behind `options.validateRequests`, on purpose:
+ * emitting it unconditionally would change status codes for every existing
+ * caller who never opted into request validation.
  */
 export function validateRequestBody(
   context: Schmock.PluginContext,
   validatorCtx: BodyValidatorContext,
 ): Schmock.PluginResult | undefined {
-  const requestBodySchema = getRouteRequestBody(context.route);
   const requestBodyRequired = isRouteRequestBodyRequired(context.route);
 
   if (context.body === undefined) {
@@ -281,6 +332,24 @@ export function validateRequestBody(
       ]);
     }
     return undefined;
+  }
+
+  let requestBodySchema = getRouteRequestBody(context.route);
+  const content = getRouteRequestContent(context.route);
+  if (content && content.size > 0) {
+    const rawContentType = getHeader(context.headers, "content-type");
+    // No declared type from the client is not a violation — fall back to the
+    // JSON-ish default contract rather than rejecting.
+    if (rawContentType) {
+      const selected = selectRequestMediaType(
+        content,
+        normalizeMediaType(rawContentType),
+      );
+      if (!selected) {
+        return unsupportedMediaTypeError(context, [...content.keys()]);
+      }
+      requestBodySchema = content.get(selected);
+    }
   }
 
   if (!requestBodySchema) {
@@ -396,8 +465,12 @@ function getResponseParts(response: unknown): ResponseParts {
   };
 }
 
-function normalizeMediaType(value: string): string {
-  return value.split(";", 1)[0].trim().toLowerCase();
+/**
+ * Status a response value will resolve to, whatever shape it carries
+ * (tuple, response object, or a plain body defaulting to 200 / 204 for nullish).
+ */
+export function getResponseStatus(response: unknown): number {
+  return getResponseParts(response).status;
 }
 
 function findDeclaredMediaType(
@@ -521,7 +594,7 @@ export function validateResponse(
     }
 
     const declaredMediaType = findDeclaredMediaType(entry, mediaType);
-    const mediaEntry = declaredMediaType
+    const mediaEntry: ParsedResponseContent | undefined = declaredMediaType
       ? entry.content.get(declaredMediaType)
       : undefined;
     if (!mediaEntry) {
@@ -718,10 +791,18 @@ async function generateResponseBody(
   try {
     return await generateFromSchema({ schema: finalSchema, seed });
   } catch (error) {
-    console.warn(
-      "[@schmock/openapi] Response body generation failed:",
-      error instanceof Error ? error.message : error,
+    // Same rule as the static generator: a failed generation is an error, not
+    // an empty success body. This runs inside `plugin.process()`, so core wraps
+    // it as a `PluginError` and the wire shape is
+    // `500 {error: 'Plugin "@schmock/openapi" failed: Schema generation failed
+    // for route GET /x: …', code: "PLUGIN_ERROR"}` rather than
+    // `SCHEMA_GENERATION_ERROR`. That asymmetry is accepted: unifying the code
+    // needs either an `onError` hook or a raw `[500, …]` tuple, and both change
+    // unrelated pipeline behaviour.
+    throw asSchemaGenerationError(
+      error,
+      `${context?.method ?? "GET"} ${context?.path ?? ""}`,
+      finalSchema,
     );
-    return {};
   }
 }

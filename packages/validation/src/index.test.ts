@@ -423,6 +423,37 @@ describe("validationPlugin", () => {
     });
   });
 
+  describe("schmock schema markers", () => {
+    // PRE-EXISTING strict-mode fix: draft-07 Ajv defaults to strictSchema:true
+    // and threw "unknown keyword: schmockNullable" on any @schmock/openapi
+    // normalized schema handed to this plugin.
+    it("compiles schemas carrying schmock generation markers", async () => {
+      const plugin = validationPlugin({
+        response: {
+          body: {
+            type: ["string", "null"],
+            schmockNullable: true,
+          } as Schmock.JSONSchema7,
+        },
+      });
+
+      const result = await plugin.process(
+        {
+          path: "/test",
+          route: {},
+          method: "GET",
+          params: {},
+          query: {},
+          headers: {},
+          state: new Map(),
+        },
+        null,
+      );
+
+      expect(result.response).toBeNull();
+    });
+  });
+
   describe("failure modes", () => {
     it("throws when schema cannot be compiled by AJV", () => {
       expect(() =>

@@ -110,22 +110,28 @@ describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
 
-  Scenario("Prefer code returns specific status code", ({ Given, When, Then }) => {
-    Given("a mock with an OpenAPI spec with 200 and 404 responses", async () => {
-      mock = schmock({ state: {} });
-      mock.pipe(await openapi({ spec: specWith404 }));
-    });
+  Scenario(
+    "Prefer code returns specific status code",
+    ({ Given, When, Then }) => {
+      Given(
+        "a mock with an OpenAPI spec with 200 and 404 responses",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(await openapi({ spec: specWith404 }));
+        },
+      );
 
-    When('I request with Prefer header "code=404"', async () => {
-      response = await mock.handle("GET", "/items", {
-        headers: { prefer: "code=404" },
+      When('I request with Prefer header "code=404"', async () => {
+        response = await mock.handle("GET", "/items", {
+          headers: { prefer: "code=404" },
+        });
       });
-    });
 
-    Then("the response status is 404", () => {
-      expect(response.status).toBe(404);
-    });
-  });
+      Then("the response status is 404", () => {
+        expect(response.status).toBe(404);
+      });
+    },
+  );
 
   Scenario("Prefer example returns named example", ({ Given, When, Then }) => {
     Given("a mock with an OpenAPI spec with named examples", async () => {
@@ -145,28 +151,31 @@ describeFeature(feature, ({ Scenario }) => {
     });
   });
 
-  Scenario("Prefer dynamic regenerates from schema", ({ Given, When, Then, And }) => {
-    Given("a mock with an OpenAPI spec with a response schema", async () => {
-      mock = schmock({ state: {} });
-      mock.pipe(await openapi({ spec: specWith404 }));
-    });
-
-    When('I request with Prefer header "dynamic=true"', async () => {
-      response = await mock.handle("GET", "/items", {
-        headers: { prefer: "dynamic=true" },
+  Scenario(
+    "Prefer dynamic regenerates from schema",
+    ({ Given, When, Then, And }) => {
+      Given("a mock with an OpenAPI spec with a response schema", async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(await openapi({ spec: specWith404 }));
       });
-    });
 
-    Then('the response body "id" is a number', () => {
-      const body = response.body as Record<string, unknown>;
-      expect(typeof body.id).toBe("number");
-    });
+      When('I request with Prefer header "dynamic=true"', async () => {
+        response = await mock.handle("GET", "/items", {
+          headers: { prefer: "dynamic=true" },
+        });
+      });
 
-    And('the response body "name" is a string', () => {
-      const body = response.body as Record<string, unknown>;
-      expect(typeof body.name).toBe("string");
-    });
-  });
+      Then('the response body "id" is a number', () => {
+        const body = response.body as Record<string, unknown>;
+        expect(typeof body.id).toBe("number");
+      });
+
+      And('the response body "name" is a string', () => {
+        const body = response.body as Record<string, unknown>;
+        expect(typeof body.name).toBe("string");
+      });
+    },
+  );
 
   Scenario(
     "Prefer example selects from the negotiated media type",

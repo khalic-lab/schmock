@@ -246,10 +246,13 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("API key in query is validated", ({ Given, When, Then }) => {
-    Given("a mock with a spec requiring an API key query parameter", async () => {
-      mock = schmock({ state: {} });
-      mock.pipe(await openapi({ spec: queryApiKeySpec, security: true }));
-    });
+    Given(
+      "a mock with a spec requiring an API key query parameter",
+      async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(await openapi({ spec: queryApiKeySpec, security: true }));
+      },
+    );
 
     When("I request without the API key query parameter", async () => {
       response = await mock.handle("GET", "/items", { query: {} });
@@ -261,10 +264,13 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Valid API key query passes through", ({ Given, When, Then }) => {
-    Given("a mock with a spec requiring an API key query parameter", async () => {
-      mock = schmock({ state: {} });
-      mock.pipe(await openapi({ spec: queryApiKeySpec, security: true }));
-    });
+    Given(
+      "a mock with a spec requiring an API key query parameter",
+      async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(await openapi({ spec: queryApiKeySpec, security: true }));
+      },
+    );
 
     When("I request with the API key query parameter present", async () => {
       response = await mock.handle("GET", "/items", {

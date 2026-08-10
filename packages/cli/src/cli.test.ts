@@ -45,6 +45,29 @@ describe("parseCliArgs", () => {
     expect(result.help).toBe(true);
   });
 
+  it("parses the spec-loading policy flags", () => {
+    const result = parseCliArgs([
+      "--spec",
+      "x.yaml",
+      "--strict",
+      "--refs-external",
+      "--refs-allow-http",
+      "a.test, b.test",
+    ]);
+
+    expect(result.strict).toBe(true);
+    expect(result.refsExternal).toBe(true);
+    expect(result.refsAllowHttp).toEqual(["a.test", "b.test"]);
+  });
+
+  it("leaves the reference policy off by default", () => {
+    const result = parseCliArgs(["--spec", "x.yaml"]);
+
+    expect(result.strict).toBe(false);
+    expect(result.refsExternal).toBe(false);
+    expect(result.refsAllowHttp).toBeUndefined();
+  });
+
   it("defaults port to undefined when not provided", () => {
     const result = parseCliArgs(["--spec", "x.yaml"]);
     expect(result.port).toBeUndefined();

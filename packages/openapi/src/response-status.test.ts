@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  findRepresentativeResponse,
   findResponseEntry,
   findSuccessResponse,
   parseResponseStatusKey,
@@ -36,5 +37,48 @@ describe("OpenAPI response status selection", () => {
       ["default", "fallback"],
     ]);
     expect(findSuccessResponse(responses)).toEqual([200, "fallback"]);
+  });
+});
+
+describe("findRepresentativeResponse", () => {
+  it("answers the lowest declared status when no 2xx exists", () => {
+    const responses = new Map<ResponseStatusKey, string>([
+      [503, "unavailable"],
+      [404, "missing"],
+    ]);
+    expect(findRepresentativeResponse(responses)).toEqual([404, "missing"]);
+  });
+
+  it("treats a range key by its effective status, so 4XX beats 503", () => {
+    // A "numerics first, then ranges" implementation would pick 503 here.
+    const responses = new Map<ResponseStatusKey, string>([
+      ["4XX", "client-error"],
+      [503, "unavailable"],
+    ]);
+    expect(findRepresentativeResponse(responses)).toEqual([
+      400,
+      "client-error",
+    ]);
+  });
+
+  it("delegates to findSuccessResponse for a default-only operation", () => {
+    const responses = new Map<ResponseStatusKey, string>([
+      ["default", "fallback"],
+    ]);
+    expect(findRepresentativeResponse(responses)).toEqual([200, "fallback"]);
+  });
+
+  it("prefers a declared success over a lower error status", () => {
+    const responses = new Map<ResponseStatusKey, string>([
+      [404, "missing"],
+      [201, "created"],
+    ]);
+    expect(findRepresentativeResponse(responses)).toEqual([201, "created"]);
+  });
+
+  it("returns undefined for an operation declaring no responses", () => {
+    expect(
+      findRepresentativeResponse(new Map<ResponseStatusKey, string>()),
+    ).toBeUndefined();
   });
 });

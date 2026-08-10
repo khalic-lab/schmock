@@ -161,8 +161,10 @@ declare namespace Schmock {
      * Extension point for plugin-specific metadata.
      *
      * Intentionally open: `@schmock/openapi` stores "openapi:*" keys here
-     * (e.g. `"openapi:operationId"`, `"openapi:tags"`), and third-party plugins
-     * may do the same. Removing this signature would be a breaking change.
+     * (e.g. `"openapi:operationId"`, `"openapi:tags"`, `"openapi:owner"`,
+     * `"openapi:requestContent"`), and
+     * third-party plugins may do the same. Removing this signature would be a
+     * breaking change.
      *
      * **Known tradeoff:** typos in known keys (e.g. `{ contenType: "…" }`) compile
      * silently. Prefer using the explicitly typed properties above when possible.
@@ -214,6 +216,14 @@ declare namespace Schmock {
     body?: unknown;
     /** Shared mutable state */
     state: Record<string, unknown>;
+    /**
+     * Per-request plugin state — the same `Map` as `PluginContext.state`.
+     *
+     * Lets a generator hand request-scoped data to the plugins that post-process
+     * its response (e.g. mutations staged until the final status is known).
+     * Absent when a generator is invoked outside the request pipeline.
+     */
+    pluginState?: Map<string, unknown>;
     /** Abort signal associated with the request */
     readonly signal?: AbortSignal;
   }
@@ -613,6 +623,14 @@ declare namespace Schmock {
     responseHeaders?: Record<string, ResponseHeaderDef>;
     /** Error response schemas keyed by status code */
     errorSchemas?: Map<number, JSONSchema7>;
+    /** Declared media types for the success response, in spec order. */
+    responseContentTypes?: string[];
+    /**
+     * Success response schemas keyed by declared media type (OAS3 `content`).
+     * When present it takes precedence over `responseSchema`, so anything that
+     * replaces `responseSchema` must clear this map too.
+     */
+    responseSchemasByMediaType?: Map<string, JSONSchema7>;
   }
 
   // ===== Faker Plugin Types =====
@@ -700,11 +718,50 @@ declare namespace Schmock {
   }
 
   /**
+   * Policy governing `$ref`s that leave the root spec document.
+   *
+   * A spec is untrusted input — on the CLI it is a path a caller hands over —
+   * and `$ref` is a file-read and network primitive, so nothing outside the
+   * root document resolves unless it is opted into here.
+   */
+  interface OpenApiRefPolicy {
+    /** Allow any `$ref` that leaves the root document. Default `false`. */
+    external?: boolean;
+    /** Allow `http(s)` `$ref`s. Requires `external`. Default `false`. */
+    allowHttp?: boolean;
+    /**
+     * Hostnames an `http(s)` `$ref` may target. Empty or omitted means any
+     * host, still minus loopback, link-local and private ranges.
+     */
+    allowedHosts?: string[];
+    /** Per-request timeout for http `$ref`s, in ms. Default 5000. */
+    timeoutMs?: number;
+    /**
+     * Redirects to follow for an http `$ref`. Default 0.
+     *
+     * `fetch` exposes no numeric redirect cap, so this behaves as a boolean:
+     * `0` refuses redirects, any positive value follows up to the platform
+     * default. Use `allowedHosts` when the exact destination matters.
+     */
+    redirects?: number;
+    /** Maximum size of a single http `$ref` document, in bytes. Default 1 MB. */
+    maxBytes?: number;
+  }
+
+  /**
    * Options for the OpenAPI plugin
    */
   interface OpenApiOptions {
     spec: string | object;
     seed?: SeedConfig;
+    /**
+     * Validate the spec against the OpenAPI schema and specification when it is
+     * loaded. Default `false`: incomplete specs are deliberately tolerated, and
+     * validation is expensive on large documents.
+     */
+    strict?: boolean;
+    /** External `$ref` resolution policy. External refs are off by default. */
+    refs?: OpenApiRefPolicy;
     validateRequests?: boolean;
     validateResponses?: boolean;
     /** @deprecated Unsupported. Supplying this option throws OPENAPI_UNSUPPORTED_OPTION. */
@@ -764,6 +821,15 @@ declare namespace Schmock {
     errors?: boolean;
     watch?: boolean;
     admin?: boolean;
+    /** Validate the spec against the OpenAPI schema at startup (`--strict`). */
+    strict?: boolean;
+    /** Resolve `$ref`s outside the spec document (`--refs-external`). */
+    refsExternal?: boolean;
+    /**
+     * Hosts an `http(s)` `$ref` may target (`--refs-allow-http`). Supplying
+     * this also enables http resolution, which still requires `refsExternal`.
+     */
+    refsAllowHttp?: string[];
   }
 
   /** Browser-safe subset of the Node server exposed by a CLI instance. */
@@ -790,5 +856,4 @@ declare namespace Schmock {
     hostname: string;
     close(): void;
   }
-
 }

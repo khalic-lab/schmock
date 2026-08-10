@@ -51,6 +51,10 @@ export function validationPlugin(
 
   // Pre-compile all validators at plugin creation time
   const ajv = new Ajv({ allErrors: true });
+  // Schemas produced by @schmock/openapi carry schmock generation markers.
+  // Draft-07 Ajv defaults to strictSchema:true and would throw
+  // "strict mode: unknown keyword" at compile time on any of them.
+  ajv.addVocabulary(["schmockNullable", "schmockTrueProbability"]);
   addFormats(ajv);
   const validators: {
     requestBody?: ValidateFunction;

@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { CrudResource } from "./crud-detector";
 import {
+  buildResponse,
   createCreateGenerator,
   createDeleteGenerator,
   createListGenerator,
   createReadGenerator,
+  createStaticGenerator,
   createUpdateGenerator,
   findArrayProperty,
   generateHeaderValues,
   generateSeedItems,
 } from "./generators";
+import type { ParsedPath } from "./parser";
 
 function makeResource(overrides?: Partial<CrudResource>): CrudResource {
   return {
@@ -17,7 +20,10 @@ function makeResource(overrides?: Partial<CrudResource>): CrudResource {
     basePath: "/pets",
     itemPath: "/pets/:petId",
     idParam: "petId",
+    idProperty: "petId",
+    idKind: "integer",
     operations: ["list", "create", "read", "update", "delete"],
+    routes: [],
     schema: {
       type: "object",
       properties: {
@@ -51,8 +57,8 @@ describe("generators", () => {
       const state: Record<string, unknown> = {};
 
       // Seed the collection
-      state["openapi:collections:pets"] = [];
-      state["openapi:counter:pets"] = 0;
+      state["openapi:collections:/pets"] = [];
+      state["openapi:counter:/pets"] = 0;
 
       const create = createCreateGenerator(resource);
       const read = createReadGenerator(resource);
@@ -116,8 +122,8 @@ describe("generators", () => {
     it("uses contract-declared success statuses for every CRUD operation", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [],
-        "openapi:counter:pets": 0,
+        "openapi:collections:/pets": [],
+        "openapi:counter:/pets": 0,
       };
 
       const created = await createCreateGenerator(resource, {
@@ -156,8 +162,8 @@ describe("generators", () => {
     it("omits bodies for CRUD operations that declare 204", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [{ name: "Buddy", petId: 1 }],
-        "openapi:counter:pets": 1,
+        "openapi:collections:/pets": [{ name: "Buddy", petId: 1 }],
+        "openapi:counter:/pets": 1,
       };
       const noContent = { responseStatus: 204 };
 
@@ -196,7 +202,7 @@ describe("generators", () => {
     it("returns 404 for missing resources", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [],
+        "openapi:collections:/pets": [],
       };
 
       const read = createReadGenerator(resource);
@@ -215,7 +221,7 @@ describe("generators", () => {
     it("returns 404 for missing resources", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [],
+        "openapi:collections:/pets": [],
       };
 
       const update = createUpdateGenerator(resource);
@@ -236,7 +242,7 @@ describe("generators", () => {
     it("returns 404 for missing resources", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [],
+        "openapi:collections:/pets": [],
       };
 
       const del = createDeleteGenerator(resource);
@@ -256,20 +262,171 @@ describe("generators", () => {
     it("auto-increments IDs", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [],
-        "openapi:counter:pets": 0,
+        "openapi:collections:/pets": [],
+        "openapi:counter:/pets": 0,
       };
 
       const create = createCreateGenerator(resource);
       await create(makeContext({ method: "POST", body: { name: "A" }, state }));
       await create(makeContext({ method: "POST", body: { name: "B" }, state }));
 
-      const collection = state["openapi:collections:pets"] as Record<
+      const collection = state["openapi:collections:/pets"] as Record<
         string,
         unknown
       >[];
       expect(collection[0].petId).toBe(1);
       expect(collection[1].petId).toBe(2);
+    });
+  });
+
+  describe("staged mutations", () => {
+    const PENDING = "openapi:pendingMutations";
+
+    function takePending(pluginState: Map<string, unknown>): Array<() => void> {
+      const pending = pluginState.get(PENDING);
+      expect(Array.isArray(pending)).toBe(true);
+      return pending as Array<() => void>;
+    }
+
+    it("defers the create push until the pending mutation runs", async () => {
+      const resource = makeResource();
+      const state: Record<string, unknown> = {
+        "openapi:collections:/pets": [],
+        "openapi:counter:/pets": 0,
+      };
+      const pluginState = new Map<string, unknown>();
+
+      const create = createCreateGenerator(resource);
+      const result = await create(
+        makeContext({
+          method: "POST",
+          body: { name: "Buddy" },
+          state,
+          pluginState,
+        }),
+      );
+
+      // The response carries the eagerly allocated id, but nothing is stored yet.
+      expect(result).toEqual([201, { name: "Buddy", petId: 1 }]);
+      expect(state["openapi:collections:/pets"]).toEqual([]);
+      expect(state["openapi:counter:/pets"]).toBe(1);
+
+      const pending = takePending(pluginState);
+      expect(pending).toHaveLength(1);
+      for (const commit of pending) commit();
+
+      expect(state["openapi:collections:/pets"]).toEqual([
+        { name: "Buddy", petId: 1 },
+      ]);
+    });
+
+    it("defers the update write until the pending mutation runs", async () => {
+      const resource = makeResource();
+      const state: Record<string, unknown> = {
+        "openapi:collections:/pets": [{ petId: 1, name: "Buddy" }],
+      };
+      const pluginState = new Map<string, unknown>();
+
+      const update = createUpdateGenerator(resource);
+      const result = await update(
+        makeContext({
+          method: "PUT",
+          path: "/pets/1",
+          params: { petId: "1" },
+          body: { name: "Max" },
+          state,
+          pluginState,
+        }),
+      );
+
+      expect(result).toEqual({ petId: 1, name: "Max" });
+      expect(state["openapi:collections:/pets"]).toEqual([
+        { petId: 1, name: "Buddy" },
+      ]);
+
+      for (const commit of takePending(pluginState)) commit();
+
+      expect(state["openapi:collections:/pets"]).toEqual([
+        { petId: 1, name: "Max" },
+      ]);
+    });
+
+    it("defers the delete splice until the pending mutation runs", async () => {
+      const resource = makeResource();
+      const state: Record<string, unknown> = {
+        "openapi:collections:/pets": [{ petId: 1, name: "Buddy" }],
+      };
+      const pluginState = new Map<string, unknown>();
+
+      const del = createDeleteGenerator(resource);
+      const result = await del(
+        makeContext({
+          method: "DELETE",
+          path: "/pets/1",
+          params: { petId: "1" },
+          state,
+          pluginState,
+        }),
+      );
+
+      expect(result).toEqual([204, undefined]);
+      expect(state["openapi:collections:/pets"]).toEqual([
+        { petId: 1, name: "Buddy" },
+      ]);
+
+      for (const commit of takePending(pluginState)) commit();
+
+      expect(state["openapi:collections:/pets"]).toEqual([]);
+    });
+
+    it("re-finds the item at commit time when the collection was replaced", async () => {
+      const resource = makeResource();
+      const state: Record<string, unknown> = {
+        "openapi:collections:/pets": [
+          { petId: 1, name: "Buddy" },
+          { petId: 2, name: "Rex" },
+        ],
+      };
+      const pluginState = new Map<string, unknown>();
+
+      const del = createDeleteGenerator(resource);
+      await del(
+        makeContext({
+          method: "DELETE",
+          path: "/pets/2",
+          params: { petId: "2" },
+          state,
+          pluginState,
+        }),
+      );
+
+      // A concurrent request shifts indices before the commit runs.
+      state["openapi:collections:/pets"] = [
+        { petId: 3, name: "Nala" },
+        { petId: 1, name: "Buddy" },
+        { petId: 2, name: "Rex" },
+      ];
+      for (const commit of takePending(pluginState)) commit();
+
+      expect(state["openapi:collections:/pets"]).toEqual([
+        { petId: 3, name: "Nala" },
+        { petId: 1, name: "Buddy" },
+      ]);
+    });
+
+    it("commits immediately when there is no plugin state", async () => {
+      const resource = makeResource();
+      const state: Record<string, unknown> = {
+        "openapi:collections:/pets": [],
+        "openapi:counter:/pets": 0,
+      };
+
+      const create = createCreateGenerator(resource);
+      await create(makeContext({ method: "POST", body: { name: "A" }, state }));
+
+      expect(state["openapi:collections:/pets"]).toEqual([
+        { name: "A", petId: 1 },
+      ]);
     });
   });
 
@@ -283,12 +440,32 @@ describe("generators", () => {
         required: ["name" as const],
       };
 
-      const items = await generateSeedItems(schema, 3, "petId");
+      const items = await generateSeedItems(schema, 3, "petId", "integer");
       expect(items).toHaveLength(3);
       for (let i = 0; i < 3; i++) {
         const item = items[i] as Record<string, unknown>;
         expect(item.petId).toBe(i + 1);
       }
+    });
+
+    it("shapes seed ids by the resource id kind", async () => {
+      const schema = {
+        type: "object" as const,
+        properties: { name: { type: "string" as const } },
+        required: ["name" as const],
+      };
+
+      const strings = await generateSeedItems(schema, 2, "id", "string");
+      expect((strings[0] as Record<string, unknown>).id).toBe("1");
+      expect((strings[1] as Record<string, unknown>).id).toBe("2");
+
+      const uuids = await generateSeedItems(schema, 2, "id", "uuid");
+      expect((uuids[0] as Record<string, unknown>).id).toBe(
+        "00000000-0000-4000-8000-000000000001",
+      );
+      expect((uuids[1] as Record<string, unknown>).id).toBe(
+        "00000000-0000-4000-8000-000000000002",
+      );
     });
   });
 
@@ -473,7 +650,7 @@ describe("generators", () => {
     it("wraps list in schema-defined object when wrapper detected", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [
+        "openapi:collections:/pets": [
           { petId: 1, name: "Buddy" },
           { petId: 2, name: "Max" },
         ],
@@ -505,7 +682,7 @@ describe("generators", () => {
     it("returns flat array when no meta provided", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [{ petId: 1, name: "Buddy" }],
+        "openapi:collections:/pets": [{ petId: 1, name: "Buddy" }],
       };
 
       const list = createListGenerator(resource);
@@ -514,11 +691,313 @@ describe("generators", () => {
     });
   });
 
+  describe("create generator contract", () => {
+    it("echoes the request and stamps the id when no contract is declared", async () => {
+      const resource = makeResource();
+      const state: Record<string, unknown> = {};
+
+      const created = await createCreateGenerator(resource)(
+        makeContext({ method: "POST", body: { name: "Buddy" }, state }),
+      );
+
+      expect(created).toEqual([201, { name: "Buddy", petId: 1 }]);
+    });
+
+    it("generates the declared contract and overlays the request body", async () => {
+      const resource = makeResource({
+        idProperty: "id",
+        idKind: "string",
+        schema: {
+          type: "object",
+          properties: { id: { type: "string" }, createdAt: { type: "string" } },
+        },
+      });
+      const meta: Schmock.CrudOperationMeta = {
+        responseStatus: 201,
+        responseSchema: {
+          type: "object",
+          required: ["id", "createdAt"],
+          properties: {
+            id: { type: "string" },
+            createdAt: { type: "string", format: "date-time" },
+          },
+        },
+      };
+
+      const created = (await createCreateGenerator(
+        resource,
+        meta,
+      )(makeContext({ method: "POST", body: { label: "a" }, state: {} }))) as [
+        number,
+        Record<string, unknown>,
+      ];
+
+      expect(created[0]).toBe(201);
+      expect(created[1].id).toBe("1");
+      expect(typeof created[1].createdAt).toBe("string");
+      expect(created[1]).not.toHaveProperty("petId");
+    });
+
+    it("drops undeclared request fields only under additionalProperties: false", async () => {
+      const resource = makeResource({ idProperty: "id", idKind: "integer" });
+      const closed: Schmock.CrudOperationMeta = {
+        responseSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { id: { type: "integer" }, name: { type: "string" } },
+        },
+      };
+      const open: Schmock.CrudOperationMeta = {
+        responseSchema: {
+          type: "object",
+          properties: { id: { type: "integer" }, name: { type: "string" } },
+        },
+      };
+      const body = { name: "Buddy", nickname: "Bud" };
+
+      const strict = (await createCreateGenerator(
+        resource,
+        closed,
+      )(makeContext({ method: "POST", body, state: {} }))) as [
+        number,
+        Record<string, unknown>,
+      ];
+      expect(strict[1].name).toBe("Buddy");
+      expect(strict[1]).not.toHaveProperty("nickname");
+
+      const lenient = (await createCreateGenerator(
+        resource,
+        open,
+      )(makeContext({ method: "POST", body, state: {} }))) as [
+        number,
+        Record<string, unknown>,
+      ];
+      expect(lenient[1].nickname).toBe("Bud");
+    });
+
+    it("never lets a client-supplied identifier win", async () => {
+      const resource = makeResource({ idProperty: "id", idKind: "integer" });
+      const created = (await createCreateGenerator(resource)(
+        makeContext({
+          method: "POST",
+          body: { id: 999, name: "Buddy" },
+          state: {},
+        }),
+      )) as [number, Record<string, unknown>];
+
+      expect(created[1].id).toBe(1);
+    });
+
+    it("mints string and synthetic-uuid identifiers in sequence", async () => {
+      const stringResource = makeResource({
+        idProperty: "id",
+        idKind: "string",
+      });
+      const state: Record<string, unknown> = {};
+      const first = (await createCreateGenerator(stringResource)(
+        makeContext({ method: "POST", body: {}, state }),
+      )) as [number, Record<string, unknown>];
+      const second = (await createCreateGenerator(stringResource)(
+        makeContext({ method: "POST", body: {}, state }),
+      )) as [number, Record<string, unknown>];
+      expect(first[1].id).toBe("1");
+      expect(second[1].id).toBe("2");
+
+      const uuidResource = makeResource({ idProperty: "id", idKind: "uuid" });
+      const uuidState: Record<string, unknown> = {};
+      const one = (await createCreateGenerator(uuidResource)(
+        makeContext({ method: "POST", body: {}, state: uuidState }),
+      )) as [number, Record<string, unknown>];
+      const two = (await createCreateGenerator(uuidResource)(
+        makeContext({ method: "POST", body: {}, state: uuidState }),
+      )) as [number, Record<string, unknown>];
+
+      expect(one[1].id).toBe("00000000-0000-4000-8000-000000000001");
+      expect(two[1].id).toBe("00000000-0000-4000-8000-000000000002");
+      expect(one[1].id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+    });
+
+    it("selects the contract matching the Accept header", async () => {
+      const resource = makeResource({ idProperty: "id", idKind: "integer" });
+      const meta: Schmock.CrudOperationMeta = {
+        responseStatus: 201,
+        responseContentTypes: ["application/json", "application/xml"],
+        responseSchemasByMediaType: new Map<string, Schmock.JSONSchema7>([
+          [
+            "application/json",
+            {
+              type: "object",
+              properties: { kind: { type: "string", const: "json" } },
+            },
+          ],
+          [
+            "application/xml",
+            {
+              type: "object",
+              properties: { kind: { type: "string", const: "xml" } },
+            },
+          ],
+        ]),
+      };
+
+      const xml = (await createCreateGenerator(
+        resource,
+        meta,
+      )(
+        makeContext({
+          method: "POST",
+          body: {},
+          headers: { accept: "application/xml" },
+          state: {},
+        }),
+      )) as [number, Record<string, unknown>];
+      expect(xml[1].kind).toBe("xml");
+
+      const json = (await createCreateGenerator(
+        resource,
+        meta,
+      )(makeContext({ method: "POST", body: {}, state: {} }))) as [
+        number,
+        Record<string, unknown>,
+      ];
+      expect(json[1].kind).toBe("json");
+    });
+  });
+
+  describe("onSchema during CRUD generation", () => {
+    it("fires for the create contract with the route context", async () => {
+      const resource = makeResource({ idProperty: "id", idKind: "integer" });
+      const seen: Array<{ method: string; path: string }> = [];
+      const meta: Schmock.CrudOperationMeta = {
+        responseSchema: {
+          type: "object",
+          properties: { id: { type: "integer" } },
+        },
+      };
+
+      const created = (await createCreateGenerator(resource, meta, {
+        method: "POST",
+        path: "/pets",
+        onSchema: (schema, ctx) => {
+          seen.push({ method: ctx.method, path: ctx.path });
+          return {
+            ...schema,
+            properties: {
+              ...(schema.properties ?? {}),
+              generatedBy: { type: "string", const: "onSchema" },
+            },
+          };
+        },
+      })(makeContext({ method: "POST", body: {}, state: {} }))) as [
+        number,
+        Record<string, unknown>,
+      ];
+
+      expect(seen).toEqual([{ method: "POST", path: "/pets" }]);
+      expect(created[1].generatedBy).toBe("onSchema");
+    });
+
+    it("fires for the list wrapper skeleton", async () => {
+      const resource = makeResource();
+      const seen: string[] = [];
+      const meta: Schmock.CrudOperationMeta = {
+        responseSchema: {
+          type: "object",
+          properties: { data: { type: "array", items: { type: "object" } } },
+        },
+      };
+
+      const result = await createListGenerator(resource, meta, {
+        method: "GET",
+        path: "/pets",
+        onSchema: (schema, ctx) => {
+          seen.push(`${ctx.method} ${ctx.path}`);
+          return {
+            ...schema,
+            properties: {
+              ...(schema.properties ?? {}),
+              wrappedBy: { type: "string", const: "onSchema" },
+            },
+          };
+        },
+      })(makeContext({ state: { "openapi:collections:/pets": [] } }));
+
+      expect(seen).toEqual(["GET /pets"]);
+      expect((result as Record<string, unknown>).wrappedBy).toBe("onSchema");
+    });
+
+    it("fires on the 404 path of read, update and delete", async () => {
+      const resource = makeResource();
+      const seen: string[] = [];
+      const errorSchemas = new Map<number, Schmock.JSONSchema7>([
+        [404, { type: "object", properties: { code: { type: "string" } } }],
+      ]);
+      const meta: Schmock.CrudOperationMeta = { errorSchemas };
+      const hooks = {
+        method: "GET",
+        path: "/pets/:petId",
+        onSchema: (schema: Schmock.JSONSchema7) => {
+          seen.push("fired");
+          return {
+            ...schema,
+            properties: {
+              ...(schema.properties ?? {}),
+              code: { type: "string", const: "GONE" },
+            },
+          };
+        },
+      };
+      const state = { "openapi:collections:/pets": [] };
+
+      for (const factory of [
+        createReadGenerator,
+        createUpdateGenerator,
+        createDeleteGenerator,
+      ]) {
+        const result = (await factory(
+          resource,
+          meta,
+          hooks,
+        )(makeContext({ params: { petId: "999" }, state }))) as [
+          number,
+          Record<string, unknown>,
+        ];
+        expect(result[0]).toBe(404);
+        expect(result[1].code).toBe("GONE");
+      }
+      expect(seen).toHaveLength(3);
+    });
+
+    it("does not fire for a read that hits stored state", async () => {
+      const resource = makeResource();
+      let calls = 0;
+
+      const result = await createReadGenerator(resource, undefined, {
+        method: "GET",
+        path: "/pets/:petId",
+        onSchema: (schema) => {
+          calls += 1;
+          return schema;
+        },
+      })(
+        makeContext({
+          params: { petId: "1" },
+          state: { "openapi:collections:/pets": [{ petId: 1, name: "Buddy" }] },
+        }),
+      );
+
+      expect(result).toEqual({ petId: 1, name: "Buddy" });
+      expect(calls).toBe(0);
+    });
+  });
+
   describe("error generator with meta (spec-defined errors)", () => {
     it("uses error schema from meta when available", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [],
+        "openapi:collections:/pets": [],
       };
 
       const errorSchemas = new Map<number, Schmock.JSONSchema7>();
@@ -548,7 +1027,7 @@ describe("generators", () => {
     it("falls back to default error when no meta", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [],
+        "openapi:collections:/pets": [],
       };
 
       const read = createReadGenerator(resource);
@@ -557,6 +1036,195 @@ describe("generators", () => {
       );
 
       expect(result).toEqual([404, { error: "Not found", code: "NOT_FOUND" }]);
+    });
+  });
+
+  describe("buildResponse", () => {
+    it("keeps a multi-element array body intact when adding headers", () => {
+      // Regression pin against the deleted addHeaders(), which sniffed its
+      // input and read a flat 2-item list body as a [status, body] tuple.
+      const result = buildResponse({
+        status: undefined,
+        body: ["a", "b"],
+        headerDefs: {
+          "X-Total": {
+            schema: { type: "string", default: "2" },
+            description: "Total",
+          },
+        },
+      });
+
+      expect(result).toEqual([200, ["a", "b"], { "X-Total": "2" }]);
+    });
+
+    it("returns the bare body when there is no status and no headers", () => {
+      expect(buildResponse({ body: { a: 1 } })).toEqual({ a: 1 });
+    });
+
+    it("suppresses the body for 204 and keeps declared headers", () => {
+      const result = buildResponse({
+        status: 204,
+        body: { a: 1 },
+        headerDefs: {
+          "X-Cache": {
+            schema: { type: "string", enum: ["HIT"] },
+            description: "Cache",
+          },
+        },
+      });
+
+      expect(result).toEqual([204, undefined, { "X-Cache": "HIT" }]);
+    });
+
+    it("returns a 2-tuple with no headers slot when headerDefs is undefined", () => {
+      const result = buildResponse({ status: 201, body: { id: 1 } });
+      expect(result).toEqual([201, { id: 1 }]);
+      expect((result as unknown[]).length).toBe(2);
+    });
+
+    it("treats header defs that yield no value as no headers", () => {
+      const result = buildResponse({
+        status: 200,
+        body: { a: 1 },
+        headerDefs: {
+          "X-Object": { schema: { type: "object" }, description: "Unusable" },
+          "X-NoSchema": { description: "No schema" },
+        },
+      });
+
+      expect(result).toEqual([200, { a: 1 }]);
+      expect((result as unknown[]).length).toBe(2);
+    });
+  });
+
+  describe("createStaticGenerator response headers", () => {
+    function makeParsedPath(overrides?: Partial<ParsedPath>): ParsedPath {
+      return {
+        path: "/status",
+        method: "GET",
+        parameters: [],
+        requestBodyRequired: false,
+        responses: new Map(),
+        tags: [],
+        ...overrides,
+      };
+    }
+
+    it("emits declared response headers on a static route", async () => {
+      const generator = createStaticGenerator(
+        makeParsedPath({
+          responses: new Map([
+            [
+              200,
+              {
+                description: "OK",
+                schema: {
+                  type: "object",
+                  properties: { ok: { type: "boolean" } },
+                },
+                headers: {
+                  "X-Request-ID": {
+                    schema: { type: "string", format: "uuid" },
+                    description: "Request id",
+                  },
+                },
+              },
+            ],
+          ]),
+        }),
+      );
+
+      const result = await generator(makeContext({ path: "/status" }));
+      const tuple = result as [number, unknown, Record<string, string>];
+      expect(tuple).toHaveLength(3);
+      expect(tuple[0]).toBe(200);
+      expect(typeof tuple[2]["X-Request-ID"]).toBe("string");
+      expect(tuple[2]["X-Request-ID"].length).toBeGreaterThan(0);
+    });
+
+    it("suppresses the body but keeps headers for a declared 204", async () => {
+      const generator = createStaticGenerator(
+        makeParsedPath({
+          responses: new Map([
+            [
+              204,
+              {
+                description: "No content",
+                headers: {
+                  "X-Cache": {
+                    schema: { type: "string", enum: ["HIT"] },
+                    description: "Cache",
+                  },
+                },
+              },
+            ],
+          ]),
+        }),
+      );
+
+      const result = await generator(makeContext({ path: "/status" }));
+      expect(result).toEqual([204, undefined, { "X-Cache": "HIT" }]);
+    });
+
+    it("emits headers declared on a default-only response at status 200", async () => {
+      const generator = createStaticGenerator(
+        makeParsedPath({
+          responses: new Map([
+            [
+              "default",
+              {
+                description: "Default",
+                headers: {
+                  "X-Fallback": {
+                    schema: { type: "string", enum: ["yes"] },
+                    description: "Fallback",
+                  },
+                },
+              },
+            ],
+          ]),
+        }),
+      );
+
+      const result = await generator(makeContext({ path: "/status" }));
+      expect(result).toEqual([200, {}, { "X-Fallback": "yes" }]);
+    });
+
+    it("emits the declared error entry's headers at its own status", async () => {
+      const generator = createStaticGenerator(
+        makeParsedPath({
+          responses: new Map([
+            [
+              400,
+              {
+                description: "Bad request",
+                headers: {
+                  "X-Error-Code": {
+                    schema: { type: "string", enum: ["BAD"] },
+                    description: "Error code",
+                  },
+                },
+              },
+            ],
+          ]),
+        }),
+      );
+
+      // An operation with no 2xx answers its lowest declared status, so the
+      // headers captured are that entry's — they are not "leaking" onto a
+      // synthesised 200, because no 200 is synthesised any more.
+      const result = await generator(makeContext({ path: "/status" }));
+      expect(result).toEqual([400, {}, { "X-Error-Code": "BAD" }]);
+    });
+
+    it("still falls back to 200 for an operation declaring no responses", async () => {
+      const generator = createStaticGenerator(
+        makeParsedPath({ responses: new Map() }),
+      );
+
+      const result = await generator(makeContext({ path: "/status" }));
+      expect(result).toEqual([200, {}]);
+      expect((result as unknown[]).length).toBe(2);
     });
   });
 });

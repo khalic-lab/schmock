@@ -219,9 +219,15 @@ interface RequestContext {
   headers: Record<string, string>
   body?: unknown
   state: Record<string, unknown>     // mutable shared state
+  pluginState?: Map<string, unknown> // per-request plugin state (same Map as PluginContext.state)
   readonly signal?: AbortSignal     // request cancellation
 }
 ```
+
+`pluginState` is the channel a generator uses to hand request-scoped data to the
+plugins that post-process its response — `@schmock/openapi` stages CRUD
+mutations there and commits them once the final status is known. It is absent
+when a generator is called outside the request pipeline.
 
 ### Response Result
 
@@ -413,10 +419,19 @@ schemas are normalized recursively, including tuples behind `$ref` definitions.
 }
 
 {
-  type: 'string',
-  schmockNullable: true,         // ~5% chance of null
-}
+  type: ['string', 'null'],      // null-permitting union, emitted by the
+  schmockNullable: true,         // OpenAPI normalizer for `nullable: true`
+}                                // ~5% chance of null at generation time
 ```
+
+`schmockNullable` marks a field for the ~5% null roll during generation. When
+the OpenAPI plugin normalizes `nullable: true` it emits the marker **alongside**
+a schema that actually permits `null` — `type: [T, 'null']`, or
+`anyOf: [{ type: 'null' }, …]` when the schema is composition-only
+(`allOf`/`oneOf`/`anyOf`/`$ref` with no local `type`) — so a generated `null`
+passes request and response validation. The generation path collapses the union
+back to the non-null shape, so json-schema-faker does not treat it as a 50/50
+type choice.
 
 ---
 
@@ -530,9 +545,20 @@ interface OpenApiOptions {
   schemas?: Record<string, JSONSchema7>   // replace response schemas
   onSchema?: OnSchemaCallback        // dynamic schema modification
   resources?: Record<string, ResourceOverride>  // override CRUD detection
+  strict?: boolean                   // validate the spec at load time (default: false)
+  refs?: OpenApiRefPolicy            // external $ref policy (external refs off by default)
   callbacks?: {
     dispatch(request: OpenApiCallbackRequest): void | Promise<void>
   }
+}
+
+interface OpenApiRefPolicy {
+  external?: boolean       // resolve $refs outside the root document (default: false)
+  allowHttp?: boolean      // also resolve http(s) refs (default: false)
+  allowedHosts?: string[]  // hosts an http ref may target (default: any public host)
+  timeoutMs?: number       // default: 5000
+  redirects?: number       // default: 0
+  maxBytes?: number        // default: 1_000_000
 }
 
 type SeedConfig = Record<string, SeedSource>
@@ -674,6 +700,9 @@ interface CliOptions {
   errors?: boolean           // enable request validation
   watch?: boolean            // watch spec for changes
   admin?: boolean            // enable admin API
+  strict?: boolean           // validate the spec at startup (--strict)
+  refsExternal?: boolean     // resolve $refs outside the spec (--refs-external)
+  refsAllowHttp?: string[]   // hosts an http $ref may target (--refs-allow-http)
 }
 
 interface CliServer {

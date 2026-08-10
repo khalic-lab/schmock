@@ -269,6 +269,72 @@ describeFeature(feature, ({ Scenario }) => {
   );
 
   Scenario(
+    "Response headers from spec definitions on a non-CRUD route",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a mock with a spec whose non-CRUD GET declares response headers",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: {
+                openapi: "3.0.3",
+                info: { title: "Health", version: "1.0.0" },
+                paths: {
+                  "/health": {
+                    get: {
+                      responses: {
+                        "200": {
+                          description: "OK",
+                          headers: {
+                            "X-Request-ID": {
+                              description: "Correlation id",
+                              schema: { type: "string", format: "uuid" },
+                            },
+                            "X-Rate-Limit": {
+                              description: "Remaining calls",
+                              schema: { type: "integer" },
+                            },
+                          },
+                          content: {
+                            "application/json": {
+                              schema: {
+                                type: "object",
+                                properties: { status: { type: "string" } },
+                                required: ["status"],
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            }),
+          );
+        },
+      );
+
+      When("I check service health", async () => {
+        response = await mock.handle("GET", "/health");
+      });
+
+      Then("the response status is 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And('the response has header "X-Request-ID"', () => {
+        expect(response.headers["X-Request-ID"]).toBeDefined();
+      });
+
+      And('the response has header "X-Rate-Limit"', () => {
+        expect(response.headers["X-Rate-Limit"]).toBeDefined();
+      });
+    },
+  );
+
+  Scenario(
     "Manual override forces wrapping on a flat-array spec",
     ({ Given, When, Then, And }) => {
       Given(
@@ -393,4 +459,148 @@ describeFeature(feature, ({ Scenario }) => {
     },
   );
 
+  Scenario(
+    "Operation declaring no 2xx response answers with its lowest declared status",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a mock with a spec whose only responses are 404 and 503",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: {
+                openapi: "3.0.3",
+                info: { title: "Archive", version: "1.0.0" },
+                paths: {
+                  "/archive": {
+                    get: {
+                      responses: {
+                        "404": {
+                          description: "Gone for good",
+                          headers: {
+                            "X-Error-Code": {
+                              description: "Machine readable code",
+                              schema: { type: "string", enum: ["ARCHIVED"] },
+                            },
+                          },
+                          content: {
+                            "application/json": {
+                              schema: {
+                                type: "object",
+                                properties: {
+                                  reason: {
+                                    type: "string",
+                                    enum: ["archived"],
+                                  },
+                                },
+                                required: ["reason"],
+                              },
+                            },
+                          },
+                        },
+                        "503": {
+                          description: "Try later",
+                          content: {
+                            "application/json": {
+                              schema: {
+                                type: "object",
+                                properties: {
+                                  retryAfter: { type: "integer" },
+                                },
+                                required: ["retryAfter"],
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            }),
+          );
+        },
+      );
+
+      When("I check the archive endpoint", async () => {
+        response = await mock.handle("GET", "/archive");
+      });
+
+      Then("the response status is 404", () => {
+        expect(response.status).toBe(404);
+      });
+
+      And("the body was generated from the 404 schema", () => {
+        const body = response.body as Record<string, unknown>;
+        expect(body.reason).toBe("archived");
+        expect(body.retryAfter).toBeUndefined();
+      });
+
+      // The headers come from the same entry the status does, so a 404-only
+      // operation emits the 404 entry's declared headers at status 404.
+      And('the response has header "X-Error-Code"', () => {
+        expect(response.headers["X-Error-Code"]).toBe("ARCHIVED");
+      });
+    },
+  );
+
+  Scenario(
+    "Response schema generation failure returns a structured 500",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a mock with a spec whose response schema cannot be generated",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: {
+                openapi: "3.0.3",
+                info: { title: "Broken", version: "1.0.0" },
+                paths: {
+                  "/broken": {
+                    get: {
+                      responses: {
+                        "200": {
+                          description: "OK",
+                          content: {
+                            "application/json": {
+                              // No branch to choose from: generation blows up
+                              // where it used to be laundered into `200 {}`.
+                              schema: { anyOf: [] },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            }),
+          );
+        },
+      );
+
+      When("I check the broken endpoint", async () => {
+        response = await mock.handle("GET", "/broken");
+      });
+
+      Then("the response status is 500", () => {
+        expect(response.status).toBe(500);
+      });
+
+      // The specific code depends on where generation gave up (a SchmockError
+      // from faker is rethrown with its own code), so the contract pinned here
+      // is that there IS a stable, non-empty code.
+      And('the error body has a non-empty "code"', () => {
+        const body = response.body as Record<string, unknown>;
+        expect(typeof body.code).toBe("string");
+        expect(body.code).not.toBe("");
+      });
+
+      And("the error body message names the route", () => {
+        const body = response.body as Record<string, unknown>;
+        expect(String(body.error)).toContain("GET /broken");
+      });
+    },
+  );
 });

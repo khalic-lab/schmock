@@ -10,11 +10,14 @@ import {
   registerCrudRoutes,
   registerNonCrudRoutes,
 } from "./crud-registration.js";
+import { PENDING_MUTATIONS_KEY } from "./generators.js";
+import { createOwnerToken, isOwnedRoute } from "./owner.js";
 import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
 import { parseSpec } from "./parser.js";
 import {
   applyResponseContentType,
   createBodyValidatorContext,
+  getResponseStatus,
   processContentNegotiation,
   processPreferHeader,
   validateRequestBody,
@@ -67,17 +70,36 @@ export async function openapi(
     );
   }
 
-  const spec = await parseSpec(options.spec);
-  const { resources, nonCrudPaths } = detectCrudResources(spec.paths);
-  const seedData = options.seed
-    ? await loadSeed(options.seed, resources, options.fakerSeed)
-    : new Map<string, unknown[]>();
+  const spec = await parseSpec(options.spec, {
+    strict: options.strict,
+    refs: options.refs,
+  });
+  if (options.debug) {
+    for (const warning of spec.warnings) {
+      console.warn(`[@schmock/openapi] ${warning}`);
+    }
+  }
+  // One token per openapi() call, captured by install/beforeRequest/process so
+  // the hooks only ever act on routes this plugin instance registered.
+  const ownerToken = createOwnerToken();
 
   // Build a lookup of all parsed paths for process() to reference
   const allParsedPaths = new Map<string, ParsedPath>();
   for (const pp of [...spec.paths]) {
     allParsedPaths.set(`${pp.method} ${pp.path}`, pp);
   }
+
+  // Overrides patch the ParsedPath objects everything downstream reads, so they
+  // have to land BEFORE detection and seeding: CRUD metadata and `{ count: n }`
+  // seed generation are both derived from those schemas exactly once.
+  if (options.schemas) {
+    applySchemaOverrides(allParsedPaths, options.schemas);
+  }
+
+  const { resources, nonCrudPaths } = detectCrudResources(spec.paths);
+  const seedData = options.seed
+    ? await loadSeed(options.seed, resources, options.fakerSeed)
+    : new Map<string, unknown[]>();
 
   // Security scheme lookup
   const securitySchemes = spec.securitySchemes;
@@ -93,41 +115,6 @@ export async function openapi(
     version: packageVersion,
 
     install(instance: Schmock.CallableMockInstance) {
-      // Apply user-provided schema overrides
-      if (options.schemas) {
-        for (const [key, schema] of Object.entries(options.schemas)) {
-          const parts = key.split(" ");
-          const method = parts[0];
-          const path = parts[1];
-          const status = parts[2] ? Number.parseInt(parts[2], 10) : undefined;
-          const routeKey = `${method} ${path}`;
-
-          const parsedPath = allParsedPaths.get(routeKey);
-          if (!parsedPath) continue;
-
-          if (status !== undefined) {
-            const entry = parsedPath.responses.get(status);
-            if (entry) {
-              replaceResponseSchema(entry, schema);
-            } else {
-              parsedPath.responses.set(status, { schema, description: "" });
-            }
-          } else {
-            let patched = false;
-            for (const [code, entry] of parsedPath.responses) {
-              if (isStatusInRange(code, 200, 300)) {
-                replaceResponseSchema(entry, schema);
-                patched = true;
-                break;
-              }
-            }
-            if (!patched) {
-              parsedPath.responses.set(200, { schema, description: "" });
-            }
-          }
-        }
-      }
-
       if (options.debug) {
         console.log(
           `[@schmock/openapi] Detected ${resources.length} CRUD resources, ${nonCrudPaths.length} static routes`,
@@ -149,7 +136,8 @@ export async function openapi(
           instance,
           resource,
           seedData.get(resource.name),
-          allParsedPaths,
+          ownerToken,
+          { fakerSeed: options.fakerSeed, onSchema: options.onSchema },
         );
       }
 
@@ -157,6 +145,7 @@ export async function openapi(
       registerNonCrudRoutes(
         instance,
         nonCrudPaths,
+        ownerToken,
         options.fakerSeed,
         options.onSchema,
       );
@@ -165,6 +154,11 @@ export async function openapi(
     beforeRequest(
       context: Schmock.PluginContext,
     ): Schmock.PluginResult | undefined {
+      // Routes this plugin did not register (manual routes, or routes from a
+      // second openapi() instance) carry no openapi:* metadata, so security,
+      // negotiation and validation would fall back to THIS spec's globals.
+      if (!isOwnedRoute(context.route, ownerToken)) return undefined;
+
       if (options.security) {
         const securityResult = validateSecurity(
           context,
@@ -199,10 +193,15 @@ export async function openapi(
       context: Schmock.PluginContext,
       incomingResponse?: unknown,
     ): Promise<Schmock.PluginResult> {
+      if (!isOwnedRoute(context.route, ownerToken)) {
+        return { context, response: incomingResponse };
+      }
+
       if (
         context.requestShortCircuited === true ||
         context.state.get(REQUEST_REJECTED_STATE) === true
       ) {
+        settlePendingMutations(context, incomingResponse);
         return { context, response: incomingResponse };
       }
 
@@ -215,6 +214,7 @@ export async function openapi(
       const negotiated = applyResponseContentType(context, result.response);
       const response = negotiated.response;
       if (negotiated.rejected) {
+        settlePendingMutations(context, response);
         return { context, response };
       }
 
@@ -224,8 +224,15 @@ export async function openapi(
           response,
           responseValidatorCtx,
         );
-        if (validationResult) return validationResult;
+        if (validationResult) {
+          settlePendingMutations(context, validationResult.response);
+          return validationResult;
+        }
       }
+
+      // Commit before callbacks so a callback that re-enters the mock observes
+      // committed state.
+      settlePendingMutations(context, response);
 
       if (options.callbacks) {
         const callbacks = getRouteCallbacks(context.route);
@@ -235,6 +242,7 @@ export async function openapi(
             options.callbacks.dispatch,
             context,
             response,
+            options.fakerSeed,
           );
         }
       }
@@ -242,6 +250,31 @@ export async function openapi(
       return { context, response };
     },
   };
+}
+
+/**
+ * Apply or discard the mutations a CRUD generator staged for this request.
+ *
+ * The pending queue is always cleared first, so a second `openapi()` instance
+ * later in the pipe cannot re-commit it. The queue is then applied only when the
+ * response the plugin is about to return is a success: a `Prefer: code=400`, a
+ * `Prefer: example=<4xx>`, a 406 from response content negotiation and a 500
+ * from response validation all leave the collection untouched.
+ *
+ * Not called on the not-owned early return: clearing another instance's queue
+ * there would drop a mutation its owner still has to commit.
+ */
+function settlePendingMutations(
+  context: Schmock.PluginContext,
+  response: unknown,
+): void {
+  const pending = context.state.get(PENDING_MUTATIONS_KEY);
+  context.state.delete(PENDING_MUTATIONS_KEY);
+  if (!Array.isArray(pending) || pending.length === 0) return;
+  if (getResponseStatus(response) >= 400) return;
+  for (const commit of pending) {
+    if (typeof commit === "function") commit();
+  }
 }
 
 function rejectRequest(
@@ -252,13 +285,85 @@ function rejectRequest(
   return result;
 }
 
+/**
+ * Apply `options.schemas` onto the parsed paths, in place.
+ *
+ * Keys are `"METHOD /path"` or `"METHOD /path STATUS"`. Without a status the
+ * first declared 2xx entry is patched, and an operation declaring no 2xx gains
+ * a synthetic 200.
+ */
+function applySchemaOverrides(
+  paths: Map<string, ParsedPath>,
+  schemas: Record<string, JSONSchema7>,
+): void {
+  for (const [key, schema] of Object.entries(schemas)) {
+    const parts = key.split(" ");
+    const method = parts[0];
+    const path = parts[1];
+    const status = parts[2] ? Number.parseInt(parts[2], 10) : undefined;
+    const routeKey = `${method} ${path}`;
+
+    const parsedPath = paths.get(routeKey);
+    if (!parsedPath) continue;
+
+    if (status !== undefined) {
+      const entry = parsedPath.responses.get(status);
+      if (entry) {
+        replaceResponseSchema(entry, schema);
+      } else {
+        parsedPath.responses.set(status, { schema, description: "" });
+      }
+      continue;
+    }
+
+    let patched = false;
+    for (const [code, entry] of parsedPath.responses) {
+      if (isStatusInRange(code, 200, 300)) {
+        replaceResponseSchema(entry, schema);
+        patched = true;
+        break;
+      }
+    }
+    if (!patched) {
+      parsedPath.responses.set(200, { schema, description: "" });
+    }
+  }
+}
+
+/**
+ * Is this a media type an `options.schemas` override should apply to?
+ *
+ * Override keys carry no media type, so the override is read as a replacement
+ * for the JSON-ish contract. Rewriting an `application/xml` branch with it as
+ * well would silently reshape a media type the caller never named.
+ */
+function isJsonMediaType(mediaType: string): boolean {
+  const base = mediaType.split(";")[0].trim().toLowerCase();
+  return (
+    base === "application/json" || base.endsWith("+json") || base === "*/*"
+  );
+}
+
 function replaceResponseSchema(
   entry: ParsedResponseEntry,
   schema: JSONSchema7,
 ): void {
   entry.schema = schema;
-  if (!entry.content) return;
-  for (const content of entry.content.values()) {
-    content.schema = schema;
+  if (!entry.content || entry.content.size === 0) return;
+
+  let patched = false;
+  for (const [mediaType, content] of entry.content) {
+    if (isJsonMediaType(mediaType)) {
+      content.schema = schema;
+      patched = true;
+    }
+  }
+
+  // A route declaring exactly one non-JSON media type still honours the
+  // override: there is no ambiguity about which contract was meant.
+  if (!patched && entry.content.size === 1) {
+    for (const content of entry.content.values()) {
+      content.schema = schema;
+    }
   }
 }
