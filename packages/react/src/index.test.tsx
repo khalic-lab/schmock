@@ -274,6 +274,23 @@ describe("renderWithSchmock", () => {
     expect(globalThis.fetch).not.toBe(fetchBeforeUnmount);
   });
 
+  it("shares one mock with an outer provider already intercepting", async () => {
+    const mock = schmock();
+    mock("GET /api/users", [{ id: 1, name: "Shared" }]);
+
+    render(
+      <SchmockProvider mock={mock}>
+        <div />
+      </SchmockProvider>,
+    );
+
+    expect(() => renderWithSchmock(<UserList />, { mock })).not.toThrow();
+
+    await waitFor(() => {
+      expect(screen.getByText("Shared")).toBeDefined();
+    });
+  });
+
   it("rerender preserves provider context", async () => {
     const { rerender } = renderWithSchmock(<MockConsumer />, {
       routes: [],

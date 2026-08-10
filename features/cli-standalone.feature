@@ -43,6 +43,29 @@ Feature: CLI Standalone Server
     And the CLI response should have CORS headers
     When I stop the CLI server
 
+  Scenario: Preflight echoes the headers the browser asked for
+    Given I have a petstore spec file
+    When I create a CLI server with CORS enabled
+    And I send a preflight requesting header "x-my-token"
+    Then the raw CLI response status should be 204
+    And the CLI response should allow the requested header "x-my-token"
+    When I stop the CLI server
+
+  Scenario: A declared OPTIONS operation answers a non-preflight request
+    Given I have a spec declaring an OPTIONS operation
+    When I create a CLI server with CORS enabled
+    And I send a bare OPTIONS request to "/things"
+    Then the raw CLI response status should be 200
+    And the raw CLI response body should contain the declared OPTIONS payload
+    When I stop the CLI server
+
+  Scenario: An unrouted OPTIONS path still reports not found under CORS
+    Given I have a petstore spec file
+    When I create a CLI server with CORS enabled
+    And I send a bare OPTIONS request to "/nope-unknown"
+    Then the raw CLI response status should be 404
+    When I stop the CLI server
+
   Scenario: Missing spec shows usage error
     When I run the CLI without a spec
     Then the CLI process exit code should be 1
@@ -113,3 +136,26 @@ Feature: CLI Standalone Server
     And I have a seed manifest with a numeric entry
     When I create a CLI server with that seed manifest
     Then the CLI error should contain "must be an array, a file path"
+
+  Scenario: Closing the server ends a stalled request within the grace window
+    Given I have a running CLI petstore server with a short shutdown grace
+    And a client has started a request body it never finishes
+    When I close the CLI server and wait for it
+    Then the close should settle
+    And the CLI port should accept a new listener
+
+  Scenario: Closing the CLI server twice resolves both times
+    Given I have a running CLI petstore server with a short shutdown grace
+    When I close the CLI server and wait for it
+    And I close the CLI server again
+    Then the close should settle
+    And the CLI port should accept a new listener
+
+  Scenario: Shutting down releases the signal handlers it registered
+    Given I have a petstore spec file
+    And I record the signal listeners registered before the run
+    When I start the CLI through run
+    Then the CLI should register one SIGINT and one SIGTERM handler
+    When the registered SIGINT handler fires
+    Then the run should settle and restore the original signal listeners
+    And the CLI port should accept a new listener

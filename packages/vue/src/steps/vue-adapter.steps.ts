@@ -4,8 +4,12 @@ import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
 import { mount } from "@vue/test-utils";
 import { expect, type Mock, vi } from "vitest";
-import { defineComponent, h, onMounted, ref } from "vue";
-import { schmockPlugin, useSchmock } from "../index.js";
+import { type App, createApp, defineComponent, h, onMounted, ref } from "vue";
+import {
+  restoreSchmockInterception,
+  schmockPlugin,
+  useSchmock,
+} from "../index.js";
 
 const feature = await loadFeature("../../features/vue-adapter.feature");
 
@@ -38,6 +42,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let originalFetch: typeof globalThis.fetch = globalThis.fetch;
 
   AfterEachScenario(() => {
+    vi.unstubAllGlobals();
     globalThis.fetch = originalFetch;
   });
 
@@ -153,6 +158,66 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
           wrapper.unmount();
         },
       );
+    },
+  );
+
+  Scenario(
+    "An app that never mounts can release interception",
+    ({ Given, When, Then }) => {
+      let savedFetch: typeof globalThis.fetch;
+
+      Given("a Schmock instance and a Vue app that never mounts", () => {
+        originalFetch = globalThis.fetch;
+        savedFetch = globalThis.fetch;
+        mock = schmock();
+        mock("GET /api/users", [{ id: 1 }]);
+      });
+
+      When(
+        "I install the plugin and release interception without mounting",
+        () => {
+          const app = createApp(defineComponent({ render: () => h("div") }));
+          app.use(schmockPlugin, { mock });
+          expect(globalThis.fetch).not.toBe(savedFetch);
+          restoreSchmockInterception(app);
+        },
+      );
+
+      Then("fetch should be restored to the original implementation", () => {
+        expect(globalThis.fetch).toBe(savedFetch);
+      });
+    },
+  );
+
+  Scenario(
+    "Installing the plugin under SSR does not patch fetch",
+    ({ Given, When, Then, And }) => {
+      let savedFetch: typeof globalThis.fetch;
+      let app: App;
+
+      Given(
+        "a Schmock instance and a server environment without a document",
+        () => {
+          originalFetch = globalThis.fetch;
+          savedFetch = globalThis.fetch;
+          mock = schmock();
+          mock("GET /api/users", [{ id: 1 }]);
+          vi.stubGlobal("document", undefined);
+        },
+      );
+
+      When("I install the plugin on a server-rendered app", () => {
+        app = createApp(defineComponent({ render: () => h("div") }));
+        app.use(schmockPlugin, { mock });
+      });
+
+      Then("globalThis.fetch should stay unpatched", () => {
+        expect(globalThis.fetch).toBe(savedFetch);
+      });
+
+      And("the server-rendered app should still provide the mock", () => {
+        expect(app.runWithContext(() => useSchmock())).toBe(mock);
+      });
     },
   );
 });

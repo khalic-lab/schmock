@@ -77,4 +77,52 @@ describe("SchmockProvider — prop changes (fix 3.4)", () => {
     );
     expect(second).toEqual({ marker: "second" });
   });
+
+  it("does not steal precedence from a newer root when options change", async () => {
+    const olderMock = schmock();
+    olderMock("GET /api/shared", ({ headers }) => ({
+      source: "older",
+      marker: headers["x-root"] ?? null,
+    }));
+    const newerMock = schmock();
+    newerMock("GET /api/shared", { source: "newer" });
+
+    const olderRoot = (marker: string) => (
+      <SchmockProvider
+        mock={olderMock}
+        options={{
+          beforeRequest: (request) => ({
+            ...request,
+            headers: { ...request.headers, "x-root": marker },
+          }),
+        }}
+      >
+        <div />
+      </SchmockProvider>
+    );
+
+    const older = render(olderRoot("first"));
+    const newer = render(
+      <SchmockProvider mock={newerMock}>
+        <div />
+      </SchmockProvider>,
+    );
+
+    expect(
+      await fetch("http://localhost/api/shared").then((r) => r.json()),
+    ).toEqual({ source: "newer" });
+
+    older.rerender(olderRoot("second"));
+
+    // The newer root registered last and must keep winning the shared route.
+    expect(
+      await fetch("http://localhost/api/shared").then((r) => r.json()),
+    ).toEqual({ source: "newer" });
+
+    // ...while the older root's lease still picked up the new hook in place.
+    newer.unmount();
+    expect(
+      await fetch("http://localhost/api/shared").then((r) => r.json()),
+    ).toEqual({ source: "older", marker: "second" });
+  });
 });

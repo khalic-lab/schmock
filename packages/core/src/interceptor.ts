@@ -9,9 +9,13 @@ import {
 } from "./response-normalizer.js";
 
 const PASSTHROUGH = Symbol("schmock.fetch.passthrough");
+// A lease whose baseUrl filter rejected the request never reached its handler.
+// It is distinct from PASSTHROUGH so the dispatch loop can tell "this owner
+// already ran" from "this lease was not interested in the request at all".
+const FILTERED = Symbol("schmock.fetch.filtered");
 const RELATIVE_REQUEST_BASE = "http://schmock.invalid/";
 
-type InterceptorResult = Response | typeof PASSTHROUGH;
+type InterceptorResult = Response | typeof PASSTHROUGH | typeof FILTERED;
 
 interface NormalizedFetchRequest {
   request: Request;
@@ -31,6 +35,9 @@ type InterceptRequestHandler = (
 
 interface RegisteredInterceptor {
   token: symbol;
+  // Identifies the mock behind the lease. Leases sharing an owner share one
+  // consultation per request; undefined means the lease stands alone.
+  owner?: symbol;
   intercept: (request: NormalizedFetchRequest) => Promise<InterceptorResult>;
 }
 
@@ -154,14 +161,33 @@ function createInterceptorSession(): InterceptorSession {
     const normalizedRequest = normalizeFetchRequest(input, init);
     throwIfAborted(normalizedRequest.request.signal);
 
+    // A mock is consulted at most once per request, however many leases it
+    // holds: without this, nested providers on one mock would run handle()
+    // — and emit request:start/notfound/end — once per lease.
+    const consultedOwners = new Set<symbol>();
+
     for (let index = snapshot.length - 1; index >= 0; index -= 1) {
+      const registered = snapshot[index];
+      const { owner } = registered;
+      if (owner !== undefined && consultedOwners.has(owner)) {
+        continue;
+      }
+
       const result = await awaitWithAbort(
-        snapshot[index].intercept(normalizedRequest),
+        registered.intercept(normalizedRequest),
         normalizedRequest.request.signal,
       );
       throwIfAborted(normalizedRequest.request.signal);
+      // The lease filtered the request out before admission, so its owner
+      // keeps its turn — a sibling lease may carry a matching baseUrl.
+      if (result === FILTERED) {
+        continue;
+      }
       if (result !== PASSTHROUGH) {
         return result;
+      }
+      if (owner !== undefined) {
+        consultedOwners.add(owner);
       }
     }
 
@@ -176,6 +202,8 @@ function createInterceptorSession(): InterceptorSession {
 
 function registerInterceptor(
   intercept: RegisteredInterceptor["intercept"],
+  applyOptions: (options?: Schmock.InterceptOptions) => void,
+  owner?: symbol,
 ): Schmock.InterceptHandle {
   let session = activeSession;
   if (!session || globalThis.fetch !== session.dispatchFetch) {
@@ -185,7 +213,7 @@ function registerInterceptor(
   }
 
   const token = Symbol("schmock.fetch.interceptor");
-  session.interceptors.push({ token, intercept });
+  session.interceptors.push({ token, owner, intercept });
   let active = true;
 
   return {
@@ -210,6 +238,12 @@ function registerInterceptor(
       if (globalThis.fetch === session.dispatchFetch) {
         globalThis.fetch = session.baselineFetch;
       }
+    },
+    update(options) {
+      // Reconfiguring never touches session.interceptors, so the lease keeps
+      // the dispatch position it was registered with.
+      if (!active) return;
+      applyOptions(options);
     },
     get active() {
       return active;
@@ -322,22 +356,32 @@ function toFetchResponse(
 
 /**
  * Create a fetch interceptor that routes requests through mock.handle().
+ *
+ * `owner` identifies the mock behind the lease. Leases sharing an owner are
+ * consulted at most once per request, so a mock held by several leases runs
+ * its handler — and emits its lifecycle events — once per network request.
  */
 export function createFetchInterceptor(
   handle: InterceptRequestHandler,
   options: Schmock.InterceptOptions = {},
   admitRequest?: () => InterceptRequestAdmission,
+  owner?: symbol,
 ): Schmock.InterceptHandle {
-  const {
-    baseUrl,
-    passthrough = true,
-    beforeRequest,
-    beforeResponse,
-    errorFormatter,
-  } = options;
+  // The options live in a mutable cell that each request reads once at its
+  // start. Reconfiguring a lease in place is what lets an adapter apply new
+  // hooks without re-registering — re-registration would move the lease to the
+  // front of the dispatch order and steal precedence from other mocks.
+  let currentOptions: Schmock.InterceptOptions = options;
 
   return registerInterceptor(
     async ({ request, url, origin }): Promise<InterceptorResult> => {
+      const {
+        baseUrl,
+        passthrough = true,
+        beforeRequest,
+        beforeResponse,
+        errorFormatter,
+      } = currentOptions;
       const path = url.pathname;
 
       // BaseUrl filter — non-matching requests go straight to real fetch.
@@ -349,12 +393,12 @@ export function createFetchInterceptor(
       if (baseUrl) {
         const { origin: baseOrigin, path: basePath } = parseBaseUrl(baseUrl);
         if (baseOrigin && origin !== baseOrigin) {
-          return PASSTHROUGH;
+          return FILTERED;
         }
         if (basePath) {
           const isMatch = path === basePath || path.startsWith(`${basePath}/`);
           if (!isMatch) {
-            return PASSTHROUGH;
+            return FILTERED;
           }
         }
       }
@@ -461,5 +505,9 @@ export function createFetchInterceptor(
         admission?.release();
       }
     },
+    (nextOptions) => {
+      currentOptions = nextOptions ?? {};
+    },
+    owner,
   );
 }

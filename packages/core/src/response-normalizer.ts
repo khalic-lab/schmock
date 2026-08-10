@@ -8,6 +8,20 @@ const FRAMING_HEADERS = new Set([
   "trailer",
   "transfer-encoding",
 ]);
+/**
+ * Headers that describe the connection rather than the message (RFC 9110 §7.6.1).
+ * Kept separate from {@link FRAMING_HEADERS}, which is parameterised by
+ * `preserveContentLength`: these are never a route's to send, so the strip is
+ * unconditional.
+ */
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "upgrade",
+]);
 type OwnedBytes = ReturnType<typeof Uint8Array.of>;
 
 interface NormalizableResponse {
@@ -299,6 +313,12 @@ function removeFramingHeaders(
   }
 }
 
+function removeHopByHopHeaders(headers: Record<string, string>): void {
+  for (const name of Object.keys(headers)) {
+    if (HOP_BY_HOP_HEADERS.has(name.toLowerCase())) delete headers[name];
+  }
+}
+
 /**
  * Validate and stabilize a response before it reaches a transport adapter.
  */
@@ -327,6 +347,13 @@ export function normalizeResponse(
       normalizedMethod === "HEAD" || status === 304,
     );
   }
+
+  // A hop-by-hop header belongs to the connection, which the transport owns:
+  // a route that emits `Connection: close` announces a close the server will
+  // not perform, and a conformant client then discards the next response on
+  // that socket. Adapters that genuinely mean it (an ingress rejection) add it
+  // after normalization, through their own extra-headers channel.
+  removeHopByHopHeaders(headers);
 
   return {
     status,

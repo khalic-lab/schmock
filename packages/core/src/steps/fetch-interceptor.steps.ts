@@ -338,33 +338,150 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     },
   );
 
-  Scenario("Double intercept throws an error", ({ Given, When, Then, And }) => {
-    let error: Error | undefined;
+  Scenario(
+    "One mock holds two concurrent leases",
+    ({ Given, When, Then, And }) => {
+      let olderLease: Schmock.InterceptHandle | undefined;
+      let newerLease: Schmock.InterceptHandle | undefined;
+      let olderResponse: Response | undefined;
+      let newerResponse: Response | undefined;
 
-    Given(
-      'a Schmock instance with route "GET /api/users" returning users',
-      () => {
+      Given(
+        "a Schmock instance with a route under each of two base URLs",
+        () => {
+          setup();
+          mock("GET /alpha/ping", { lease: "alpha" });
+          mock("GET /beta/ping", { lease: "beta" });
+        },
+      );
+
+      And(
+        "the same mock intercepts fetch twice with different base URLs",
+        () => {
+          olderLease = mock.intercept({ baseUrl: "/alpha" });
+          newerLease = mock.intercept({ baseUrl: "/beta" });
+          additionalHandles.push(olderLease, newerLease);
+        },
+      );
+
+      When("I fetch through each lease", async () => {
+        olderResponse = await fetch("http://localhost/alpha/ping");
+        newerResponse = await fetch("http://localhost/beta/ping");
+      });
+
+      Then("each lease should serve its own base URL", async () => {
+        expect(await olderResponse?.json()).toEqual({ lease: "alpha" });
+        expect(await newerResponse?.json()).toEqual({ lease: "beta" });
+        expect(savedFetch).not.toHaveBeenCalled();
+      });
+
+      When("I restore the newer lease", () => {
+        newerLease?.restore();
+      });
+
+      Then("the older lease should still serve its own base URL", async () => {
+        expect(olderLease?.active).toBe(true);
+        expect(newerLease?.active).toBe(false);
+        const response = await fetch("http://localhost/alpha/ping");
+        expect(await response.json()).toEqual({ lease: "alpha" });
+      });
+
+      When("I restore the older lease", () => {
+        olderLease?.restore();
+      });
+
+      Then("globalThis.fetch should be the original function", () => {
+        expect(globalThis.fetch).toBe(savedFetch);
+      });
+    },
+  );
+
+  Scenario(
+    "Two leases of one mock report a single unmatched request",
+    ({ Given, When, Then, And }) => {
+      let lifecycleEvents: string[] = [];
+
+      Given("a Schmock instance with lifecycle listeners and a route", () => {
         setup();
-        mock("GET /api/users", [{ id: 1 }]);
-      },
-    );
+        mock("GET /api/hit", { hit: true });
+        lifecycleEvents = [];
+        mock.on("request:start", () => {
+          lifecycleEvents.push("request:start");
+        });
+        mock.on("request:notfound", () => {
+          lifecycleEvents.push("request:notfound");
+        });
+        mock.on("request:end", () => {
+          lifecycleEvents.push("request:end");
+        });
+      });
 
-    And("fetch is intercepted", () => {
-      handle = mock.intercept();
-    });
+      And("the same mock intercepts fetch twice", () => {
+        additionalHandles.push(mock.intercept(), mock.intercept());
+      });
 
-    When("I try to intercept again", () => {
-      try {
-        mock.intercept();
-      } catch (caught) {
-        error = caught instanceof Error ? caught : new Error(String(caught));
-      }
-    });
+      When("I fetch an unmatched route", async () => {
+        await fetch("http://localhost/api/miss");
+      });
 
-    Then("it should throw an error about already intercepting", () => {
-      expect(error?.message).toMatch(/already intercepting/i);
-    });
-  });
+      Then("the lifecycle events should fire exactly once", () => {
+        expect(lifecycleEvents).toEqual([
+          "request:start",
+          "request:notfound",
+          "request:end",
+        ]);
+        expect(savedFetch).toHaveBeenCalledOnce();
+      });
+    },
+  );
+
+  Scenario(
+    "Updating lease options preserves stack position",
+    ({ Given, When, Then, And }) => {
+      let newerMock: Schmock.CallableMockInstance;
+      let newerHandle: Schmock.InterceptHandle | undefined;
+
+      Given(
+        'an older mock and a newer mock both serving "GET /api/shared"',
+        () => {
+          setup();
+          const echoLease = ({ headers }: Schmock.RequestContext) => ({
+            source: "older",
+            marker: headers["x-lease"] ?? null,
+          });
+          mock("GET /api/shared", echoLease);
+          mock("GET /api/older", echoLease);
+          newerMock = schmock();
+          newerMock("GET /api/shared", { source: "newer" });
+          handle = mock.intercept();
+          newerHandle = newerMock.intercept();
+          additionalHandles.push(newerHandle);
+        },
+      );
+
+      When("the older lease updates its options in place", () => {
+        handle?.update({
+          beforeRequest: (request) => ({
+            ...request,
+            headers: { ...request.headers, "x-lease": "updated" },
+          }),
+        });
+      });
+
+      Then("the newer mock should still win the shared route", async () => {
+        const response = await fetch("http://localhost/api/shared");
+        expect(await response.json()).toEqual({ source: "newer" });
+      });
+
+      And("the older lease should apply its updated options", async () => {
+        const response = await fetch("http://localhost/api/older");
+        expect(await response.json()).toEqual({
+          source: "older",
+          marker: "updated",
+        });
+      });
+    },
+  );
 
   Scenario(
     "Multiple mocks compose from newest to oldest",

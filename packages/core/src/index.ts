@@ -89,6 +89,7 @@ export function schmock(
 export { isBinaryBody } from "./binary.js";
 // Re-export constants and utilities
 export {
+  getResponseException,
   HTTP_METHODS,
   isHttpMethod,
   isRouteNotFound,

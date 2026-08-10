@@ -25,11 +25,25 @@ function App() {
 }
 ```
 
-`SchmockProvider` patches `globalThis.fetch` on mount and restores it on unmount. Any client that uses `globalThis.fetch` — including React Query or SWR when configured with fetch — is intercepted automatically. Clients using another transport are not intercepted. The installer commits before descendant layout effects, so a child may safely fetch from `useLayoutEffect` on its first mount.
+`SchmockProvider` patches `globalThis.fetch` on mount and restores it on unmount. Any client that uses `globalThis.fetch` — including React Query or SWR when configured with fetch — is intercepted automatically. Clients using another transport are not intercepted. The installer commits before descendant layout effects, so a child may safely fetch from `useLayoutEffect` on its first mount. Rendering on the server installs nothing: without a DOM the provider only supplies the mock through context.
 
 If another library replaces `globalThis.fetch`, a later Schmock provider wraps
 that current implementation as its passthrough boundary. Cleanup never
 overwrites a third-party replacement it no longer owns.
+
+### Ownership and precedence
+
+The provider takes an interception lease per mounted provider, and a mock can
+back several leases at once. Nesting a provider inside another provider for the
+same mock is allowed, as is `renderWithSchmock({ mock })` under an outer
+provider — both install, and neither disturbs the other.
+
+Changing `options` (including a fresh inline `beforeRequest` on every render)
+reconfigures the existing lease in place; it does not re-register it. The
+provider therefore keeps the dispatch position it acquired at mount, so
+reconfiguring one root never promotes it above a root that mounted later.
+Interception is re-acquired only when the `mock` prop itself changes — a new
+owner legitimately takes a new position at the front.
 
 Calling `mock.reset()` while the provider is mounted clears routes, state,
 history, plugins, and listeners but preserves the provider's explicit

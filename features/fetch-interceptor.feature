@@ -66,11 +66,27 @@ Feature: Fetch Interceptor
     When I fetch "/api/users"
     Then the fetch response should have the injected header
 
-  Scenario: Double intercept throws an error
-    Given a Schmock instance with route "GET /api/users" returning users
-    And fetch is intercepted
-    When I try to intercept again
-    Then it should throw an error about already intercepting
+  Scenario: One mock holds two concurrent leases
+    Given a Schmock instance with a route under each of two base URLs
+    And the same mock intercepts fetch twice with different base URLs
+    When I fetch through each lease
+    Then each lease should serve its own base URL
+    When I restore the newer lease
+    Then the older lease should still serve its own base URL
+    When I restore the older lease
+    Then globalThis.fetch should be the original function
+
+  Scenario: Two leases of one mock report a single unmatched request
+    Given a Schmock instance with lifecycle listeners and a route
+    And the same mock intercepts fetch twice
+    When I fetch an unmatched route
+    Then the lifecycle events should fire exactly once
+
+  Scenario: Updating lease options preserves stack position
+    Given an older mock and a newer mock both serving "GET /api/shared"
+    When the older lease updates its options in place
+    Then the newer mock should still win the shared route
+    And the older lease should apply its updated options
 
   Scenario: Multiple mocks compose from newest to oldest
     Given an older mock for both routes and a newer mock for "GET /api/shared"

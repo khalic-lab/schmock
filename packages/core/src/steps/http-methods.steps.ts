@@ -1,3 +1,4 @@
+import { connect } from "node:net";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
 import { isRouteNotFound, schmock } from "../index";
@@ -9,10 +10,86 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-describeFeature(feature, ({ Scenario }) => {
+interface RawHttpResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+/**
+ * Read a response off the wire rather than through a fetch client: framing and
+ * connection headers are exactly what this exercises, and a client normalizes
+ * them away. Resolves as soon as the response head is complete, so a rejection
+ * that deliberately lingers (413) does not stall the scenario.
+ */
+function sendRawHttpRequest(
+  port: number,
+  request: string,
+): Promise<RawHttpResponse> {
+  return new Promise((resolveResponse, rejectResponse) => {
+    const socket = connect(port, "127.0.0.1");
+    let rawResponse = "";
+    let settled = false;
+
+    const settle = (): void => {
+      if (settled) return;
+      const separator = rawResponse.indexOf("\r\n\r\n");
+      if (separator === -1 && !socket.destroyed) return;
+      settled = true;
+      const head =
+        separator === -1 ? rawResponse : rawResponse.slice(0, separator);
+      const body = separator === -1 ? "" : rawResponse.slice(separator + 4);
+      const [statusLine = "", ...headerLines] = head.split("\r\n");
+      const headers: Record<string, string> = {};
+      for (const line of headerLines) {
+        const headerSeparator = line.indexOf(":");
+        if (headerSeparator === -1) continue;
+        headers[line.slice(0, headerSeparator).toLowerCase()] = line
+          .slice(headerSeparator + 1)
+          .trim();
+      }
+      socket.destroy();
+      resolveResponse({
+        status: Number(statusLine.split(" ")[1]),
+        headers,
+        body,
+      });
+    };
+
+    socket.setEncoding("utf8");
+    socket.setTimeout(5_000, () => {
+      socket.destroy(new Error("Timed out waiting for a raw response"));
+    });
+    socket.on("connect", () => socket.write(request));
+    socket.on("data", (chunk: string) => {
+      rawResponse += chunk;
+      settle();
+    });
+    socket.on("error", (error) => {
+      if (!settled) rejectResponse(error);
+    });
+    socket.on("close", settle);
+  });
+}
+
+describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let mock: CallableMockInstance;
   let response: any;
   let responses: any[] = [];
+  let listeningPort = 0;
+  let listening = false;
+
+  function closeListeningMock(): void {
+    if (!listening) return;
+    listening = false;
+    mock.close();
+  }
+
+  // A scenario that fails mid-way must not leave the port bound for the rest
+  // of the suite.
+  AfterEachScenario(() => {
+    closeListeningMock();
+  });
 
   Scenario("GET method with query parameters", ({ Given, When, Then }) => {
     Given("I create a mock with a GET search endpoint", () => {
@@ -458,6 +535,106 @@ describeFeature(feature, ({ Scenario }) => {
         expect(normalizedResponses[3].headers).toEqual({
           "Content-Length": "7",
         });
+      });
+    },
+  );
+
+  Scenario(
+    "Hop-by-hop headers never reach a transport",
+    ({ Given, When, Then }) => {
+      let hopResponses: Schmock.Response[];
+
+      Given("I create routes that return hop-by-hop headers", () => {
+        mock = schmock();
+        const hopHeaders = {
+          Connection: "close",
+          "Keep-Alive": "timeout=5",
+          Upgrade: "websocket",
+          TE: "trailers",
+          "Proxy-Authenticate": 'Basic realm="proxy"',
+          "Proxy-Authorization": "Basic Zm9v",
+          "X-Kept": "yes",
+        };
+        mock("GET /hop", () => [200, { ok: true }, hopHeaders]);
+        mock("HEAD /hop-head", () => [200, { ok: true }, hopHeaders]);
+        mock("GET /hop-not-modified", () => [304, { ok: true }, hopHeaders]);
+      });
+
+      When("I request every hop-by-hop route", async () => {
+        hopResponses = await Promise.all([
+          mock.handle("GET", "/hop"),
+          mock.handle("HEAD", "/hop-head"),
+          mock.handle("GET", "/hop-not-modified"),
+        ]);
+      });
+
+      // Unconditional, unlike Content-Length: a hop-by-hop header belongs to
+      // the connection the transport owns, never to a route's response, so
+      // there is no HEAD or 304 case where keeping one would be correct.
+      Then("no normalized response should carry a hop-by-hop header", () => {
+        expect(hopResponses.map((entry) => entry.headers)).toEqual([
+          { "X-Kept": "yes" },
+          { "X-Kept": "yes" },
+          { "X-Kept": "yes" },
+        ]);
+      });
+    },
+  );
+
+  Scenario(
+    "Ingress failures on the listening server still close the connection",
+    ({ Given, When, Then }) => {
+      let ingressResponses: RawHttpResponse[];
+
+      Given("I start a listening mock with a JSON route", async () => {
+        mock = schmock();
+        mock("POST /ingress", ({ body }) => ({ received: body }));
+        listeningPort = (await mock.listen(0)).port;
+        listening = true;
+      });
+
+      When(
+        "I send a malformed body and an oversized declared body to it",
+        async () => {
+          // Sequential, not parallel: the 413 response lingers deliberately
+          // while the client may still be uploading, and overlapping reads
+          // make the failure mode hard to attribute.
+          const malformed = await sendRawHttpRequest(
+            listeningPort,
+            "POST /ingress HTTP/1.1\r\n" +
+              "Host: 127.0.0.1\r\n" +
+              "Content-Type: application/json\r\n" +
+              "Content-Length: 5\r\n" +
+              "\r\n" +
+              "{oops",
+          );
+          const oversized = await sendRawHttpRequest(
+            listeningPort,
+            "POST /ingress HTTP/1.1\r\n" +
+              "Host: 127.0.0.1\r\n" +
+              "Content-Type: application/json\r\n" +
+              `Content-Length: ${11 * 1024 * 1024}\r\n` +
+              "\r\n",
+          );
+          ingressResponses = [malformed, oversized];
+        },
+      );
+
+      // The header is the only thing that puts `Connection: close` on the
+      // wire — `shouldKeepAlive = false` alone emits nothing — so this is the
+      // regression guard for routing it through the adapter's extra headers
+      // once the normalizer strips hop-by-hop headers from responses.
+      Then("both ingress failures should close the connection", () => {
+        expect(ingressResponses.map((entry) => entry.status)).toEqual([
+          400, 413,
+        ]);
+        expect(
+          ingressResponses.map((entry) => entry.headers.connection),
+        ).toEqual(["close", "close"]);
+      });
+
+      When("I stop the listening mock", () => {
+        closeListeningMock();
       });
     },
   );

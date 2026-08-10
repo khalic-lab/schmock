@@ -178,10 +178,249 @@ describe("mock.intercept()", () => {
     }
   });
 
-  it("throws when intercepting twice", () => {
+  it("lets one mock hold two concurrent leases", async () => {
+    mock("GET /alpha/ping", { lease: "alpha" });
+    mock("GET /beta/ping", { lease: "beta" });
+
+    const older = mock.intercept({ baseUrl: "/alpha" });
+    const newer = mock.intercept({ baseUrl: "/beta" });
+
+    try {
+      expect(older.active).toBe(true);
+      expect(newer.active).toBe(true);
+      expect(
+        await fetch("http://localhost/alpha/ping").then((r) => r.json()),
+      ).toEqual({ lease: "alpha" });
+      expect(
+        await fetch("http://localhost/beta/ping").then((r) => r.json()),
+      ).toEqual({ lease: "beta" });
+    } finally {
+      older.restore();
+      newer.restore();
+    }
+  });
+
+  it("restores exactly one of two leases held by the same mock", async () => {
+    mock("GET /alpha/ping", { lease: "alpha" });
+    mock("GET /beta/ping", { lease: "beta" });
+    const baselineFetch = globalThis.fetch;
+
+    const older = mock.intercept({ baseUrl: "/alpha" });
+    const newer = mock.intercept({ baseUrl: "/beta" });
+
+    newer.restore();
+    expect(newer.active).toBe(false);
+    expect(older.active).toBe(true);
+    expect(globalThis.fetch).not.toBe(baselineFetch);
+    expect(
+      await fetch("http://localhost/alpha/ping").then((r) => r.json()),
+    ).toEqual({ lease: "alpha" });
+
+    older.restore();
+    expect(older.active).toBe(false);
+    expect(globalThis.fetch).toBe(baselineFetch);
+  });
+
+  it("emits one lifecycle event set when two leases of one mock miss", async () => {
+    mock("GET /api/hit", { hit: true });
+    const events: string[] = [];
+    mock.on("request:start", () => {
+      events.push("start");
+    });
+    mock.on("request:notfound", () => {
+      events.push("notfound");
+    });
+    mock.on("request:end", () => {
+      events.push("end");
+    });
+
+    const older = mock.intercept();
+    const newer = mock.intercept();
+
+    try {
+      await fetch("http://localhost/api/miss");
+      // One network request consults the mock once, no matter how many
+      // leases it holds.
+      expect(events).toEqual(["start", "notfound", "end"]);
+    } finally {
+      newer.restore();
+      older.restore();
+    }
+  });
+
+  it("consults both leases of one mock when their baseUrls are disjoint", async () => {
+    mock("GET /alpha/ping", { lease: "alpha" });
+    mock("GET /beta/ping", { lease: "beta" });
+    const events: string[] = [];
+    mock.on("request:start", () => {
+      events.push("start");
+    });
+    mock.on("request:notfound", () => {
+      events.push("notfound");
+    });
+
+    const older = mock.intercept({ baseUrl: "/alpha" });
+    const newer = mock.intercept({ baseUrl: "/beta" });
+
+    try {
+      // The newer lease filters the request out before it reaches the mock,
+      // so it must not consume the owner's single consultation.
+      expect(
+        await fetch("http://localhost/alpha/ping").then((r) => r.json()),
+      ).toEqual({ lease: "alpha" });
+      expect(events).toEqual(["start"]);
+
+      // An unmatched path under the older lease still misses exactly once.
+      await fetch("http://localhost/alpha/miss");
+      expect(events).toEqual(["start", "start", "notfound"]);
+    } finally {
+      newer.restore();
+      older.restore();
+    }
+  });
+
+  it("applies a new baseUrl through update()", async () => {
+    mock("GET /alpha/ping", { lease: "alpha" });
+    mock("GET /beta/ping", { lease: "beta" });
+    const baselineFetch = vi.mocked(globalThis.fetch);
+    const handle = mock.intercept({ baseUrl: "/alpha" });
+
+    try {
+      await fetch("http://localhost/beta/ping");
+      expect(baselineFetch).toHaveBeenCalledTimes(1);
+
+      handle.update({ baseUrl: "/beta" });
+
+      expect(
+        await fetch("http://localhost/beta/ping").then((r) => r.json()),
+      ).toEqual({ lease: "beta" });
+
+      await fetch("http://localhost/alpha/ping");
+      expect(baselineFetch).toHaveBeenCalledTimes(2);
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("flips passthrough through update()", async () => {
+    mock("GET /api/known", { ok: true });
+    const handle = mock.intercept({ passthrough: true });
+
+    try {
+      expect(await (await fetch("http://localhost/api/unknown")).text()).toBe(
+        "real backend",
+      );
+
+      handle.update({ passthrough: false });
+
+      const strict = await fetch("http://localhost/api/unknown");
+      expect(strict.status).toBe(404);
+      expect(await strict.json()).toEqual({
+        error: "No matching mock route found",
+        code: "ROUTE_NOT_FOUND",
+      });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("swaps request and response hooks through update()", async () => {
+    mock("GET /api/hook", ({ headers }) => ({ marker: headers["x-marker"] }));
+
+    const handle = mock.intercept({
+      beforeRequest: (request) => ({
+        ...request,
+        headers: { ...request.headers, "x-marker": "first" },
+      }),
+      beforeResponse: (response) => ({
+        ...response,
+        headers: { ...response.headers, "x-hook": "first" },
+      }),
+    });
+
+    try {
+      const first = await fetch("http://localhost/api/hook");
+      expect(await first.json()).toEqual({ marker: "first" });
+      expect(first.headers.get("x-hook")).toBe("first");
+
+      handle.update({
+        beforeRequest: (request) => ({
+          ...request,
+          headers: { ...request.headers, "x-marker": "second" },
+        }),
+        beforeResponse: (response) => ({
+          ...response,
+          headers: { ...response.headers, "x-hook": "second" },
+        }),
+      });
+
+      const second = await fetch("http://localhost/api/hook");
+      expect(await second.json()).toEqual({ marker: "second" });
+      expect(second.headers.get("x-hook")).toBe("second");
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("swaps errorFormatter through update()", async () => {
+    mock("GET /api/users", [{ id: 1 }]);
+    const handle = mock.intercept({
+      beforeRequest: () => {
+        throw new Error("hook failed");
+      },
+      errorFormatter: (error) => ({ stage: "first", message: error.message }),
+    });
+
+    try {
+      expect(
+        await fetch("http://localhost/api/users").then((r) => r.json()),
+      ).toEqual({ stage: "first", message: "hook failed" });
+
+      handle.update({
+        beforeRequest: () => {
+          throw new Error("hook failed again");
+        },
+        errorFormatter: (error) => ({
+          stage: "second",
+          message: error.message,
+        }),
+      });
+
+      expect(
+        await fetch("http://localhost/api/users").then((r) => r.json()),
+      ).toEqual({ stage: "second", message: "hook failed again" });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("keeps its stack position when a lease updates its options", async () => {
+    mock("GET /api/shared", { source: "older" });
+    const newerMock = schmock();
+    newerMock("GET /api/shared", { source: "newer" });
+
+    const older = mock.intercept();
+    const newer = newerMock.intercept();
+
+    try {
+      older.update({ passthrough: false });
+
+      expect(
+        await fetch("http://localhost/api/shared").then((r) => r.json()),
+      ).toEqual({ source: "newer" });
+    } finally {
+      older.restore();
+      newer.restore();
+    }
+  });
+
+  it("ignores update() on a restored lease", () => {
+    mock("GET /api/known", { ok: true });
     const handle = mock.intercept();
-    expect(() => mock.intercept()).toThrow(/already intercepting/i);
     handle.restore();
+
+    expect(() => handle.update({ passthrough: false })).not.toThrow();
+    expect(handle.active).toBe(false);
   });
 
   it("does not leak an admission for unsupported fetch methods", async () => {

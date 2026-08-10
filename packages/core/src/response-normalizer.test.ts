@@ -186,6 +186,61 @@ describe("response normalization", () => {
 
       expect(normalized.headers).toEqual({ "X-Kept": "yes" });
     });
+
+    it.each([
+      "Connection",
+      "Keep-Alive",
+      "Proxy-Authenticate",
+      "Proxy-Authorization",
+      "TE",
+      "Upgrade",
+    ])("removes the hop-by-hop header %s", (header) => {
+      const normalized = normalizeResponse(
+        createResponse("body", {
+          headers: { [header]: "close", "X-Kept": "yes" },
+        }),
+        "GET",
+      );
+
+      expect(normalized.headers).toEqual({ "X-Kept": "yes" });
+    });
+
+    it("removes hop-by-hop headers whatever case they are written in", () => {
+      const normalized = normalizeResponse(
+        createResponse("body", {
+          headers: { CoNnEcTiOn: "close", "keep-ALIVE": "timeout=5" },
+        }),
+        "GET",
+      );
+
+      expect(normalized.headers).toEqual({});
+    });
+
+    // Unlike Content-Length, a hop-by-hop header is never the route's to send:
+    // it describes the connection the transport owns, so HEAD and 304 lose it
+    // too even though they keep their entity length.
+    it.each([
+      { method: "HEAD", status: 200 },
+      { method: "GET", status: 304 },
+    ])("strips hop-by-hop but keeps Content-Length on $method $status", ({
+      method,
+      status,
+    }) => {
+      const normalized = normalizeResponse(
+        createResponse("representation", {
+          status,
+          headers: {
+            "Content-Length": "14",
+            Connection: "close",
+            "Keep-Alive": "timeout=5",
+            Upgrade: "websocket",
+          },
+        }),
+        method,
+      );
+
+      expect(normalized.headers).toEqual({ "Content-Length": "14" });
+    });
   });
 
   describe("headers", () => {

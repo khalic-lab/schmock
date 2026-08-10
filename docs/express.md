@@ -101,6 +101,16 @@ The formatter receives core-marked internal exceptions and errors thrown by
 adapter hooks or request handling. It does not reinterpret an ordinary
 user-defined 500 route response.
 
+Exception provenance is captured before `beforeResponse` runs, so a hook that
+clones the response with `{ ...response }` does not suppress the formatter.
+The formatted response keeps the (post-hook) response headers — `retry-after`
+and friends survive — with `content-type` forced to `application/json`. A
+post-hook header that cannot be transported (a non-string value, a control
+character in the value, or a case-duplicate name) is dropped rather than
+discarding the formatted body. If
+`beforeResponse` rewrites an exception to a non-500 status, that response is
+sent as-is and the formatter is not called.
+
 ## Response Behavior
 
 - Final statuses must be integers from 200 through 599.

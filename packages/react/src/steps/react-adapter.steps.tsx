@@ -32,6 +32,27 @@ function MockConsumer() {
   return <div data-testid="has-mock">yes</div>;
 }
 
+function NestedFetcher() {
+  const [value, setValue] = useState("loading");
+
+  useEffect(() => {
+    void fetch("http://localhost/api/nested")
+      .then((response) => response.json())
+      .then((body: unknown) => {
+        if (
+          typeof body === "object" &&
+          body !== null &&
+          "value" in body &&
+          typeof body.value === "string"
+        ) {
+          setValue(body.value);
+        }
+      });
+  }, []);
+
+  return <div data-testid="nested-value">{value}</div>;
+}
+
 function LayoutEffectFetcher() {
   const [value, setValue] = useState("loading");
 
@@ -282,6 +303,96 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
           unmountProvider();
         },
       );
+    },
+  );
+
+  Scenario(
+    "Nested providers sharing one mock both install",
+    ({ Given, When, Then, And }) => {
+      let renderError: Error | undefined;
+
+      Given("a Schmock instance with a route for nested providers", () => {
+        originalFetch = globalThis.fetch;
+        mock = schmock();
+        mock("GET /api/nested", { value: "nested" });
+      });
+
+      When(
+        "I render a provider for the same mock inside another provider",
+        () => {
+          try {
+            render(
+              <SchmockProvider mock={mock}>
+                <SchmockProvider mock={mock}>
+                  <NestedFetcher />
+                </SchmockProvider>
+              </SchmockProvider>,
+            );
+          } catch (caught) {
+            renderError =
+              caught instanceof Error ? caught : new Error(String(caught));
+          }
+        },
+      );
+
+      Then("the nested render should not throw", () => {
+        expect(renderError).toBeUndefined();
+      });
+
+      And("the nested component should display the mocked value", async () => {
+        await waitFor(() => {
+          expect(screen.getByTestId("nested-value").textContent).toBe("nested");
+        });
+      });
+    },
+  );
+
+  Scenario(
+    "Changing provider options does not steal precedence from another root",
+    ({ Given, When, Then }) => {
+      let rerenderOlderRoot: ((marker: string) => void) | undefined;
+
+      Given("two roots whose mocks both serve the same route", () => {
+        originalFetch = globalThis.fetch;
+        const olderMock = schmock();
+        olderMock("GET /api/shared", ({ headers }) => ({
+          source: "older",
+          marker: headers["x-root"] ?? null,
+        }));
+        const newerMock = schmock();
+        newerMock("GET /api/shared", { source: "newer" });
+
+        const olderRoot = (marker: string) => (
+          <SchmockProvider
+            mock={olderMock}
+            options={{
+              beforeRequest: (request) => ({
+                ...request,
+                headers: { ...request.headers, "x-root": marker },
+              }),
+            }}
+          >
+            <div />
+          </SchmockProvider>
+        );
+
+        const older = render(olderRoot("first"));
+        render(
+          <SchmockProvider mock={newerMock}>
+            <div />
+          </SchmockProvider>,
+        );
+        rerenderOlderRoot = (marker) => older.rerender(olderRoot(marker));
+      });
+
+      When("I rerender the older root with a new request hook", () => {
+        rerenderOlderRoot?.("second");
+      });
+
+      Then("the newer root should still win the shared route", async () => {
+        const response = await fetch("http://localhost/api/shared");
+        expect(await response.json()).toEqual({ source: "newer" });
+      });
     },
   );
 });

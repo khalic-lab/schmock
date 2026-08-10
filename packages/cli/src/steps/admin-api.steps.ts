@@ -67,6 +67,7 @@ const simpleSpec = {
 interface JsonResponse {
   status: number;
   body: unknown;
+  headers: Headers;
 }
 
 interface RouteRecord {
@@ -103,6 +104,11 @@ const expectedHistory: HistoryRecordSummary[] = [
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Drops `headers` so payload assertions stay focused on the JSON body. */
+function payload(response: JsonResponse): { status: number; body: unknown } {
+  return { status: response.status, body: response.body };
 }
 
 function routeRecords(value: unknown): RouteRecord[] {
@@ -174,21 +180,54 @@ function historyRecords(value: unknown): HistoryRecordSummary[] {
   });
 }
 
+/**
+ * Reads the raw `headers` map of the first history record. `historyRecords`
+ * deliberately drops header values, so header-level assertions need their own
+ * reader.
+ */
+function firstRecordHeaders(value: unknown): Record<string, unknown> {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("Expected at least one history record");
+  }
+  const [record] = value;
+  if (!isRecord(record) || !isRecord(record.headers)) {
+    throw new Error("Expected the first history record to carry headers");
+  }
+  return record.headers;
+}
+
 async function fetchJson(
   server: CliServer,
   method: string,
   path: string,
+  headers: Record<string, string> = {},
 ): Promise<JsonResponse> {
   const response = await fetch(
     `http://${server.hostname}:${server.port}${path}`,
-    { method },
+    { method, headers },
   );
   if (response.status === 204) {
-    return { status: response.status, body: undefined };
+    return {
+      status: response.status,
+      body: undefined,
+      headers: response.headers,
+    };
   }
-  const body: unknown = await response.json();
-  return { status: response.status, body };
+  const text = await response.text();
+  let body: unknown;
+  try {
+    body = text === "" ? undefined : JSON.parse(text);
+  } catch {
+    body = text;
+  }
+  return { status: response.status, body, headers: response.headers };
 }
+
+const CORS_RESPONSE_HEADERS = [
+  "access-control-allow-origin",
+  "access-control-allow-methods",
+  "access-control-allow-headers",
+];
 
 describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let server: CliServer | undefined;
@@ -206,15 +245,33 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     return response;
   }
 
-  async function closeServer(): Promise<void> {
-    if (!server?.server.listening) {
-      server = undefined;
-      return;
-    }
-    server.server.closeAllConnections();
-    await new Promise<void>((resolve) => {
-      server?.server.close(() => resolve());
+  function adminAuth(): Record<string, string> {
+    const token = requireServer().adminToken;
+    if (!token)
+      throw new Error("Expected the CLI server to issue an admin token");
+    return { authorization: `Bearer ${token}` };
+  }
+
+  /** Every admin call in this suite is authenticated with the issued token. */
+  function adminFetch(
+    method: string,
+    path: string,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<JsonResponse> {
+    return fetchJson(requireServer(), method, path, {
+      ...adminAuth(),
+      ...extraHeaders,
     });
+  }
+
+  function expectNoCorsHeaders(received: JsonResponse): void {
+    for (const header of CORS_RESPONSE_HEADERS) {
+      expect(received.headers.get(header)).toBeNull();
+    }
+  }
+
+  async function closeServer(): Promise<void> {
+    await server?.close();
     server = undefined;
   }
 
@@ -225,16 +282,22 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     return specPath;
   }
 
-  async function startServer(admin: boolean): Promise<void> {
+  async function startServer(
+    admin: boolean,
+    extra: { cors?: boolean; adminHistoryLimit?: number } = {},
+  ): Promise<void> {
     server = await createCliServer({
       spec: writeTempSpec(),
       port: 0,
       admin,
+      ...extra,
     });
   }
 
-  async function requestMockApi(): Promise<JsonResponse> {
-    return fetchJson(requireServer(), "GET", "/items");
+  async function requestMockApi(
+    headers: Record<string, string> = {},
+  ): Promise<JsonResponse> {
+    return fetchJson(requireServer(), "GET", "/items", headers);
   }
 
   AfterEachScenario(async () => {
@@ -251,11 +314,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     });
 
     When('I request "GET /schmock-admin/routes"', async () => {
-      response = await fetchJson(
-        requireServer(),
-        "GET",
-        "/schmock-admin/routes",
-      );
+      response = await adminFetch("GET", "/schmock-admin/routes");
     });
 
     Then("the response status is 200", () => {
@@ -273,11 +332,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     });
 
     When('I request "GET /schmock-admin/state"', async () => {
-      response = await fetchJson(
-        requireServer(),
-        "GET",
-        "/schmock-admin/state",
-      );
+      response = await adminFetch("GET", "/schmock-admin/state");
     });
 
     Then("the response status is 200", () => {
@@ -295,30 +350,21 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       async () => {
         await startServer(true);
 
-        const routeResponse = await fetchJson(
-          requireServer(),
-          "GET",
-          "/schmock-admin/routes",
-        );
+        const routeResponse = await adminFetch("GET", "/schmock-admin/routes");
         routesBeforeReset = routeRecords(routeResponse.body);
         expect(routesBeforeReset).toEqual(expectedRoutes);
 
         const mockResponse = await requestMockApi();
-        expect(mockResponse).toEqual({ status: 200, body: [] });
+        expect(payload(mockResponse)).toEqual({ status: 200, body: [] });
 
-        const stateResponse = await fetchJson(
-          requireServer(),
-          "GET",
-          "/schmock-admin/state",
-        );
+        const stateResponse = await adminFetch("GET", "/schmock-admin/state");
         expect(isRecord(stateResponse.body)).toBe(true);
         if (!isRecord(stateResponse.body)) {
           throw new Error("Expected populated state before reset");
         }
         expect(Object.keys(stateResponse.body).length).toBeGreaterThan(0);
 
-        const historyResponse = await fetchJson(
-          requireServer(),
+        const historyResponse = await adminFetch(
           "GET",
           "/schmock-admin/history",
         );
@@ -327,46 +373,36 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     );
 
     When('I send "POST /schmock-admin/reset"', async () => {
-      response = await fetchJson(
-        requireServer(),
-        "POST",
-        "/schmock-admin/reset",
-      );
+      response = await adminFetch("POST", "/schmock-admin/reset");
     });
 
     Then("the response status is 204", () => {
-      expect(requireResponse()).toEqual({ status: 204, body: undefined });
+      expect(payload(requireResponse())).toEqual({
+        status: 204,
+        body: undefined,
+      });
     });
 
     And("the admin request history is empty", async () => {
-      const historyResponse = await fetchJson(
-        requireServer(),
-        "GET",
-        "/schmock-admin/history",
-      );
-      expect(historyResponse).toEqual({ status: 200, body: [] });
+      const historyResponse = await adminFetch("GET", "/schmock-admin/history");
+      expect(payload(historyResponse)).toEqual({ status: 200, body: [] });
     });
 
     And("the admin state is empty", async () => {
-      const stateResponse = await fetchJson(
-        requireServer(),
-        "GET",
-        "/schmock-admin/state",
-      );
-      expect(stateResponse).toEqual({ status: 200, body: {} });
+      const stateResponse = await adminFetch("GET", "/schmock-admin/state");
+      expect(payload(stateResponse)).toEqual({ status: 200, body: {} });
     });
 
     And("the registered routes are unchanged", async () => {
-      const routeResponse = await fetchJson(
-        requireServer(),
-        "GET",
-        "/schmock-admin/routes",
-      );
+      const routeResponse = await adminFetch("GET", "/schmock-admin/routes");
       expect(routeRecords(routeResponse.body)).toEqual(routesBeforeReset);
     });
 
     And("the mock API still responds", async () => {
-      expect(await requestMockApi()).toEqual({ status: 200, body: [] });
+      expect(payload(await requestMockApi())).toEqual({
+        status: 200,
+        body: [],
+      });
     });
   });
 
@@ -376,15 +412,14 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     });
 
     When("I make a request to the mock API", async () => {
-      expect(await requestMockApi()).toEqual({ status: 200, body: [] });
+      expect(payload(await requestMockApi())).toEqual({
+        status: 200,
+        body: [],
+      });
     });
 
     And('I request "GET /schmock-admin/history"', async () => {
-      response = await fetchJson(
-        requireServer(),
-        "GET",
-        "/schmock-admin/history",
-      );
+      response = await adminFetch("GET", "/schmock-admin/history");
     });
 
     Then("the response status is 200", () => {
@@ -413,4 +448,288 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       expect(requireResponse().status).toBe(404);
     });
   });
+
+  Scenario(
+    "Admin endpoints reject an unauthenticated request",
+    ({ Given, When, Then, And }) => {
+      Given("a CLI server with admin enabled and a simple spec", async () => {
+        await startServer(true);
+      });
+
+      When(
+        'I request "GET /schmock-admin/history" without a token',
+        async () => {
+          response = await fetchJson(
+            requireServer(),
+            "GET",
+            "/schmock-admin/history",
+          );
+        },
+      );
+
+      Then("the response status is 401", () => {
+        expect(requireResponse().status).toBe(401);
+      });
+
+      And('the response body has code "UNAUTHORIZED"', () => {
+        expect(requireResponse().body).toMatchObject({ code: "UNAUTHORIZED" });
+      });
+
+      And('the response carries a "www-authenticate" challenge', () => {
+        expect(requireResponse().headers.get("www-authenticate")).toContain(
+          "Bearer",
+        );
+      });
+
+      And("the response has no CORS headers", () => {
+        expectNoCorsHeaders(requireResponse());
+      });
+    },
+  );
+
+  Scenario(
+    "Admin endpoints reject a wrong token",
+    ({ Given, When, Then, And }) => {
+      Given("a CLI server with admin enabled and a simple spec", async () => {
+        await startServer(true);
+      });
+
+      When(
+        'I request "GET /schmock-admin/history" with the token "not-the-token"',
+        async () => {
+          response = await fetchJson(
+            requireServer(),
+            "GET",
+            "/schmock-admin/history",
+            { authorization: "Bearer not-the-token" },
+          );
+        },
+      );
+
+      Then("the response status is 401", () => {
+        expect(requireResponse().status).toBe(401);
+      });
+
+      And('the response body has code "UNAUTHORIZED"', () => {
+        expect(requireResponse().body).toMatchObject({ code: "UNAUTHORIZED" });
+      });
+    },
+  );
+
+  Scenario(
+    "Admin endpoints accept the issued token",
+    ({ Given, When, Then, And }) => {
+      Given("a CLI server with admin enabled and a simple spec", async () => {
+        await startServer(true);
+      });
+
+      When(
+        'I request "GET /schmock-admin/routes" with the issued token',
+        async () => {
+          response = await adminFetch("GET", "/schmock-admin/routes");
+        },
+      );
+
+      Then("the response status is 200", () => {
+        expect(requireResponse().status).toBe(200);
+      });
+
+      And("the response body contains the exact registered routes", () => {
+        expect(routeRecords(requireResponse().body)).toEqual(expectedRoutes);
+      });
+    },
+  );
+
+  Scenario(
+    "Admin responses carry no CORS headers even with CORS enabled",
+    ({ Given, When, Then, And }) => {
+      Given("a CLI server with admin and CORS enabled", async () => {
+        await startServer(true, { cors: true });
+      });
+
+      When(
+        'I request "GET /schmock-admin/state" with the issued token',
+        async () => {
+          response = await adminFetch("GET", "/schmock-admin/state");
+        },
+      );
+
+      Then("the response status is 200", () => {
+        expect(requireResponse().status).toBe(200);
+      });
+
+      And("the response has no CORS headers", () => {
+        expectNoCorsHeaders(requireResponse());
+      });
+
+      And(
+        'a browser preflight to "/schmock-admin/state" is refused with 403 and no CORS headers',
+        async () => {
+          // A real preflight (Origin + Access-Control-Request-Method) is what
+          // exercises the `!adminRequest` gate on the CORS short-circuit; a
+          // bare OPTIONS never reaches it.
+          response = await fetchJson(
+            requireServer(),
+            "OPTIONS",
+            "/schmock-admin/state",
+            {
+              origin: "https://evil.example",
+              "access-control-request-method": "GET",
+            },
+          );
+          expect(requireResponse().status).toBe(403);
+          expect(requireResponse().body).toMatchObject({ code: "FORBIDDEN" });
+          expectNoCorsHeaders(requireResponse());
+        },
+      );
+
+      And(
+        'a bare OPTIONS to "/schmock-admin/state" gets no CORS headers and is not 204',
+        async () => {
+          response = await fetchJson(
+            requireServer(),
+            "OPTIONS",
+            "/schmock-admin/state",
+          );
+          expect(requireResponse().status).not.toBe(204);
+          expectNoCorsHeaders(requireResponse());
+        },
+      );
+
+      And(
+        'an unsupported method on "/schmock-admin/state" gets an error with no CORS headers',
+        async () => {
+          // Pins the error path in the request handler's catch block, which
+          // must also honor the admin CORS exclusion.
+          response = await fetchJson(
+            requireServer(),
+            "PROPFIND",
+            "/schmock-admin/state",
+          );
+          expect(requireResponse().status).toBeGreaterThanOrEqual(400);
+          expectNoCorsHeaders(requireResponse());
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Admin refuses a browser-originated request",
+    ({ Given, When, Then, And }) => {
+      Given("a CLI server with admin enabled and a simple spec", async () => {
+        await startServer(true);
+      });
+
+      When(
+        'I request "GET /schmock-admin/state" with the issued token and an Origin header',
+        async () => {
+          response = await adminFetch("GET", "/schmock-admin/state", {
+            origin: "https://evil.example",
+          });
+        },
+      );
+
+      Then("the response status is 403", () => {
+        expect(requireResponse().status).toBe(403);
+      });
+
+      And('the response body has code "FORBIDDEN"', () => {
+        expect(requireResponse().body).toMatchObject({ code: "FORBIDDEN" });
+      });
+
+      And("the response has no CORS headers", () => {
+        expectNoCorsHeaders(requireResponse());
+      });
+    },
+  );
+
+  Scenario(
+    "Admin history redacts sensitive request headers",
+    ({ Given, When, Then, And }) => {
+      Given("a CLI server with admin enabled and a simple spec", async () => {
+        await startServer(true);
+      });
+
+      When(
+        "I make a request to the mock API with sensitive headers",
+        async () => {
+          const mockResponse = await requestMockApi({
+            authorization: "Bearer super-secret-token",
+            cookie: "sid=abc123",
+            "x-schmock-admin-token": "leaked-admin-token",
+            accept: "application/json",
+          });
+          expect(mockResponse.status).toBe(200);
+        },
+      );
+
+      And(
+        'I request "GET /schmock-admin/history" with the issued token',
+        async () => {
+          response = await adminFetch("GET", "/schmock-admin/history");
+        },
+      );
+
+      Then("the response status is 200", () => {
+        expect(requireResponse().status).toBe(200);
+      });
+
+      And('the recorded headers redact "authorization"', () => {
+        expect(firstRecordHeaders(requireResponse().body).authorization).toBe(
+          "[redacted]",
+        );
+      });
+
+      And('the recorded headers redact "cookie"', () => {
+        expect(firstRecordHeaders(requireResponse().body).cookie).toBe(
+          "[redacted]",
+        );
+      });
+
+      And('the recorded headers redact "x-schmock-admin-token"', () => {
+        expect(
+          firstRecordHeaders(requireResponse().body)["x-schmock-admin-token"],
+        ).toBe("[redacted]");
+      });
+
+      And('the recorded headers keep "accept"', () => {
+        expect(firstRecordHeaders(requireResponse().body).accept).toBe(
+          "application/json",
+        );
+      });
+    },
+  );
+
+  Scenario(
+    "Admin history is capped by the configured limit",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a CLI server with admin enabled and a history limit of 2",
+        async () => {
+          await startServer(true, { adminHistoryLimit: 2 });
+        },
+      );
+
+      When("I make 5 requests to the mock API", async () => {
+        for (let i = 0; i < 5; i += 1) {
+          expect((await requestMockApi()).status).toBe(200);
+        }
+      });
+
+      And(
+        'I request "GET /schmock-admin/history" with the issued token',
+        async () => {
+          response = await adminFetch("GET", "/schmock-admin/history");
+        },
+      );
+
+      Then("the response status is 200", () => {
+        expect(requireResponse().status).toBe(200);
+      });
+
+      And("the response body contains 2 history records", () => {
+        expect(historyRecords(requireResponse().body)).toHaveLength(2);
+      });
+    },
+  );
 });

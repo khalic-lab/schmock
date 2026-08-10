@@ -125,6 +125,17 @@ Feature: HTTP Methods Support
     Then every body-forbidden response should have no body
     And bodyless response framing headers should be transport-safe
 
+  Scenario: Hop-by-hop headers never reach a transport
+    Given I create routes that return hop-by-hop headers
+    When I request every hop-by-hop route
+    Then no normalized response should carry a hop-by-hop header
+
+  Scenario: Ingress failures on the listening server still close the connection
+    Given I start a listening mock with a JSON route
+    When I send a malformed body and an oversized declared body to it
+    Then both ingress failures should close the connection
+    When I stop the listening mock
+
   Scenario: Generated HEAD failures retain semantics without bodies
     Given I create a throwing HEAD route
     When I request unmatched and throwing HEAD routes

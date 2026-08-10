@@ -22,11 +22,43 @@ app.use(schmockPlugin, { mock })
 app.mount('#app')
 ```
 
-`schmockPlugin` patches `globalThis.fetch` when the plugin is installed and restores it when the app unmounts. Calls from your code, Pinia actions, or other clients are intercepted only when they use `globalThis.fetch`; clients using another transport are not intercepted.
+`schmockPlugin` patches `globalThis.fetch` in the browser when the plugin is installed and restores it when the app unmounts. Calls from your code, Pinia actions, or other clients are intercepted only when they use `globalThis.fetch`; clients using another transport are not intercepted.
 
 Calling `mock.reset()` while the app is mounted clears routes, state, history,
 plugins, and listeners but preserves the Vue plugin's explicit interception
 lease. Re-register routes on the same mock without reinstalling the plugin.
+
+### Releasing interception
+
+Unmounting the app releases its lease. For an app that never reaches an
+unmount — one that is never mounted, or whose `mount()` throws — release it
+explicitly:
+
+```typescript
+import { restoreSchmockInterception } from '@schmock/vue'
+
+const app = createApp(App)
+app.use(schmockPlugin, { mock })
+
+// ...never mounted, or torn down some other way
+restoreSchmockInterception(app)
+```
+
+`restoreSchmockInterception(app)` is idempotent and safe for an app that never
+intercepted. A `mount()` that throws releases the lease before rethrowing, so a
+failed startup does not leave `globalThis.fetch` patched.
+
+Several apps may share one mock: each `app.use(schmockPlugin, { mock })` takes
+its own lease, and the newest one is consulted first.
+
+### Server-side rendering
+
+With no `document` — SSR, or any server render — the plugin does **not** patch
+`globalThis.fetch`. A server's `fetch` is shared by every concurrent request, so
+patching it would leak one render's mock into another's. `app.provide` still
+runs, so `useSchmock()` works during SSR; only fetch interception is skipped.
+Mock your data layer directly on the server, or intercept at the transport your
+server actually uses.
 
 ## Options
 

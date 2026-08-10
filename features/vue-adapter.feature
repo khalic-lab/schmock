@@ -22,3 +22,14 @@ Feature: Vue Adapter
     Given a mounted Vue plugin with a first-generation route
     When I reset and re-register the Vue plugin route
     Then the mounted Vue plugin should return the second generation
+
+  Scenario: An app that never mounts can release interception
+    Given a Schmock instance and a Vue app that never mounts
+    When I install the plugin and release interception without mounting
+    Then fetch should be restored to the original implementation
+
+  Scenario: Installing the plugin under SSR does not patch fetch
+    Given a Schmock instance and a server environment without a document
+    When I install the plugin on a server-rendered app
+    Then globalThis.fetch should stay unpatched
+    And the server-rendered app should still provide the mock
