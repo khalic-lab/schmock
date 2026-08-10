@@ -55,6 +55,20 @@ function endedJson(res: Response): unknown {
   return parsed;
 }
 
+/** A core-synthesized exception 500, marked exactly as the builder marks it. */
+function markedException(message = "route blew up") {
+  const response = {
+    status: 500,
+    body: { error: message, code: "INTERNAL_ERROR" },
+    headers: { "content-type": "application/json" } as Record<string, string>,
+  };
+  Object.defineProperty(response, Symbol.for("@schmock/core.response-origin"), {
+    configurable: true,
+    value: { kind: "exception", error: new Error(message) },
+  });
+  return response;
+}
+
 function arrayBufferViewCases(): Array<[string, ArrayBufferView]> {
   const buffer = Uint8Array.from({ length: 32 }, (_, index) => index).buffer;
   const sharedBytes = new Uint8Array(new SharedArrayBuffer(4));
@@ -684,6 +698,216 @@ describe("toExpress", () => {
         error: "declined",
         code: "DOMAIN_DECLINED",
       });
+    });
+
+    it("formats an exception whose provenance a spreading beforeResponse dropped", async () => {
+      // The documented `{...response}` hook copies only own enumerable
+      // properties, so the non-enumerable origin symbol is lost. Provenance
+      // must therefore be read before the hook runs.
+      const mock = createMock(() => Promise.resolve(markedException()));
+      const errorFormatter = vi.fn(() => ({ formatted: true }));
+      const res = createRes();
+
+      await toExpress(mock, {
+        errorFormatter,
+        beforeResponse: (response) => ({
+          ...response,
+          headers: { ...response.headers, "cache-control": "no-cache" },
+        }),
+      })(createReq(), res, vi.fn());
+
+      expect(errorFormatter).toHaveBeenCalledTimes(1);
+      expect(endedJson(res)).toEqual({ formatted: true });
+    });
+
+    it("carries the response headers onto the formatted error", async () => {
+      const mock = createMock(() => Promise.resolve(markedException()));
+      const res = createRes();
+
+      await toExpress(mock, {
+        errorFormatter: () => ({ formatted: true }),
+        beforeResponse: (response) => ({
+          ...response,
+          headers: { ...response.headers, "retry-after": "30" },
+        }),
+      })(createReq(), res, vi.fn());
+
+      expect(res.set).toHaveBeenCalledWith("retry-after", "30");
+      expect(res.set).toHaveBeenCalledWith("content-type", "application/json");
+      expect(endedJson(res)).toEqual({ formatted: true });
+    });
+
+    it("keeps the formatted body when a header value carries a control char", async () => {
+      // `err.stack` in a post-hook header is type-legal but not
+      // transportable. Dropping the header must not also drop the
+      // formatter's body in favour of the minimal fallback.
+      const mock = createMock(() => Promise.resolve(markedException()));
+      const errorFormatter = vi.fn(() => ({ formatted: true }));
+      const res = createRes();
+
+      await toExpress(mock, {
+        errorFormatter,
+        beforeResponse: (response) => ({
+          ...response,
+          headers: {
+            ...response.headers,
+            "x-error": "Error: boom\n    at handler",
+          },
+        }),
+      })(createReq(), res, vi.fn());
+
+      expect(errorFormatter).toHaveBeenCalledTimes(1);
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(endedJson(res)).toEqual({ formatted: true });
+      // The retry drops every inherited header, not just the bad one.
+      expect(vi.mocked(res.set).mock.calls).toEqual([
+        ["content-type", "application/json"],
+      ]);
+    });
+
+    it("keeps the formatted body when post-hook headers duplicate a name", async () => {
+      const mock = createMock(() => Promise.resolve(markedException()));
+      const errorFormatter = vi.fn(() => ({ formatted: true }));
+      const res = createRes();
+
+      await toExpress(mock, {
+        errorFormatter,
+        beforeResponse: (response) => ({
+          ...response,
+          headers: {
+            ...response.headers,
+            "Retry-After": "30",
+            "retry-after": "30",
+          },
+        }),
+      })(createReq(), res, vi.fn());
+
+      expect(errorFormatter).toHaveBeenCalledTimes(1);
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(endedJson(res)).toEqual({ formatted: true });
+      expect(vi.mocked(res.set).mock.calls).toEqual([
+        ["content-type", "application/json"],
+      ]);
+    });
+
+    it("keeps the formatted body when a post-hook header value is not a string", async () => {
+      // Plain-JS callers are not protected by the Record<string, string>
+      // declaration, so a numeric `retry-after` reaches the normalizer.
+      const mock = createMock(() => Promise.resolve(markedException()));
+      const errorFormatter = vi.fn(() => ({ formatted: true }));
+      const res = createRes();
+
+      await toExpress(mock, {
+        errorFormatter,
+        beforeResponse: (response) => ({
+          ...response,
+          headers: {
+            ...response.headers,
+            "retry-after": 30,
+          } as unknown as Record<string, string>,
+        }),
+      })(createReq(), res, vi.fn());
+
+      expect(errorFormatter).toHaveBeenCalledTimes(1);
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(endedJson(res)).toEqual({ formatted: true });
+      expect(vi.mocked(res.set).mock.calls).toEqual([
+        ["content-type", "application/json"],
+      ]);
+    });
+
+    it("replaces a capitalized Content-Type rather than duplicating it", async () => {
+      // Keeping both `Content-Type` and the forced lowercase key makes the
+      // pair transport-invalid, which would divert the formatted body into
+      // the minimal fallback branch.
+      const mock = createMock(() => Promise.resolve(markedException()));
+      const res = createRes();
+
+      await toExpress(mock, {
+        errorFormatter: () => ({ formatted: true }),
+        beforeResponse: (response) => ({
+          ...response,
+          headers: { "Content-Type": "text/plain" },
+        }),
+      })(createReq(), res, vi.fn());
+
+      expect(endedJson(res)).toEqual({ formatted: true });
+      const contentTypeCalls = vi
+        .mocked(res.set)
+        .mock.calls.filter(
+          ([name]) => String(name).toLowerCase() === "content-type",
+        );
+      expect(contentTypeCalls).toEqual([["content-type", "application/json"]]);
+    });
+
+    it("respects a beforeResponse that rewrites an exception to a non-500", async () => {
+      const mock = createMock(() => Promise.resolve(markedException()));
+      const errorFormatter = vi.fn(() => ({ formatted: true }));
+      const res = createRes();
+
+      await toExpress(mock, {
+        errorFormatter,
+        beforeResponse: (response) => {
+          response.status = 503;
+          response.body = { error: "try later" };
+          return response;
+        },
+      })(createReq(), res, vi.fn());
+
+      expect(errorFormatter).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(503);
+      expect(endedJson(res)).toEqual({ error: "try later" });
+    });
+
+    it("respects an in-place status rewrite from a beforeResponse that returns nothing", async () => {
+      // The likeliest accidental shape: mutate and forget to return. The
+      // pre-hook capture and the post-hook status gate must still agree.
+      const mock = createMock(() => Promise.resolve(markedException()));
+      const errorFormatter = vi.fn(() => ({ formatted: true }));
+      const res = createRes();
+
+      await toExpress(mock, {
+        errorFormatter,
+        beforeResponse: (response) => {
+          response.status = 503;
+          response.body = { error: "try later" };
+          return undefined;
+        },
+      })(createReq(), res, vi.fn());
+
+      expect(errorFormatter).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(503);
+      expect(endedJson(res)).toEqual({ error: "try later" });
+    });
+
+    it("resolves and releases listeners when the request admission is malformed", async () => {
+      const requestEvents = new EventEmitter();
+      const responseEvents = new EventEmitter();
+      const req = createReq();
+      const res = createRes();
+      req.once = requestEvents.once.bind(requestEvents);
+      req.off = requestEvents.off.bind(requestEvents);
+      res.once = responseEvents.once.bind(responseEvents);
+      res.off = responseEvents.off.bind(responseEvents);
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      Object.defineProperty(
+        mock,
+        Symbol.for("@schmock/core.request-admission"),
+        { configurable: true, value: () => ({ notAnAdmission: true }) },
+      );
+      const next = vi.fn() as NextFunction;
+
+      await expect(toExpress(mock)(req, res, next)).resolves.toBeUndefined();
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "Schmock returned an invalid request admission",
+        }),
+      );
+      expect(requestEvents.listenerCount("aborted")).toBe(0);
+      expect(responseEvents.listenerCount("close")).toBe(0);
     });
 
     it("uses a method rewritten to HEAD for formatted errors", async () => {

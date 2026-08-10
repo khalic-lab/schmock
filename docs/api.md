@@ -189,7 +189,17 @@ const interception = mock.intercept({
 })
 
 await fetch('/api/users')
+
+interception.update({ baseUrl: '/api', passthrough: false })
 interception.restore()
+```
+
+```typescript
+interface InterceptHandle {
+  restore(): void                          // release this lease
+  update(options?: InterceptOptions): void // reconfigure it in place
+  readonly active: boolean
+}
 ```
 
 `baseUrl` accepts either a pathname prefix or an absolute origin with an
@@ -201,10 +211,22 @@ The interceptor creates one effective `Request`, including `RequestInit`
 overrides, and snapshots it at admission. JSON bodies are parsed only for JSON
 media types; unmatched passthrough receives the original effective body and
 headers. Aborts settle pending request/response hooks, route generators, and
-passthrough fetches. A mock exposes one active lease at a time; leases from
-different mocks stack safely. Restoration does not overwrite a later
-third-party fetch replacement, and `reset()` does not release an explicit
-interception lease.
+passthrough fetches.
+
+Interception is a lease, not a lock. A mock may hold any number of concurrent
+leases — nested providers, separate roots, or an adapter alongside a manual
+`intercept()` — and each one carries its own options and its own idempotent
+`restore()`. Leases are consulted newest-first regardless of which mock owns
+them, and the original `fetch` returns once the last lease is released.
+
+`update(options?)` reconfigures a lease without re-registering it, so it keeps
+its position in the dispatch order: an adapter can apply new hooks without
+stealing precedence from a mock that registered later. Options are replaced
+wholesale — omitted fields fall back to their defaults, so `update({})` restores
+`passthrough: true`. Calling it on a released lease does nothing.
+
+Restoration does not overwrite a later third-party fetch replacement, and
+`reset()` does not release an explicit interception lease.
 
 ### Request Context
 
@@ -698,20 +720,35 @@ interface CliOptions {
   debug?: boolean            // default: false
   fakerSeed?: number
   errors?: boolean           // enable request validation
-  watch?: boolean            // watch spec for changes
+  watch?: boolean            // watch spec for changes (honored here, not only by the binary)
   admin?: boolean            // enable admin API
+  adminToken?: string        // bearer token for /schmock-admin/* (generated when omitted)
+  adminHistoryLimit?: number // requests retained for the admin history (default: 500)
   strict?: boolean           // validate the spec at startup (--strict)
   refsExternal?: boolean     // resolve $refs outside the spec (--refs-external)
   refsAllowHttp?: string[]   // hosts an http $ref may target (--refs-allow-http)
+  shutdownGraceMs?: number   // close() waits this long for in-flight requests (default: 5000)
 }
 
 interface CliServer {
   server: http.Server
   port: number
   hostname: string
-  close(): void
+  adminToken?: string        // present only when admin is enabled
+  close(): Promise<void>
 }
 ```
+
+`watch: true` starts the spec watcher here, not only under the `--watch` flag,
+and the promise rejects if the watcher cannot be created — nothing is left
+bound when it does.
+
+`close()` stops accepting first, then stops the watcher, and resolves once the
+socket is released. In-flight requests — and a watcher reload still parsing —
+get `shutdownGraceMs` to finish; whatever is still open then is destroyed, so
+a half-sent request cannot keep the process alive.
+It is memoized — calling it twice returns the same promise and both callers
+resolve — and it never calls `process.exit()`.
 
 ### `parseCliArgs(args)`
 
@@ -728,5 +765,11 @@ Entry point for the CLI binary. Parses args, starts server, handles SIGINT/SIGTE
 ```typescript
 async function run(args: string[]): Promise<void>
 ```
+
+The returned promise settles when the server has shut down, not when it has
+started: on `--help` or a missing `--spec` it resolves immediately, otherwise
+it stays pending until `SIGINT`/`SIGTERM` arrives and the close completes (and
+rejects if that close fails). Both signal handlers are removed as shutdown
+begins, so a host process that calls `run` repeatedly does not accumulate them.
 
 See the [CLI guide](./cli.md) for detailed usage.

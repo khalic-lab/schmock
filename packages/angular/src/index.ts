@@ -13,27 +13,129 @@ import {
 import { Injectable } from "@angular/core";
 import type * as Schmock from "@schmock/core";
 import {
+  getResponseException,
   isHttpMethod,
   isRouteNotFound,
   normalizeResponse,
+  serializeResponseBody,
 } from "@schmock/core";
 import { Observable } from "rxjs";
 
-const RESPONSE_ORIGIN = Symbol.for("@schmock/core.response-origin");
+type AngularResponseType = HttpRequest<unknown>["responseType"];
 
-function responseException(response: Schmock.Response): Error | undefined {
-  const origin: unknown = Reflect.get(response, RESPONSE_ORIGIN);
-  if (
-    typeof origin === "object" &&
-    origin !== null &&
-    "kind" in origin &&
-    origin.kind === "exception" &&
-    "error" in origin &&
-    origin.error instanceof Error
-  ) {
-    return origin.error;
+/**
+ * Fold request header names to lowercase. Every other adapter delivers
+ * lowercase keys (the fetch interceptor lowercases explicitly, Express
+ * receives Node's already-folded names), so handlers can always read
+ * `headers.authorization` regardless of how the caller spelled it.
+ */
+function lowercaseHeaderKeys(
+  headers: Record<string, string> | undefined,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    result[name.toLowerCase()] = value;
+  }
+  return result;
+}
+
+/** Case-insensitive header lookup — normalizeResponse preserves casing. */
+function headerValue(
+  headers: Record<string, string> | undefined,
+  name: string,
+): string | undefined {
+  for (const [key, value] of Object.entries(headers ?? {})) {
+    if (key.toLowerCase() === name) return value;
   }
   return undefined;
+}
+
+/** Copy bytes into a standalone ArrayBuffer with no trailing slack. */
+function toArrayBufferCopy(bytes: Uint8Array): ArrayBuffer {
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return copy;
+}
+
+/**
+ * The value Angular delivers when a response carries no wire bytes.
+ * HttpXhrBackend nulls the body only at 204 (`HTTP_STATUS_CODE_NO_CONTENT`);
+ * at every other status an empty payload still surfaces as `''`, an empty
+ * `ArrayBuffer` or an empty `Blob`, so a subscriber typed
+ * `Observable<string>` never receives null and `res.trim()` keeps working.
+ */
+function emptyResponseBody(
+  status: number,
+  headers: Record<string, string>,
+  responseType: AngularResponseType,
+): unknown {
+  if (status === 204) return null;
+  switch (responseType) {
+    case "text":
+      return "";
+    case "arraybuffer":
+      return new ArrayBuffer(0);
+    case "blob":
+      // The package builds for the browser but its tests run under Bun, so
+      // fall back to the ArrayBuffer where Blob is unavailable.
+      return typeof Blob === "function"
+        ? new Blob([], { type: headerValue(headers, "content-type") ?? "" })
+        : new ArrayBuffer(0);
+    default:
+      return null;
+  }
+}
+
+/**
+ * Shape the emitted body to the request's `responseType`. Angular's own
+ * HttpXhrBackend promises a `string` for 'text', an `ArrayBuffer` for
+ * 'arraybuffer' and a `Blob` for 'blob'; handing back a plain object breaks
+ * that contract. 'json' is typed `any`/`T`, so a string body legitimately
+ * satisfies it and is deliberately left untouched — parsing here would turn
+ * a route returning `'true'` into the boolean `true`.
+ */
+function applyResponseType(
+  body: unknown,
+  status: number,
+  headers: Record<string, string>,
+  responseType: AngularResponseType,
+): unknown {
+  if (responseType === "json") return body;
+  // The bodyless cases (HEAD, 204, 205, 304, or an explicitly null body).
+  // `null` must not fall through to the serializer, which would encode it as
+  // the literal string "null" for a body that never reaches the wire.
+  if (body === undefined || body === null) {
+    return emptyResponseBody(status, headers, responseType);
+  }
+
+  let bytes: Uint8Array | undefined;
+  try {
+    bytes = serializeResponseBody({ status, body, headers });
+  } catch {
+    // A formatter output the serializer rejects must not break the emission.
+    return body;
+  }
+  // A body the status forbids (204/205/304) still produced no bytes.
+  if (bytes === undefined) {
+    return emptyResponseBody(status, headers, responseType);
+  }
+
+  switch (responseType) {
+    case "text":
+      return typeof body === "string" ? body : new TextDecoder().decode(bytes);
+    case "arraybuffer":
+      return toArrayBufferCopy(bytes);
+    case "blob":
+      // The package builds for the browser but its tests run under Bun, so
+      // fall back to the ArrayBuffer where Blob is unavailable.
+      return typeof Blob === "function"
+        ? new Blob([toArrayBufferCopy(bytes)], {
+            type: headerValue(headers, "content-type") ?? "",
+          })
+        : toArrayBufferCopy(bytes);
+    default:
+      return body;
+  }
 }
 
 function toSupportedHttpMethod(method: string): Schmock.HttpMethod | undefined {
@@ -278,89 +380,196 @@ export function createSchmockInterceptor(
         ? path.slice(effectiveBasePath.length) || "/"
         : path;
 
-      // Extract request data using Angular's built-in params
-      const query = extractQueryParams(req);
-
       const method = toSupportedHttpMethod(req.method);
       if (!method) {
         return next.handle(req);
       }
 
-      let requestData = {
-        method,
-        path: routePath,
-        headers: headersToObject(req),
-        body: req.body,
-        query,
-      };
-
-      // Apply request transformation if provided
-      if (transformRequest) {
-        const transformed = transformRequest(req);
-        const transformedMethod = toSupportedHttpMethod(
-          transformed.method ?? req.method,
-        );
-        if (!transformedMethod) {
-          return next.handle(req);
-        }
-        requestData = {
-          ...requestData,
-          ...transformed,
-          method: transformedMethod,
-        };
-      }
-
-      // Handle with Schmock
+      // Handle with Schmock. Request derivation and transformRequest run
+      // INSIDE the Observable so a throwing hook is shaped into an
+      // HttpErrorResponse by the same path as any other adapter failure
+      // instead of escaping intercept() as a bare Error.
       return new Observable<HttpEvent<unknown>>((observer) => {
         let innerSub: { unsubscribe(): void } | undefined;
         let aborted = false;
         const abortController = new AbortController();
+        const teardown = () => {
+          aborted = true;
+          abortController.abort();
+          innerSub?.unsubscribe();
+        };
 
-        mock
-          .handle(requestData.method, requestData.path, {
-            headers: requestData.headers,
-            body: requestData.body,
-            query: requestData.query,
-            signal: abortController.signal,
-          })
-          .then((schmockResponse: Schmock.Response) => {
-            if (aborted) return;
+        // Shapes error responses; a transformRequest rewrite updates it, and
+        // a throw before that leaves the pre-transform method in place.
+        let responseMethod: Schmock.HttpMethod = method;
 
-            // Detect ROUTE_NOT_FOUND responses
-            const routeNotFound = isRouteNotFound(schmockResponse);
+        const emitError = (error: unknown) => {
+          if (aborted) return;
 
-            if (routeNotFound && passthrough) {
-              // No matching route, pass to real backend
+          let errorBody: unknown;
+          let formatterFailed = false;
+
+          if (errorFormatter) {
+            // A throwing formatter would leave the promise rejected with
+            // nothing downstream to catch it, so the Observable would
+            // never settle. Fall back to the unformatted body instead.
+            try {
+              errorBody = errorFormatter(
+                error instanceof Error ? error : new Error(String(error)),
+                req,
+              );
+            } catch {
+              formatterFailed = true;
+            }
+          }
+          if (!errorFormatter || formatterFailed) {
+            const hasCode =
+              error !== null &&
+              typeof error === "object" &&
+              "code" in error &&
+              typeof error.code === "string";
+            errorBody = {
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Internal Server Error",
+              code: hasCode ? error.code : "INTERNAL_ERROR",
+            };
+          }
+
+          // The Observable must always settle: if the formatter returned a
+          // value the normalizer rejects (for example an embedded Error),
+          // fall back to a minimal safe body instead of throwing inside
+          // this handler and hanging the HttpClient request forever.
+          let response: Schmock.Response;
+          try {
+            response = normalizeResponse(
+              {
+                status: 500,
+                body: errorBody,
+                headers: { "content-type": "application/json" },
+              },
+              responseMethod,
+            );
+          } catch {
+            response = {
+              status: 500,
+              body: {
+                error: "Internal Server Error",
+                code: "INTERNAL_ERROR",
+              },
+              headers: { "content-type": "application/json" },
+            };
+          }
+          observer.error(
+            new HttpErrorResponse({
+              error: applyResponseType(
+                response.body,
+                response.status,
+                response.headers,
+                req.responseType,
+              ),
+              status: response.status,
+              statusText: "Internal Server Error",
+              url: req.urlWithParams,
+              headers: new HttpHeaders(response.headers),
+            }),
+          );
+        };
+
+        try {
+          let requestData = {
+            method,
+            path: routePath,
+            headers: headersToObject(req),
+            body: req.body,
+            // Angular's HttpParams are already parsed
+            query: extractQueryParams(req),
+          };
+
+          // Apply request transformation if provided
+          if (transformRequest) {
+            const transformed = transformRequest(req);
+            const transformedMethod = toSupportedHttpMethod(
+              transformed.method ?? req.method,
+            );
+            if (!transformedMethod) {
               innerSub = next.handle(req).subscribe(observer);
-            } else if (routeNotFound) {
-              // No matching route and passthrough disabled
-              const response = normalizeResponse(
-                {
-                  status: 404,
-                  body: { message: "No matching mock route found" },
-                  headers: {},
-                },
-                requestData.method,
-              );
-              observer.error(
-                new HttpErrorResponse({
-                  error: response.body,
-                  status: response.status,
-                  statusText: "Not Found",
-                  url: req.url,
-                  headers: new HttpHeaders(response.headers),
-                }),
-              );
-            } else {
+              return teardown;
+            }
+            requestData = {
+              ...requestData,
+              ...transformed,
+              method: transformedMethod,
+            };
+          }
+          responseMethod = requestData.method;
+
+          mock
+            .handle(requestData.method, requestData.path, {
+              // Fold header casing at the single choke point: doing it
+              // inside headersToObject would miss a transformRequest
+              // override that supplies capitalized keys.
+              headers: lowercaseHeaderKeys(requestData.headers),
+              body: requestData.body,
+              query: requestData.query,
+              signal: abortController.signal,
+            })
+            .then((schmockResponse: Schmock.Response) => {
+              if (aborted) return;
+
+              // Detect ROUTE_NOT_FOUND responses
+              const routeNotFound = isRouteNotFound(schmockResponse);
+
+              if (routeNotFound && passthrough) {
+                // No matching route, pass to real backend
+                innerSub = next.handle(req).subscribe(observer);
+                return;
+              }
+
+              if (routeNotFound) {
+                // No matching route and passthrough disabled
+                const response = normalizeResponse(
+                  {
+                    status: 404,
+                    body: { message: "No matching mock route found" },
+                    headers: {},
+                  },
+                  requestData.method,
+                );
+                observer.error(
+                  new HttpErrorResponse({
+                    error: applyResponseType(
+                      response.body,
+                      response.status,
+                      response.headers,
+                      req.responseType,
+                    ),
+                    status: response.status,
+                    statusText: "Not Found",
+                    url: req.urlWithParams,
+                    headers: new HttpHeaders(response.headers),
+                  }),
+                );
+                return;
+              }
+
+              // Exception provenance is a non-enumerable symbol on the
+              // response, so it must be read BEFORE transformResponse: the
+              // documented `{...response}` hook copies only own enumerable
+              // properties and would otherwise strip the mark, silently
+              // bypassing errorFormatter.
+              const internalError = getResponseException(schmockResponse);
+
               // Apply response transformation if provided
               let response = schmockResponse;
               if (transformResponse) {
                 response = transformResponse(response, req);
               }
-              const internalError = responseException(response);
               response = normalizeResponse(response, requestData.method);
 
               const status = response.status;
+              const headers = response.headers || {};
 
               // Angular treats only final 2xx responses as successful emissions.
               if (status < 200 || status >= 300) {
@@ -382,103 +591,53 @@ export function createSchmockInterceptor(
 
                 observer.error(
                   new HttpErrorResponse({
-                    error: errorBody,
+                    // Shape the formatter's output too — the error channel
+                    // obeys the same responseType law as the success one.
+                    // Once the formatter has replaced the body the response's
+                    // own content-type no longer describes it, so a Blob would
+                    // otherwise be labelled with the route's media type.
+                    error: applyResponseType(
+                      errorBody,
+                      status,
+                      errorBody === response.body
+                        ? headers
+                        : { "content-type": "application/json" },
+                      req.responseType,
+                    ),
                     status,
                     statusText: getStatusText(status),
-                    url: req.url,
-                    headers: new HttpHeaders(response.headers || {}),
+                    url: req.urlWithParams,
+                    headers: new HttpHeaders(headers),
                   }),
                 );
               } else {
                 // Convert Schmock response to Angular HttpResponse
                 const httpResponse = new HttpResponse({
-                  body: response.body,
+                  body: applyResponseType(
+                    response.body,
+                    status,
+                    headers,
+                    req.responseType,
+                  ),
                   status,
                   statusText: getStatusText(status),
-                  url: req.url,
-                  headers: new HttpHeaders(response.headers || {}),
+                  url: req.urlWithParams,
+                  headers: new HttpHeaders(headers),
                 });
 
                 observer.next(httpResponse);
                 observer.complete();
               }
-            }
-          })
-          .catch((error: unknown) => {
-            if (aborted) return;
+            })
+            .catch(emitError);
+        } catch (error) {
+          // A throwing transformRequest (or request derivation) is shaped by
+          // the same path as an async failure, so callers always receive an
+          // HttpErrorResponse and the Observable always settles.
+          emitError(error);
+        }
 
-            // Handle errors
-            let errorBody: unknown;
-            let formatterFailed = false;
-
-            if (errorFormatter) {
-              // A throwing formatter would leave the promise rejected with
-              // nothing downstream to catch it, so the Observable would
-              // never settle. Fall back to the unformatted body instead.
-              try {
-                errorBody = errorFormatter(
-                  error instanceof Error ? error : new Error(String(error)),
-                  req,
-                );
-              } catch {
-                formatterFailed = true;
-              }
-            }
-            if (!errorFormatter || formatterFailed) {
-              const hasCode =
-                error !== null &&
-                typeof error === "object" &&
-                "code" in error &&
-                typeof error.code === "string";
-              errorBody = {
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "Internal Server Error",
-                code: hasCode ? error.code : "INTERNAL_ERROR",
-              };
-            }
-
-            // The Observable must always settle: if the formatter returned a
-            // value the normalizer rejects (for example an embedded Error),
-            // fall back to a minimal safe body instead of throwing inside
-            // this handler and hanging the HttpClient request forever.
-            let response: Schmock.Response;
-            try {
-              response = normalizeResponse(
-                {
-                  status: 500,
-                  body: errorBody,
-                  headers: { "content-type": "application/json" },
-                },
-                requestData.method,
-              );
-            } catch {
-              response = {
-                status: 500,
-                body: {
-                  error: "Internal Server Error",
-                  code: "INTERNAL_ERROR",
-                },
-                headers: { "content-type": "application/json" },
-              };
-            }
-            observer.error(
-              new HttpErrorResponse({
-                error: response.body,
-                status: response.status,
-                statusText: "Internal Server Error",
-                url: req.url,
-                headers: new HttpHeaders(response.headers),
-              }),
-            );
-          });
-
-        return () => {
-          aborted = true;
-          abortController.abort();
-          innerSub?.unsubscribe();
-        };
+        return teardown;
       });
     }
   }

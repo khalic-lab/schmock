@@ -3,8 +3,12 @@
 import { schmock } from "@schmock/core";
 import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { defineComponent, h, onMounted, ref } from "vue";
-import { schmockPlugin, useSchmock } from "./index.js";
+import { createApp, defineComponent, h, onMounted, ref } from "vue";
+import {
+  restoreSchmockInterception,
+  schmockPlugin,
+  useSchmock,
+} from "./index.js";
 
 const UserList = defineComponent({
   setup() {
@@ -67,6 +71,80 @@ describe("schmockPlugin", () => {
 
     expect(globalThis.fetch).not.toBe(savedFetch);
     wrapper.unmount();
+    expect(globalThis.fetch).toBe(savedFetch);
+  });
+
+  it("releases interception for an app that never mounts", () => {
+    const mock = schmock();
+    const savedFetch = globalThis.fetch;
+
+    const app = createApp(defineComponent({ render: () => h("div") }));
+    app.use(schmockPlugin, { mock });
+    expect(globalThis.fetch).not.toBe(savedFetch);
+
+    restoreSchmockInterception(app);
+    expect(globalThis.fetch).toBe(savedFetch);
+  });
+
+  it("ignores a release for an app that never installed the plugin", () => {
+    const savedFetch = globalThis.fetch;
+    const app = createApp(defineComponent({ render: () => h("div") }));
+
+    expect(() => restoreSchmockInterception(app)).not.toThrow();
+    expect(globalThis.fetch).toBe(savedFetch);
+  });
+
+  it("releases interception when a release is repeated", () => {
+    const mock = schmock();
+    const savedFetch = globalThis.fetch;
+
+    const app = createApp(defineComponent({ render: () => h("div") }));
+    app.use(schmockPlugin, { mock });
+    restoreSchmockInterception(app);
+    restoreSchmockInterception(app);
+
+    expect(globalThis.fetch).toBe(savedFetch);
+  });
+
+  it("releases interception when mount throws", () => {
+    const mock = schmock();
+    const savedFetch = globalThis.fetch;
+
+    const Broken = defineComponent({
+      setup() {
+        throw new Error("setup failed");
+      },
+    });
+
+    const app = createApp(Broken);
+    app.use(schmockPlugin, { mock });
+    expect(globalThis.fetch).not.toBe(savedFetch);
+
+    const container = document.createElement("div");
+    expect(() => app.mount(container)).toThrow("setup failed");
+    expect(globalThis.fetch).toBe(savedFetch);
+  });
+
+  it("lets two apps share one mock", async () => {
+    const mock = schmock();
+    mock("GET /api/users", [{ id: 1, name: "Alice" }]);
+    const savedFetch = globalThis.fetch;
+
+    const first = createApp(defineComponent({ render: () => h("div") }));
+    const second = createApp(defineComponent({ render: () => h("div") }));
+    first.use(schmockPlugin, { mock });
+    expect(() => second.use(schmockPlugin, { mock })).not.toThrow();
+
+    expect(
+      await fetch("http://localhost/api/users").then((r) => r.json()),
+    ).toEqual([{ id: 1, name: "Alice" }]);
+
+    restoreSchmockInterception(second);
+    expect(
+      await fetch("http://localhost/api/users").then((r) => r.json()),
+    ).toEqual([{ id: 1, name: "Alice" }]);
+
+    restoreSchmockInterception(first);
     expect(globalThis.fetch).toBe(savedFetch);
   });
 });

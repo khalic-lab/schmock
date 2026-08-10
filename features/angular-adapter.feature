@@ -109,6 +109,26 @@ Feature: Angular Adapter
     And the error status should be 500
     And the error body should use the custom error format
 
+  # Request and Response Shaping
+
+  Scenario: Request header names are lowercased for handlers
+    Given I create an Angular mock that echoes the authorization header
+    When I make an Angular request to "GET /api/whoami" with a capitalized Authorization header
+    Then the response should be an HttpResponse
+    And the echoed authorization header should be "Bearer token123"
+
+  Scenario: responseType text yields a string body
+    Given I create an Angular mock returning an object for "GET /api/users"
+    When I make an Angular request to "GET /api/users" with responseType "text"
+    Then the response should be an HttpResponse
+    And the response body should be the string '{"users":[]}'
+
+  Scenario: Emitted responses report the URL with params
+    Given I create an Angular mock returning an object for "GET /api/users"
+    When I make an Angular request to "GET /api/users" with query params
+    Then the response should be an HttpResponse
+    And the response url should be "/api/users?page=2"
+
   # OpenAPI Spec with Angular Adapter Options
 
   Scenario: Auto-created interceptor respects baseUrl option

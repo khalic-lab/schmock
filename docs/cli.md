@@ -28,12 +28,14 @@ schmock <spec> [options]
 | `--port <number>` | Port to listen on | `3000` |
 | `--hostname <host>` | Hostname to bind to | `127.0.0.1` |
 | `--seed <path>` | JSON file with seed data | — |
-| `--cors` | Enable CORS headers | `false` |
+| `--cors` | Enable CORS headers on mock responses and answer browser preflights (never on `/schmock-admin/*`) | `false` |
 | `--debug` | Enable debug logging | `false` |
 | `--seed-random <number>` | Deterministic data generation | — |
 | `--errors` | Enable request validation | `false` |
 | `--watch` | Watch spec file for changes | `false` |
 | `--admin` | Enable admin API endpoints | `false` |
+| `--admin-token <token>` | Bearer token required by `/schmock-admin/*` | generated |
+| `--admin-history-limit <number>` | Requests retained for `/schmock-admin/history` | `500` |
 | `--strict` | Validate the spec against the OpenAPI schema at startup | `false` |
 | `--refs-external` | Resolve `$ref`s outside the spec document | `false` |
 | `--refs-allow-http <hosts>` | Also resolve http(s) `$ref`s, limited to this comma-separated host list | — |
@@ -110,6 +112,17 @@ reported as `Seed file "…" contains invalid JSON` instead of a raw
 schmock api.yaml --cors --port 4000
 ```
 
+Every mock response then carries `Access-Control-Allow-Origin: *`. A real browser
+preflight — `OPTIONS` with both `Origin` and `Access-Control-Request-Method` — is
+answered by the server itself with `204`, echoing whatever
+`Access-Control-Request-Headers` asked for so a custom header such as
+`x-my-token` is not rejected. Any other `OPTIONS` request is routed normally: a
+spec-declared `options` operation answers it, and an unknown path answers `404`.
+
+This is a dev-server convenience, not a configurable policy — the origin is
+always `*`, credentials are never allowed, and `/schmock-admin/*` never receives
+CORS headers at all.
+
 ### Deterministic data
 
 ```sh
@@ -124,9 +137,14 @@ schmock api.yaml --watch
 # Server reloads when the spec file changes
 ```
 
-Reloads are serialized and keep the same port. A changed spec is parsed and
-configured before the live server is replaced, so an invalid intermediate save
-is reported without taking the current mock offline.
+Reloads are serialized and the listening socket is never unbound: the new mock
+is built first and then swapped in behind the running server, atomically. An
+invalid intermediate save is reported on stderr and leaves the current mock
+serving; connections opened before a reload stay usable across it, and requests
+already in flight finish against the mock they started on.
+
+`--watch` is also available programmatically as `watch: true` — see
+[Programmatic usage](#programmatic-usage).
 
 ## Admin API
 
@@ -138,6 +156,65 @@ When started with `--admin`, additional endpoints are available:
 | `GET /schmock-admin/state` | Get current shared state |
 | `GET /schmock-admin/history` | Get request history |
 | `POST /schmock-admin/reset` | Reset state and history |
+
+### Authentication
+
+Every admin endpoint requires a bearer token. Supply one with `--admin-token`,
+or let the CLI mint one — it is printed to stderr next to the startup banner:
+
+```
+Admin: enabled (/schmock-admin/*)
+Admin token: 4f1c1f2c-2f5f-4b6f-9a9a-1a4b0f2f3d21
+```
+
+```sh
+schmock api.yaml --admin --admin-token dev-token
+curl -H 'Authorization: Bearer dev-token' localhost:3000/schmock-admin/state
+```
+
+`x-schmock-admin-token: <token>` is accepted as an alternative to the
+`Authorization` header. A missing or wrong token returns `401` with code
+`UNAUTHORIZED` and a `WWW-Authenticate: Bearer` challenge. With `--admin` off
+the paths are not special-cased at all and fall through to the mock, so they
+answer `404`. An unauthenticated caller can therefore tell from `401` vs `404`
+that `--admin` is on; the token is what protects the data, not the obscurity.
+
+The token survives a `--watch` reload, so a live admin client keeps working
+across spec saves. A token passed as `--admin-token` is visible in `ps` output
+on a shared host; prefer the generated one there.
+
+### Browser access and CORS
+
+Admin responses never carry CORS headers, even with `--cors`, and an
+`OPTIONS /schmock-admin/*` preflight is not answered with a wildcard. Admin
+requests that carry an `Origin` header are refused with `403` `FORBIDDEN`.
+
+That combination is what stops a page you happen to be visiting from reading
+`http://127.0.0.1:3000/schmock-admin/history` — which holds recorded request
+headers and response bodies — or from calling `reset`. Command-line and
+server-side clients send no `Origin` and are unaffected. A browser-based admin
+dashboard cannot talk to these endpoints cross-origin by design.
+
+### History retention and redaction
+
+Request history exists only to serve `GET /schmock-admin/history`:
+
+- without `--admin`, nothing is retained at all;
+- with `--admin`, the most recent 500 requests are kept, adjustable via
+  `--admin-history-limit <n>` (`0` keeps nothing; the value must be a
+  non-negative integer). Passing it without `--admin` has no effect.
+
+In the admin projection the values of `authorization`, `proxy-authorization`,
+`cookie`, `set-cookie`, `x-api-key`, `x-auth-token` and `x-schmock-admin-token`
+read `"[redacted]"`. The core `mock.history()` API is untouched and still
+returns raw header values.
+
+### Binding beyond loopback
+
+`--admin --hostname 0.0.0.0` is allowed — containers need it — but the CLI
+prints a warning, because the admin API then reaches every host that can route
+to the port. The bearer token is the only thing standing between them and the
+recorded traffic.
 
 ## Request Handling
 
@@ -164,8 +241,40 @@ const server = await createCliServer({
 
 console.log(`Mock server on port ${server.port}`)
 
-// Stop the server
-server.close()
+// Stop the server; resolves once the port is released
+await server.close()
+```
+
+`close()` stops accepting connections first, then stops the watcher and waits
+for in-flight requests, destroying whatever is still open after
+`shutdownGraceMs` (default 5000) — a client that stopped mid-upload, or a spec
+reload still parsing, cannot keep the shutdown open past the bound. It is
+memoized, so calling it twice is safe and both calls resolve. Awaiting it
+before binding the same port again is what makes a port-reuse race impossible.
+
+`watch: true` works here too, not just behind the `--watch` flag: the returned
+server owns the watcher and closes it with the socket. If the watcher cannot be
+started, `createCliServer` rejects instead of leaving a server bound that
+nobody can reach.
+
+```typescript
+const server = await createCliServer({
+  spec: './petstore.yaml',
+  port: 0,
+  watch: true,
+  shutdownGraceMs: 1_000,
+})
+```
+
+With `admin: true` the resolved bearer token is on the returned server, whether
+you pinned it via `adminToken` or let it be generated:
+
+```typescript
+const server = await createCliServer({ spec: './petstore.yaml', port: 0, admin: true })
+
+const state = await fetch(`http://127.0.0.1:${server.port}/schmock-admin/state`, {
+  headers: { authorization: `Bearer ${server.adminToken}` },
+})
 ```
 
 Useful for integration tests:
@@ -184,7 +293,10 @@ beforeAll(async () => {
   })
 })
 
-afterAll(() => server.close())
+afterAll(async () => {
+  // Awaited: the next suite may bind the same port.
+  await server.close()
+})
 
 it('serves the API', async () => {
   const res = await fetch(`http://127.0.0.1:${server.port}/users`)

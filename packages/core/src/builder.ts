@@ -204,9 +204,10 @@ export class CallableMockInstance {
   private server: Server | undefined;
   private pendingServerStart: PendingServerStart | undefined;
   private serverCloseBarrier: Promise<void> | undefined;
-  private interceptHandle: Schmock.InterceptHandle | null = null;
+  private interceptHandles = new Set<Schmock.InterceptHandle>();
   private requestGeneration: RequestGeneration = { activeAdmissions: 0 };
   private historyGeneration = Symbol("schmock.history.generation");
+  private interceptOwner = Symbol("schmock.intercept.owner");
   private globalConfig: InternalGlobalConfig;
   // biome-ignore lint/complexity/noBannedTypes: internal storage for event listeners with varying signatures
   private listeners = new Map<string, Set<Function>>();
@@ -773,6 +774,14 @@ export class CallableMockInstance {
           const code = ingressError?.code ?? "SERVER_ERROR";
           if (!res.headersSent && !res.writableEnded) {
             if (ingressError) res.shouldKeepAlive = false;
+            // `shouldKeepAlive = false` alone emits no Connection header when
+            // writeHead is given a header object, so the announcement has to be
+            // explicit. It travels on the transport's own header channel rather
+            // than on the response: normalizeResponse strips hop-by-hop headers
+            // from everything a route produces.
+            const transportHeaders = ingressError
+              ? { connection: "close" }
+              : undefined;
             const response = normalizeResponse(
               {
                 status,
@@ -783,17 +792,19 @@ export class CallableMockInstance {
                       : "Internal Server Error",
                   code,
                 },
-                headers: {
-                  "content-type": "application/json",
-                  ...(ingressError ? { connection: "close" } : {}),
-                },
+                headers: { "content-type": "application/json" },
               },
               requestMethod,
             );
             if (ingressError?.status === 413) {
-              writeRejectedSchmockResponse(req, res, response);
+              writeRejectedSchmockResponse(
+                req,
+                res,
+                response,
+                transportHeaders,
+              );
             } else {
-              writeSchmockResponse(res, response);
+              writeSchmockResponse(res, response, transportHeaders);
             }
           } else if (!res.writableEnded) {
             res.end();
@@ -901,20 +912,43 @@ export class CallableMockInstance {
   // ===== Fetch Interceptor =====
 
   intercept(options?: Schmock.InterceptOptions): Schmock.InterceptHandle {
-    if (this.interceptHandle?.active) {
-      throw new SchmockError(
-        "Already intercepting. Call restore() first.",
-        "ALREADY_INTERCEPTING",
-      );
-    }
-
-    this.interceptHandle = createFetchInterceptor(
+    // Ownership is a lease, not a lock: nested providers, separate roots, and
+    // a manual intercept() alongside an adapter each get their own registry
+    // slot with their own options, released independently. The owner symbol
+    // keeps them one mock for dispatch, so a single request reaches handle()
+    // once no matter how many leases this instance holds.
+    const lease = createFetchInterceptor(
       (method, path, opts) => this.handle(method, path, opts),
       options,
       () => this.createRequestAdmission(),
+      this.interceptOwner,
     );
 
-    return this.interceptHandle;
+    const handle: Schmock.InterceptHandle = {
+      restore: () => {
+        lease.restore();
+        if (this.interceptHandles.delete(handle)) {
+          this.logger.log(
+            "lifecycle",
+            `Interception lease released (${this.interceptHandles.size} still held)`,
+          );
+        }
+      },
+      update: (nextOptions) => {
+        lease.update(nextOptions);
+      },
+      get active() {
+        return lease.active;
+      },
+    };
+
+    this.interceptHandles.add(handle);
+    this.logger.log(
+      "lifecycle",
+      `Interception lease acquired (${this.interceptHandles.size} held)`,
+    );
+
+    return handle;
   }
 
   async handle(

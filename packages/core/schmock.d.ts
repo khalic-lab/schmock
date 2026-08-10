@@ -450,9 +450,14 @@ declare namespace Schmock {
      * Intercept globalThis.fetch and route requests through this mock.
      * Client-side equivalent of listen().
      *
+     * A mock may hold any number of concurrent leases — nested providers,
+     * separate roots, or an adapter alongside a manual call. Each lease owns
+     * its own options and is released independently; the newest lease is
+     * consulted first.
+     *
      * @param options - Intercept configuration
-     * @returns Handle with restore() to stop intercepting
-     * @throws If already intercepting (call restore() first)
+     * @returns Handle with restore() to release this lease and update() to
+     *   change its options without changing its position in the stack
      */
     intercept(options?: InterceptOptions): InterceptHandle;
   }
@@ -539,8 +544,15 @@ declare namespace Schmock {
   }
 
   interface InterceptHandle {
-    /** Stop intercepting and restore original fetch */
+    /** Release this lease; restores original fetch once the last lease goes */
     restore(): void;
+    /**
+     * Reconfigure this lease in place, keeping its position in the
+     * interception stack. Options are replaced wholesale — omitted fields fall
+     * back to their defaults, so `update({})` restores `passthrough: true`.
+     * No-op once the lease has been restored.
+     */
+    update(options?: InterceptOptions): void;
     /** Whether this interceptor is currently active */
     readonly active: boolean;
   }
@@ -821,6 +833,18 @@ declare namespace Schmock {
     errors?: boolean;
     watch?: boolean;
     admin?: boolean;
+    /**
+     * Bearer token required by every `/schmock-admin/*` request
+     * (`--admin-token`). When `admin` is on and this is omitted, a random
+     * token is minted once and surfaced on {@link CliServer.adminToken}.
+     */
+    adminToken?: string;
+    /**
+     * How many requests the mock retains for `GET /schmock-admin/history`
+     * (`--admin-history-limit`, default 500). Ignored — history is disabled
+     * entirely — when `admin` is off.
+     */
+    adminHistoryLimit?: number;
     /** Validate the spec against the OpenAPI schema at startup (`--strict`). */
     strict?: boolean;
     /** Resolve `$ref`s outside the spec document (`--refs-external`). */
@@ -830,6 +854,13 @@ declare namespace Schmock {
      * this also enables http resolution, which still requires `refsExternal`.
      */
     refsAllowHttp?: string[];
+    /**
+     * How long {@link CliServer.close} waits for in-flight requests before
+     * the remaining sockets are destroyed (default 5000 ms). A half-sent
+     * request never completes on its own, so without a bound the close would
+     * hang.
+     */
+    shutdownGraceMs?: number;
   }
 
   /** Browser-safe subset of the Node server exposed by a CLI instance. */
@@ -854,6 +885,16 @@ declare namespace Schmock {
     server: CliHttpServer;
     port: number;
     hostname: string;
-    close(): void;
+    /**
+     * The bearer token this server requires on `/schmock-admin/*`. Present
+     * only when admin is enabled.
+     */
+    adminToken?: string;
+    /**
+     * Stop watching, stop accepting, and settle once the socket is released —
+     * within {@link CliOptions.shutdownGraceMs}. Memoized: closing twice is
+     * safe and resolves twice.
+     */
+    close(): Promise<void>;
   }
 }

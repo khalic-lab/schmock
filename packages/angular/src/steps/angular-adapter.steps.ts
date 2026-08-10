@@ -8,6 +8,7 @@ import {
   type HttpHandler,
   HttpHeaders,
   type HttpInterceptor,
+  HttpParams,
   HttpRequest,
   HttpResponse,
 } from "@angular/common/http";
@@ -49,12 +50,20 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
     url: string,
     body?: unknown,
     headers?: Record<string, string>,
+    extras?: {
+      responseType?: "arraybuffer" | "blob" | "json" | "text";
+      params?: Record<string, string>;
+    },
   ) {
     const InterceptorClass = createSchmockInterceptor(mock, interceptorOptions);
     const interceptor = new InterceptorClass();
 
     const request = new HttpRequest<unknown>(method, url, body, {
       headers: new HttpHeaders(headers),
+      ...(extras?.responseType ? { responseType: extras.responseType } : {}),
+      ...(extras?.params
+        ? { params: new HttpParams({ fromObject: extras.params }) }
+        : {}),
     });
 
     return new Promise<void>((resolve) => {
@@ -451,6 +460,104 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           "Custom error",
         );
         expect(errorResponse?.error).toHaveProperty("timestamp");
+      });
+    },
+  );
+
+  // Request and Response Shaping
+
+  Scenario(
+    "Request header names are lowercased for handlers",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Angular mock that echoes the authorization header",
+        () => {
+          resetState();
+          mock("GET /api/whoami", ({ headers }) => [
+            200,
+            { auth: headers.authorization ?? "none" },
+          ]);
+        },
+      );
+
+      When(
+        'I make an Angular request to "GET /api/whoami" with a capitalized Authorization header',
+        async () => {
+          await makeRequest("GET", "/api/whoami", undefined, {
+            Authorization: "Bearer token123",
+          });
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And('the echoed authorization header should be "Bearer token123"', () => {
+        if (!isRecord(response?.body)) {
+          throw new Error("Expected response body to be an object");
+        }
+        expect(response.body.auth).toBe("Bearer token123");
+      });
+    },
+  );
+
+  Scenario(
+    "responseType text yields a string body",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'I create an Angular mock returning an object for "GET /api/users"',
+        () => {
+          resetState();
+          mock("GET /api/users", [200, { users: [] }]);
+        },
+      );
+
+      When(
+        'I make an Angular request to "GET /api/users" with responseType "text"',
+        async () => {
+          await makeRequest("GET", "/api/users", undefined, undefined, {
+            responseType: "text",
+          });
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And("the response body should be the string '{\"users\":[]}'", () => {
+        expect(response?.body).toBe('{"users":[]}');
+      });
+    },
+  );
+
+  Scenario(
+    "Emitted responses report the URL with params",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'I create an Angular mock returning an object for "GET /api/users"',
+        () => {
+          resetState();
+          mock("GET /api/users", [200, { users: [] }]);
+        },
+      );
+
+      When(
+        'I make an Angular request to "GET /api/users" with query params',
+        async () => {
+          await makeRequest("GET", "/api/users", undefined, undefined, {
+            params: { page: "2" },
+          });
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And('the response url should be "/api/users?page=2"', () => {
+        expect(response?.url).toBe("/api/users?page=2");
       });
     },
   );

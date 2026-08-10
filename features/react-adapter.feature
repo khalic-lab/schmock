@@ -32,3 +32,14 @@ Feature: React Adapter
     Given a mounted provider with a first-generation route
     When I reset and re-register the provider route
     Then the mounted provider should return the second generation
+
+  Scenario: Nested providers sharing one mock both install
+    Given a Schmock instance with a route for nested providers
+    When I render a provider for the same mock inside another provider
+    Then the nested render should not throw
+    And the nested component should display the mocked value
+
+  Scenario: Changing provider options does not steal precedence from another root
+    Given two roots whose mocks both serve the same route
+    When I rerender the older root with a new request hook
+    Then the newer root should still win the shared route

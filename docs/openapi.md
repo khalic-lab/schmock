@@ -263,15 +263,19 @@ covers `HEAD` and `OPTIONS`, a `POST` on an item path, a collection-level `PUT`,
 and an item path whose parameter name differs from the resource's own id
 parameter (e.g. `PUT /users/{id}` alongside `GET /users/{userId}`).
 
-Two known limitations of that fallback:
+Two notes on how that fallback reaches the wire:
 
-- **`HEAD` responses carry a body.** The route is served by the same static
-  generator as `GET`, and Schmock does not strip bodies for `HEAD`.
-- **A declared `OPTIONS` operation shadows CORS preflight.** The Express adapter
-  and the CLI server sit in front of the mock; if your spec declares `options`
-  on a path, requests to it get the spec's declared response instead of the
-  adapter's preflight handling. Remove the `options` operation from the spec (or
-  handle preflight before the mock) if you need CORS preflight on that path.
+- **`HEAD` responses are generated with a body, then stripped.** The route is
+  served by the same static generator as `GET`, so the body is generated; response
+  normalization drops it before any adapter sees it, leaving the status and
+  headers (including a declared `Content-Length`) intact.
+- **A declared `OPTIONS` operation and CORS preflight coexist.** Under the CLI's
+  `--cors`, only a real browser preflight — `OPTIONS` carrying both `Origin` and
+  `Access-Control-Request-Method` — is answered by the transport with `204`.
+  Every other `OPTIONS` reaches the mock, so a spec-declared `options` operation
+  answers it and an unrouted path still answers `404`. The Express adapter does
+  no CORS handling at all: mount your own preflight middleware in front of it if
+  you need one.
 
 ### Route ownership
 

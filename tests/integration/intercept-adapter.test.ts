@@ -437,12 +437,26 @@ describe("Fetch Intercept — adapter primitive (React/Vue code path)", () => {
     handle.restore();
   });
 
-  // ——— Duplicate intercept guard ———
+  // ——— Concurrent interception leases ———
 
-  it("calling intercept() twice throws without restoring first", () => {
-    const handle = mock.intercept();
-    expect(() => mock.intercept()).toThrow(/already intercepting/i);
-    handle.restore();
+  it("calling intercept() twice takes a second independent lease", async () => {
+    mock("GET /api/users", [{ id: 1, name: "Alice" }]);
+    const patchedFetch = globalThis.fetch;
+    const first = mock.intercept();
+    const second = mock.intercept();
+
+    expect(first.active).toBe(true);
+    expect(second.active).toBe(true);
+
+    second.restore();
+    expect(second.active).toBe(false);
+    expect(first.active).toBe(true);
+    expect(
+      await fetch("http://localhost/api/users").then((r) => r.json()),
+    ).toEqual([{ id: 1, name: "Alice" }]);
+
+    first.restore();
+    expect(globalThis.fetch).toBe(patchedFetch);
   });
 
   // ——— Request object support (used by some frameworks) ———
