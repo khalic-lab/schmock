@@ -1,0 +1,60 @@
+name: Registry Verification
+
+# The smoke and consumer fixtures install @schmock/* from the public npm
+# registry, so they verify what is PUBLISHED — not the change under review.
+# Running them in the PR matrix would gate every pull request on the state of
+# the registry, so they run here instead: automatically after a release is
+# published, and on demand.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Space-separated package list (blank = all)"
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: ${{ matrix.suite }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - smoke
+          - consumer
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13  # Match local dev version
+
+      - name: Run ${{ matrix.suite }} verification
+        # PACKAGES goes through the environment rather than straight into the
+        # script so a dispatch input cannot inject shell. It is deliberately
+        # unquoted below: an empty value must expand to no arguments, and a
+        # multi-package value must split into one argument per package.
+        env:
+          SUITE: ${{ matrix.suite }}
+          PACKAGES: ${{ inputs.packages }}
+        run: |
+          echo "::group::Running $SUITE verification"
+          case "$SUITE" in
+            smoke)
+              bash scripts/smoke-tests/run-all.sh $PACKAGES
+              ;;
+            consumer)
+              bash scripts/integration-tests/run-all.sh $PACKAGES
+              ;;
+          esac
+          echo "::endgroup::"

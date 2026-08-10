@@ -1,0 +1,9 @@
+{
+  "name": "smoke-express-single-install",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@schmock/express": "^2.0.0",
+    "express": "^5.0.0"
+  }
+}

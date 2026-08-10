@@ -3,6 +3,15 @@
   "version": "2.3.0",
   "description": "All-in-one Schmock package — installs core, faker, validation, query, openapi, and CLI",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khalic-lab/schmock.git",
+    "directory": "packages/schmock"
+  },
+  "homepage": "https://github.com/khalic-lab/schmock/tree/main/packages/schmock#readme",
+  "bugs": {
+    "url": "https://github.com/khalic-lab/schmock/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

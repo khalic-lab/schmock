@@ -7,8 +7,8 @@ import {
 } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { createCliServer, isLoopbackHost, parseCliArgs } from "./cli";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createCliServer, isLoopbackHost, parseCliArgs, run } from "./cli";
 
 const PETSTORE_SPEC = resolve(
   __dirname,
@@ -750,5 +750,169 @@ describe("CLI binary", () => {
 
     expect(stderr).toContain("WARNING");
     expect(stderr).toContain("0.0.0.0");
+  });
+});
+
+describe("post-listen server errors", () => {
+  let server: Awaited<ReturnType<typeof createCliServer>> | undefined;
+
+  afterEach(async () => {
+    await server?.close();
+    server = undefined;
+  });
+
+  it("reports a server error raised after listen instead of swallowing it", async () => {
+    server = await createCliServer({ spec: PETSTORE_SPEC, port: 0 });
+    const written: string[] = [];
+    const writeSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        written.push(String(chunk));
+        return true;
+      });
+
+    try {
+      expect(() =>
+        server?.server.emit("error", new Error("late server failure")),
+      ).not.toThrow();
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    expect(written.join("")).toMatch(/Server error: late server failure/);
+  });
+
+  it("keeps exactly one error listener after listen resolves", async () => {
+    server = await createCliServer({ spec: PETSTORE_SPEC, port: 0 });
+    expect(server.server.listenerCount("error")).toBe(1);
+  });
+
+  it("still rejects when the socket cannot be bound", async () => {
+    const blocker = createNetServer();
+    await new Promise<void>((done) => blocker.listen(0, "127.0.0.1", done));
+    const address = blocker.address();
+    const takenPort =
+      address !== null && typeof address === "object" ? address.port : 0;
+
+    try {
+      await expect(
+        createCliServer({ spec: PETSTORE_SPEC, port: takenPort }),
+      ).rejects.toMatchObject({ code: "EADDRINUSE" });
+    } finally {
+      await new Promise<void>((done) => blocker.close(() => done()));
+    }
+  });
+});
+
+describe("parseCliArgs validation", () => {
+  it.each([
+    ["abc"],
+    [""],
+    ["1.5"],
+    ["  "],
+    ["Infinity"],
+    ["1e400"],
+  ])("rejects --seed-random %j", (value) => {
+    expect(() =>
+      parseCliArgs(["--spec", "x.yaml", "--seed-random", value]),
+    ).toThrow(/--seed-random/);
+  });
+
+  it.each([
+    ["42", 42],
+    ["0", 0],
+    [" 7 ", 7],
+  ])("accepts --seed-random %j as %i", (value, expected) => {
+    const result = parseCliArgs(["--spec", "x.yaml", "--seed-random", value]);
+    expect(result.fakerSeed).toBe(expected);
+  });
+
+  // A leading dash needs the `=` form: node:util's parseArgs refuses a
+  // separate argument that looks like another flag.
+  it("accepts a negative --seed-random", () => {
+    const result = parseCliArgs(["--spec", "x.yaml", "--seed-random=-1"]);
+    expect(result.fakerSeed).toBe(-1);
+  });
+
+  it("leaves fakerSeed undefined when --seed-random is absent", () => {
+    expect(parseCliArgs(["--spec", "x.yaml"]).fakerSeed).toBeUndefined();
+  });
+
+  it.each([[""], ["   "]])("rejects a blank --hostname %j", (value) => {
+    expect(() =>
+      parseCliArgs(["--spec", "x.yaml", "--hostname", value]),
+    ).toThrow(/--hostname/);
+  });
+
+  it("still accepts a real hostname", () => {
+    expect(
+      parseCliArgs(["--spec", "x.yaml", "--hostname", "0.0.0.0"]).hostname,
+    ).toBe("0.0.0.0");
+  });
+
+  it("rejects extra positional arguments", () => {
+    expect(() => parseCliArgs(["a.json", "b.json"])).toThrow(
+      /Unexpected extra argument/,
+    );
+    expect(() => parseCliArgs(["a.json", "b.json", "c.json"])).toThrow(
+      /b\.json, c\.json/,
+    );
+  });
+});
+
+describe("createCliServer hostname validation", () => {
+  it("rejects a blank hostname on the programmatic path", async () => {
+    await expect(
+      createCliServer({ spec: PETSTORE_SPEC, port: 0, hostname: "" }),
+    ).rejects.toThrow(/hostname/);
+  });
+});
+
+describe("repeat shutdown signals", () => {
+  it("acknowledges a repeat signal once and still settles", async () => {
+    const baseline = process.listeners("SIGINT");
+    let stderr = "";
+    const stderrWrite = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        stderr += String(chunk);
+        return true;
+      });
+
+    const runPromise = run(["--spec", PETSTORE_SPEC, "--port", "0"]).finally(
+      () => stderrWrite.mockRestore(),
+    );
+
+    try {
+      const deadline = Date.now() + 10_000;
+      while (
+        !/Schmock server running on/.test(stderr) &&
+        Date.now() < deadline
+      ) {
+        await new Promise((tick) => setTimeout(tick, 25));
+      }
+      expect(stderr).toMatch(/Schmock server running on/);
+
+      const added = process
+        .listeners("SIGINT")
+        .filter((listener) => !baseline.includes(listener)) as Array<
+        () => void
+      >;
+      expect(added).toHaveLength(1);
+
+      // First signal shuts down; the next two must not be silent, and must not
+      // restart the shutdown either.
+      added[0]?.();
+      added[0]?.();
+      added[0]?.();
+
+      await runPromise;
+    } finally {
+      stderrWrite.mockRestore();
+    }
+
+    expect(stderr.match(/Shutting down\.\.\./g)).toHaveLength(1);
+    expect(stderr.match(/Shutdown already in progress/g)).toHaveLength(1);
+    expect(process.listeners("SIGINT")).toEqual(baseline);
   });
 });

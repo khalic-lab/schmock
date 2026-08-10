@@ -79,13 +79,39 @@ function stripNullableForGeneration(schema: FakerSchema): FakerSchema {
   return schema;
 }
 
+/**
+ * @param schema - Schema to enhance
+ * @param seen - Nodes on the current descent path. Enhancement recurses through
+ *   composition, `additionalProperties` and `patternProperties`, so a cyclic
+ *   schema reaching this function directly used to overflow the stack. Cycles
+ *   are rejected by `validateSchema` first, but this function is exported and
+ *   must not depend on that: a node already being enhanced is handed back
+ *   untouched. Removing it on the way out keeps legitimate reuse of one
+ *   sub-schema by sibling branches fully enhanced.
+ */
 export function enhanceSchemaWithSmartMapping(
   schema: JSONSchema7,
+  seen: Set<JSONSchema7> = new Set(),
 ): JSONSchema7 {
   if (!schema || typeof schema !== "object") {
     return schema;
   }
 
+  if (seen.has(schema)) {
+    return schema;
+  }
+  seen.add(schema);
+  try {
+    return enhanceSchemaNode(schema, seen);
+  } finally {
+    seen.delete(schema);
+  }
+}
+
+function enhanceSchemaNode(
+  schema: JSONSchema7,
+  seen: Set<JSONSchema7>,
+): JSONSchema7 {
   const enhanced: FakerSchema = stripNullableForGeneration({
     ...schema,
   } as FakerSchema);
@@ -101,6 +127,7 @@ export function enhanceSchemaWithSmartMapping(
         enhanced.properties[fieldName] = enhanceFieldSchema(
           fieldName,
           fieldSchema,
+          seen,
         );
       }
     }
@@ -111,7 +138,9 @@ export function enhanceSchemaWithSmartMapping(
     const branches = enhanced[keyword];
     if (Array.isArray(branches)) {
       enhanced[keyword] = branches.map((branch) =>
-        isJSONSchema7(branch) ? enhanceSchemaWithSmartMapping(branch) : branch,
+        isJSONSchema7(branch)
+          ? enhanceSchemaWithSmartMapping(branch, seen)
+          : branch,
       );
     }
   }
@@ -120,10 +149,10 @@ export function enhanceSchemaWithSmartMapping(
   if (enhanced.items) {
     if (Array.isArray(enhanced.items)) {
       enhanced.items = enhanced.items.map((item) =>
-        isJSONSchema7(item) ? enhanceSchemaWithSmartMapping(item) : item,
+        isJSONSchema7(item) ? enhanceSchemaWithSmartMapping(item, seen) : item,
       );
     } else if (isJSONSchema7(enhanced.items)) {
-      enhanced.items = enhanceSchemaWithSmartMapping(enhanced.items);
+      enhanced.items = enhanceSchemaWithSmartMapping(enhanced.items, seen);
     }
   }
 
@@ -131,6 +160,7 @@ export function enhanceSchemaWithSmartMapping(
   if (isJSONSchema7(enhanced.additionalProperties)) {
     enhanced.additionalProperties = enhanceSchemaWithSmartMapping(
       enhanced.additionalProperties,
+      seen,
     );
   }
 
@@ -140,7 +170,7 @@ export function enhanceSchemaWithSmartMapping(
     const patterned = { ...enhanced.patternProperties };
     for (const [pattern, subSchema] of Object.entries(patterned)) {
       if (isJSONSchema7(subSchema)) {
-        patterned[pattern] = enhanceSchemaWithSmartMapping(subSchema);
+        patterned[pattern] = enhanceSchemaWithSmartMapping(subSchema, seen);
       }
     }
     enhanced.patternProperties = patterned;
@@ -156,7 +186,14 @@ export function enhanceSchemaWithSmartMapping(
 function enhanceFieldSchema(
   fieldName: string,
   fieldSchema: JSONSchema7,
+  seen: Set<JSONSchema7>,
 ): FakerSchema {
+  // A field whose schema is already being enhanced is part of a cycle; hand it
+  // back untouched rather than recursing forever.
+  if (seen.has(fieldSchema)) {
+    return fieldSchema as FakerSchema;
+  }
+
   const enhanced: FakerSchema = stripNullableForGeneration({
     ...fieldSchema,
   } as FakerSchema);
@@ -174,8 +211,15 @@ function enhanceFieldSchema(
   // Recursively enhance nested schemas first
   const hasComposition = enhanced.allOf || enhanced.anyOf || enhanced.oneOf;
   if (enhanced.properties || hasComposition || enhanced.items) {
-    const recursed = enhanceSchemaWithSmartMapping(enhanced);
-    Object.assign(enhanced, recursed);
+    // `enhanced` is a fresh copy, so it is tracked through the original node:
+    // marking `fieldSchema` is what stops a cycle from recursing forever.
+    seen.add(fieldSchema);
+    try {
+      const recursed = enhanceSchemaNode(enhanced, seen);
+      Object.assign(enhanced, recursed);
+    } finally {
+      seen.delete(fieldSchema);
+    }
   }
 
   // Don't apply field-level faker mapping to composition schemas — the branches define their own types
@@ -202,7 +246,10 @@ function enhanceFieldSchema(
     } else {
       enhanced.faker = fakerMethod;
     }
-    if (format) {
+    // A declared format is a contract: never let a name-based mapping clobber
+    // it. `findBestMapping` already skips schemas that declare a format, so
+    // this is defence in depth for any other route into this branch.
+    if (format && enhanced.format === undefined) {
       enhanced.format = format;
     }
     if (trueProbability !== undefined) {

@@ -25,7 +25,7 @@ bun install @schmock/schmock    # Core + non-framework plugins + CLI
 
 ### 1. Create a mock instance
 
-```typescript
+```typescript docs-run=basics
 import { schmock } from '@schmock/core'
 
 const mock = schmock()
@@ -47,7 +47,7 @@ const mock = schmock({
 
 Routes are defined by calling the instance directly:
 
-```typescript
+```typescript docs-run=basics
 mock('GET /health', { status: 'ok' })
 ```
 
@@ -55,14 +55,21 @@ The first argument is a `RouteKey` in the format `METHOD /path`. The second is a
 
 **Static data** — returned as-is:
 
-```typescript
+```typescript docs-run=basics
 mock('GET /config', { version: '2.0', env: 'staging' })
 ```
 
-**Generator function** — called on each request:
+**Generator function** — called on each request. These two read and write
+`state`, so they need an instance created with it:
 
-```typescript
-mock('GET /users/:id', ({ params, state }) => {
+```typescript docs-run=stateful
+import { schmock } from '@schmock/core'
+
+const api = schmock({ state: { users: [], counter: 0 } })
+```
+
+```typescript docs-run=stateful
+api('GET /users/:id', ({ params, state }) => {
   const user = state.users.find(u => u.id === Number(params.id))
   return user || [404, { error: 'Not found' }]
 })
@@ -70,8 +77,8 @@ mock('GET /users/:id', ({ params, state }) => {
 
 **Tuple responses** — control status codes and headers:
 
-```typescript
-mock('POST /users', ({ body, state }) => {
+```typescript docs-run=stateful
+api('POST /users', ({ body, state }) => {
   const user = { id: ++state.counter, ...body }
   state.users.push(user)
   return [201, user, { 'x-created-id': String(user.id) }]
@@ -80,7 +87,7 @@ mock('POST /users', ({ body, state }) => {
 
 ### 3. Handle requests
 
-```typescript
+```typescript docs-run=basics
 const health = await mock.handle('GET', '/health')
 // → { status: 200, body: { status: 'ok' }, headers: { 'content-type': 'application/json' } }
 
@@ -127,7 +134,7 @@ response processors then run in `.pipe()` order after the generator.
 State is shared across all routes and persists between requests. Calling
 `schmock()` without a state still creates one persistent empty state object:
 
-```typescript
+```typescript docs-run=state
 const mock = schmock({ state: { users: [], nextId: 1 } })
 
 mock('POST /users', ({ body, state }) => {
@@ -163,11 +170,11 @@ provided by the caller.
 
 ## Request Spying
 
-Matched requests that reach a normalized route response are recorded for
-assertions. Route misses, canceled requests, and unrecovered processing errors
-are not:
+Every request that matched a route is recorded for assertions, including one
+that ended in a 500 — the recorded `response` carries that status. Route misses
+and canceled requests are not recorded:
 
-```typescript
+```typescript docs-run=state
 await mock.handle('POST', '/users', { body: { name: 'Alice' } })
 await mock.handle('POST', '/users', { body: { name: 'Bob' } })
 
@@ -190,7 +197,7 @@ FIFO eviction when a bounded history is configured.
 
 Subscribe to request lifecycle events:
 
-```typescript
+```typescript docs-run=basics
 mock.on('request:start', ({ method, path }) => {
   console.log(`→ ${method} ${path}`)
 })
@@ -210,7 +217,7 @@ reset clears listeners and suppresses stale events from older requests.
 
 ## Route Introspection
 
-```typescript
+```typescript docs-run=basics
 const routes = mock.getRoutes()
 // [{ method: 'GET', path: '/users', hasParams: false },
 //  { method: 'GET', path: '/users/:id', hasParams: true }]
@@ -220,7 +227,7 @@ const routes = mock.getRoutes()
 
 Route `globalThis.fetch` through the mock without starting a server:
 
-```typescript
+```typescript docs-run=basics
 mock('GET /api/users', [{ id: 1, name: 'Alice' }])
 
 const interception = mock.intercept({ baseUrl: '/api' })
@@ -236,6 +243,13 @@ browser-relative URLs, and passes unmatched requests through unchanged by
 default. `baseUrl` filters requests but does not strip the prefix before route
 lookup. A full `mock.reset()` keeps the explicit lease active so mounted UI
 adapters can re-register routes without patching fetch again.
+
+Interception is a lease, not a lock: a mock can hold several concurrent leases —
+nested providers, or a framework adapter alongside a manual `intercept()` — each
+with its own options and its own idempotent `restore()`. Leases are consulted
+newest-first, and the original `fetch` returns only once the last one is
+released. See the [API reference](./api.md#interceptoptions) for `update()` and
+dispatch-order details.
 
 ## Standalone HTTP Server
 

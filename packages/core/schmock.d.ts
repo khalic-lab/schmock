@@ -5,6 +5,82 @@
 
 declare namespace Schmock {
   type JSONSchema7 = import("json-schema").JSONSchema7;
+
+  /**
+   * A `Schema` or the boolean shorthand, wherever draft-07 allows a subschema.
+   */
+  type SchemaDefinition = Schema | boolean;
+
+  /**
+   * JSON Schema draft-07 plus the keywords Schmock's own tooling understands,
+   * applied recursively so nested subschemas accept them too.
+   *
+   * `JSONSchema7` rejects these keywords in an object literal, which is why
+   * schemas carrying them otherwise need a cast at every level that uses one.
+   * A `Schema` is assignable to `JSONSchema7`, so it can be handed to
+   * `fakerPlugin`, `validationPlugin` or any other schema-typed option.
+   *
+   * Only `@schmock/*` packages know these keywords. `@schmock/validation`
+   * registers them on its own Ajv instance; a strict Ajv of your own throws
+   * `strict mode: unknown keyword` until you do the same.
+   *
+   * @example
+   * ```typescript
+   * const schema: Schmock.Schema = {
+   *   type: 'object',
+   *   properties: {
+   *     name: { type: 'string', faker: 'person.fullName' },
+   *     nickname: { type: ['string', 'null'], schmockNullable: true },
+   *     active: { type: 'boolean', schmockTrueProbability: 0.8 },
+   *   },
+   * }
+   * ```
+   */
+  interface Schema
+    extends Omit<
+      JSONSchema7,
+      | "properties"
+      | "patternProperties"
+      | "additionalProperties"
+      | "items"
+      | "additionalItems"
+      | "contains"
+      | "propertyNames"
+      | "allOf"
+      | "anyOf"
+      | "oneOf"
+      | "not"
+      | "if"
+      | "then"
+      | "else"
+      | "definitions"
+      | "dependencies"
+    > {
+    /** json-schema-faker method path, e.g. `"person.fullName"`. */
+    faker?: string | Record<string, unknown>;
+    /** Marks a null-permitting field: ~5% of generated values are `null`. */
+    schmockNullable?: boolean;
+    /** Probability (0–1) that a generated boolean is `true`. */
+    schmockTrueProbability?: number;
+
+    properties?: Record<string, SchemaDefinition>;
+    patternProperties?: Record<string, SchemaDefinition>;
+    additionalProperties?: SchemaDefinition;
+    items?: SchemaDefinition | SchemaDefinition[];
+    additionalItems?: SchemaDefinition;
+    contains?: SchemaDefinition;
+    propertyNames?: SchemaDefinition;
+    allOf?: SchemaDefinition[];
+    anyOf?: SchemaDefinition[];
+    oneOf?: SchemaDefinition[];
+    not?: SchemaDefinition;
+    if?: SchemaDefinition;
+    then?: SchemaDefinition;
+    else?: SchemaDefinition;
+    definitions?: Record<string, SchemaDefinition>;
+    dependencies?: Record<string, SchemaDefinition | string[]>;
+  }
+
   /**
    * HTTP methods supported by Schmock
    */
@@ -20,12 +96,17 @@ declare namespace Schmock {
   /**
    * Route key format: 'METHOD /path'
    *
+   * The path must start with '/': transports always deliver a leading-slash
+   * pathname, so a slash-less key would register a route no request can reach.
+   * `parseRouteKey` rejects it at runtime; the template type surfaces the same
+   * mistake at compile time.
+   *
    * @example
    * 'GET /users'
    * 'POST /users/:id'
    * 'DELETE /api/posts/:postId/comments/:commentId'
    */
-  type RouteKey = `${HttpMethod} ${string}`;
+  type RouteKey = `${HttpMethod} /${string}`;
 
   /**
    * Plugin interface for extending Schmock functionality
@@ -145,6 +226,10 @@ declare namespace Schmock {
     /**
      * Maximum number of requests retained in history (FIFO eviction).
      * Defaults to unbounded; set this to cap memory growth in long-running servers.
+     *
+     * Must be a non-negative integer — `0` disables history entirely, and any
+     * other value (negative, fractional, NaN, Infinity) is rejected with a
+     * `SchmockError` (`INVALID_CONFIG`) when the mock is created.
      */
     maxHistorySize?: number;
   }
@@ -173,9 +258,15 @@ declare namespace Schmock {
   }
 
   /**
-   * Generator types that can be passed to route definitions
+   * Generator types that can be passed to route definitions.
+   *
+   * Core dispatches on exactly two shapes: a function is called per request,
+   * and anything else is returned verbatim as static data. There is no
+   * schema-generation arm — a JSON Schema handed to a route is serialized back
+   * to the client as a literal schema document. Schema-driven responses come
+   * from a plugin: `.pipe(fakerPlugin({ schema }))`.
    */
-  type Generator = GeneratorFunction | StaticData | JSONSchema7;
+  type Generator = GeneratorFunction | StaticData;
 
   /**
    * Function that generates responses
@@ -185,7 +276,11 @@ declare namespace Schmock {
   ) => ResponseResult | Promise<ResponseResult>;
 
   /**
-   * Static data (non-function) that gets returned as-is
+   * Static data (non-function) that gets returned as-is.
+   *
+   * `Record<string, unknown>` accepts object literals but not a value whose
+   * declared type is an interface without an index signature (e.g. a variable
+   * typed `JSONSchema7`); pass such values as literals or widen them.
    */
   type StaticData =
     | string
@@ -233,11 +328,22 @@ declare namespace Schmock {
    * - Any value: returns as 200 OK
    * - [status, body]: custom status with body
    * - [status, body, headers]: custom status, body, and headers
+   * - { status, body, headers? }: object envelope, equivalent to the tuple
+   *   forms and produced by plugin error recovery
+   *
+   * The object envelope is detected by shape, so any returned object carrying a
+   * numeric `status` alongside a `body` is unwrapped rather than delivered as
+   * the payload — a domain object such as `{ status: 200, body: "draft" }` is
+   * indistinguishable from an envelope. An object whose `headers` is present
+   * but not a string record is *not* an envelope and is delivered whole. To
+   * return such a shape as data, nest it (`{ value: { status, body } }`) or use
+   * an explicit `[status, body]` tuple for the envelope instead.
    */
   type ResponseResult =
     | ResponseBody
     | [number, unknown]
-    | [number, unknown, Record<string, string>];
+    | [number, unknown, Record<string, string>]
+    | { status: number; body: unknown; headers?: Record<string, string> };
 
   /**
    * Response object returned by handle method
@@ -288,7 +394,9 @@ declare namespace Schmock {
      * Define a route by calling the instance directly
      *
      * @param route - Route pattern in format 'METHOD /path'
-     * @param generator - Response generator (function, static data, or schema)
+     * @param generator - Response generator: a function called per request, or
+     *   static data returned verbatim. There is no schema arm — use
+     *   `.pipe(fakerPlugin({ schema }))` for schema-driven responses.
      * @param config - Route-specific configuration
      * @returns The same instance for method chaining
      *
@@ -559,6 +667,12 @@ declare namespace Schmock {
 
   // ===== Lifecycle Events =====
 
+  /**
+   * Every lifecycle event carries `path`: the ORIGINAL request path in its
+   * canonical percent-encoded form, namespace prefix included. The
+   * namespace-stripped route form is available only as `routePath` on
+   * `request:match`.
+   */
   interface RequestStartEvent {
     readonly method: HttpMethod;
     readonly path: string;
@@ -567,7 +681,9 @@ declare namespace Schmock {
 
   interface RequestMatchEvent {
     readonly method: HttpMethod;
+    /** Original request path, namespace prefix included */
     readonly path: string;
+    /** Registered route path, namespace prefix stripped */
     readonly routePath: string;
     readonly params: Readonly<Record<string, string>>;
   }

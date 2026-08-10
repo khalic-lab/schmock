@@ -10,6 +10,13 @@ Feature: Fetch Interceptor
     Then the fetch response status should be 200
     And the fetch response body should be the mocked users
 
+  Scenario: A literal unicode route is matched by both URL spellings
+    Given a Schmock instance with route "GET /café/:name" returning the captured name
+    And fetch is intercepted with passthrough enabled
+    When I fetch the literal unicode URL and the percent-encoded URL
+    Then both fetch responses should be 200 with the decoded captured name
+    And the original fetch should not have been called
+
   Scenario: Passthrough for unmatched routes
     Given a Schmock instance with route "GET /api/users" returning users
     And fetch is intercepted with passthrough enabled
@@ -163,3 +170,29 @@ Feature: Fetch Interceptor
     When I fetch an unmatched HEAD route
     Then the fetch response status should be 404
     And the unmatched HEAD response body should be empty
+
+  Scenario: A generator exception reaches the error formatter
+    Given an intercepted route whose generator throws
+    When I fetch the throwing route
+    Then the fetch response status should be 500
+    And the formatted error body should be returned
+    And the error formatter should have been called once
+
+  Scenario: A cloning beforeResponse hook keeps exception provenance
+    Given an intercepted throwing route with a spreading beforeResponse hook
+    When I fetch the throwing route
+    Then the fetch response status should be 500
+    And the formatted error body should be returned
+
+  Scenario: An ordinary 500 route response is not reformatted
+    Given an intercepted route returning a plain 500 error body
+    When I fetch the plain error route
+    Then the fetch response status should be 500
+    And the plain error body should be returned unchanged
+    And the error formatter should not have been called
+
+  Scenario: A beforeResponse hook that rewrites an exception status is honoured
+    Given an intercepted throwing route with a beforeResponse hook that rewrites the status
+    When I fetch the throwing route
+    Then the fetch response status should be 503
+    And the error formatter should not have been called

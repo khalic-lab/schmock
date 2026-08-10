@@ -179,10 +179,29 @@ export function checkRef(ref: string, policy: ResolvedRefPolicy): RefVerdict {
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
+/**
+ * Every failure this resolver raises, recorded under the url it happened on.
+ *
+ * ref-parser wraps a resolver throw in `{ plugin, error }` — an object with no
+ * `message` — and its `ResolverError` constructor then falls back to
+ * `Error reading file "<url>"`, so the size/timeout/status detail is destroyed
+ * before any caller can see it. Handing the message out of band is the only way
+ * to get it back without taking a direct dependency on ref-parser's error class.
+ * Deliberately NOT part of {@link RefParserOptions}: naming a ref-parser type in
+ * the published surface is what the option shape exists to avoid.
+ */
 async function readHttpRef(
   url: string,
   policy: ResolvedRefPolicy,
+  diagnostics?: Map<string, string>,
 ): Promise<string> {
+  // Keyed on the ORIGINAL url, which is the one ref-parser reports as the
+  // failing source — a redirect target would never be looked up.
+  const fail = (message: string): Error => {
+    diagnostics?.set(url, message);
+    return new Error(message);
+  };
+
   // One deadline for the whole redirect chain, not per hop, so a redirector
   // cannot stretch the budget by bouncing the request around.
   const signal = AbortSignal.timeout(policy.timeoutMs);
@@ -201,12 +220,12 @@ async function readHttpRef(
     if (REDIRECT_STATUSES.has(response.status)) {
       const location = response.headers.get("location");
       if (!location) {
-        throw new Error(
+        throw fail(
           `external $ref ${currentUrl} returned ${response.status} with no Location header`,
         );
       }
       if (hops >= policy.redirects) {
-        throw new Error(
+        throw fail(
           `external $ref ${url} exceeded the redirect limit of ${policy.redirects}`,
         );
       }
@@ -214,13 +233,13 @@ async function readHttpRef(
       try {
         next = new URL(location, currentUrl).toString();
       } catch {
-        throw new Error(
+        throw fail(
           `external $ref ${currentUrl} redirected to an unparseable location`,
         );
       }
       const verdict = checkRef(next, policy);
       if (!verdict.allowed) {
-        throw new Error(
+        throw fail(
           `external $ref redirect to ${next} blocked: ${verdict.reason}`,
         );
       }
@@ -229,14 +248,14 @@ async function readHttpRef(
     }
 
     if (!response.ok) {
-      throw new Error(
+      throw fail(
         `external $ref ${currentUrl} responded with ${response.status} ${response.statusText}`,
       );
     }
 
     const declaredLength = Number(response.headers.get("content-length") ?? 0);
     if (Number.isFinite(declaredLength) && declaredLength > policy.maxBytes) {
-      throw new Error(
+      throw fail(
         `external $ref ${currentUrl} declares ${declaredLength} bytes, above the ${policy.maxBytes} byte limit`,
       );
     }
@@ -244,7 +263,7 @@ async function readHttpRef(
     const text = await response.text();
     const actualLength = new TextEncoder().encode(text).length;
     if (actualLength > policy.maxBytes) {
-      throw new Error(
+      throw fail(
         `external $ref ${currentUrl} returned ${actualLength} bytes, above the ${policy.maxBytes} byte limit`,
       );
     }
@@ -281,7 +300,10 @@ export interface RefParserOptions {
  *
  * Every branch maps 1:1 onto a ref-parser option; there is no extra layer.
  */
-export function buildRefParserOptions(policy?: RefPolicy): RefParserOptions {
+export function buildRefParserOptions(
+  policy?: RefPolicy,
+  diagnostics?: Map<string, string>,
+): RefParserOptions {
   const resolved = resolveRefPolicy(policy);
 
   if (!resolved.external) {
@@ -303,7 +325,8 @@ export function buildRefParserOptions(policy?: RefPolicy): RefParserOptions {
         // hand a filesystem path to `fetch`.
         canRead: (file: { url: string }) =>
           isHttpUrl(file.url) && checkRef(file.url, resolved).allowed,
-        read: (file: { url: string }) => readHttpRef(file.url, resolved),
+        read: (file: { url: string }) =>
+          readHttpRef(file.url, resolved, diagnostics),
       },
     },
     timeoutMs: resolved.timeoutMs * 4,

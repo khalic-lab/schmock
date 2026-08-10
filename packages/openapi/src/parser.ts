@@ -188,7 +188,10 @@ async function loadDocument(
   options: ParseSpecOptions,
 ): Promise<OpenAPI.Document> {
   const policy = resolveRefPolicy(options.refs);
-  const refOptions = buildRefParserOptions(options.refs);
+  // Per call, never module-scoped: parallel `openapi()` calls under
+  // `Promise.all` would otherwise read each other's diagnostics.
+  const refDiagnostics = new Map<string, string>();
+  const refOptions = buildRefParserOptions(options.refs, refDiagnostics);
   const strict = options.strict === true;
   const derefOptions = {
     ...refOptions,
@@ -224,6 +227,10 @@ async function loadDocument(
   }
   if (blocked.length > 0) throw externalRefBlocked(blocked, source);
 
+  // MUST run before dereference: it is the last moment a `oneOf` branch is
+  // still a `$ref` string and can be paired with its `mapping` entry.
+  markDiscriminatorValues(raw);
+
   const api = await dereferenceDocument(
     parser,
     baseUrl,
@@ -231,6 +238,7 @@ async function loadDocument(
     derefOptions,
     strict,
     source,
+    refDiagnostics,
   );
 
   // Defence in depth for refs reached through a nested document: only
@@ -244,6 +252,78 @@ async function loadDocument(
   return api;
 }
 
+/**
+ * Pair each `oneOf` branch with the `discriminator.mapping` entry that names it,
+ * and record the answer index-aligned on the discriminator object.
+ *
+ * Why a marker rather than resolving in the normalizer: dereference replaces
+ * every `$ref` branch with the component object, at which point NOTHING on the
+ * branch says which mapping key pointed at it — the old code guessed by
+ * position, so a mapping declared in a different order than the branches
+ * stamped every branch with the wrong discriminator value. Object identity
+ * cannot rescue it either, because `normalizeSchema` `structuredClone`s its
+ * input before walking it.
+ *
+ * The `x-` prefix keeps the marker inside OAS's own extension namespace, which
+ * is the only key space a document may legally carry — verified to survive
+ * `strict: true` validation, which is what the marker has to clear. It is NOT
+ * stripped before it can be read: `normalizeNode` strips `x-*` keys per node,
+ * and this one lives one level down, inside `discriminator`; it then leaves with
+ * the whole `discriminator` object.
+ */
+const DISCRIMINATOR_VALUES_MARKER = "x-schmock-discriminator-values";
+
+/**
+ * The mapping key naming `ref`, or `null` when no entry does.
+ *
+ * Both spellings OAS allows are accepted: a full pointer
+ * (`#/components/schemas/Dog`) and the bare component name (`Dog`).
+ */
+function mappingKeyForRef(
+  mapping: Record<string, unknown>,
+  ref: string,
+): string | null {
+  const bareName = ref.slice(ref.lastIndexOf("/") + 1);
+  for (const [key, value] of Object.entries(mapping)) {
+    if (typeof value !== "string") continue;
+    if (value === ref || value === bareName) return key;
+  }
+  return null;
+}
+
+function markDiscriminatorValues(root: unknown): void {
+  const seen = new WeakSet<object>();
+  const stack: unknown[] = [root];
+
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (typeof node !== "object" || node === null) continue;
+    if (seen.has(node)) continue;
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      for (const child of node) stack.push(child);
+      continue;
+    }
+    if (!isRecord(node)) continue;
+
+    const disc = node.discriminator;
+    if (isRecord(disc) && isRecord(disc.mapping) && Array.isArray(node.oneOf)) {
+      const mapping = disc.mapping;
+      const values = node.oneOf.map((branch) =>
+        isRecord(branch) && typeof branch.$ref === "string"
+          ? mappingKeyForRef(mapping, branch.$ref)
+          : null,
+      );
+      if (values.some((value) => value !== null)) {
+        disc[DISCRIMINATOR_VALUES_MARKER] = values;
+      }
+    }
+
+    for (const child of Object.values(node)) stack.push(child);
+  }
+}
+
 async function dereferenceDocument(
   parser: SwaggerParser,
   baseUrl: string | undefined,
@@ -251,6 +331,7 @@ async function dereferenceDocument(
   derefOptions: SwaggerParser.Options,
   strict: boolean,
   source: string | object,
+  diagnostics: Map<string, string>,
 ): Promise<OpenAPI.Document> {
   // Ref-free object sources keep their fast path: no resolver, no clone, no
   // validator. `browser-compat.test.ts` pins it.
@@ -267,7 +348,10 @@ async function dereferenceDocument(
         ? await parser.validate(baseUrl, raw, derefOptions)
         : await parser.validate(raw, derefOptions);
     return validated as OpenAPI.Document;
-  } catch (error) {
+  } catch (rawError) {
+    // BOTH branches, not just the SchmockError one: `strict` is off by default,
+    // so the non-strict rethrow is the path a real consumer hits.
+    const error = enrichResolverError(rawError, diagnostics);
     if (!strict) throw error;
     throw new SchmockError(
       `OpenAPI spec failed validation: ${error instanceof Error ? error.message : String(error)}`,
@@ -275,6 +359,44 @@ async function dereferenceDocument(
       { spec: typeof source === "string" ? source : undefined },
     );
   }
+}
+
+/**
+ * Put the resolver's own message back on a ref-parser `ResolverError`.
+ *
+ * ref-parser wraps a resolver throw as `{ plugin, error }` — an object with no
+ * `message` — and `ResolverError` then falls back to
+ * `Error reading file "<url>"`. The size, timeout and status detail the ref
+ * policy produced is gone by the time it reaches us, so `readHttpRef` records
+ * each message in `diagnostics` on its way out and it is re-attached here.
+ *
+ * Matching is by the error's `source` first, then by any recorded url appearing
+ * in its message; anything else is returned untouched.
+ */
+export function enrichResolverError(
+  error: unknown,
+  diagnostics: Map<string, string>,
+): unknown {
+  if (diagnostics.size === 0 || !(error instanceof Error)) return error;
+  const carrier = error as Error & { code?: unknown; source?: unknown };
+  if (carrier.code !== "ERESOLVER") return error;
+
+  let detail: string | undefined;
+  if (typeof carrier.source === "string") {
+    detail = diagnostics.get(carrier.source);
+  }
+  if (detail === undefined) {
+    for (const [url, message] of diagnostics) {
+      if (error.message.includes(url)) {
+        detail = message;
+        break;
+      }
+    }
+  }
+  if (detail === undefined) return error;
+
+  error.message = `${error.message}: ${detail}`;
+  return error;
 }
 
 function externalRefBlocked(
@@ -808,7 +930,16 @@ function findJsonContent(
   );
 }
 
-function convertPathTemplate(path: string): string {
+/**
+ * Rewrite an OpenAPI path template into the Express form the router uses:
+ * `/pets/{petId}` → `/pets/:petId`.
+ *
+ * Exported so `options.schemas` keys can be normalized with the SAME function
+ * that produced `ParsedPath.path`. A second copy would be a silent mismatch
+ * waiting to happen — the exact drift that made a spec-native override key
+ * report "the spec declares no ... operation" about an operation it declares.
+ */
+export function convertPathTemplate(path: string): string {
   return path.replace(/\{([^}]+)\}/g, ":$1");
 }
 

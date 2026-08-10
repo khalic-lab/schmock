@@ -174,6 +174,16 @@ function checkSchemePresence(
   return false;
 }
 
+/**
+ * Case-insensitive header read — the ONLY way this module should look a request
+ * header up.
+ *
+ * Load-bearing, not a convenience: core does not normalize header case at
+ * `mock.handle`, so a direct-API caller (unit test, BDD step, callable API with
+ * no adapter) still delivers `Accept`/`PREFER` exactly as written. Do not
+ * "simplify" this away on the argument that the adapters already lowercase —
+ * they do, but they are not the only entry point.
+ */
 function getHeader(
   headers: Record<string, string>,
   name: string,
@@ -237,7 +247,7 @@ export function processContentNegotiation(
   context: Schmock.PluginContext,
   defaultStatus?: number,
 ): Schmock.PluginResult | undefined {
-  const accept = context.headers.accept ?? context.headers.Accept;
+  const accept = getHeader(context.headers, "accept");
   if (!accept || accept === "*/*") return undefined;
 
   const responses = getRouteResponses(context.route);
@@ -671,7 +681,7 @@ export async function processPreferHeader(
   fakerSeed?: number,
   onSchema?: OnSchemaCallback,
 ): Promise<Schmock.PluginResult> {
-  const preferValue = context.headers.prefer ?? context.headers.Prefer;
+  const preferValue = getHeader(context.headers, "prefer");
   if (!preferValue) {
     return { context, response };
   }

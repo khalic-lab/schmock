@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR=$(mktemp -d)
 PASSED=0
 FAILED=0
+SKIPPED=0
 FAILURES=()
 
 cleanup() {
@@ -45,8 +46,12 @@ run_test() {
     fi
   done
 
+  # A missing fixture is a missing test, not a pass: count it as a failure so
+  # a renamed or deleted fixture cannot silently stop being exercised.
   if [[ -z "$test_file" ]]; then
     red "  SKIP: no test fixture found for $name"
+    SKIPPED=$((SKIPPED + 1))
+    FAILURES+=("$name (no fixture)")
     return
   fi
 
@@ -80,7 +85,7 @@ run_test() {
 }
 
 # All testable packages
-ALL_PACKAGES=(core faker express angular validation query react vue openapi cli schmock)
+ALL_PACKAGES=(core faker express angular validation query react vue openapi cli schmock express-single-install)
 
 # Filter by args or run all
 if [[ $# -gt 0 ]]; then
@@ -100,12 +105,17 @@ done
 
 bold "=== Results ==="
 green "Passed: $PASSED"
-if [[ $FAILED -gt 0 ]]; then
+if [[ $FAILED -gt 0 || $SKIPPED -gt 0 || $PASSED -eq 0 ]]; then
   red "Failed: $FAILED"
-  for f in "${FAILURES[@]}"; do
-    red "  - $f"
-  done
+  red "Skipped: $SKIPPED"
+  if [[ ${#FAILURES[@]} -gt 0 ]]; then
+    for f in "${FAILURES[@]}"; do
+      red "  - $f"
+    done
+  fi
+  if [[ $PASSED -eq 0 ]]; then
+    red "No smoke test ran — refusing to report success."
+  fi
   exit 1
-else
-  green "All smoke tests passed!"
 fi
+green "All smoke tests passed!"

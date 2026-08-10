@@ -42,24 +42,23 @@ export class HttpIngressError extends Error {
 export function parseNodeHeaders(
   req: RequestWithHeaders,
 ): Record<string, string> {
-  const headers: Record<string, string> = {};
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (typeof value === "string") {
-      headers[key] = value;
-    }
-  }
-  return headers;
+  // Object.fromEntries defines own properties, so a header literally named
+  // `__proto__` is preserved instead of being swallowed by the prototype
+  // setter. The prototype is retained so consumers keep Object.prototype.
+  return Object.fromEntries(
+    Object.entries(req.headers).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
 }
 
 /**
  * Extract query parameters from a URL as a flat Record<string, string>.
  */
 export function parseNodeQuery(url: URL): Record<string, string> {
-  const query: Record<string, string> = {};
-  url.searchParams.forEach((value, key) => {
-    query[key] = value;
-  });
-  return query;
+  // Own-property definition for the same reason as parseNodeHeaders, and it
+  // matches how the fetch interceptor builds its query record.
+  return Object.fromEntries(url.searchParams);
 }
 
 /** Default body size limit: 10 MB */

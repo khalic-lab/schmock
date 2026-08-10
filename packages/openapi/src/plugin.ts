@@ -1,5 +1,5 @@
 import type * as Schmock from "@schmock/core";
-import { SchmockError } from "@schmock/core";
+import { isHttpMethod, SchmockError } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { version as packageVersion } from "../package.json";
 import { dispatchCallbacks, getRouteCallbacks } from "./callbacks.js";
@@ -13,7 +13,7 @@ import {
 import { PENDING_MUTATIONS_KEY } from "./generators.js";
 import { createOwnerToken, isOwnedRoute } from "./owner.js";
 import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
-import { parseSpec } from "./parser.js";
+import { convertPathTemplate, parseSpec } from "./parser.js";
 import {
   applyResponseContentType,
   createBodyValidatorContext,
@@ -286,26 +286,88 @@ function rejectRequest(
 }
 
 /**
+ * The one grammar an `options.schemas` key may take.
+ *
+ * Deliberately not `key.split(" ")`: that accepted `"GET /widgets 200 extra"`
+ * by dropping the tail, and `Number.parseInt("2xx", 10) === 2` turned a typo
+ * into a phantom `responses[2]` entry that then won status selection. One
+ * anchored pattern rejects extra tokens, non-3-digit statuses, lowercase
+ * methods, a missing space and a path without a leading slash at once.
+ */
+const SCHEMA_OVERRIDE_KEY = /^([A-Z]+) (\/\S*)(?: ([1-5]\d{2}))?$/;
+
+const SCHEMA_OVERRIDE_GRAMMAR =
+  'expected "METHOD /path" or "METHOD /path STATUS" (uppercase method, path with a leading slash, 3-digit status); a path parameter may be written "{petId}" or ":petId"';
+
+function invalidOverrideKey(key: string, reason: string): SchmockError {
+  return new SchmockError(
+    `Invalid OpenAPI schema override key "${key}": ${reason}.`,
+    "OPENAPI_INVALID_SCHEMA_OVERRIDE",
+    { key },
+  );
+}
+
+/**
  * Apply `options.schemas` onto the parsed paths, in place.
  *
  * Keys are `"METHOD /path"` or `"METHOD /path STATUS"`. Without a status the
  * first declared 2xx entry is patched, and an operation declaring no 2xx gains
  * a synthetic 200.
+ *
+ * Every key is validated before ANY mutation, and both a malformed key and a
+ * well-formed key naming a route the spec does not declare throw. Silently
+ * ignoring either turned a typo into a mock that quietly served the unpatched
+ * contract.
  */
 function applySchemaOverrides(
   paths: Map<string, ParsedPath>,
   schemas: Record<string, JSONSchema7>,
 ): void {
+  const parsed: Array<{
+    parsedPath: ParsedPath;
+    status?: number;
+    schema: JSONSchema7;
+  }> = [];
+
   for (const [key, schema] of Object.entries(schemas)) {
-    const parts = key.split(" ");
-    const method = parts[0];
-    const path = parts[1];
-    const status = parts[2] ? Number.parseInt(parts[2], 10) : undefined;
-    const routeKey = `${method} ${path}`;
-
+    const match = SCHEMA_OVERRIDE_KEY.exec(key);
+    if (!match) {
+      throw invalidOverrideKey(key, SCHEMA_OVERRIDE_GRAMMAR);
+    }
+    const [, method, path, statusText] = match;
+    if (!isHttpMethod(method)) {
+      throw invalidOverrideKey(
+        key,
+        `"${method}" is not a supported HTTP method`,
+      );
+    }
+    // `ParsedPath.path` is always the Express form, so a key copied verbatim
+    // out of the spec (`GET /pets/{petId}`) has to go through the parser's own
+    // rewrite before the lookup. Both spellings therefore name one operation;
+    // the parameter NAME still matters, because it is part of the route key.
+    const routeKey = `${method} ${convertPathTemplate(path)}`;
     const parsedPath = paths.get(routeKey);
-    if (!parsedPath) continue;
+    if (!parsedPath) {
+      // When the key used `{param}`, say which form was actually looked up —
+      // otherwise the message reads as a claim about the spelling the author
+      // wrote rather than about the route.
+      const lookedUp =
+        routeKey === `${method} ${path}`
+          ? ""
+          : ` (path parameters are matched in Express form, so it was looked up as "${routeKey}")`;
+      throw invalidOverrideKey(
+        key,
+        `the spec declares no "${method} ${path}" operation${lookedUp}`,
+      );
+    }
+    parsed.push({
+      parsedPath,
+      status: statusText === undefined ? undefined : Number(statusText),
+      schema,
+    });
+  }
 
+  for (const { parsedPath, status, schema } of parsed) {
     if (status !== undefined) {
       const entry = parsedPath.responses.get(status);
       if (entry) {

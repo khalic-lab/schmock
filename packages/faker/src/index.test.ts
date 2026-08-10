@@ -1,6 +1,7 @@
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import { version as packageVersion } from "../package.json";
+import { MAX_NESTING_DEPTH } from "./constants";
 import { fakerPlugin, generateFromSchema } from "./index";
 import {
   generate,
@@ -266,7 +267,7 @@ describe("Schema Generator", () => {
       });
 
       it("enforces nesting depth limits", async () => {
-        const deepSchema = schemas.nested.deep(15);
+        const deepSchema = schemas.nested.deep(MAX_NESTING_DEPTH + 5);
         await expect(
           generateFromSchema({ schema: deepSchema }),
         ).rejects.toThrow("schema_nesting_depth");

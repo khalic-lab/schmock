@@ -2,7 +2,11 @@
 
 import { awaitWithAbort, throwIfAborted } from "./abort.js";
 import { isBinaryBody } from "./binary.js";
-import { isRouteNotFound, toHttpMethod } from "./constants.js";
+import {
+  getResponseException,
+  isRouteNotFound,
+  toHttpMethod,
+} from "./constants.js";
 import {
   normalizeResponse,
   serializeResponseBody,
@@ -355,6 +359,82 @@ function toFetchResponse(
 }
 
 /**
+ * Formatted error bodies are always JSON, so the replaced response's own
+ * content type must be dropped rather than inherited. Every case variant goes
+ * first: leaving a `Content-Type` beside the forced lowercase key makes the
+ * pair transport-invalid and the normalizer rejects it.
+ */
+function withJsonContentType(
+  headers: Record<string, string> | undefined,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    if (name.toLowerCase() === "content-type") continue;
+    result[name] = value;
+  }
+  result["content-type"] = "application/json";
+  return result;
+}
+
+/**
+ * Invoke the errorFormatter for a core-marked exception and build its
+ * response, falling back to a minimal safe body when the formatter throws or
+ * its result is not serializable.
+ *
+ * This helper is TOTAL — it never throws. It runs inside the interceptor's
+ * `try`, so an escaping error would land in the catch below and invoke the
+ * formatter a second time; the re-entrancy is exactly the defect the Express
+ * adapter's `sendFormattedError` was shaped to avoid.
+ *
+ * `responseHeaders` carries the (post-hook) headers of the response being
+ * replaced so metadata such as `retry-after` survives. There are two distinct
+ * fallbacks. When the inherited headers are untransportable, the send is
+ * retried once with the fixed JSON header set and the SAME formatted body —
+ * nothing is on the wire yet, and losing the body would silently change the
+ * user's error contract. Only a failure of the formatter itself, or of its
+ * body, reaches the minimal fallback, which deliberately inherits nothing.
+ */
+function formatInterceptedError(
+  errorFormatter: (error: Error) => unknown,
+  error: Error,
+  responseHeaders: Record<string, string> | undefined,
+  method: Schmock.HttpMethod,
+): Response {
+  try {
+    const formatted = errorFormatter(error);
+    try {
+      return toFetchResponse(
+        {
+          status: 500,
+          body: formatted,
+          headers: withJsonContentType(responseHeaders),
+        },
+        method,
+      );
+    } catch {
+      // `formatted` is reused, so the formatter still fires exactly once.
+      return toFetchResponse(
+        {
+          status: 500,
+          body: formatted,
+          headers: { "content-type": "application/json" },
+        },
+        method,
+      );
+    }
+  } catch {
+    return toFetchResponse(
+      {
+        status: 500,
+        body: { error: "Internal Server Error", code: "INTERNAL_ERROR" },
+        headers: { "content-type": "application/json" },
+      },
+      method,
+    );
+  }
+}
+
+/**
  * Create a fetch interceptor that routes requests through mock.handle().
  *
  * `owner` identifies the mock behind the lease. Leases sharing an owner are
@@ -448,6 +528,13 @@ export function createFetchInterceptor(
         );
         throwIfAborted(request.signal);
 
+        // Exception provenance is carried on the response as a non-enumerable
+        // symbol, so it must be read BEFORE beforeResponse runs: the
+        // documented `{...response}` hook pattern copies only own enumerable
+        // properties and would otherwise strip the mark, silently bypassing
+        // errorFormatter.
+        const internalError = getResponseException(schmockResponse);
+
         // Route not found — passthrough or 404
         if (isRouteNotFound(schmockResponse)) {
           if (passthrough) {
@@ -478,6 +565,20 @@ export function createFetchInterceptor(
           if (modified) {
             response = modified;
           }
+        }
+
+        // Only core-marked exceptions reach errorFormatter; a user-defined 500
+        // with an error-shaped body stays an ordinary domain response. The
+        // POST-hook status gates the replacement (matching Express and
+        // Angular): a beforeResponse that rewrites an exception into a 503 or
+        // a 200 is honoured instead of being forced back to a formatted 500.
+        if (errorFormatter && internalError && response.status === 500) {
+          return formatInterceptedError(
+            errorFormatter,
+            internalError,
+            response.headers,
+            effectiveMethod,
+          );
         }
 
         return toFetchResponse(response, effectiveMethod);

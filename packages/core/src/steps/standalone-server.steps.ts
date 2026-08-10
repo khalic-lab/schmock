@@ -1,7 +1,7 @@
 import { request as nodeRequest } from "node:http";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { schmock } from "../index";
+import { schmock, toRouteKey } from "../index";
 
 const feature = await loadFeature("../../features/standalone-server.feature");
 
@@ -108,7 +108,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   Scenario("Handle POST with JSON body", ({ Given, When, Then, And }) => {
     Given("I create a mock echoing POST at {string}", (_, path: string) => {
       mock = schmock();
-      mock(`POST ${path}`, ({ body }) => body);
+      mock(toRouteKey("POST", path), ({ body }) => body);
     });
 
     When("I start the server on a random port", async () => {
@@ -379,7 +379,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         "I create a mock that accepts POST requests at {string}",
         (_, path: string) => {
           mock = schmock();
-          const route = `POST ${path}` satisfies Schmock.RouteKey;
+          const route = toRouteKey("POST", path);
           mock(route, { accepted: true });
           mock("GET /health", { healthy: true });
         },
@@ -427,7 +427,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         (_, path: string) => {
           jsonRouteExecutions = 0;
           mock = schmock();
-          const route = `POST ${path}` satisfies Schmock.RouteKey;
+          const route = toRouteKey("POST", path);
           mock(route, ({ body }) => {
             jsonRouteExecutions += 1;
             return body;
@@ -473,7 +473,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         (_, path: string) => {
           jsonRouteExecutions = 0;
           mock = schmock();
-          const route = `POST ${path}` satisfies Schmock.RouteKey;
+          const route = toRouteKey("POST", path);
           mock(route, ({ body }) => {
             jsonRouteExecutions += 1;
             return body;

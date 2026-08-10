@@ -1,9 +1,12 @@
+import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import {
   findBestMapping,
+  GENERATABLE_FORMATS,
   scoreMatch,
   tokenizeFieldName,
 } from "./field-name-matcher";
+import { generateWithJsf } from "./jsf-config";
 
 describe("tokenizeFieldName", () => {
   it("splits camelCase", () => {
@@ -259,6 +262,74 @@ describe("findBestMapping", () => {
       expect(result).toBeUndefined();
     });
 
+    // Regression (M20-d): json-schema-faker gives the `faker` extension
+    // precedence over `format`, so injecting a name-based faker method into a
+    // field that declares a format silently violates the declared contract —
+    // an email address landed in a `format: "date-time"` field. Preserving the
+    // declared format is not enough; the mapping has to be skipped entirely.
+    it("skips mapping when the schema declares a format", () => {
+      const result = findBestMapping("email", {
+        type: "string",
+        format: "date-time",
+      });
+      expect(result).toBeUndefined();
+    });
+
+    it("skips mapping when a format is declared and the mapping sets none", () => {
+      // The `name` mapping carries no format of its own, so "preserve the
+      // declared format" would still have produced a person name here.
+      const result = findBestMapping("name", {
+        type: "string",
+        format: "ipv4",
+      });
+      expect(result).toBeUndefined();
+    });
+
+    // Regression: deferring to EVERY declared format regressed real specs.
+    // train-travel.yaml declares `format: iso-country-code`, which nothing
+    // downstream implements, so json-schema-faker emitted an arbitrary string
+    // ("oU9dd84tv") where the name-based mapping produces a country code. The
+    // skip applies to formats the generator can actually satisfy.
+    it("still maps when the declared format is not one anything generates", () => {
+      const result = findBestMapping("country_code", {
+        type: "string",
+        format: "iso-country-code",
+      });
+      expect(result).toBeDefined();
+    });
+
+    it("still maps format:uuid, the one case where name and format agree", () => {
+      const result = findBestMapping("someField", {
+        type: "string",
+        format: "uuid",
+      });
+      expect(result?.mapping.fakerMethod).toBe("string.uuid");
+    });
+
+    // Regression (M20-e): multipleOf is a numeric constraint, so a name-based
+    // numeric mapping would produce values that violate it (age 44 for
+    // multipleOf: 10).
+    it("skips numeric mapping when the schema declares multipleOf", () => {
+      const result = findBestMapping("age", {
+        type: "integer",
+        multipleOf: 10,
+      });
+      expect(result).toBeUndefined();
+    });
+
+    it("skips numeric mapping for fractional multipleOf", () => {
+      const result = findBestMapping("price", {
+        type: "number",
+        multipleOf: 0.25,
+      });
+      expect(result).toBeUndefined();
+    });
+
+    it("still maps a numeric field without multipleOf", () => {
+      const result = findBestMapping("age", { type: "integer" });
+      expect(result).toBeDefined();
+    });
+
     it("does not skip non-string types when minLength happens to be set", () => {
       // minLength is a string-only keyword; on a non-string schema it's
       // meaningless. The number mapping for 'age' should still apply.
@@ -288,5 +359,56 @@ describe("findBestMapping", () => {
     });
     expect(result).toBeDefined();
     expect(result?.mapping.fakerMethod).toBe("string.uuid");
+  });
+});
+
+describe("GENERATABLE_FORMATS matches what json-schema-faker generates", () => {
+  /**
+   * The set exists to answer one question — can the generator satisfy this
+   * format? — so every member is checked against the generator itself. A
+   * format json-schema-faker does not know falls through to its plain string
+   * branch, which with no length constraints emits a short random string or
+   * the empty string; `uri-template` and `regex` used to be listed and behaved
+   * exactly like that, suppressing a good name-based value for nothing.
+   */
+  it.each([
+    ...GENERATABLE_FORMATS,
+  ])("generates a recognizable value for format %s", async (format) => {
+    const schema = {
+      type: "object",
+      properties: { zqx: { type: "string", format } },
+      required: ["zqx"],
+    } as JSONSchema7;
+
+    const values: string[] = [];
+    for (const seed of [1, 2, 3, 7]) {
+      const generated = await generateWithJsf(schema, seed);
+      const value = Reflect.get(generated as object, "zqx");
+      expect(typeof value).toBe("string");
+      values.push(value as string);
+    }
+
+    // A random-alphanumeric fallback is [A-Za-z0-9]* and never empty-plus-
+    // structured: every real format generator emits either a separator
+    // (-:/.@) or, for `duration`, a leading "P".
+    for (const value of values) {
+      expect(value).not.toBe("");
+      expect(value).toMatch(/[-:/.@]|^P/);
+    }
+  });
+
+  it("defers to no format json-schema-faker cannot generate", async () => {
+    // uri-template and regex are standard Draft 7 formats absent from
+    // json-schema-faker's registry: listing them cost `searchUrl` its
+    // internet.url mapping and returned a random string instead.
+    for (const format of ["uri-template", "regex"]) {
+      expect(GENERATABLE_FORMATS.has(format)).toBe(false);
+
+      const mapping = findBestMapping("searchUrl", {
+        type: "string",
+        format,
+      });
+      expect(mapping?.mapping.fakerMethod).toBe("internet.url");
+    }
   });
 });

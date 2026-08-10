@@ -245,6 +245,44 @@ describeFeature(feature, ({ Scenario }) => {
     },
   );
 
+  Scenario(
+    "Generator throwing a non-Error value keeps the thrown value",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a mock with a generator that throws the raw string {string}",
+        (_, thrown: string) => {
+          mock = schmock();
+          mock("GET /raw-throw", () => {
+            throw thrown;
+          });
+        },
+      );
+
+      When("I request {string}", async (_, request: string) => {
+        const { method, path } = parseRequest(request);
+        response = await mock.handle(method, path);
+      });
+
+      Then("I should receive status {int}", (_, status: number) => {
+        expect(response.status).toBe(status);
+      });
+
+      And(
+        "the response should contain error {string}",
+        (_, errorMessage: string) => {
+          expect(responseBodyString(response, "error")).toContain(errorMessage);
+        },
+      );
+
+      And(
+        "the response should have error code {string}",
+        (_, errorCode: string) => {
+          expect(responseBodyString(response, "code")).toBe(errorCode);
+        },
+      );
+    },
+  );
+
   Scenario("Namespace mismatch returns 404", ({ Given, When, Then, And }) => {
     Given(
       "I create a mock with namespace {string} and a GET /users route",

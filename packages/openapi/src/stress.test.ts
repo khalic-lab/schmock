@@ -2923,3 +2923,76 @@ describe("stress: stripe spec — the confused Stripe developer", () => {
     );
   }, 120_000);
 });
+
+// ════════════════════════════════════════════════════════════════════
+// STRIPE — GETs whose body comes from @schmock/faker, not from state
+//
+// The blocks above exercise the parser, CRUD detection and state-backed
+// lifecycles; the only schema-generated Stripe GET they touched was the
+// shallow /v1/balance. A faker depth ceiling that rejects Stripe's real
+// response schemas therefore shipped green. These two cover that path.
+// ════════════════════════════════════════════════════════════════════
+
+describe("stress: stripe spec — schema-generated GETs", () => {
+  let plugin: Schmock.Plugin;
+
+  beforeAll(async () => {
+    plugin = await getStripePlugin();
+  }, 120_000);
+
+  it("keeps the declared envelope of a deeply nested list route", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(plugin);
+
+    // The /v1/issuing/cards envelope nests 12 levels of real value depth.
+    // When @schmock/faker's MAX_NESTING_DEPTH sat at 10 the skeleton threw
+    // schema_nesting_depth, generateWrapperSkeleton degraded it to `{}` and
+    // the route answered a bare {"data":[]} — every declared envelope field
+    // silently gone.
+    const res = await mock.handle("GET", "/v1/issuing/cards");
+
+    expect(res.status).toBe(200);
+    const body = res.body as Record<string, unknown>;
+    expect(body.data).toEqual([]);
+    expect(Object.keys(body).sort()).toEqual([
+      "data",
+      "has_more",
+      "object",
+      "url",
+    ]);
+    expect(body.object).toBe("list");
+  }, 120_000);
+
+  it("generates a non-empty, bounded body for a deep static GET", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(plugin);
+
+    const res = await mock.handle("GET", "/v1/tax/calculations/1/line_items");
+
+    expect(res.status).toBe(200);
+    const bytes = JSON.stringify(res.body).length;
+    // Measured at ~100-160 KB. The upper bound is the point: the depth handed
+    // to json-schema-faker is what keeps a Stripe response in the hundreds of
+    // kilobytes, and raising it without raising this fixture's ceiling pushes
+    // the same body into the tens of megabytes.
+    expect(bytes).toBeGreaterThan(1_000);
+    expect(bytes).toBeLessThan(5_000_000);
+  }, 120_000);
+
+  it("refuses Stripe's tallest response schemas instead of generating them", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(plugin);
+
+    // Stripe's mutually referencing object graph dereferences into schemas
+    // 28-47 levels tall. Generating one costs 97-188 MB, so the faker budgets
+    // refuse it. This is a deliberate limitation, not an accident: pinning it
+    // here means the next change to those budgets has to face it, and the
+    // graceful truncation that would restore a 200 has a test to flip.
+    const res = await mock.handle("GET", "/v1/setup_attempts");
+
+    expect(res.status).toBe(500);
+    const body = res.body as { error?: string; code?: string };
+    expect(body.code).toBe("RESOURCE_LIMIT_ERROR");
+    expect(body.error).toMatch(/schema_nodes|schema_nesting_depth/);
+  }, 120_000);
+});

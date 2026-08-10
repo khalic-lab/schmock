@@ -49,7 +49,9 @@ intercepted. A `mount()` that throws releases the lease before rethrowing, so a
 failed startup does not leave `globalThis.fetch` patched.
 
 Several apps may share one mock: each `app.use(schmockPlugin, { mock })` takes
-its own lease, and the newest one is consulted first.
+its own lease, and the newest one is consulted first. A manual
+`mock.intercept()` stacks the same way, and `globalThis.fetch` is restored only
+once the last lease of any kind is released.
 
 ### Server-side rendering
 
@@ -94,6 +96,29 @@ When `true` (default), requests that don't match any Schmock route are forwarded
 ### `baseUrl`
 
 Only intercept requests whose pathname starts with this string. Non-matching requests go straight to real `fetch` without being processed.
+
+### `errorFormatter`
+
+`errorFormatter(error)` formats core-marked internal exceptions — an error
+thrown by a route generator or a plugin — and errors thrown by the
+`beforeRequest`/`beforeResponse` hooks, matching the Express and Angular
+adapters. It does not reinterpret an ordinary user-defined 500 route response
+such as `[500, { error: 'domain failure' }]`.
+
+On the core-marked exception path, provenance is captured before
+`beforeResponse` runs, so a hook that clones the response with
+`{ ...response }` does not suppress the formatter. The post-hook status gates
+the replacement: a `beforeResponse` that rewrites an exception into a `503` (or
+a `200`) is honoured and the formatter is not invoked. That response keeps the
+post-hook response headers — `retry-after` and friends survive — with
+`content-type` forced to `application/json`, and a formatter that throws, or
+that returns a body which cannot be serialized, yields
+`{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }` without being
+invoked a second time.
+
+A hook that *throws* is handled separately: that response inherits no headers
+beyond `content-type: application/json`, and a formatter that throws while
+handling it propagates, rejecting the `fetch` call.
 
 ## `useSchmock` Composable
 

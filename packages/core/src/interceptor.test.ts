@@ -990,6 +990,79 @@ describe("mock.intercept()", () => {
     }
   });
 
+  it("invokes the formatter once when it throws on a core-marked exception", async () => {
+    mock("GET /api/boom", () => {
+      throw new Error("kaboom");
+    });
+    const errorFormatter = vi.fn(() => {
+      throw new Error("formatter exploded");
+    });
+    const handle = mock.intercept({ passthrough: false, errorFormatter });
+
+    try {
+      const response = await fetch("http://localhost/api/boom");
+      expect(response.status).toBe(500);
+      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(await response.json()).toEqual({
+        error: "Internal Server Error",
+        code: "INTERNAL_ERROR",
+      });
+      expect(errorFormatter).toHaveBeenCalledTimes(1);
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("falls back without re-invoking a formatter whose body is unserializable", async () => {
+    mock("GET /api/boom", () => {
+      throw new Error("kaboom");
+    });
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const errorFormatter = vi.fn(() => cyclic);
+    const handle = mock.intercept({ passthrough: false, errorFormatter });
+
+    try {
+      const response = await fetch("http://localhost/api/boom");
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({
+        error: "Internal Server Error",
+        code: "INTERNAL_ERROR",
+      });
+      expect(errorFormatter).toHaveBeenCalledTimes(1);
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("keeps post-hook headers on a formatted exception and forces JSON", async () => {
+    mock("GET /api/boom", () => {
+      throw new Error("kaboom");
+    });
+    const handle = mock.intercept({
+      passthrough: false,
+      beforeResponse: (response) => ({
+        ...response,
+        headers: {
+          ...response.headers,
+          "retry-after": "30",
+          "Content-Type": "text/plain",
+        },
+      }),
+      errorFormatter: (error) => ({ formatted: error.message }),
+    });
+
+    try {
+      const response = await fetch("http://localhost/api/boom");
+      expect(response.status).toBe(500);
+      expect(response.headers.get("retry-after")).toBe("30");
+      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(await response.json()).toEqual({ formatted: "kaboom" });
+    } finally {
+      handle.restore();
+    }
+  });
+
   it("rejects an abort while an async hook remains pending", async () => {
     mock("GET /api/slow-hook", { completed: true });
     let announceHookStart = () => {};

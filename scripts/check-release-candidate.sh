@@ -171,6 +171,27 @@ for ((index = 0; index < TOTAL; index += 1)); do
     exit 1
   fi
 
+  # A tarball ships build output and package metadata, nothing else. This is
+  # an allowlist rather than a denylist on purpose: sources, tests, BDD steps,
+  # spec fixtures and test-only helpers must stay out whatever they are named,
+  # so a newly emitted or renamed test artefact cannot slip past.
+  declare -a FORBIDDEN_ENTRIES=()
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] && FORBIDDEN_ENTRIES+=("$entry")
+  done < <(
+    tar -tf "$tarball" \
+      | grep -vE '^package/(package\.json|README\.md|LICENSE|dist/)' \
+      || true
+  )
+
+  if [[ "${#FORBIDDEN_ENTRIES[@]}" -gt 0 ]]; then
+    echo "Packing $package_name included non-distributable files:" >&2
+    for entry in "${FORBIDDEN_ENTRIES[@]}"; do
+      echo "  - $entry" >&2
+    done
+    exit 1
+  fi
+
   TARBALLS+=("$tarball")
   printf '%s\t%s\t%s\n' \
     "$package_name" \

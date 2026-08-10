@@ -1,8 +1,8 @@
 import type * as Schmock from "@schmock/core";
-import { isStatusTuple } from "@schmock/core";
+import { isStatusTuple, SchmockError } from "@schmock/core";
 import { version as packageVersion } from "../package.json";
 
-interface PaginationOptions {
+export interface PaginationOptions {
   /** Default items per page (default: 10) */
   defaultLimit?: number;
   /** Maximum items per page (default: 100) */
@@ -13,7 +13,7 @@ interface PaginationOptions {
   limitParam?: string;
 }
 
-interface SortingOptions {
+export interface SortingOptions {
   /** Fields allowed for sorting */
   allowed: string[];
   /** Default sort field */
@@ -26,21 +26,111 @@ interface SortingOptions {
   orderParam?: string;
 }
 
-interface FilteringOptions {
+export interface FilteringOptions {
   /** Fields allowed for filtering */
   allowed: string[];
   /** Query parameter prefix for filters (default: "filter") */
   filterPrefix?: string;
 }
 
-interface QueryPluginOptions {
+export interface QueryPluginOptions {
   pagination?: PaginationOptions;
   sorting?: SortingOptions;
   filtering?: FilteringOptions;
 }
 
+/** Field names that would reach up the prototype chain if honoured. */
+const RESERVED_FIELDS = new Set(["__proto__", "constructor", "prototype"]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/**
+ * Reads a key without consulting the prototype chain, so inherited members such
+ * as `toString` or `constructor` are never mistaken for query params or fields.
+ */
+function ownValue<T>(source: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(source, key) ? source[key] : undefined;
+}
+
+function describeReceived(value: unknown): string {
+  return typeof value === "string" ? JSON.stringify(value) : String(value);
+}
+
+function configError(message: string, option: string, received: unknown) {
+  return new SchmockError(
+    `queryPlugin: ${message} (received ${describeReceived(received)})`,
+    "QUERY_CONFIG_INVALID",
+    { option, received },
+  );
+}
+
+function assertPositiveInteger(value: unknown, option: string): void {
+  if (value === undefined) return;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw configError(`${option} must be a positive integer`, option, value);
+  }
+}
+
+function assertNonEmptyString(value: unknown, option: string): void {
+  if (value === undefined) return;
+  if (typeof value !== "string" || value.length === 0) {
+    throw configError(`${option} must be a non-empty string`, option, value);
+  }
+}
+
+function assertAllowedFields(value: unknown, option: string): void {
+  if (!Array.isArray(value)) {
+    throw configError(
+      `${option} must be an array of field names`,
+      option,
+      value,
+    );
+  }
+
+  for (const field of value) {
+    if (typeof field !== "string" || field.length === 0) {
+      throw configError(
+        `${option} must contain only non-empty field names`,
+        option,
+        field,
+      );
+    }
+    if (RESERVED_FIELDS.has(field)) {
+      throw configError(
+        `${option} must not contain the reserved field name`,
+        option,
+        field,
+      );
+    }
+  }
+}
+
+/**
+ * Validates configuration at plugin creation time so misconfiguration surfaces
+ * to the developer immediately instead of producing nonsensical responses.
+ */
+function validateOptions(options: QueryPluginOptions): void {
+  const { pagination, sorting, filtering } = options;
+
+  if (pagination) {
+    assertPositiveInteger(pagination.defaultLimit, "pagination.defaultLimit");
+    assertPositiveInteger(pagination.maxLimit, "pagination.maxLimit");
+    assertNonEmptyString(pagination.pageParam, "pagination.pageParam");
+    assertNonEmptyString(pagination.limitParam, "pagination.limitParam");
+  }
+
+  if (sorting) {
+    assertAllowedFields(sorting.allowed, "sorting.allowed");
+    assertNonEmptyString(sorting.sortParam, "sorting.sortParam");
+    assertNonEmptyString(sorting.orderParam, "sorting.orderParam");
+  }
+
+  if (filtering) {
+    assertAllowedFields(filtering.allowed, "filtering.allowed");
+    assertNonEmptyString(filtering.filterPrefix, "filtering.filterPrefix");
+  }
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {
@@ -80,7 +170,9 @@ function replaceResponseBody(response: unknown, body: unknown): unknown {
   return body;
 }
 
-export function queryPlugin(options: QueryPluginOptions): Schmock.Plugin {
+export function queryPlugin(options: QueryPluginOptions = {}): Schmock.Plugin {
+  validateOptions(options);
+
   return {
     name: "query",
     version: packageVersion,
@@ -127,17 +219,16 @@ function applyFiltering(
   let result = items;
 
   for (const field of options.allowed) {
-    // Support filter[field]=value format
-    const bracketKey = `${prefix}[${field}]`;
-    // Support filter.field=value format
-    const dotKey = `${prefix}.${field}`;
-    // Support plain field=value format as fallback
-    const value = query[bracketKey] ?? query[dotKey] ?? query[field];
+    // Only prefixed forms are honoured, so filters can never collide with the
+    // pagination or sorting controls: filter[field]=value and filter.field=value
+    const value =
+      ownValue(query, `${prefix}[${field}]`) ??
+      ownValue(query, `${prefix}.${field}`);
 
     if (value !== undefined) {
       result = result.filter((item) => {
         if (!isRecord(item)) return false;
-        const itemValue = item[field];
+        const itemValue = ownValue(item, field);
         if (itemValue === undefined) return false;
         // Intentional string coercion: query params are inherently strings
         return String(itemValue) === value;
@@ -148,6 +239,49 @@ function applyFiltering(
   return result;
 }
 
+/**
+ * Buckets values by type so comparisons never mix incompatible rules.
+ * Finite numbers < non-finite numbers < strings < booleans < everything else.
+ */
+function typeRank(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? 0 : 1;
+  if (typeof value === "string") return 2;
+  if (typeof value === "boolean") return 3;
+  return 4;
+}
+
+/**
+ * Total order over mixed value types. Comparing within a single bucket keeps
+ * the comparator transitive, so the result never depends on input order.
+ */
+function compareValues(a: unknown, b: unknown): number {
+  const rankA = typeRank(a);
+  const rankB = typeRank(b);
+  if (rankA !== rankB) return rankA - rankB;
+
+  // Equal ranks mean equal runtime types, so each branch narrows rather than
+  // asserts. Non-finite numbers share rank 1 and have no ordering among
+  // themselves.
+  if (typeof a === "number" && typeof b === "number") {
+    return Number.isFinite(a) ? a - b : 0;
+  }
+  if (typeof a === "string" && typeof b === "string") {
+    // Locale collation can rank distinct strings equal; fall back to code
+    // unit order so the result stays deterministic across engines
+    const collated = a.localeCompare(b);
+    return collated !== 0 ? collated : compareStrings(a, b);
+  }
+  if (typeof a === "boolean" && typeof b === "boolean") {
+    return Number(a) - Number(b);
+  }
+  return compareStrings(String(a), String(b));
+}
+
+function compareStrings(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 function applySorting(
   items: unknown[],
   query: Record<string, string>,
@@ -155,8 +289,8 @@ function applySorting(
 ): unknown[] {
   const sortParam = options.sortParam ?? "sort";
   const orderParam = options.orderParam ?? "order";
-  const sortField = query[sortParam] ?? options.default;
-  const rawOrder = query[orderParam] ?? options.defaultOrder ?? "asc";
+  const sortField = ownValue(query, sortParam) ?? options.default;
+  const rawOrder = ownValue(query, orderParam) ?? options.defaultOrder ?? "asc";
   const sortOrder = rawOrder === "desc" ? "desc" : "asc";
 
   if (!sortField) return items;
@@ -166,25 +300,21 @@ function applySorting(
 
   return items.sort((a, b) => {
     if (!isRecord(a) || !isRecord(b)) return 0;
-    const aVal = a[sortField];
-    const bVal = b[sortField];
+    const aVal = ownValue(a, sortField);
+    const bVal = ownValue(b, sortField);
 
+    // Missing values always sort last, in either direction
     if (aVal === bVal) return 0;
     if (aVal === undefined) return 1;
     if (bVal === undefined) return -1;
 
-    let comparison: number;
-    if (typeof aVal === "number" && typeof bVal === "number") {
-      comparison = aVal - bVal;
-    } else {
-      comparison = String(aVal).localeCompare(String(bVal));
-    }
+    const comparison = compareValues(aVal, bVal);
 
     return sortOrder === "desc" ? -comparison : comparison;
   });
 }
 
-interface PaginatedResult {
+export interface PaginatedResult {
   data: unknown[];
   pagination: {
     page: number;
@@ -192,6 +322,17 @@ interface PaginatedResult {
     total: number;
     totalPages: number;
   };
+}
+
+/**
+ * Parses a query value as an exact positive integer. Anything else — padded,
+ * signed, fractional, exponent, partially numeric or beyond the safe integer
+ * range — falls back rather than being silently coerced.
+ */
+function parseCount(raw: unknown, fallback: number): number {
+  if (typeof raw !== "string" || !/^[0-9]+$/.test(raw)) return fallback;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : fallback;
 }
 
 function applyPagination(
@@ -204,14 +345,10 @@ function applyPagination(
   const defaultLimit = options.defaultLimit ?? 10;
   const maxLimit = options.maxLimit ?? 100;
 
-  const page = Math.max(1, Number.parseInt(query[pageParam] || "1", 10) || 1);
+  const page = parseCount(ownValue(query, pageParam), 1);
   const limit = Math.min(
     maxLimit,
-    Math.max(
-      1,
-      Number.parseInt(query[limitParam] || String(defaultLimit), 10) ||
-        defaultLimit,
-    ),
+    parseCount(ownValue(query, limitParam), defaultLimit),
   );
 
   const total = items.length;

@@ -3,6 +3,7 @@ import { readFileSync, realpathSync, statSync, watch } from "node:fs";
 import type { Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import {
+  basename,
   dirname,
   isAbsolute,
   relative,
@@ -738,6 +739,15 @@ function startCliServer(
   options: CliOptions,
   holder: MockHolder,
 ): Promise<OwnedCliServer> {
+  // `??` only covers null/undefined, so a blank hostname would survive to
+  // `listen()` and bind every interface instead of the documented loopback
+  // default. `createCliServer` is public, so the guard belongs here too and
+  // not only in the flag parser.
+  if (options.hostname !== undefined && options.hostname.trim() === "") {
+    throw new Error(
+      "Invalid hostname. The hostname must be a non-empty host, address or interface.",
+    );
+  }
   const hostname = options.hostname ?? "127.0.0.1";
   const port = options.port ?? 3000;
   const cors = options.cors ?? false;
@@ -787,8 +797,25 @@ function startCliServer(
   };
 
   return new Promise((resolve, reject) => {
-    httpServer.on("error", reject);
+    const onListenError = (error: unknown): void => reject(error);
+    // A socket-level failure once the server is up (a stray accept error)
+    // reached an already-settled `reject` and vanished. Report it and keep
+    // serving: a development mock server surviving a stray error is worth more
+    // than exiting, and every other CLI diagnostic goes to stderr too.
+    const reportServerError = (error: unknown): void => {
+      process.stderr.write(
+        `Server error: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    };
+
+    httpServer.once("error", onListenError);
     httpServer.listen(port, hostname, () => {
+      // Attach the permanent reporter BEFORE dropping the startup handler:
+      // the other order leaves a window with zero 'error' listeners, in which
+      // Node rethrows the event and kills the process.
+      httpServer.on("error", reportServerError);
+      httpServer.off("error", onListenError);
+
       const addr = httpServer.address();
       const actualPort =
         addr !== null && typeof addr === "object" ? addr.port : port;
@@ -878,6 +905,37 @@ function validateHistoryLimit(value: string): number {
   return limit;
 }
 
+/**
+ * `Number("")` is 0 and `Number("abc")` is NaN, both of which used to reach
+ * faker unchallenged — an unseeded run silently pretending to be seeded.
+ * Negatives are legal (faker accepts them); a fraction is not, because a seed
+ * is an integer and `1.5` was never doing what the caller meant.
+ */
+function validateFakerSeed(value: string): number {
+  const seed = value.trim() === "" ? Number.NaN : Number(value);
+  if (!Number.isInteger(seed)) {
+    throw new Error(
+      `Invalid --seed-random "${value}". It must be a finite integer.`,
+    );
+  }
+  return seed;
+}
+
+/**
+ * An empty hostname is NOT the documented 127.0.0.1 default: `listen(port, "")`
+ * binds every interface, exactly as omitting it does, so a typo would silently
+ * publish the mock to the network.
+ */
+function validateHostname(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (value.trim() === "") {
+    throw new Error(
+      "Invalid --hostname. The hostname must be a non-empty host, address or interface.",
+    );
+  }
+  return value;
+}
+
 function validateAdminToken(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   if (value === "" || /\s/.test(value)) {
@@ -913,12 +971,20 @@ export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
     allowPositionals: true,
   });
 
+  // Exactly one spec path. Silently discarding the rest turned a shell glob,
+  // or a forgotten flag name, into a server for the wrong document.
+  if (positionals.length > 1) {
+    throw new Error(
+      `Unexpected extra arguments: ${positionals.slice(1).join(", ")}. Pass exactly one spec path.`,
+    );
+  }
+
   const spec = values.spec ?? positionals[0] ?? "";
 
   return {
     spec,
     port: values.port ? validatePort(values.port) : undefined,
-    hostname: values.hostname,
+    hostname: validateHostname(values.hostname),
     seed: values.seed,
     cors: values.cors,
     debug: values.debug,
@@ -933,9 +999,10 @@ export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
     strict: values.strict,
     refsExternal: values["refs-external"],
     refsAllowHttp: parseAllowedHosts(values["refs-allow-http"]),
-    fakerSeed: values["seed-random"]
-      ? Number(values["seed-random"])
-      : undefined,
+    fakerSeed:
+      values["seed-random"] === undefined
+        ? undefined
+        : validateFakerSeed(values["seed-random"]),
     help: values.help ?? false,
   };
 }
@@ -998,11 +1065,44 @@ async function reloadMock(
   holder: MockHolder,
   options: CliOptions,
 ): Promise<void> {
+  const previous = holder.mock;
   holder.mock = await createCliMock(options);
+  // Retire the instance nothing will use again, so its plugins' `uninstall`
+  // hooks actually run — a reload used to drop it on the floor. Order matters
+  // twice: resetting BEFORE the swap would blank the live mock, and a
+  // `createCliMock` that threw must leave the old mock serving (the "invalid
+  // spec changes keep the current server online" contract), which the `await`
+  // above guarantees by never reaching this line.
+  //
+  // In-flight requests are safe: every request path acquires a core admission
+  // first, and an admission snapshots routes, plugins, state and the history
+  // generation, so it keeps serving from its snapshot while core defers the
+  // uninstall until the last admission releases.
+  try {
+    previous.reset();
+  } catch {
+    // Core already logs a per-plugin uninstall failure. A discarded instance
+    // failing to tidy up must not fail the reload that already succeeded.
+  }
 }
 
 /**
  * Watch a spec file and hot-swap the mock behind the live server on changes.
+ *
+ * The watch is on the spec's DIRECTORY, not the spec itself. `fs.watch` on a
+ * file follows its inode, so the first atomic editor save — write a sibling
+ * temp file, rename it over the target, which is what vim, JetBrains and VS
+ * Code all do — leaves the watcher bound to the replaced inode and silently
+ * deaf to every later edit. A directory watch sees the rename, keeps seeing
+ * later in-place writes, and re-arms for free when a spec is deleted and
+ * recreated. It is non-recursive, so a large tree under the spec's directory
+ * costs nothing.
+ *
+ * The path is resolved with `resolve`, deliberately NOT `realpathSync`: a
+ * symlinked spec must keep watching the directory the user actually named.
+ * (Consequence: an editor saving the symlink's TARGET, in another directory,
+ * fires no event. Watching the target instead would break the far commoner
+ * case of a linked spec edited in place.)
  */
 function startWatch(
   specPath: string,
@@ -1014,8 +1114,23 @@ function startWatch(
   let closed = false;
   let reloadQueue = Promise.resolve();
 
-  const watcher = watch(specPath, () => {
+  const resolvedSpec = resolvePath(specPath);
+  const specDirectory = dirname(resolvedSpec);
+  const specName = basename(resolvedSpec);
+  // Some platforms report an in-place write under the watched DIRECTORY's own
+  // name rather than the file's, so that spelling counts as ours too. A null
+  // filename is likewise treated as possibly-ours — the debounce absorbs the
+  // duplicate — while a named unrelated sibling is skipped so an unrelated
+  // write in the spec's directory does not rebuild the mock.
+  const isSpecEvent = (filename: string | Buffer | null): boolean => {
+    if (filename == null) return true;
+    const name = basename(filename.toString());
+    return name === specName || name === basename(specDirectory);
+  };
+
+  const watcher = watch(specDirectory, (_event, filename) => {
     if (closed) return;
+    if (!isSpecEvent(filename)) return;
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       reloadQueue = reloadQueue.then(async () => {
@@ -1110,9 +1225,22 @@ export async function run(args: string[]): Promise<void> {
   // `bin.ts`'s `.catch` cover a failing close.
   return new Promise<void>((resolveRun, rejectRun) => {
     let shuttingDown = false;
+    let repeatReported = false;
 
     const shutdown = (): void => {
-      if (shuttingDown) return;
+      if (shuttingDown) {
+        // The handlers stay attached on purpose (see above), so a repeat
+        // Ctrl-C during the grace window used to vanish with no output at all
+        // and no way to tell whether it had been received. Reported once, so
+        // holding the key down does not bury the shutdown log.
+        if (!repeatReported) {
+          repeatReported = true;
+          process.stderr.write(
+            "Shutdown already in progress; waiting for in-flight requests...\n",
+          );
+        }
+        return;
+      }
       shuttingDown = true;
       process.stderr.write("\nShutting down...\n");
       const release = (): void => {

@@ -93,6 +93,106 @@ describeFeature(feature, ({ Scenario }) => {
     },
   );
 
+  function registerAllListeners() {
+    events = [];
+    mock.on("request:start", collectEvent("request:start"));
+    mock.on("request:match", collectEvent("request:match"));
+    mock.on("request:notfound", collectEvent("request:notfound"));
+    mock.on("request:end", collectEvent("request:end"));
+  }
+
+  function expectEventOrder(expectedOrder: string) {
+    expect(events.map((event) => event.type)).toEqual(expectedOrder.split(","));
+  }
+
+  function expectEveryEventPath(path: string) {
+    expect(
+      events.map((event) => (event.data as { path: string }).path),
+    ).toEqual(events.map(() => path));
+  }
+
+  Scenario(
+    "Out-of-namespace requests still report a route miss",
+    ({ Given, And, When, Then }) => {
+      Given('a namespaced mock with a route "GET /users"', () => {
+        mock = schmock({ namespace: "/api" });
+        mock("GET /users", [{ id: 1 }]);
+      });
+
+      And("I register listeners for all events", registerAllListeners);
+
+      When('I request "GET /other/users"', async () => {
+        await mock.handle("GET", "/other/users");
+      });
+
+      Then("the event order should be {string}", (_, expectedOrder: string) => {
+        expectEventOrder(expectedOrder);
+      });
+
+      And("every event carried the path {string}", (_, path: string) => {
+        expectEveryEventPath(path);
+      });
+    },
+  );
+
+  Scenario(
+    "Namespaced events carry the original request path",
+    ({ Given, And, When, Then }) => {
+      Given('a namespaced mock with a route "GET /users"', () => {
+        mock = schmock({ namespace: "/api" });
+        mock("GET /users", [{ id: 1 }]);
+      });
+
+      And("I register listeners for all events", registerAllListeners);
+
+      When('I request "GET /api/users"', async () => {
+        await mock.handle("GET", "/api/users");
+      });
+
+      Then("the event order should be {string}", (_, expectedOrder: string) => {
+        expectEventOrder(expectedOrder);
+      });
+
+      And("every event carried the path {string}", (_, path: string) => {
+        expectEveryEventPath(path);
+      });
+
+      And('the "request:match" event fired with routePath "/users"', () => {
+        expect(eventData("request:match").routePath).toBe("/users");
+      });
+    },
+  );
+
+  Scenario(
+    "A failing request ends with the original path",
+    ({ Given, And, When, Then }) => {
+      Given('a namespaced mock with a throwing route "GET /boom"', () => {
+        mock = schmock({ namespace: "/api" });
+        mock("GET /boom", () => {
+          throw new Error("generator exploded");
+        });
+      });
+
+      And("I register listeners for all events", registerAllListeners);
+
+      When('I request "GET /api/boom"', async () => {
+        await mock.handle("GET", "/api/boom");
+      });
+
+      Then("the event order should be {string}", (_, expectedOrder: string) => {
+        expectEventOrder(expectedOrder);
+      });
+
+      And("every event carried the path {string}", (_, path: string) => {
+        expectEveryEventPath(path);
+      });
+
+      And('the "request:end" event fired with status 500', () => {
+        expect(eventData("request:end").status).toBe(500);
+      });
+    },
+  );
+
   Scenario("Off removes listener", ({ Given, And, When, Then }) => {
     Given('a mock with a route "GET /items"', () => {
       mock = schmock({ state: {} });

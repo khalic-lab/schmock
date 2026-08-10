@@ -172,18 +172,21 @@ function createSeeder(
   seedItems?: unknown[],
 ): (state: Record<string, unknown>, params: Record<string, string>) => void {
   return (state: Record<string, unknown>, params: Record<string, string>) => {
+    // Nothing to seed → write NOTHING, not an empty collection and a zero
+    // counter. Those writes are semantically no-ops (`getCollection` reads a
+    // missing key as `[]`, `getNextId` reads it as `0`) but they allocated
+    // three state keys per distinct parent id on plain reads, so an unseeded
+    // nested resource grew memory under read-only traffic across a wide id
+    // range. They also clobbered collection state a caller pre-loaded through
+    // `schmock({ state })`.
+    if (!seedItems || seedItems.length === 0) return;
+
     const seededKey = seededStateKey(resource.basePath, params);
     if (state[seededKey]) return;
     state[seededKey] = true;
 
     const stateKey = collectionStateKey(resource.basePath, params);
     const counterKey = counterStateKey(resource.basePath, params);
-
-    if (!seedItems || seedItems.length === 0) {
-      state[stateKey] = [];
-      state[counterKey] = 0;
-      return;
-    }
 
     const rows = seedItems.map((item) => normalizeSeedRow(resource, item));
     state[stateKey] = rows;

@@ -170,3 +170,27 @@ describe("determineArrayCount — edge cases", () => {
     expect(determineArrayCount({}, Number.NEGATIVE_INFINITY)).toBe(0);
   });
 });
+
+describe("determineArrayCount — non-integer explicit counts", () => {
+  it("with a fractional explicitCount rounds down", () => {
+    expect(determineArrayCount({}, 2.5)).toBe(2);
+    expect(determineArrayCount({}, 0.9)).toBe(0);
+  });
+
+  it("with a fractional negative explicitCount returns 0", () => {
+    expect(determineArrayCount({}, -0.5)).toBe(0);
+  });
+
+  it("with a NaN explicitCount falls back to the schema-derived count", () => {
+    expect(determineArrayCount({}, Number.NaN)).toBe(3);
+    expect(determineArrayCount({ minItems: 7, maxItems: 7 }, Number.NaN)).toBe(
+      7,
+    );
+  });
+
+  it("with an infinite explicitCount stays over the array-size limit", () => {
+    expect(determineArrayCount({}, Number.POSITIVE_INFINITY)).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+  });
+});

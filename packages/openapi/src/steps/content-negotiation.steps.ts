@@ -164,6 +164,36 @@ const negotiatedErrorCrudSpec = {
   },
 };
 
+const dualMediaSpec = {
+  openapi: "3.0.3",
+  info: { title: "Dual media", version: "1.0.0" },
+  paths: {
+    "/dual": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { id: { type: "integer" } },
+                },
+              },
+              "application/xml": {
+                schema: {
+                  type: "object",
+                  properties: { id: { type: "integer" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 const requestMediaTypeSpec = {
   openapi: "3.0.3",
   info: { title: "Request media types", version: "1.0.0" },
@@ -392,6 +422,46 @@ describeFeature(feature, ({ Scenario }) => {
 
       Then("the request response status is {number}", (_, status: number) => {
         expect(response.status).toBe(status);
+      });
+    },
+  );
+
+  Scenario(
+    "A wildcard does not re-admit a type excluded with q=0",
+    ({ Given, When, Then }) => {
+      Given("a mock with a spec defining JSON and XML responses", async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(await openapi({ spec: dualMediaSpec }));
+      });
+
+      When("I request with Accept header {string}", async (_, accept) => {
+        response = await mock.handle("GET", "/dual", {
+          headers: { accept: String(accept) },
+        });
+      });
+
+      Then("the negotiated content type is {string}", (_, contentType) => {
+        expect(response.headers["content-type"]).toBe(String(contentType));
+      });
+    },
+  );
+
+  Scenario(
+    "Excluding every declared type with q=0 returns 406",
+    ({ Given, When, Then }) => {
+      Given("a mock with a spec defining JSON and XML responses", async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(await openapi({ spec: dualMediaSpec }));
+      });
+
+      When("I request with Accept header {string}", async (_, accept) => {
+        response = await mock.handle("GET", "/dual", {
+          headers: { accept: String(accept) },
+        });
+      });
+
+      Then("the response status is 406", () => {
+        expect(response.status).toBe(406);
       });
     },
   );

@@ -326,6 +326,51 @@ describeFeature(feature, ({ Scenario }) => {
   );
 
   Scenario(
+    "Malformed response envelope is validated as a plain body",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a mock returning a structured response with non-string headers",
+        () => {
+          mock = schmock();
+          // Core refuses to unwrap an envelope whose headers are not a string
+          // record and delivers the whole object as the body, so validation
+          // must judge that same object.
+          mock("GET /malformed-envelope", () => ({
+            status: 200,
+            body: { ok: true },
+            headers: { attempts: 5 },
+          })).pipe(
+            validationPlugin({
+              response: {
+                body: {
+                  type: "object",
+                  properties: { ok: { type: "boolean" } },
+                  required: ["ok"],
+                },
+              },
+            }),
+          );
+        },
+      );
+
+      When("I request the malformed envelope endpoint", async () => {
+        response = await mock.handle("GET", "/malformed-envelope");
+      });
+
+      Then("the status should be {int}", (_, status: number) => {
+        expect(response.status).toBe(status);
+      });
+
+      And(
+        "the response body should have error code {string}",
+        (_, code: string) => {
+          expect(responseBodyRecord(response).code).toBe(code);
+        },
+      );
+    },
+  );
+
+  Scenario(
     "Undefined semantic response body is validated",
     ({ Given, When, Then, And }) => {
       Given(

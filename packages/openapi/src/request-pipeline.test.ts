@@ -157,6 +157,66 @@ describe("OpenAPI request pipeline regressions", () => {
       processPreferHeader(context, { original: true }),
     ).rejects.toThrow(/GET \/items/);
   });
+
+  // Core does NOT normalize header case at `mock.handle`, so an all-caps header
+  // from a direct-API caller has to negotiate exactly like a lowercase one. The
+  // two ad-hoc `headers.accept ?? headers.Accept` lookups these pin replaced
+  // missed every other casing.
+  it("negotiates an all-caps ACCEPT header", () => {
+    const responses = new Map([
+      [200, { description: "OK", contentTypes: ["application/json"] }],
+    ]);
+
+    expect(
+      processContentNegotiation(
+        makeContext(
+          { "openapi:responses": responses },
+          { ACCEPT: "application/json" },
+        ),
+        200,
+      ),
+    ).toBeUndefined();
+
+    expect(
+      processContentNegotiation(
+        makeContext(
+          { "openapi:responses": responses },
+          { ACCEPT: "application/xml" },
+        ),
+        200,
+      )?.response,
+    ).toEqual([
+      406,
+      {
+        error: "Not Acceptable",
+        code: "NOT_ACCEPTABLE",
+        acceptable: ["application/json"],
+      },
+    ]);
+  });
+
+  it("honours an all-caps PREFER header", async () => {
+    const responses = new Map([
+      [200, { description: "OK" }],
+      [
+        201,
+        {
+          description: "Created",
+          schema: {
+            type: "object",
+            properties: { made: { type: "string", const: "yes" } },
+          },
+        },
+      ],
+    ]);
+    const context = makeContext(
+      { "openapi:responses": responses },
+      { PREFER: "code=201" },
+    );
+
+    const result = await processPreferHeader(context, { original: true });
+    expect(result.response).toEqual([201, { made: "yes" }]);
+  });
 });
 
 /** Build an /items collection whose POST declares the given request media types. */
