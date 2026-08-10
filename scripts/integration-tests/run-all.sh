@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR=$(mktemp -d)
 PASSED=0
 FAILED=0
+SKIPPED=0
 FAILURES=()
 
 cleanup() {
@@ -31,8 +32,12 @@ run_test() {
   bold "--- @schmock/$name ---"
 
   # Copy all fixture files into temp dir
+  # A missing fixture is a missing test, not a pass: count it as a failure so
+  # a renamed or deleted fixture cannot silently stop being exercised.
   if [[ ! -d "$SCRIPT_DIR/fixtures/$name" ]]; then
     red "  SKIP: no fixture found for $name"
+    SKIPPED=$((SKIPPED + 1))
+    FAILURES+=("$name (no fixture)")
     return
   fi
   cp "$SCRIPT_DIR/fixtures/$name/"* "$dir/" 2>/dev/null || true
@@ -79,12 +84,17 @@ done
 
 bold "=== Results ==="
 green "Passed: $PASSED"
-if [[ $FAILED -gt 0 ]]; then
+if [[ $FAILED -gt 0 || $SKIPPED -gt 0 || $PASSED -eq 0 ]]; then
   red "Failed: $FAILED"
-  for f in "${FAILURES[@]}"; do
-    red "  - $f"
-  done
+  red "Skipped: $SKIPPED"
+  if [[ ${#FAILURES[@]} -gt 0 ]]; then
+    for f in "${FAILURES[@]}"; do
+      red "  - $f"
+    done
+  fi
+  if [[ $PASSED -eq 0 ]]; then
+    red "No integration test ran — refusing to report success."
+  fi
   exit 1
-else
-  green "All integration tests passed!"
 fi
+green "All integration tests passed!"

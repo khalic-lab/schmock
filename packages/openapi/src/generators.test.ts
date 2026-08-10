@@ -1,9 +1,11 @@
+import { schmock } from "@schmock/core";
 import { describe, expect, it } from "vitest";
 import type { CrudResource } from "./crud-detector";
 import {
   buildResponse,
   createCreateGenerator,
   createDeleteGenerator,
+  createHeaderSeed,
   createListGenerator,
   createReadGenerator,
   createStaticGenerator,
@@ -13,6 +15,7 @@ import {
   generateSeedItems,
 } from "./generators";
 import type { ParsedPath } from "./parser";
+import { openapi } from "./plugin";
 
 function makeResource(overrides?: Partial<CrudResource>): CrudResource {
   return {
@@ -430,6 +433,101 @@ describe("generators", () => {
     });
   });
 
+  // An unseeded resource writes no counter key, so a collection pre-loaded
+  // through `schmock({ state })` reaches the create path with a live collection
+  // and NO counter. Minting from 0 there hands the new item an id that already
+  // exists, which makes read/update/delete address the wrong row.
+  describe("id counter recovery", () => {
+    it("resumes past a pre-loaded collection that has no counter key", async () => {
+      const resource = makeResource();
+      const state: Record<string, unknown> = {
+        "openapi:collections:/pets": [
+          { petId: 1, name: "pre-a" },
+          { petId: 2, name: "pre-b" },
+        ],
+      };
+
+      const create = createCreateGenerator(resource);
+      const result = await create(
+        makeContext({ method: "POST", body: { name: "new" }, state }),
+      );
+
+      expect(result).toEqual([201, { name: "new", petId: 3 }]);
+      expect(state["openapi:counter:/pets"]).toBe(3);
+    });
+
+    it("recovers the counter for a uuid-keyed resource", async () => {
+      const resource = makeResource({
+        idKind: "uuid",
+        schema: {
+          type: "object",
+          properties: {
+            petId: { type: "string", format: "uuid" },
+            name: { type: "string" },
+          },
+          required: ["petId", "name"],
+        },
+      });
+      const state: Record<string, unknown> = {
+        "openapi:collections:/pets": [
+          { petId: "00000000-0000-4000-8000-000000000004", name: "pre" },
+        ],
+      };
+
+      const create = createCreateGenerator(resource);
+      const result = await create(
+        makeContext({ method: "POST", body: { name: "new" }, state }),
+      );
+
+      expect(result).toEqual([
+        201,
+        { name: "new", petId: "00000000-0000-4000-8000-000000000005" },
+      ]);
+    });
+
+    it("leaves an explicitly stored counter authoritative", async () => {
+      // `createSeeder` legitimately stores 0 when no seed row carries a
+      // recoverable id; a stored number must never be re-derived.
+      const resource = makeResource();
+      const state: Record<string, unknown> = {
+        "openapi:collections:/pets": [{ petId: 9, name: "pre" }],
+        "openapi:counter:/pets": 0,
+      };
+
+      const create = createCreateGenerator(resource);
+      const result = await create(
+        makeContext({ method: "POST", body: { name: "new" }, state }),
+      );
+
+      expect(result).toEqual([201, { name: "new", petId: 1 }]);
+    });
+
+    it("recovers per parent scope on a nested collection", async () => {
+      const resource = makeResource({
+        basePath: "/owners/:ownerId/pets",
+        itemPath: "/owners/:ownerId/pets/:petId",
+      });
+      const state: Record<string, unknown> = {
+        "openapi:collections:/owners/:ownerId/pets|ownerId=7": [
+          { petId: 4, name: "pre" },
+        ],
+      };
+
+      const create = createCreateGenerator(resource);
+      const result = await create(
+        makeContext({
+          method: "POST",
+          path: "/owners/7/pets",
+          params: { ownerId: "7" },
+          body: { name: "new" },
+          state,
+        }),
+      );
+
+      expect(result).toEqual([201, { name: "new", petId: 5 }]);
+    });
+  });
+
   describe("generateSeedItems", () => {
     it("generates items with auto-assigned IDs", async () => {
       const schema = {
@@ -643,6 +741,138 @@ describe("generators", () => {
         },
       });
       expect(headers["X-NoSchema"]).toBeUndefined();
+    });
+
+    it("emits a boolean-typed header", () => {
+      const headers = generateHeaderValues({
+        "X-Flag": {
+          schema: { type: "boolean" },
+          description: "Flag",
+        },
+      });
+      expect(headers["X-Flag"]).toBe("false");
+    });
+  });
+
+  describe("seeded response headers", () => {
+    const headerDefs = {
+      "X-Request-Id": {
+        schema: { type: "string" as const, format: "uuid" },
+        description: "Request id",
+      },
+      "X-Served-At": {
+        schema: { type: "string" as const, format: "date-time" },
+        description: "Served at",
+      },
+    };
+
+    const healthSpec = {
+      openapi: "3.0.3",
+      info: { title: "Health", version: "1.0.0" },
+      paths: {
+        "/health": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                headers: {
+                  "X-Request-Id": {
+                    schema: { type: "string", format: "uuid" },
+                  },
+                  "X-Served-At": {
+                    schema: { type: "string", format: "date-time" },
+                  },
+                },
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { ok: { type: "boolean" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    async function healthHeaders(
+      fakerSeed?: number,
+    ): Promise<Record<string, string>> {
+      const mock = schmock({ state: {} });
+      mock.pipe(await openapi({ spec: healthSpec, fakerSeed }));
+      const res = await mock.handle("GET", "/health");
+      return res.headers;
+    }
+
+    it("reproduces uuid and date-time headers across two seeded mocks", async () => {
+      const a = await healthHeaders(42);
+      const b = await healthHeaders(42);
+      expect(a["X-Request-Id"]).toBe(b["X-Request-Id"]);
+      expect(a["X-Served-At"]).toBe(b["X-Served-At"]);
+    });
+
+    it("produces different header values for a different seed", async () => {
+      const a = await healthHeaders(42);
+      const b = await healthHeaders(7);
+      expect(a["X-Request-Id"]).not.toBe(b["X-Request-Id"]);
+      expect(a["X-Served-At"]).not.toBe(b["X-Served-At"]);
+    });
+
+    it("keeps unseeded headers random and wall-clock", async () => {
+      const a = await healthHeaders();
+      const b = await healthHeaders();
+      expect(a["X-Request-Id"]).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+      expect(a["X-Request-Id"]).not.toBe(b["X-Request-Id"]);
+      expect(new Date(a["X-Served-At"]).getUTCFullYear()).toBe(
+        new Date().getUTCFullYear(),
+      );
+    });
+
+    it("advances by request ordinal within one seeded mock", async () => {
+      const mock = schmock({ state: {} });
+      mock.pipe(await openapi({ spec: healthSpec, fakerSeed: 42 }));
+      const first = await mock.handle("GET", "/health");
+      const second = await mock.handle("GET", "/health");
+      expect(first.headers["X-Request-Id"]).not.toBe(
+        second.headers["X-Request-Id"],
+      );
+    });
+
+    it("keeps a seeded uuid header valid under validateResponses", async () => {
+      const mock = schmock({ state: {} });
+      mock.pipe(
+        await openapi({
+          spec: healthSpec,
+          fakerSeed: 42,
+          validateResponses: true,
+        }),
+      );
+      const res = await mock.handle("GET", "/health");
+      expect(res.status).toBe(200);
+      expect(res.headers["X-Request-Id"]).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+    });
+
+    it("keeps buildResponse header generation deterministic per seed", () => {
+      const one = buildResponse({
+        status: 200,
+        body: {},
+        headerDefs,
+        headerSeed: createHeaderSeed(42),
+      });
+      const two = buildResponse({
+        status: 200,
+        body: {},
+        headerDefs,
+        headerSeed: createHeaderSeed(42),
+      });
+      expect(one).toEqual(two);
     });
   });
 
@@ -1226,5 +1456,171 @@ describe("generators", () => {
       expect(result).toEqual([200, {}]);
       expect((result as unknown[]).length).toBe(2);
     });
+  });
+});
+
+// ===========================================================================
+// Per-scope state growth (DEF-STATE-EVICTION)
+// ===========================================================================
+
+describe("per-parent state allocation", () => {
+  const nestedSpec = {
+    openapi: "3.0.3",
+    info: { title: "Owners", version: "1.0.0" },
+    paths: {
+      "/owners/{ownerId}/pets": {
+        get: {
+          parameters: [
+            {
+              name: "ownerId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "List",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        petId: { type: "integer" },
+                        name: { type: "string" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          parameters: [
+            {
+              name: "ownerId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            "201": {
+              description: "Created",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      petId: { type: "integer" },
+                      name: { type: "string" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/owners/{ownerId}/pets/{petId}": {
+        get: {
+          parameters: [
+            {
+              name: "ownerId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "petId",
+              in: "path",
+              required: true,
+              schema: { type: "integer" },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Item",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      petId: { type: "integer" },
+                      name: { type: "string" },
+                    },
+                  },
+                },
+              },
+            },
+            "404": { description: "Missing" },
+          },
+        },
+      },
+    },
+  };
+
+  async function nestedMock(
+    state: Record<string, unknown>,
+    seed?: Record<string, { count: number }>,
+  ): Promise<Schmock.CallableMockInstance> {
+    const mock = schmock({ state });
+    mock.pipe(await openapi({ spec: nestedSpec, seed, fakerSeed: 1 }));
+    return mock;
+  }
+
+  it("allocates nothing for read-only traffic across many parent ids", async () => {
+    const state: Record<string, unknown> = {};
+    const mock = await nestedMock(state);
+
+    for (let i = 0; i < 50; i++) {
+      const res = await mock.handle("GET", `/owners/${i}/pets`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    }
+    const missing = await mock.handle("GET", "/owners/0/pets/9");
+    expect(missing.status).toBe(404);
+
+    expect(Object.keys(state)).toEqual([]);
+  });
+
+  it("still stores a created item in its own scope", async () => {
+    const state: Record<string, unknown> = {};
+    const mock = await nestedMock(state);
+
+    const created = await mock.handle("POST", "/owners/7/pets", {
+      body: { name: "Rex" },
+    });
+    expect(created.status).toBe(201);
+
+    const mine = await mock.handle("GET", "/owners/7/pets");
+    expect(mine.body).toEqual([expect.objectContaining({ name: "Rex" })]);
+
+    // A sibling scope neither sees the item nor allocates state of its own.
+    const other = await mock.handle("GET", "/owners/8/pets");
+    expect(other.body).toEqual([]);
+
+    expect(Object.keys(state).sort()).toEqual([
+      "openapi:collections:/owners/:ownerId/pets|ownerId=7",
+      "openapi:counter:/owners/:ownerId/pets|ownerId=7",
+    ]);
+  });
+
+  it("still seeds a scope on read when seed data is configured", async () => {
+    const state: Record<string, unknown> = {};
+    const mock = await nestedMock(state, { pets: { count: 2 } });
+
+    const first = await mock.handle("GET", "/owners/3/pets");
+    expect(first.status).toBe(200);
+    expect(first.body).toHaveLength(2);
+
+    // Re-seeding on every GET would hand back a different collection each time.
+    const second = await mock.handle("GET", "/owners/3/pets");
+    expect(second.body).toEqual(first.body);
+
+    expect(state["openapi:seeded:/owners/:ownerId/pets|ownerId=3"]).toBe(true);
   });
 });

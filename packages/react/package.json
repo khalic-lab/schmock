@@ -3,6 +3,15 @@
   "version": "2.3.0",
   "description": "React adapter for Schmock — Provider, hooks, and test utilities",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khalic-lab/schmock.git",
+    "directory": "packages/react"
+  },
+  "homepage": "https://github.com/khalic-lab/schmock/tree/main/packages/react#readme",
+  "bugs": {
+    "url": "https://github.com/khalic-lab/schmock/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

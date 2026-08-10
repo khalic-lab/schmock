@@ -2,6 +2,7 @@ import type { Server } from "node:http";
 import { awaitWithAbort, throwIfAborted } from "./abort.js";
 import { isBinaryBody } from "./binary.js";
 import {
+  canonicalizePath,
   markResponseException,
   markRouteNotFound,
   normalizePath,
@@ -151,6 +152,59 @@ function removeSharedMemory(
   return value;
 }
 
+/**
+ * Reject a history limit that cannot bound anything.
+ *
+ * A negative limit used to read as "unbounded" and a fractional one evicted a
+ * fractional number of records, so a typo silently disabled the cap instead of
+ * failing. `Number.isInteger` also rejects NaN and Infinity. `0` stays valid
+ * and keeps meaning "history disabled".
+ */
+function assertValidHistoryLimit(limit: number | undefined): void {
+  if (limit === undefined) return;
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new SchmockError(
+      `Invalid maxHistorySize: ${String(limit)}. Expected a non-negative integer (0 disables history).`,
+      "INVALID_CONFIG",
+      { maxHistorySize: limit },
+    );
+  }
+}
+
+/**
+ * Header names whose VALUE is replaced in debug logs. The name is kept so a log
+ * still shows the header was present; only the credential is hidden. Matches
+ * the set the CLI already masks.
+ */
+const REDACTED_HEADER_NAMES = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+  "x-auth-token",
+  "x-schmock-admin-token",
+]);
+
+const REDACTED_HEADER_VALUE = "[redacted]";
+
+/**
+ * Copy-on-write redaction: the input record is handed on to plugins, history
+ * and transports, so it must never be mutated. When nothing is sensitive the
+ * original object is returned unchanged.
+ */
+function redactSensitiveHeaders(
+  headers: Record<string, string>,
+): Record<string, string> {
+  let redacted: Record<string, string> | undefined;
+  for (const name of Object.keys(headers)) {
+    if (!REDACTED_HEADER_NAMES.has(name.toLowerCase())) continue;
+    redacted ??= { ...headers };
+    redacted[name] = REDACTED_HEADER_VALUE;
+  }
+  return redacted ?? headers;
+}
+
 function snapshotHistoryValue(value: unknown): unknown {
   try {
     return removeSharedMemory(structuredClone(value));
@@ -213,6 +267,7 @@ export class CallableMockInstance {
   private listeners = new Map<string, Set<Function>>();
 
   constructor(globalConfig: Schmock.GlobalConfig = {}) {
+    assertValidHistoryLimit(globalConfig.maxHistorySize);
     this.globalConfig = {
       ...globalConfig,
       state: globalConfig.state ?? {},
@@ -479,12 +534,28 @@ export class CallableMockInstance {
     };
   }
 
+  /**
+   * History stores the canonical request path — percent-encoded and
+   * trailing-slash-normalized exactly as `handle()` produced it — so a spy
+   * filter must be put into the same form before it is compared, or the very
+   * string the caller passed to `handle()` would not match its own record.
+   * `canonicalizePath` is idempotent, so an already-encoded filter keeps
+   * matching and both spellings work.
+   */
+  #historyMatcher(
+    method?: Schmock.HttpMethod,
+    path?: string,
+  ): (r: Schmock.RequestRecord) => boolean {
+    const wanted =
+      path === undefined ? undefined : normalizePath(canonicalizePath(path));
+    return (r) =>
+      (!method || r.method === method) && (!wanted || r.path === wanted);
+  }
+
   history(method?: Schmock.HttpMethod, path?: string): Schmock.RequestRecord[] {
     if (method || path) {
       return this.requestHistory
-        .filter(
-          (r) => (!method || r.method === method) && (!path || r.path === path),
-        )
+        .filter(this.#historyMatcher(method, path))
         .map((r) => this.cloneRecord(r));
     }
     return this.requestHistory.map((r) => this.cloneRecord(r));
@@ -492,18 +563,15 @@ export class CallableMockInstance {
 
   called(method?: Schmock.HttpMethod, path?: string): boolean {
     if (method || path) {
-      return this.requestHistory.some(
-        (r) => (!method || r.method === method) && (!path || r.path === path),
-      );
+      return this.requestHistory.some(this.#historyMatcher(method, path));
     }
     return this.requestHistory.length > 0;
   }
 
   callCount(method?: Schmock.HttpMethod, path?: string): number {
     if (method || path) {
-      return this.requestHistory.filter(
-        (r) => (!method || r.method === method) && (!path || r.path === path),
-      ).length;
+      return this.requestHistory.filter(this.#historyMatcher(method, path))
+        .length;
     }
     return this.requestHistory.length;
   }
@@ -514,7 +582,7 @@ export class CallableMockInstance {
   ): Schmock.RequestRecord | undefined {
     if (method || path) {
       const filtered = this.requestHistory.filter(
-        (r) => (!method || r.method === method) && (!path || r.path === path),
+        this.#historyMatcher(method, path),
       );
       const last = filtered[filtered.length - 1];
       // FIX 2.3: return a deep clone so callers cannot corrupt internal history
@@ -972,10 +1040,15 @@ export class CallableMockInstance {
 
   async #handleAdmittedRequest(
     method: Schmock.HttpMethod,
-    path: string,
+    requestedPath: string,
     options: Schmock.RequestOptions | undefined,
     admission: RequestAdmission,
   ): Promise<Schmock.Response> {
+    // Canonicalize before anything observes the path: a transport hands over an
+    // already-encoded `url.pathname` while a direct handle() caller may type
+    // literal unicode, and every lifecycle event, log line and 404 message must
+    // report the same spelling.
+    const path = canonicalizePath(requestedPath);
     const requestGeneration = admission.requestGeneration;
     const historyGeneration = admission.historyGeneration;
     const requestPlugins = admission.plugins;
@@ -994,9 +1067,13 @@ export class CallableMockInstance {
     const reqHeaders = { ...(options?.headers ?? {}) };
     const requestBody = options?.body;
     this.logger.log("request", `[${requestId}] ${method} ${path}`, {
-      headers: reqHeaders,
+      headers: redactSensitiveHeaders(reqHeaders),
       query: reqQuery,
-      bodyType: options?.body ? typeof options.body : "none",
+      // Presence, not truthiness: "", 0 and false are bodies too.
+      bodyType:
+        options !== undefined && "body" in options && options.body !== undefined
+          ? typeof options.body
+          : "none",
     });
     this.logger.time(`request-${requestId}`);
 
@@ -1008,13 +1085,18 @@ export class CallableMockInstance {
       });
     }
 
+    // Hoisted so the catch block can finalize a matched request the same way
+    // the success path does — same delay override, same history record.
+    let requestPath = path;
+    let matchedRoute: CompiledCallableRoute | undefined;
+    let params: Record<string, string> = {};
+
     try {
       // Apply namespace if configured
-      let requestPath = path;
       if (namespace && namespace !== "/") {
-        const normalizedNamespace = namespace.startsWith("/")
-          ? namespace
-          : `/${namespace}`;
+        const normalizedNamespace = canonicalizePath(
+          namespace.startsWith("/") ? namespace : `/${namespace}`,
+        );
 
         const pathToCheck = path.startsWith("/") ? path : `/${path}`;
 
@@ -1034,27 +1116,15 @@ export class CallableMockInstance {
             "route",
             `[${requestId}] Path doesn't match namespace ${normalizedNamespace}`,
           );
-          const error = new RouteNotFoundError(method, path);
-          const response = markRouteNotFound(
-            normalizeResponse(
-              {
-                status: 404,
-                body: { error: error.message, code: error.code },
-                headers: { "content-type": "application/json" },
-              },
-              method,
-            ),
-          );
-          if (this.requestGeneration === requestGeneration) {
-            this.emit("request:end", {
-              method,
-              path,
-              status: 404,
-              duration: performance.now() - handleStart,
-            });
-          }
-          this.logger.timeEnd(`request-${requestId}`);
-          return response;
+          // A request outside the namespace is a route miss like any other, so
+          // it reports one instead of silently ending.
+          return this.#finalizeMiss({
+            method,
+            path,
+            requestId,
+            handleStart,
+            requestGeneration,
+          });
         }
 
         // Remove namespace prefix, ensuring we always start with /
@@ -1062,8 +1132,13 @@ export class CallableMockInstance {
         requestPath = stripped.startsWith("/") ? stripped : `/${stripped}`;
       }
 
+      // One trailing-slash normalization for the whole request: route lookup
+      // and parameter extraction must see the identical string, or a request
+      // could match a route and then capture no parameters.
+      requestPath = normalizePath(requestPath);
+
       // Find matching route
-      const matchedRoute = findRoute(
+      matchedRoute = findRoute(
         method,
         requestPath,
         requestStaticRoutes,
@@ -1075,30 +1150,13 @@ export class CallableMockInstance {
           "route",
           `[${requestId}] No route found for ${method} ${requestPath}`,
         );
-        if (this.requestGeneration === requestGeneration) {
-          this.emit("request:notfound", { method, path: requestPath });
-        }
-        const error = new RouteNotFoundError(method, path);
-        const response = markRouteNotFound(
-          normalizeResponse(
-            {
-              status: 404,
-              body: { error: error.message, code: error.code },
-              headers: { "content-type": "application/json" },
-            },
-            method,
-          ),
-        );
-        if (this.requestGeneration === requestGeneration) {
-          this.emit("request:end", {
-            method,
-            path: requestPath,
-            status: 404,
-            duration: performance.now() - handleStart,
-          });
-        }
-        this.logger.timeEnd(`request-${requestId}`);
-        return response;
+        return this.#finalizeMiss({
+          method,
+          path,
+          requestId,
+          handleStart,
+          requestGeneration,
+        });
       }
 
       this.logger.log(
@@ -1107,12 +1165,14 @@ export class CallableMockInstance {
       );
 
       // Extract parameters from the matched route
-      const params = extractParams(matchedRoute, requestPath);
+      params = extractParams(matchedRoute, requestPath);
 
       if (this.requestGeneration === requestGeneration) {
         this.emit("request:match", {
           method,
-          path: requestPath,
+          // Every lifecycle event carries the ORIGINAL request path; the
+          // namespace-stripped route form is exposed as routePath.
+          path,
           routePath: matchedRoute.path,
           params,
         });
@@ -1221,61 +1281,25 @@ export class CallableMockInstance {
         method,
       );
 
-      // Apply delay (route-level overrides global)
-      await this.applyDelay(matchedRoute.config.delay, globalDelay, signal);
-      throwIfAborted(signal);
-
-      // Record request in history (FIFO-bounded when maxHistorySize is set)
-      if (
-        this.requestGeneration === requestGeneration &&
-        this.historyGeneration === historyGeneration &&
-        maxHistorySize !== 0
-      ) {
-        this.requestHistory.push({
-          method,
-          path: requestPath,
-          params: { ...params },
-          query: { ...reqQuery },
-          headers: { ...reqHeaders },
-          body: snapshotHistoryValue(requestBody),
-          timestamp: Date.now(),
-          response: {
-            status: response.status,
-            body: snapshotHistoryValue(response.body),
-          },
-        });
-        if (
-          typeof maxHistorySize === "number" &&
-          maxHistorySize >= 0 &&
-          this.requestHistory.length > maxHistorySize
-        ) {
-          this.requestHistory.splice(
-            0,
-            this.requestHistory.length - maxHistorySize,
-          );
-        }
-      }
-
-      if (this.requestGeneration === requestGeneration) {
-        this.emit("request:end", {
-          method,
-          path: requestPath,
-          status: response.status,
-          duration: performance.now() - handleStart,
-        });
-      }
-
-      // Log successful response
-      this.logger.log(
-        "response",
-        `[${requestId}] Sending response ${response.status}`,
-        {
-          status: response.status,
-          headers: response.headers,
-          bodyType: typeof response.body,
-        },
-      );
-      this.logger.timeEnd(`request-${requestId}`);
+      await this.#finalizeMatchedRequest({
+        method,
+        path,
+        requestPath,
+        params,
+        reqQuery,
+        reqHeaders,
+        requestBody,
+        response,
+        routeDelay: matchedRoute.config.delay,
+        globalDelay,
+        record: true,
+        signal,
+        requestGeneration,
+        historyGeneration,
+        maxHistorySize,
+        requestId,
+        handleStart,
+      });
 
       return response;
     } catch (error) {
@@ -1305,23 +1329,158 @@ export class CallableMockInstance {
         responseError,
       );
 
-      // Apply delay even for error responses
-      await this.applyDelay(undefined, globalDelay, signal);
-      throwIfAborted(signal);
+      // A request that matched a route did happen: it is finalized exactly like
+      // a successful one — its own delay override, and a history record.
+      await this.#finalizeMatchedRequest({
+        method,
+        path,
+        requestPath,
+        params,
+        reqQuery,
+        reqHeaders,
+        requestBody,
+        response: errorResponse,
+        routeDelay: matchedRoute?.config.delay,
+        globalDelay,
+        record: matchedRoute !== undefined,
+        signal,
+        requestGeneration,
+        historyGeneration,
+        maxHistorySize,
+        requestId,
+        handleStart,
+      });
 
-      if (this.requestGeneration === requestGeneration) {
-        this.emit("request:end", {
-          method,
-          path,
-          status: 500,
-          duration: performance.now() - handleStart,
-        });
-      }
-
-      this.logger.log("error", `[${requestId}] Returning error response 500`);
-      this.logger.timeEnd(`request-${requestId}`);
       return errorResponse;
     }
+  }
+
+  /**
+   * Finish a request that matched a route.
+   *
+   * Order matters: delay first (an abort during it must escape before anything
+   * is committed), then the history record, then `request:end`, then the logs.
+   */
+  async #finalizeMatchedRequest(input: {
+    method: Schmock.HttpMethod;
+    path: string;
+    requestPath: string;
+    params: Record<string, string>;
+    reqQuery: Record<string, string>;
+    reqHeaders: Record<string, string>;
+    requestBody: unknown;
+    response: Schmock.Response;
+    routeDelay?: number | [number, number];
+    globalDelay?: number | [number, number];
+    record: boolean;
+    signal?: AbortSignal;
+    requestGeneration: RequestGeneration;
+    historyGeneration: symbol;
+    maxHistorySize?: number;
+    requestId: string;
+    handleStart: number;
+  }): Promise<void> {
+    const { response, maxHistorySize } = input;
+
+    // Apply delay (route-level overrides global)
+    await this.applyDelay(input.routeDelay, input.globalDelay, input.signal);
+    throwIfAborted(input.signal);
+
+    // Record request in history (FIFO-bounded when maxHistorySize is set)
+    if (
+      input.record &&
+      this.requestGeneration === input.requestGeneration &&
+      this.historyGeneration === input.historyGeneration &&
+      maxHistorySize !== 0
+    ) {
+      this.requestHistory.push({
+        method: input.method,
+        path: input.requestPath,
+        params: { ...input.params },
+        query: { ...input.reqQuery },
+        headers: { ...input.reqHeaders },
+        body: snapshotHistoryValue(input.requestBody),
+        timestamp: Date.now(),
+        response: {
+          status: response.status,
+          body: snapshotHistoryValue(response.body),
+        },
+      });
+      // The constructor already rejected a limit that is not a non-negative
+      // integer, so a plain comparison is enough here.
+      if (
+        maxHistorySize !== undefined &&
+        this.requestHistory.length > maxHistorySize
+      ) {
+        this.requestHistory.splice(
+          0,
+          this.requestHistory.length - maxHistorySize,
+        );
+      }
+    }
+
+    if (this.requestGeneration === input.requestGeneration) {
+      this.emit("request:end", {
+        method: input.method,
+        path: input.path,
+        status: response.status,
+        duration: performance.now() - input.handleStart,
+      });
+    }
+
+    this.logger.log(
+      "response",
+      `[${input.requestId}] Sending response ${response.status}`,
+      {
+        status: response.status,
+        headers: redactSensitiveHeaders(response.headers),
+        bodyType: typeof response.body,
+      },
+    );
+    this.logger.timeEnd(`request-${input.requestId}`);
+  }
+
+  /**
+   * Finish a request that matched no route — an unknown path or one outside the
+   * configured namespace. Misses stay delay-free and out of history: nothing
+   * ran, so there is nothing to record.
+   */
+  #finalizeMiss(input: {
+    method: Schmock.HttpMethod;
+    path: string;
+    requestId: string;
+    handleStart: number;
+    requestGeneration: RequestGeneration;
+  }): Schmock.Response {
+    if (this.requestGeneration === input.requestGeneration) {
+      this.emit("request:notfound", {
+        method: input.method,
+        path: input.path,
+      });
+    }
+
+    const error = new RouteNotFoundError(input.method, input.path);
+    const response = markRouteNotFound(
+      normalizeResponse(
+        {
+          status: 404,
+          body: { error: error.message, code: error.code },
+          headers: { "content-type": "application/json" },
+        },
+        input.method,
+      ),
+    );
+
+    if (this.requestGeneration === input.requestGeneration) {
+      this.emit("request:end", {
+        method: input.method,
+        path: input.path,
+        status: 404,
+        duration: performance.now() - input.handleStart,
+      });
+    }
+    this.logger.timeEnd(`request-${input.requestId}`);
+    return response;
   }
 
   /**

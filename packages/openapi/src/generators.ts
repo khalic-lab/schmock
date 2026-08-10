@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type * as Schmock from "@schmock/core";
 import {
   ResourceLimitError,
@@ -149,17 +148,114 @@ function findArrayInProperties(
 }
 
 /**
+ * Per-generator ordinal source for seeded header values.
+ *
+ * Created once per generator factory, so the determinism contract is "same seed
+ * + same request ordinal within a mock instance → same value": two mocks built
+ * from the same spec with the same `fakerSeed` answer their first request
+ * identically, while a second request to one of them still gets a fresh id.
+ * A process-global counter would break the first half; a constant would make
+ * `X-Request-Id` useless as an id.
+ */
+export interface HeaderSeed {
+  readonly seed: number;
+  /** Ordinal of the next generated header value, starting at 0. */
+  next(): number;
+}
+
+export function createHeaderSeed(seed?: number): HeaderSeed | undefined {
+  if (seed === undefined) return undefined;
+  let ordinal = 0;
+  return {
+    seed,
+    next: () => ordinal++,
+  };
+}
+
+/**
+ * Header-namespace synthetic uuid: a well-formed v4 whose node field encodes
+ * `(seed, ordinal)`.
+ *
+ * Deliberately a different variant nibble from {@link SYNTHETIC_UUID_PREFIX}, so
+ * a header value can never be mistaken for a minted resource id by `idCounter`.
+ * `ajv-formats` enforces `format: uuid` under `validateResponses`, so a seeded
+ * header still has to be a real uuid.
+ */
+const SEEDED_HEADER_UUID_PREFIX = "00000000-0000-4000-9000-";
+
+/** Fixed clock for seeded `date-time` headers: 2024-01-01T00:00:00.000Z. */
+const SEEDED_CLOCK_BASE_MS = Date.UTC(2024, 0, 1);
+
+function seedComponent(seed: number): number {
+  return Math.floor(Math.abs(seed)) % 1_000_000;
+}
+
+function seededHeaderUuid(seed: number, ordinal: number): string {
+  const high = String(seedComponent(seed)).padStart(6, "0");
+  const low = String(ordinal % 1_000_000).padStart(6, "0");
+  return `${SEEDED_HEADER_UUID_PREFIX}${high}${low}`;
+}
+
+function seededHeaderTimestamp(seed: number, ordinal: number): string {
+  const offsetSeconds = (seedComponent(seed) % 86_400) + ordinal;
+  return new Date(SEEDED_CLOCK_BASE_MS + offsetSeconds * 1000).toISOString();
+}
+
+/**
+ * RFC-4122 v4 identifier from Web Crypto.
+ *
+ * NOT `node:crypto`'s `randomUUID`: `bun build --target browser` inlines a full
+ * Node crypto polyfill for that single import, which was ~92% of the published
+ * browser bundle. `crypto.randomUUID` is secure-context-only in browsers, so a
+ * mock served over plain http falls through to `getRandomValues` (which is not
+ * gated) and finally to `Math.random` — a development mock needs a well-formed
+ * uuid, not cryptographic strength.
+ */
+function randomUuid(): string {
+  const webCrypto = globalThis.crypto;
+  if (typeof webCrypto?.randomUUID === "function") {
+    return webCrypto.randomUUID();
+  }
+
+  const bytes = new Uint8Array(16);
+  if (typeof webCrypto?.getRandomValues === "function") {
+    webCrypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(
+    "",
+  );
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-");
+}
+
+/**
  * Generate header values from spec-defined response header definitions.
+ *
+ * With a `headerSeed` every random/time value is derived from it, so a seeded
+ * run reproduces its response headers as well as its bodies.
  */
 export function generateHeaderValues(
   headerDefs: Record<string, Schmock.ResponseHeaderDef> | undefined,
+  headerSeed?: HeaderSeed,
 ): Record<string, string> {
   if (!headerDefs) return {};
 
   const headers: Record<string, string> = {};
 
   for (const [name, def] of Object.entries(headerDefs)) {
-    const value = generateSingleHeaderValue(def.schema);
+    const value = generateSingleHeaderValue(def.schema, headerSeed);
     if (value !== undefined) {
       headers[name] = value;
     }
@@ -170,6 +266,7 @@ export function generateHeaderValues(
 
 function generateSingleHeaderValue(
   schema: JSONSchema7 | undefined,
+  headerSeed?: HeaderSeed,
 ): string | undefined {
   if (!schema || typeof schema === "boolean") return undefined;
 
@@ -183,12 +280,18 @@ function generateSingleHeaderValue(
     return String(schema.default);
   }
 
-  // Format-based generation
+  // Format-based generation. Seeded runs trade the wall clock for a fixed one:
+  // "seeded" and "timestamp" cannot both hold, and the seeded body path already
+  // makes the same trade.
   if (schema.format === "uuid") {
-    return randomUUID();
+    return headerSeed
+      ? seededHeaderUuid(headerSeed.seed, headerSeed.next())
+      : randomUuid();
   }
   if (schema.format === "date-time") {
-    return new Date().toISOString();
+    return headerSeed
+      ? seededHeaderTimestamp(headerSeed.seed, headerSeed.next())
+      : new Date().toISOString();
   }
 
   // Type-based fallback
@@ -198,7 +301,14 @@ function generateSingleHeaderValue(
   if (schema.type === "string") {
     return "";
   }
+  if (schema.type === "boolean") {
+    return "false";
+  }
 
+  // Deliberate drop: `array` and untyped header schemas have no single obvious
+  // wire form (comma-joined? repeated header? JSON?), and guessing one would be
+  // worse than omitting the header. Not an oversight — do not "fix" it without
+  // deciding the serialization first.
   return undefined;
 }
 
@@ -211,6 +321,8 @@ export interface ResponseBuild {
   body: unknown;
   /** Declared response headers for THIS status, if any. */
   headerDefs?: Record<string, Schmock.ResponseHeaderDef>;
+  /** Ordinal source making uuid/date-time header values reproducible. */
+  headerSeed?: HeaderSeed;
 }
 
 /**
@@ -222,7 +334,7 @@ export interface ResponseBuild {
  * tuple. 204-body suppression lives here and nowhere else.
  */
 export function buildResponse(build: ResponseBuild): Schmock.ResponseResult {
-  const headers = generateHeaderValues(build.headerDefs);
+  const headers = generateHeaderValues(build.headerDefs, build.headerSeed);
   const hasHeaders = Object.keys(headers).length > 0;
 
   if (build.status === undefined) {
@@ -233,7 +345,14 @@ export function buildResponse(build: ResponseBuild): Schmock.ResponseResult {
   return hasHeaders ? [build.status, body, headers] : [build.status, body];
 }
 
-/** Read (creating if absent) the collection stored under an already-resolved key. */
+/**
+ * Read (creating if absent) the collection stored under an already-resolved key.
+ *
+ * MATERIALIZING — only for write paths (the create push, the update/delete
+ * commit callbacks). Reads must use {@link readCollection}: allocating on a GET
+ * meant an unauthenticated scan of `/owners/<random>/pets` grew process memory
+ * one collection per id with no write ever occurring.
+ */
 function getCollection(state: Record<string, unknown>, key: string): unknown[] {
   if (!Array.isArray(state[key])) {
     state[key] = [];
@@ -245,10 +364,45 @@ function getCollection(state: Record<string, unknown>, key: string): unknown[] {
   return [];
 }
 
-/** Advance and return the id counter stored under an already-resolved key. */
-function getNextId(state: Record<string, unknown>, key: string): number {
+/**
+ * Read the collection under an already-resolved key WITHOUT persisting a scope
+ * that does not exist yet.
+ *
+ * Indistinguishable to the caller from `getCollection` on an empty scope — an
+ * empty list is an empty list — but it leaves no state key behind. Seeded
+ * resources are unaffected: `createSeeder` still materializes their scope on
+ * first touch, before any generator runs.
+ */
+function readCollection(
+  state: Record<string, unknown>,
+  key: string,
+): unknown[] {
+  const value = state[key];
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * Advance and return the id counter stored under an already-resolved key.
+ *
+ * A MISSING counter is recovered from the live collection rather than restarted
+ * at 0. An unseeded resource writes no state at all, so a collection pre-loaded
+ * through `schmock({ state })` arrives here with rows and no counter — minting
+ * from 0 handed the new item an id that already existed, and every subsequent
+ * read/update/delete on that id addressed the pre-loaded row instead. The scan
+ * mirrors `createSeeder`'s: `idCounter` per row, max wins, unrecoverable ids
+ * skipped.
+ *
+ * A counter that IS stored stays authoritative even at 0 — `createSeeder`
+ * legitimately writes 0 when no seed row carries a recoverable id, and
+ * re-deriving there would overrule it.
+ */
+function getNextId(
+  state: Record<string, unknown>,
+  key: string,
+  recover?: () => number,
+): number {
   const current = state[key];
-  const base = typeof current === "number" ? current : 0;
+  const base = typeof current === "number" ? current : (recover?.() ?? 0);
   const next = base + 1;
   state[key] = next;
   return next;
@@ -297,12 +451,37 @@ export function idCounter(value: unknown, idKind: IdKind): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/**
+ * Highest counter encoded by the ids already in a collection, or 0.
+ *
+ * Reads with {@link readCollection} on purpose: recovery must not materialize
+ * the collection key, which would re-break the non-materializing read.
+ */
+function recoverCounter(
+  state: Record<string, unknown>,
+  collectionKey: string,
+  idProperty: string,
+  idKind: IdKind,
+): number {
+  let maxId = 0;
+  for (const item of readCollection(state, collectionKey)) {
+    if (!isRecord(item)) continue;
+    const counter = idCounter(item[idProperty], idKind);
+    if (counter !== undefined && counter > maxId) maxId = counter;
+  }
+  return maxId;
+}
+
 function mintId(
   state: Record<string, unknown>,
   counterKey: string,
-  idKind: IdKind,
+  collectionKey: string,
+  resource: Pick<CrudResource, "idProperty" | "idKind">,
 ): number | string {
-  return shapeId(getNextId(state, counterKey), idKind);
+  const next = getNextId(state, counterKey, () =>
+    recoverCounter(state, collectionKey, resource.idProperty, resource.idKind),
+  );
+  return shapeId(next, resource.idKind);
 }
 
 /**
@@ -425,6 +604,7 @@ export function createListGenerator(
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
   const responseStatus = meta?.responseStatus;
+  const headerSeed = createHeaderSeed(hooks?.fakerSeed);
   // The wrapper shape depends on the negotiated media type, so it can only be
   // resolved per request. Memoized per schema object: without `onSchema` the
   // keys are the route's declared media-type schemas, a bounded set. A hook
@@ -434,7 +614,7 @@ export function createListGenerator(
 
   return async (ctx: Schmock.RequestContext) => {
     const key = collectionStateKey(resource.basePath, ctx.params);
-    const collection = getCollection(ctx.state, key);
+    const collection = readCollection(ctx.state, key);
     const items = [...collection];
 
     const schema = metaSchema(meta, ctx.headers);
@@ -442,6 +622,7 @@ export function createListGenerator(
       status: responseStatus,
       body: items,
       headerDefs,
+      headerSeed,
     });
     if (!schema) return flat;
 
@@ -463,6 +644,7 @@ export function createListGenerator(
         status: responseStatus,
         body: skeleton,
         headerDefs,
+        headerSeed,
       });
     }
 
@@ -549,6 +731,7 @@ export function createCreateGenerator(
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
   const responseStatus = meta?.responseStatus ?? 201;
+  const headerSeed = createHeaderSeed(hooks?.fakerSeed);
 
   return async (ctx: Schmock.RequestContext) => {
     const key = collectionStateKey(resource.basePath, ctx.params);
@@ -583,7 +766,7 @@ export function createCreateGenerator(
     // The id is allocated eagerly: staging the counter too would let two
     // in-flight creates peek the same id and commit duplicates. A rejected
     // create therefore burns an id — gaps are possible, duplicates are not.
-    item[resource.idProperty] = mintId(ctx.state, counterKey, resource.idKind);
+    item[resource.idProperty] = mintId(ctx.state, counterKey, key, resource);
 
     stageMutation(ctx, () => {
       getCollection(ctx.state, key).push(item);
@@ -601,7 +784,12 @@ export function createCreateGenerator(
       shell[wrapper.property] = item;
       body = shell;
     }
-    return buildResponse({ status: responseStatus, body, headerDefs });
+    return buildResponse({
+      status: responseStatus,
+      body,
+      headerDefs,
+      headerSeed,
+    });
   };
 }
 
@@ -646,10 +834,11 @@ export function createReadGenerator(
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
   const responseStatus = meta?.responseStatus;
+  const headerSeed = createHeaderSeed(hooks?.fakerSeed);
 
   return async (ctx: Schmock.RequestContext) => {
     const key = collectionStateKey(resource.basePath, ctx.params);
-    const collection = getCollection(ctx.state, key);
+    const collection = readCollection(ctx.state, key);
     const idValue = ctx.params[resource.idParam];
     const item = findById(collection, resource.idProperty, idValue);
 
@@ -657,7 +846,12 @@ export function createReadGenerator(
       return await generateErrorResponse(404, meta, hooks, ctx);
     }
 
-    return buildResponse({ status: responseStatus, body: item, headerDefs });
+    return buildResponse({
+      status: responseStatus,
+      body: item,
+      headerDefs,
+      headerSeed,
+    });
   };
 }
 
@@ -668,10 +862,11 @@ export function createUpdateGenerator(
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
   const responseStatus = meta?.responseStatus;
+  const headerSeed = createHeaderSeed(hooks?.fakerSeed);
 
   return async (ctx: Schmock.RequestContext) => {
     const key = collectionStateKey(resource.basePath, ctx.params);
-    const collection = getCollection(ctx.state, key);
+    const collection = readCollection(ctx.state, key);
     const idValue = ctx.params[resource.idParam];
     const index = findIndexById(collection, resource.idProperty, idValue);
 
@@ -699,7 +894,12 @@ export function createUpdateGenerator(
       const liveIndex = findIndexById(live, resource.idProperty, idValue);
       if (liveIndex !== -1) live[liveIndex] = updated;
     });
-    return buildResponse({ status: responseStatus, body: updated, headerDefs });
+    return buildResponse({
+      status: responseStatus,
+      body: updated,
+      headerDefs,
+      headerSeed,
+    });
   };
 }
 
@@ -710,10 +910,11 @@ export function createDeleteGenerator(
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
   const responseStatus = meta?.responseStatus ?? 204;
+  const headerSeed = createHeaderSeed(hooks?.fakerSeed);
 
   return async (ctx: Schmock.RequestContext) => {
     const key = collectionStateKey(resource.basePath, ctx.params);
-    const collection = getCollection(ctx.state, key);
+    const collection = readCollection(ctx.state, key);
     const idValue = ctx.params[resource.idParam];
     const index = findIndexById(collection, resource.idProperty, idValue);
 
@@ -728,7 +929,12 @@ export function createDeleteGenerator(
       const liveIndex = findIndexById(live, resource.idProperty, idValue);
       if (liveIndex !== -1) live.splice(liveIndex, 1);
     });
-    return buildResponse({ status: responseStatus, body: deleted, headerDefs });
+    return buildResponse({
+      status: responseStatus,
+      body: deleted,
+      headerDefs,
+      headerSeed,
+    });
   };
 }
 
@@ -742,6 +948,7 @@ export function createStaticGenerator(
   // below therefore come from that same entry — a 404-only operation emits the
   // 404 entry's declared headers at status 404.
   const declaredResponse = findRepresentativeResponse(parsedPath.responses);
+  const headerSeed = createHeaderSeed(seed);
 
   return async (ctx: Schmock.RequestContext) => {
     // Only reachable for a spec that declares no responses at all.
@@ -764,7 +971,12 @@ export function createStaticGenerator(
       }
       try {
         const body = await generateFromSchema({ schema, seed });
-        return buildResponse({ status: responseStatus, body, headerDefs });
+        return buildResponse({
+          status: responseStatus,
+          body,
+          headerDefs,
+          headerSeed,
+        });
       } catch (error) {
         // Deliberately a throw, not a laundered `[status, {}]`: core renders it
         // as a structured 500 with the failing route in the message. Returning
@@ -777,7 +989,12 @@ export function createStaticGenerator(
         );
       }
     }
-    return buildResponse({ status: responseStatus, body: {}, headerDefs });
+    return buildResponse({
+      status: responseStatus,
+      body: {},
+      headerDefs,
+      headerSeed,
+    });
   };
 }
 

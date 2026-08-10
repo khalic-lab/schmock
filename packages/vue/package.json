@@ -3,6 +3,15 @@
   "version": "2.3.0",
   "description": "Vue adapter for Schmock — Plugin and composables",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khalic-lab/schmock.git",
+    "directory": "packages/vue"
+  },
+  "homepage": "https://github.com/khalic-lab/schmock/tree/main/packages/vue#readme",
+  "bugs": {
+    "url": "https://github.com/khalic-lab/schmock/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

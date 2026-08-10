@@ -370,6 +370,18 @@ export function toExpress(
         }
       }
 
+      // A hook that sent — or began sending — the response owns it: stop here
+      // rather than running the mock against a response that is already on the
+      // wire. `next()` is deliberately NOT called: handing a live response to
+      // the rest of the stack is a second bug. This is an explicit check, not
+      // a backstop on the abort wiring: `res.once('close', ...)` is registered
+      // only when `res.once` is a function, so response doubles and any
+      // non-EventEmitter response get no absorption at all, and even a real
+      // response only absorbs a FULLY sent one, as a nextTick-vs-microtask
+      // race. The `finally` below still releases admission and unregisters the
+      // abort listeners.
+      if (res.headersSent || res.writableEnded) return;
+
       // Handle request with Schmock
       let schmockResponse = await awaitWithAbort(
         handleRequest(requestData.method, requestData.path, {
@@ -404,6 +416,12 @@ export function toExpress(
         }
       }
 
+      // Same ownership rule after the response hook, and it must sit BEFORE
+      // the errorFormatter gate: a partially written response plus a
+      // core-marked exception would otherwise send a formatted body into a
+      // live socket.
+      if (res.headersSent || res.writableEnded) return;
+
       // Only core-marked exceptions reach errorFormatter; a user-defined 500
       // with an error-shaped body remains an ordinary domain response. The
       // POST-hook status gates the replacement (matching Angular): a
@@ -425,6 +443,16 @@ export function toExpress(
       schmockToExpressResponse(schmockResponse, requestData.method, res);
     } catch (error) {
       if (abortController.signal.aborted) return;
+      // Same ownership rule as the two in-band exits above: a hook that sent —
+      // or began sending — the response still owns it after it throws. Without
+      // this, `errorFormatter` runs against a committed socket and its
+      // last-resort fallback ends the owner's stream on its behalf (truncating
+      // a partially written body), or `next(error)` hands a live response to
+      // the rest of the stack. Nothing the middleware itself sends reaches
+      // here with an unwritten body: `schmockToExpressResponse` and
+      // `sendFormattedError` both guard internally, so suppressing the error
+      // path for an already-committed response loses no recoverable handling.
+      if (res.headersSent || res.writableEnded) return;
       // Handle errors based on configuration
       if (errorFormatter) {
         // Fires for any Error from the handler/pipeline, not just

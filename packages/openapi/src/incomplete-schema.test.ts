@@ -936,41 +936,45 @@ describe("schemas option", () => {
     expect(res.body).toHaveProperty("fresh");
   });
 
-  it("ignores schemas for routes not in the spec", async () => {
-    const res = await probe(
-      spec3({
-        "/items": {
-          get: {
-            responses: {
-              "200": {
-                description: "OK",
-                content: {
-                  "application/json": {
-                    schema: {
-                      type: "object",
-                      properties: { a: { type: "string" } },
+  // PIN FLIPPED (Phase 5, MIN-OVERRIDE-KEYS): an override key naming a route the
+  // spec does not declare used to be dropped in silence, so a typo produced a
+  // mock that served the unpatched contract with no signal. It now throws at
+  // construction, like every other malformed key.
+  it("rejects schemas for routes not in the spec", async () => {
+    await expect(
+      probe(
+        spec3({
+          "/items": {
+            get: {
+              responses: {
+                "200": {
+                  description: "OK",
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        properties: { a: { type: "string" } },
+                      },
                     },
                   },
                 },
               },
             },
           },
-        },
-      }),
-      "GET",
-      "/items",
-      undefined,
-      {
-        schemas: {
-          "GET /nonexistent": {
-            type: "object",
-            properties: { x: { type: "string" } },
+        }),
+        "GET",
+        "/items",
+        undefined,
+        {
+          schemas: {
+            "GET /nonexistent": {
+              type: "object",
+              properties: { x: { type: "string" } },
+            },
           },
         },
-      },
-    );
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty("a");
+      ),
+    ).rejects.toMatchObject({ code: "OPENAPI_INVALID_SCHEMA_OVERRIDE" });
   });
 
   it("is visible to a CRUD list route, not only to static routes", async () => {

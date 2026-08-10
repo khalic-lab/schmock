@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { SchmockError } from "@schmock/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseSpec } from "./parser";
+import { enrichResolverError, parseSpec } from "./parser";
 
 const fixturesDir = resolve(import.meta.dirname, "__fixtures__");
 const externalDir = `${fixturesDir}/external`;
@@ -610,5 +610,246 @@ describe("parseSpec", () => {
 
       expect(createPet?.requestContent).toBeUndefined();
     });
+  });
+});
+
+describe("discriminator mapping", () => {
+  /** `oneOf` $refs Cat first, but the mapping declares dog first. */
+  function specWithMapping(
+    mapping: Record<string, string> | undefined,
+  ): Record<string, unknown> {
+    return {
+      openapi: "3.0.3",
+      info: { title: "Pets", version: "1.0.0" },
+      paths: {
+        "/pet": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: { $ref: "#/components/schemas/Pet" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      components: {
+        schemas: {
+          Pet: {
+            oneOf: [
+              { $ref: "#/components/schemas/Cat" },
+              { $ref: "#/components/schemas/Dog" },
+            ],
+            discriminator: {
+              propertyName: "petType",
+              ...(mapping ? { mapping } : {}),
+            },
+          },
+          Cat: {
+            type: "object",
+            properties: {
+              petType: { type: "string" },
+              meow: { type: "boolean" },
+            },
+          },
+          Dog: {
+            type: "object",
+            properties: {
+              petType: { type: "string" },
+              bark: { type: "boolean" },
+            },
+          },
+        },
+      },
+    };
+  }
+
+  async function branchEnums(
+    spec: Record<string, unknown>,
+  ): Promise<Array<{ marker: string; petType: unknown }>> {
+    const parsed = await parseSpec(spec);
+    const schema = parsed.paths[0]?.responses.get(200)?.schema;
+    const branches = (schema?.oneOf ?? []) as Record<string, unknown>[];
+    return branches.map((branch) => {
+      const props = branch.properties as Record<
+        string,
+        Record<string, unknown>
+      >;
+      return {
+        marker: "meow" in props ? "cat" : "dog",
+        petType: props.petType?.enum,
+      };
+    });
+  }
+
+  it("pairs a mapping with its $ref target, not with branch position", async () => {
+    const enums = await branchEnums(
+      specWithMapping({
+        dog: "#/components/schemas/Dog",
+        cat: "#/components/schemas/Cat",
+      }),
+    );
+
+    expect(enums).toEqual([
+      { marker: "cat", petType: ["cat"] },
+      { marker: "dog", petType: ["dog"] },
+    ]);
+  });
+
+  it("accepts a bare component name as the mapping target", async () => {
+    const enums = await branchEnums(
+      specWithMapping({ dog: "Dog", cat: "Cat" }),
+    );
+
+    expect(enums).toEqual([
+      { marker: "cat", petType: ["cat"] },
+      { marker: "dog", petType: ["dog"] },
+    ]);
+  });
+
+  it("leaves branches enum-free when no mapping is declared", async () => {
+    const enums = await branchEnums(specWithMapping(undefined));
+
+    expect(enums).toEqual([
+      { marker: "cat", petType: undefined },
+      { marker: "dog", petType: undefined },
+    ]);
+  });
+
+  it("keeps the marker out of the normalized schema", async () => {
+    const parsed = await parseSpec(
+      specWithMapping({
+        dog: "#/components/schemas/Dog",
+        cat: "#/components/schemas/Cat",
+      }),
+    );
+    const schema = parsed.paths[0]?.responses.get(200)?.schema;
+    expect(JSON.stringify(schema)).not.toContain("x-schmock");
+  });
+
+  it("survives strict validation", async () => {
+    const parsed = await parseSpec(
+      specWithMapping({
+        dog: "#/components/schemas/Dog",
+        cat: "#/components/schemas/Cat",
+      }),
+      { strict: true },
+    );
+    const schema = parsed.paths[0]?.responses.get(200)?.schema;
+    const branches = (schema?.oneOf ?? []) as Record<string, unknown>[];
+    const first = branches[0]?.properties as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(first.petType?.enum).toEqual(["cat"]);
+  });
+});
+
+describe("enrichResolverError", () => {
+  /** Shape ref-parser actually throws: the detail is already laundered away. */
+  function resolverError(source: string): Error {
+    const error = new Error(`Error reading file "${source}"`);
+    Object.assign(error, { code: "ERESOLVER", source, name: "ResolverError" });
+    return error;
+  }
+
+  it("appends the recorded diagnostic for the failing url", () => {
+    const diagnostics = new Map([
+      [
+        "http://schemas.example.com/x.json",
+        "external $ref http://schemas.example.com/x.json declares 99999 bytes, above the 1000 byte limit",
+      ],
+    ]);
+    const enriched = enrichResolverError(
+      resolverError("http://schemas.example.com/x.json"),
+      diagnostics,
+    );
+
+    expect((enriched as Error).message).toContain("above the 1000 byte limit");
+    expect((enriched as Error).message).toContain("Error reading file");
+  });
+
+  it("matches on the message when the error carries no source", () => {
+    const error = new Error(
+      'Error reading file "http://schemas.example.com/y.json"',
+    );
+    Object.assign(error, { code: "ERESOLVER" });
+    const enriched = enrichResolverError(
+      error,
+      new Map([["http://schemas.example.com/y.json", "responded with 503"]]),
+    );
+
+    expect((enriched as Error).message).toContain("responded with 503");
+  });
+
+  it("leaves unrelated errors and empty diagnostics untouched", () => {
+    const plain = new Error("boom");
+    expect(enrichResolverError(plain, new Map())).toBe(plain);
+    expect(enrichResolverError(plain, new Map([["u", "d"]]))).toBe(plain);
+
+    const unknownUrl = resolverError("http://other.example.com/z.json");
+    expect(
+      (enrichResolverError(unknownUrl, new Map([["u", "d"]])) as Error).message,
+    ).toBe('Error reading file "http://other.example.com/z.json"');
+  });
+});
+
+describe("external $ref failure diagnostics", () => {
+  const externalRefSpec = {
+    openapi: "3.0.3",
+    info: { title: "External", version: "1.0.0" },
+    paths: {
+      "/p": {
+        get: {
+          responses: {
+            "200": {
+              description: "ok",
+              content: {
+                "application/json": {
+                  schema: { $ref: "https://schemas.example.com/x.json" },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const refs = {
+    external: true,
+    allowHttp: true,
+    allowedHosts: ["schemas.example.com"],
+    maxBytes: 32,
+  };
+
+  it("surfaces the resolver's own message instead of ref-parser's opaque one", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("nope", { status: 503 }));
+    try {
+      await expect(parseSpec(externalRefSpec, { refs })).rejects.toThrow(
+        /responded with 503/,
+      );
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("surfaces an over-size external $ref the same way", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("x".repeat(200)));
+    try {
+      await expect(parseSpec(externalRefSpec, { refs })).rejects.toThrow(
+        /above the 32 byte limit/,
+      );
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 });

@@ -1,7 +1,30 @@
 import { isBinaryBody } from "./binary.js";
 import { isStatusTuple } from "./constants.js";
+import { InvalidResponseError } from "./errors.js";
 
 const BINARY_CONTENT_TYPE = "application/octet-stream";
+
+/**
+ * Take ownership of caller-supplied response headers.
+ *
+ * Parsing injects a content type into the header record, so the caller's object
+ * must never be aliased — a generator reusing a module-level header object would
+ * otherwise leak the content type of one response into the next. Only the shape
+ * is checked here; per-value type checks stay in `normalizeResponse` so its
+ * distinct messages ("header names/values must be strings") are preserved.
+ */
+function toOwnHeaderRecord(value: unknown): Record<string, string> {
+  if (value === undefined) return {};
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new InvalidResponseError("headers must be a string record");
+  }
+  // Per-value types are `normalizeResponse`'s job (it keeps its own distinct
+  // message), so a non-string value is carried through here rather than
+  // rejected; this pass only shape-checks and detaches the caller's object.
+  const record: Record<string, string> = {};
+  Object.assign(record, value);
+  return record;
+}
 
 function hasContentType(headers: Record<string, string>): boolean {
   return Object.keys(headers).some(
@@ -9,6 +32,17 @@ function hasContentType(headers: Record<string, string>): boolean {
   );
 }
 
+/**
+ * Detect the object response envelope `{ status, body, headers? }`.
+ *
+ * Detection is by shape, so a legitimate domain object carrying a numeric
+ * `status` next to a `body` is unwrapped instead of being delivered as the
+ * payload. Callers who need to return such a shape as data should nest it or
+ * use an explicit `[status, body]` tuple for the envelope. An object whose
+ * `headers` is present but not a string record is deliberately NOT an envelope
+ * and is delivered whole — plugins that inspect responses must use this same
+ * rule (see `@schmock/validation`) or they will judge an undelivered payload.
+ */
 function isResponseObject(value: unknown): value is {
   status: number;
   body: unknown;
@@ -52,11 +86,12 @@ export function parseResponse(
   if (isResponseObject(result)) {
     status = result.status;
     body = result.body;
-    headers = result.headers ?? {};
+    headers = toOwnHeaderRecord(result.headers);
     tupleFormat = true;
   } else if (isStatusTuple(result)) {
     // Handle tuple response format [status, body, headers?]
-    [status, body, headers = {}] = result;
+    [status, body] = result;
+    headers = toOwnHeaderRecord(result[2]);
     tupleFormat = true;
   }
 

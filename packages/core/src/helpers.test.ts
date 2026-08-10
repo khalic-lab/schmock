@@ -104,16 +104,14 @@ describe("paginate", () => {
     expect(result.total).toBe(5);
   });
 
-  it("page=0 falls back to page 1 (falsy default)", () => {
+  it("page=0 is normalized to page 1", () => {
     const result = paginate(items, { page: 0, pageSize: 2 });
-    // page=0 is falsy, so options.page || 1 => 1
     expect(result.page).toBe(1);
     expect(result.data).toEqual([{ id: 1 }, { id: 2 }]);
   });
 
-  it("pageSize=0 falls back to default 10 (falsy default)", () => {
+  it("pageSize=0 is normalized to the default 10", () => {
     const result = paginate(items, { pageSize: 0 });
-    // pageSize=0 is falsy, so options.pageSize || 10 => 10
     expect(result.pageSize).toBe(10);
     expect(result.data).toEqual(items);
   });
@@ -129,19 +127,50 @@ describe("paginate", () => {
     });
   });
 
-  it("negative page produces empty data (start index < 0)", () => {
+  it("normalizes a negative page to the first page", () => {
     const result = paginate(items, { page: -1, pageSize: 2 });
-    // (page - 1) * pageSize = (-1 - 1) * 2 = -4
-    // items.slice(-4, -2) => items from index 1 to 3
-    expect(result.page).toBe(-1);
-    expect(result.pageSize).toBe(2);
-    expect(result.total).toBe(5);
+    expect(result).toEqual({
+      data: [{ id: 1 }, { id: 2 }],
+      page: 1,
+      pageSize: 2,
+      total: 5,
+      totalPages: 3,
+    });
   });
 
-  it("negative pageSize returns empty data", () => {
+  it("normalizes a negative pageSize to the default", () => {
     const result = paginate(items, { page: 1, pageSize: -5 });
-    // start = 0, end = 0 + (-5) = -5 => items.slice(0, -5) => []
-    expect(result.data).toEqual([]);
-    expect(result.pageSize).toBe(-5);
+    expect(result.data).toEqual(items);
+    expect(result.pageSize).toBe(10);
+    expect(result.totalPages).toBe(1);
+  });
+
+  it("normalizes fractional page and pageSize", () => {
+    const result = paginate(items, { page: 1.5, pageSize: 2.5 });
+    expect(result.page).toBe(1);
+    expect(result.pageSize).toBe(10);
+    expect(result.data).toEqual(items);
+  });
+
+  it("normalizes NaN and Infinity", () => {
+    const nan = paginate(items, { page: Number.NaN, pageSize: Number.NaN });
+    expect(nan.page).toBe(1);
+    expect(nan.pageSize).toBe(10);
+
+    const infinite = paginate(items, {
+      page: Number.POSITIVE_INFINITY,
+      pageSize: Number.POSITIVE_INFINITY,
+    });
+    expect(infinite.page).toBe(1);
+    expect(infinite.pageSize).toBe(10);
+    expect(infinite.totalPages).toBe(1);
+  });
+
+  it("never reports a negative or fractional totalPages", () => {
+    for (const pageSize of [-5, 0, 2.5, Number.NaN]) {
+      const result = paginate(items, { pageSize });
+      expect(Number.isInteger(result.totalPages)).toBe(true);
+      expect(result.totalPages).toBeGreaterThanOrEqual(0);
+    }
   });
 });

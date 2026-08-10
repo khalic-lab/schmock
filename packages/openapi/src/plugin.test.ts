@@ -607,6 +607,187 @@ describe("schema overrides", () => {
   });
 });
 
+describe("schema override key validation", () => {
+  const widgetsSpec = {
+    openapi: "3.0.3",
+    info: { title: "Widgets", version: "1.0.0" },
+    paths: {
+      "/widgets": {
+        get: {
+          responses: {
+            "200": {
+              description: "OK",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { id: { type: "integer" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/gone": {
+        get: {
+          responses: {
+            "404": {
+              description: "Missing",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { error: { type: "string" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const override = {
+    type: "object" as const,
+    properties: { patched: { type: "string" as const, const: "yes" } },
+  };
+
+  function withKey(key: string): Promise<Schmock.Plugin> {
+    return openapi({ spec: widgetsSpec, schemas: { [key]: override } });
+  }
+
+  it.each([
+    ["extra trailing token", "GET /widgets 200 extra"],
+    ["a non-numeric status", "GET /widgets 2xx"],
+    ["a lowercase method", "get /widgets"],
+    ["no space between method and path", "GET/widgets"],
+    ["a path with no leading slash", "GET widgets"],
+    ["an unknown HTTP method", "FETCH /widgets"],
+    ["a status outside 1xx-5xx", "GET /widgets 600"],
+  ])("rejects a key with %s", async (_label, key) => {
+    await expect(withKey(key)).rejects.toMatchObject({
+      code: "OPENAPI_INVALID_SCHEMA_OVERRIDE",
+    });
+    await expect(withKey(key)).rejects.toThrow(key);
+  });
+
+  it("rejects a well-formed key naming a route the spec does not declare", async () => {
+    await expect(withKey("GET /nope")).rejects.toMatchObject({
+      code: "OPENAPI_INVALID_SCHEMA_OVERRIDE",
+    });
+    await expect(withKey("GET /nope")).rejects.toThrow("GET /nope");
+  });
+
+  // Regression: `Number.parseInt("2xx", 10) === 2` used to inject a phantom
+  // `responses[2]` entry, which `findRepresentativeResponse` then picked as the
+  // representative response — the generator emitted `[2, body]` and core passed
+  // the whole tuple through as the BODY at status 200.
+  it("no longer injects a phantom status-2 response from a '2xx' key", async () => {
+    await expect(withKey("GET /gone 2xx")).rejects.toMatchObject({
+      code: "OPENAPI_INVALID_SCHEMA_OVERRIDE",
+    });
+
+    const mock = schmock({ state: {} });
+    mock.pipe(await openapi({ spec: widgetsSpec }));
+    const res = await mock.handle("GET", "/gone");
+    expect(res.status).toBe(404);
+  });
+
+  it("accepts the documented grammar", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: widgetsSpec,
+        schemas: { "GET /widgets": override, "GET /gone 404": override },
+      }),
+    );
+
+    expect((await mock.handle("GET", "/widgets")).body).toEqual({
+      patched: "yes",
+    });
+    const gone = await mock.handle("GET", "/gone");
+    expect(gone.status).toBe(404);
+    expect(gone.body).toEqual({ patched: "yes" });
+  });
+
+  // A parameterized path has two spellings: the `{petId}` form the author reads
+  // out of their own spec, and the `:petId` form the parser converts it to.
+  // Both must resolve to the same operation — rejecting the spec-native one
+  // with "the spec declares no ... operation" was a false statement.
+  describe("parameterized paths", () => {
+    // A report summary rather than an item route: `/pets/{petId}` alone is
+    // detected as a CRUD read and 404s on an empty collection, which would hide
+    // whether the override landed.
+    const reportsSpec = {
+      openapi: "3.0.3",
+      info: { title: "Reports", version: "1.0.0" },
+      paths: {
+        "/reports/{reportId}/summary": {
+          get: {
+            parameters: [
+              {
+                name: "reportId",
+                in: "path",
+                required: true,
+                schema: { type: "string" },
+              },
+            ],
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { id: { type: "integer" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    it.each([
+      ["the spec's own {param} spelling", "GET /reports/{reportId}/summary"],
+      ["the Express :param spelling", "GET /reports/:reportId/summary"],
+    ])("accepts an override key written with %s", async (_label, key) => {
+      const mock = schmock({ state: {} });
+      mock.pipe(
+        await openapi({ spec: reportsSpec, schemas: { [key]: override } }),
+      );
+
+      const res = await mock.handle("GET", "/reports/7/summary");
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ patched: "yes" });
+    });
+
+    it("still rejects a parameterized key naming an undeclared route", async () => {
+      await expect(
+        openapi({
+          spec: reportsSpec,
+          schemas: { "GET /reports/{reportId}/lines": override },
+        }),
+      ).rejects.toMatchObject({ code: "OPENAPI_INVALID_SCHEMA_OVERRIDE" });
+    });
+
+    it("still rejects a key whose parameter name differs from the spec's", async () => {
+      // The parameter NAME is part of the route key: `/reports/{id}/summary`
+      // converts to `/reports/:id/summary`, not the `:reportId` form declared.
+      await expect(
+        openapi({
+          spec: reportsSpec,
+          schemas: { "GET /reports/{id}/summary": override },
+        }),
+      ).rejects.toThrow("GET /reports/{id}/summary");
+    });
+  });
+});
+
 describe("identifier policy", () => {
   const thingsSpec = {
     openapi: "3.0.3",

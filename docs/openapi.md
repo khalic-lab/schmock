@@ -232,12 +232,17 @@ A nested collection gets one collection per parent id: with
 by `GET /owners/2/pets`, and `GET /owners/2/pets/{id}` answers 404 for it. Id
 counters restart per scope, so two owners can each hold a pet with id `1`.
 
-> **Scope state is not evicted.** Each distinct parent id ever seen allocates its
-> own collection, counter and seed state for the lifetime of the mock instance;
-> there is no cap. This is a non-issue for the test and short-lived-server uses
-> the plugin is built for, but a long-running server that receives requests
-> across a very large or attacker-controlled range of parent ids will grow state
-> unboundedly. Recreate or `reset()` the instance to reclaim it.
+> **Written scopes are not evicted.** A read no longer allocates: `GET`s across
+> any number of parent ids on a resource with no seed data leave the state object
+> empty, so scanning `/owners/<random>/pets` costs nothing. A scope is
+> materialized when it is first seeded, or by a `POST` to it (which allocates
+> its id counter eagerly, so even a rejected create leaves that one key behind).
+> From then on it lives for the lifetime of the mock instance — there is no cap
+> and no eviction,
+> because evicting a written scope would silently delete data a `POST` created.
+> A long-running server that writes across a very large or attacker-controlled
+> range of parent ids will still grow state unboundedly; construct a fresh mock
+> per test, or `reset()` between suites, to reclaim it.
 
 ### Transactional mutations
 
@@ -413,6 +418,18 @@ Swagger 2.0 `produces` supplies those content types, operation level overriding
 root level. A Swagger 2.0 spec that declares `produces` therefore negotiates and
 sets `Content-Type` where it previously did neither.
 
+Each declared representation is scored by the **most specific** `Accept` range
+that matches it — exact type, then `type/*`, then `*/*` — so a `q=0` exclusion
+is never re-admitted by a broader wildcard. `Accept: */*;q=1, application/json;q=0`
+against a route declaring JSON and XML answers XML, and answers 406 when JSON is
+all the route declares. Ties are broken by the spec's own declaration order, so
+the client's preferences never reorder what the server offers first.
+
+Matching ignores media-type parameters on both sides, so a `content` key written
+as `"application/json; charset=utf-8"` is satisfied by `Accept: application/json`
+— but the response `Content-Type` still carries the spec's key verbatim,
+parameters included.
+
 ## Request Validation
 
 Validate request bodies against the spec's `requestBody` schema:
@@ -473,9 +490,15 @@ has no body.
 Response headers declared on the selected response are generated and returned,
 on both auto-detected CRUD routes and plain (non-CRUD) routes. Values come from
 the header schema: an `enum` uses its first value, a `default` is used verbatim,
-`format: uuid` and `format: date-time` are generated, and other types fall back
-to a type-appropriate placeholder. A header whose schema yields nothing is
-omitted.
+`format: uuid` and `format: date-time` are generated, and `string`, `number`,
+`integer` and `boolean` fall back to a type-appropriate placeholder. A header
+whose schema yields nothing is omitted — `array`-typed and untyped header
+schemas are dropped deliberately, since there is no single obvious wire form for
+them.
+
+Header values obey `fakerSeed` too: see
+[Deterministic Generation](#deterministic-generation) for the fixed-clock trade
+a seeded `format: date-time` header makes.
 
 Headers always come from the same response entry the status does. An operation
 declaring only `404` therefore answers 404 *with the 404 entry's headers* (see
@@ -604,6 +627,38 @@ mock.pipe(await openapi({
 
 Without a status code, the schema replaces the first 2xx response. If no 2xx response exists, a 200 entry is created.
 
+**Every key is validated, and a bad one throws.** The grammar is exactly
+`"METHOD /path"` or `"METHOD /path STATUS"`: an uppercase, supported HTTP
+method, one space, a path with a leading slash, and optionally one more space
+and a 3-digit status in `100`–`599`. `openapi()` rejects anything else with
+`OPENAPI_INVALID_SCHEMA_OVERRIDE`, naming the offending key — including a
+well-formed key naming a route the spec does not declare.
+
+A path parameter may be written either way: the spec's own `{petId}` or the
+Express `:petId` the router uses. Both resolve to the same operation. The
+parameter **name** is part of the route key, though — `GET /pets/{id}` does not
+match an operation declared as `/pets/{petId}`.
+
+| Key | Verdict |
+|-----|---------|
+| `GET /items` | valid |
+| `POST /items 201` | valid |
+| `GET /pets/{petId}` | valid — the spec's own spelling |
+| `GET /pets/:petId` | valid — the same operation, Express spelling |
+| `get /items` | throws — method must be uppercase |
+| `GET/items` | throws — missing space |
+| `GET items` | throws — path needs a leading slash |
+| `GET /items 2xx` | throws — status must be 3 digits |
+| `GET /items 200 extra` | throws — trailing tokens |
+| `GET /nope` | throws — no such operation in the spec |
+| `GET /pets/{id}` | throws — parameter name must match the spec's |
+
+> **Upgrade note.** A malformed or unmatched key used to be silently ignored,
+> so a typo produced a mock that quietly served the unpatched contract.
+> Those keys now fail fast at `openapi()`. `"GET /items 2xx"` was the worst
+> case: `parseInt("2xx")` is `2`, which injected a phantom `responses[2]` entry
+> that could win status selection and leak the status tuple into the body.
+
 The user schema **replaces** the parsed schema entirely (no deep merge).
 Overrides are applied while `openapi()` builds the plugin — *before* CRUD
 detection and before seed data is generated — so CRUD metadata, `{ count: n }`
@@ -702,6 +757,19 @@ mock.pipe(await openapi({
 
 // Same seed → same data every time
 ```
+
+The seed covers **response headers** as well as bodies. The contract is *same
+seed + same request ordinal within a mock instance → same value*: two mocks
+built from the same spec with `fakerSeed: 42` answer their first request with
+identical `format: uuid` and `format: date-time` headers, while a second request
+to either still gets a fresh value — a constant `X-Request-Id` would not be an
+id at all.
+
+> **A seeded `date-time` header runs on a fixed clock.** Under `fakerSeed`, a
+> header like `X-Served-At` no longer tracks wall time; it is derived from the
+> seed and the request ordinal. That is the only way "seeded" and "timestamp"
+> can coexist, and it is the same trade the seeded body path already makes.
+> Unseeded runs are unaffected: they keep a random v4 uuid and the real clock.
 
 ## Real-World Examples
 

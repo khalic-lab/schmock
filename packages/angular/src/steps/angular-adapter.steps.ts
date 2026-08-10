@@ -13,7 +13,7 @@ import {
   HttpResponse,
 } from "@angular/common/http";
 import type { CallableMockInstance } from "@schmock/core";
-import { isHttpMethod, schmock } from "@schmock/core";
+import { isHttpMethod, schmock, toRouteKey } from "@schmock/core";
 import { of } from "rxjs";
 import { expect } from "vitest";
 import type { AngularAdapterOptions } from "../index";
@@ -100,7 +100,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           if (!isHttpMethod(normalizedMethod)) {
             throw new Error(`Unsupported scenario method: ${method}`);
           }
-          mock(`${normalizedMethod} ${path}`, [
+          mock(toRouteKey(normalizedMethod, path), [
             status,
             { error: `Error ${status}` },
           ]);
@@ -498,6 +498,64 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           throw new Error("Expected response body to be an object");
         }
         expect(response.body.auth).toBe("Bearer token123");
+      });
+    },
+  );
+
+  Scenario(
+    "A repeated request header reaches the mock as a combined value",
+    ({ Given, When, Then, And }) => {
+      Given("I create an Angular mock that echoes the x-tag header", () => {
+        resetState();
+        mock("GET /api/tagged", ({ headers }) => [
+          200,
+          { tag: headers["x-tag"] ?? "none" },
+        ]);
+      });
+
+      When(
+        'I make an Angular request to "GET /api/tagged" with the x-tag header appended twice',
+        async () => {
+          const InterceptorClass = createSchmockInterceptor(
+            mock,
+            interceptorOptions,
+          );
+          const interceptor = new InterceptorClass();
+          const request = new HttpRequest<unknown>("GET", "/api/tagged", {
+            headers: new HttpHeaders()
+              .append("x-tag", "a")
+              .append("x-tag", "b"),
+          });
+
+          await new Promise<void>((resolve) => {
+            interceptor.intercept(request, mockNext).subscribe({
+              next: (event: HttpEvent<unknown>) => {
+                if (event instanceof HttpResponse) {
+                  response = event;
+                }
+                resolve();
+              },
+              error: (error: unknown) => {
+                errorResponse =
+                  error instanceof HttpErrorResponse
+                    ? error
+                    : new HttpErrorResponse({ error });
+                resolve();
+              },
+            });
+          });
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And('the echoed x-tag header should be "a, b"', () => {
+        if (!isRecord(response?.body)) {
+          throw new Error("Expected response body to be an object");
+        }
+        expect(response.body.tag).toBe("a, b");
       });
     },
   );

@@ -54,3 +54,24 @@ Feature: Query Plugin
       | container  |
       | tuple      |
       | structured |
+
+  Scenario: Pass array responses through when the plugin has no options
+    Given I create a mock with 5 items and the query plugin with no options
+    When I request the list
+    Then the response status should be 200
+    And the response body should be an array of 5 items
+
+  Scenario Outline: Fall back to defaults for malformed pagination values
+    Given I create a mock with 25 items and pagination plugin
+    When I request with raw "<param>" value "<value>"
+    Then the pagination page should be "<page>"
+    And the pagination limit should be "<limit>"
+
+    Examples:
+      | param | value | page | limit |
+      | page  | 3abc  | 1    | 10    |
+      | page  | 2.9   | 1    | 10    |
+      | page  | +2    | 1    | 10    |
+      | limit | 1e2   | 1    | 10    |
+      | limit | 3abc  | 1    | 10    |
+      | limit | -1    | 1    | 10    |

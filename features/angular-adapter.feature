@@ -117,6 +117,12 @@ Feature: Angular Adapter
     Then the response should be an HttpResponse
     And the echoed authorization header should be "Bearer token123"
 
+  Scenario: A repeated request header reaches the mock as a combined value
+    Given I create an Angular mock that echoes the x-tag header
+    When I make an Angular request to "GET /api/tagged" with the x-tag header appended twice
+    Then the response should be an HttpResponse
+    And the echoed x-tag header should be "a, b"
+
   Scenario: responseType text yields a string body
     Given I create an Angular mock returning an object for "GET /api/users"
     When I make an Angular request to "GET /api/users" with responseType "text"

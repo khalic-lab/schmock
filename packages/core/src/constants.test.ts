@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  canonicalizePath,
   HTTP_METHODS,
   isHttpMethod,
   isRouteNotFound,
   ROUTE_NOT_FOUND_CODE,
   toHttpMethod,
+  toRouteKey,
 } from "./constants";
 
 describe("constants", () => {
@@ -95,5 +97,67 @@ describe("isRouteNotFound", () => {
   it("returns false when body is a string", () => {
     const response = { status: 404, body: "not found", headers: {} };
     expect(isRouteNotFound(response)).toBe(false);
+  });
+});
+
+describe("toRouteKey", () => {
+  it("joins a method and an absolute path", () => {
+    expect(toRouteKey("GET", "/users/:id")).toBe("GET /users/:id");
+  });
+
+  it("adds the leading slash a RouteKey requires", () => {
+    expect(toRouteKey("POST", "users")).toBe("POST /users");
+  });
+});
+
+describe("canonicalizePath", () => {
+  const cases: Array<[string, string]> = [
+    ["/users", "/users"],
+    ["/users/:id", "/users/:id"],
+    ["/café", "/caf%C3%A9"],
+    ["/caf%C3%A9", "/caf%C3%A9"],
+    ["/a b", "/a%20b"],
+    ["/a%20b", "/a%20b"],
+    ["/a%2Fb", "/a%2Fb"],
+    ["/😀", "/%F0%9F%98%80"],
+    ["/", "/"],
+  ];
+
+  it.each(cases)("canonicalizes %s", (input, expected) => {
+    expect(canonicalizePath(input)).toBe(expected);
+  });
+
+  it("agrees with the URL parser on reachable paths", () => {
+    for (const [input] of cases) {
+      expect(canonicalizePath(input)).toBe(
+        new URL(input, "http://x.test").pathname,
+      );
+    }
+  });
+
+  it("is idempotent", () => {
+    for (const input of [
+      ...cases.map(([value]) => value),
+      "/a%zz",
+      "/a%",
+      "/a?b",
+      "/a#b",
+      "/a\tb",
+      "/..%2f",
+      "/%2e%2e",
+      "/a\u{1F600}%2Fb",
+    ]) {
+      const once = canonicalizePath(input);
+      expect(canonicalizePath(once)).toBe(once);
+    }
+  });
+
+  it("leaves a malformed percent sequence alone", () => {
+    expect(canonicalizePath("/a%zz")).toBe("/a%zz");
+    expect(canonicalizePath("/a%")).toBe("/a%");
+  });
+
+  it("never throws on a lone surrogate", () => {
+    expect(() => canonicalizePath("/a\uD800b")).not.toThrow();
   });
 });

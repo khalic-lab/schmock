@@ -359,4 +359,66 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       });
     },
   );
+
+  Scenario(
+    "Pass array responses through when the plugin has no options",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a mock with 5 items and the query plugin with no options",
+        () => {
+          mock = schmock();
+          mock("GET /items", generateItems(5)).pipe(queryPlugin());
+        },
+      );
+
+      When("I request the list", async () => {
+        response = await mock.handle("GET", "/items");
+      });
+
+      Then("the response status should be {int}", (_, status: number) => {
+        expect(response.status).toBe(status);
+      });
+
+      And(
+        "the response body should be an array of {int} items",
+        (_, count: number) => {
+          expect(
+            requireRecordArray(response.body, "pass-through response body"),
+          ).toHaveLength(count);
+        },
+      );
+    },
+  );
+
+  ScenarioOutline(
+    "Fall back to defaults for malformed pagination values",
+    ({ Given, When, Then, And }, variables) => {
+      Given("I create a mock with 25 items and pagination plugin", () => {
+        mock = schmock();
+        mock("GET /items", generateItems(25)).pipe(
+          queryPlugin({
+            pagination: { defaultLimit: 10, maxLimit: 100 },
+          }),
+        );
+      });
+
+      When("I request with raw {string} value {string}", async () => {
+        response = await mock.handle("GET", "/items", {
+          query: { [variables.param]: variables.value },
+        });
+      });
+
+      Then("the pagination page should be {string}", () => {
+        expect(requirePaginatedBody(response).pagination.page).toBe(
+          Number(variables.page),
+        );
+      });
+
+      And("the pagination limit should be {string}", () => {
+        expect(requirePaginatedBody(response).pagination.limit).toBe(
+          Number(variables.limit),
+        );
+      });
+    },
+  );
 });

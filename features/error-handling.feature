@@ -42,6 +42,13 @@ Feature: Error Handling
     And the response should contain error "Generator failed"
     And the response should have error code "INTERNAL_ERROR"
 
+  Scenario: Generator throwing a non-Error value keeps the thrown value
+    Given I create a mock with a generator that throws the raw string "boom-string"
+    When I request "GET /raw-throw"
+    Then I should receive status 500
+    And the response should contain error "boom-string"
+    And the response should have error code "INTERNAL_ERROR"
+
   Scenario: Namespace mismatch returns 404
     Given I create a mock with namespace "/api/v1" and a GET /users route
     When I request "GET /users"

@@ -26,7 +26,8 @@
   },
   "include": [
     "packages/**/*.steps.ts",
-    "packages/**/*.steps.tsx"
+    "packages/**/*.steps.tsx",
+    "packages/faker/src/test-utils.ts"
   ],
   "exclude": ["node_modules", "**/dist/**", "**/coverage/**"]
 }

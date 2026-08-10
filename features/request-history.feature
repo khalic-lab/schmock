@@ -77,6 +77,22 @@ Feature: Request History & Spy API
     Then the call count should be 3
     And the retained request sequence should be "3,4,5"
 
+  Scenario: maxHistorySize 0 disables history
+    Given I create a mock with maxHistorySize 0 and a users route
+    When I issue 3 sequenced requests to "GET /users"
+    Then the call count should be 0
+
+  Scenario Outline: Invalid history limits are rejected at construction
+    When I create a mock with maxHistorySize "<limit>"
+    Then a configuration error should be thrown with message matching "maxHistorySize"
+
+    Examples:
+      | limit     |
+      | -1        |
+      | 2.5       |
+      | NaN       |
+      | Infinity  |
+
   Scenario: Resetting history preserves routes and shared state
     Given I create a stateful mock and record a request
     When I reset only the request history

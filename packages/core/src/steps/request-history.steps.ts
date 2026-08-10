@@ -1,6 +1,6 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { schmock, toHttpMethod } from "../index";
+import { SchmockError, schmock, toHttpMethod, toRouteKey } from "../index";
 import type { CallableMockInstance } from "../types";
 
 const feature = await loadFeature("../../features/request-history.feature");
@@ -107,7 +107,7 @@ function requestRecordField(
   }
 }
 
-describeFeature(feature, ({ Scenario }) => {
+describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   let mock: CallableMockInstance;
   let response: Schmock.Response;
 
@@ -327,7 +327,7 @@ describeFeature(feature, ({ Scenario }) => {
         "I create a mock echoing POST body at {string}",
         (_, path: string) => {
           mock = schmock();
-          mock(`POST ${path}`, ({ body }) => [201, body]);
+          mock(toRouteKey("POST", path), ({ body }) => [201, body]);
         },
       );
 
@@ -419,6 +419,59 @@ describeFeature(feature, ({ Scenario }) => {
           expect(mock.history().map((record) => record.query.sequence)).toEqual(
             sequence.split(","),
           );
+        },
+      );
+    },
+  );
+
+  Scenario("maxHistorySize 0 disables history", ({ Given, When, Then }) => {
+    Given(
+      "I create a mock with maxHistorySize {int} and a users route",
+      (_, maxHistorySize: number) => {
+        mock = schmock({ maxHistorySize });
+        mock("GET /users", []);
+      },
+    );
+
+    When(
+      "I issue {int} sequenced requests to {string}",
+      async (_, count: number, request: string) => {
+        const { method, path } = parseRequest(request);
+        for (let i = 0; i < count; i++) {
+          await mock.handle(method, path, {
+            query: { sequence: String(i + 1) },
+          });
+        }
+      },
+    );
+
+    Then("the call count should be {int}", (_, expected: number) => {
+      expect(mock.callCount()).toBe(expected);
+      expect(mock.history()).toEqual([]);
+    });
+  });
+
+  ScenarioOutline(
+    "Invalid history limits are rejected at construction",
+    ({ When, Then }, variables) => {
+      let thrown: unknown;
+
+      When("I create a mock with maxHistorySize {string}", () => {
+        thrown = undefined;
+        try {
+          schmock({ maxHistorySize: Number(variables.limit) });
+        } catch (error) {
+          thrown = error;
+        }
+      });
+
+      Then(
+        "a configuration error should be thrown with message matching {string}",
+        (_, expected: string) => {
+          expect(thrown).toBeInstanceOf(SchmockError);
+          expect((thrown as SchmockError).code).toBe("INVALID_CONFIG");
+          expect((thrown as SchmockError).message).toContain(expected);
+          expect((thrown as SchmockError).message).toContain(variables.limit);
         },
       );
     },

@@ -192,9 +192,8 @@ describe('Express integration', () => {
 ```typescript
 import { TestBed } from '@angular/core/testing'
 import { HttpClient, provideHttpClient, withInterceptorsFromDi } from '@angular/common/http'
-import { HTTP_INTERCEPTORS } from '@angular/common/http'
 import { schmock } from '@schmock/core'
-import { createSchmockInterceptor } from '@schmock/angular'
+import { provideSchmockInterceptor } from '@schmock/angular'
 
 describe('UserService', () => {
   let http: HttpClient
@@ -202,16 +201,13 @@ describe('UserService', () => {
 
   beforeEach(() => {
     mock = schmock()
-    mock('GET /api/users', [{ id: 1, name: 'Alice' }])
+    // Register the route WITHOUT the baseUrl prefix — see the note below.
+    mock('GET /users', [{ id: 1, name: 'Alice' }])
 
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(withInterceptorsFromDi()),
-        {
-          provide: HTTP_INTERCEPTORS,
-          useClass: createSchmockInterceptor(mock, { baseUrl: '/api' }),
-          multi: true,
-        },
+        provideSchmockInterceptor(mock, { baseUrl: '/api' }),
       ],
     })
 
@@ -227,6 +223,17 @@ describe('UserService', () => {
   })
 })
 ```
+
+Two things differ from the other adapters:
+
+- The Angular adapter's `baseUrl` both filters requests **and strips** the
+  prefix before route lookup, so `/api/users` is matched against the route
+  `GET /users`. (Core's `mock.intercept()` filters without stripping — routes
+  there keep the prefix.)
+- Use `provideSchmockInterceptor`, not a hand-written
+  `{ provide: HTTP_INTERCEPTORS, useClass: ... }` entry. The interceptor class
+  is built at runtime, so `useClass` fails with NG0204 ("needs JIT compiler")
+  in AOT builds; the helper provides it with `useFactory` instead.
 
 ### OpenAPI-driven Angular tests
 
@@ -361,7 +368,9 @@ packed release-candidate gate:
 bun run check:publish
 ```
 
-It verifies clean/repeated build equality and stale-artifact removal, packs all
+It first runs `check:manifests` (publish shape per package: `files`, `license`,
+`repository`, `homepage`, `bugs`, `engines`, README, and script symmetry), then
+verifies clean/repeated build equality and stale-artifact removal, packs all
 11 workspaces, runs Node and Bun consumers, compiles 12 strict standalone
 declaration entries, compiles packed Core declarations with TypeScript 5.6,
 checks React root/testing context identity, exercises the CLI and browser

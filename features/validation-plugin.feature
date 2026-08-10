@@ -48,6 +48,12 @@ Feature: Validation Plugin
     And the response body should have property "id" with numeric value
     And the response header "x-response-shape" should be "structured"
 
+  Scenario: Malformed response envelope is validated as a plain body
+    Given I create a mock returning a structured response with non-string headers
+    When I request the malformed envelope endpoint
+    Then the status should be 500
+    And the response body should have error code "RESPONSE_VALIDATION_ERROR"
+
   Scenario: Undefined semantic response body is validated
     Given I create a mock returning an undefined body against a null response schema
     When I request the undefined response endpoint

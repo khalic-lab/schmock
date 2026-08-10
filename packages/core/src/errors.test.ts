@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  errorMessage,
   PluginError,
   ResourceLimitError,
-  ResponseGenerationError,
   RouteDefinitionError,
   RouteNotFoundError,
   RouteParseError,
@@ -10,6 +10,60 @@ import {
   SchemaValidationError,
   SchmockError,
 } from "./errors";
+
+describe("errorMessage", () => {
+  it("returns the message of an Error", () => {
+    expect(errorMessage(new Error("boom"))).toBe("boom");
+  });
+
+  it("preserves a thrown string verbatim", () => {
+    expect(errorMessage("boom-string")).toBe("boom-string");
+  });
+
+  it("preserves thrown primitives", () => {
+    expect(errorMessage(42)).toBe("42");
+    expect(errorMessage(false)).toBe("false");
+    expect(errorMessage(Symbol("sym"))).toBe("Symbol(sym)");
+    expect(errorMessage(10n)).toBe("10");
+  });
+
+  it("keeps 'Unknown error' for null and undefined", () => {
+    expect(errorMessage(null)).toBe("Unknown error");
+    expect(errorMessage(undefined)).toBe("Unknown error");
+  });
+
+  it("serializes a plain object throw", () => {
+    expect(errorMessage({ code: "E_X", detail: 42 })).toBe(
+      '{"code":"E_X","detail":42}',
+    );
+  });
+
+  it("falls back for a circular object", () => {
+    const circular: Record<string, unknown> = { a: 1 };
+    circular.self = circular;
+    expect(errorMessage(circular)).toBe("Unknown error");
+  });
+
+  it("does not let a throwing toString escape", () => {
+    const hostile = {
+      toString() {
+        throw new Error("nope");
+      },
+      get boom() {
+        throw new Error("getter exploded");
+      },
+    };
+    expect(() => errorMessage(hostile)).not.toThrow();
+    expect(errorMessage(hostile)).toBe("Unknown error");
+  });
+
+  it("truncates a very long stringification", () => {
+    const long = "x".repeat(5_000);
+    const result = errorMessage(long);
+    expect(result.length).toBeLessThanOrEqual(220);
+    expect(result.endsWith("…")).toBe(true);
+  });
+});
 
 describe("error classes", () => {
   describe("SchmockError", () => {
@@ -61,22 +115,6 @@ describe("error classes", () => {
       expect(error.context).toEqual({
         routeKey: "INVALID /test",
         reason: "Missing method",
-      });
-    });
-  });
-
-  describe("ResponseGenerationError", () => {
-    it("wraps original error", () => {
-      const originalError = new Error("Original failure");
-      const error = new ResponseGenerationError("GET /users", originalError);
-
-      expect(error.message).toBe(
-        "Failed to generate response for route GET /users: Original failure",
-      );
-      expect(error.code).toBe("RESPONSE_GENERATION_ERROR");
-      expect(error.context).toEqual({
-        route: "GET /users",
-        originalError,
       });
     });
   });
@@ -204,7 +242,6 @@ describe("error classes", () => {
       const errors = [
         new RouteNotFoundError("GET", "/test"),
         new RouteParseError("invalid", "reason"),
-        new ResponseGenerationError("route", new Error("test")),
         new PluginError("plugin", new Error("test")),
         new RouteDefinitionError("route", "reason"),
         new SchemaValidationError("path", "issue"),

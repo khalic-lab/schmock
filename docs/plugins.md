@@ -255,3 +255,12 @@ These serve as reference implementations:
 | `@schmock/validation` | Guard | Validate requests/responses with AJV |
 | `@schmock/query` | Transformer | Pagination, sorting, filtering |
 | `@schmock/openapi` | Install hook | Auto-register routes from spec |
+
+Plugin options are trusted configuration, not request data. Schemas handed to
+`@schmock/validation` or `@schmock/faker` compile to native regular expressions
+without safety screening, so a schema derived from untrusted input can block the
+event loop; treat specs and schemas like handler code, especially when a mock is
+exposed over a network. See the [Validation Plugin section of the API
+reference](./api.md#validation-plugin-schmockvalidation) for the full contract,
+including that validation targets the semantic response body rather than the
+serialized transport payload.

@@ -213,6 +213,95 @@ describe("debug functionality", () => {
     });
   });
 
+  describe("credential redaction", () => {
+    function serializedLogs(): string {
+      return consoleLogs
+        .map((args) =>
+          args
+            .map((arg: unknown) => JSON.stringify(arg) ?? String(arg))
+            .join(" "),
+        )
+        .join("\n");
+    }
+
+    it("redacts credential request headers while keeping the header name", async () => {
+      const mock = schmock({ debug: true });
+      mock("GET /secure", () => "ok");
+
+      await mock.handle("GET", "/secure", {
+        headers: {
+          Authorization: "Bearer SUPER-SECRET-TOKEN",
+          cookie: "session=abc123",
+          "X-API-Key": "KEY-42",
+          "x-schmock-admin-token": "ADMIN-TOKEN",
+          "content-type": "application/json",
+        },
+      });
+
+      const logs = serializedLogs();
+      expect(logs).not.toContain("SUPER-SECRET-TOKEN");
+      expect(logs).not.toContain("session=abc123");
+      expect(logs).not.toContain("KEY-42");
+      expect(logs).not.toContain("ADMIN-TOKEN");
+      expect(logs).toContain("Authorization");
+      expect(logs).toContain("[redacted]");
+      expect(logs).toContain("application/json");
+    });
+
+    it("redacts credential response headers", async () => {
+      const mock = schmock({ debug: true });
+      mock("GET /login", () => [
+        200,
+        "ok",
+        { "set-cookie": "session=SECRET-SESSION" },
+      ]);
+
+      await mock.handle("GET", "/login");
+
+      const logs = serializedLogs();
+      expect(logs).not.toContain("SECRET-SESSION");
+      expect(logs).toContain("set-cookie");
+      expect(logs).toContain("[redacted]");
+    });
+
+    it("does not mutate the headers handed to generators and history", async () => {
+      const mock = schmock({ debug: true });
+      let seen: Record<string, string> = {};
+      mock("GET /secure", ({ headers }) => {
+        seen = headers;
+        return "ok";
+      });
+
+      await mock.handle("GET", "/secure", {
+        headers: { authorization: "Bearer KEEP-ME" },
+      });
+
+      expect(seen.authorization).toBe("Bearer KEEP-ME");
+      expect(mock.lastRequest()?.headers.authorization).toBe("Bearer KEEP-ME");
+    });
+
+    it("reports the real type of falsy request bodies", async () => {
+      const mock = schmock({ debug: true });
+      mock("POST /echo", () => "ok");
+
+      for (const body of ["", 0, false]) {
+        consoleLogs = [];
+        await mock.handle("POST", "/echo", { body });
+        const requestLog = consoleLogs.find((args) =>
+          String(args[0]).includes("[SCHMOCK:REQUEST]"),
+        );
+        expect(requestLog?.[1]).toMatchObject({ bodyType: typeof body });
+      }
+
+      consoleLogs = [];
+      await mock.handle("POST", "/echo");
+      const missingLog = consoleLogs.find((args) =>
+        String(args[0]).includes("[SCHMOCK:REQUEST]"),
+      );
+      expect(missingLog?.[1]).toMatchObject({ bodyType: "none" });
+    });
+  });
+
   describe("debug configuration inheritance", () => {
     it("preserves debug setting through chained calls", () => {
       // Create mock with debug enabled, then configure namespace

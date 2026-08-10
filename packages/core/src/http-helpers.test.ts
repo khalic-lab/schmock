@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import {
   collectBody,
   HttpIngressError,
+  parseNodeHeaders,
+  parseNodeQuery,
   writeSchmockResponse,
 } from "./http-helpers.js";
 
@@ -191,6 +193,52 @@ describe("collectBody", () => {
         code: "MALFORMED_JSON",
       });
     });
+  });
+});
+
+describe("parseNodeQuery", () => {
+  it("keeps prototype-shadowing query keys as own properties", () => {
+    const query = parseNodeQuery(
+      new URL("http://x.test/y?__proto__=polluted&constructor=ctor&ok=1"),
+    );
+
+    expect(Object.keys(query).sort()).toEqual([
+      "__proto__",
+      "constructor",
+      "ok",
+    ]);
+    expect(Object.hasOwn(query, "__proto__")).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(query, "__proto__")?.value).toBe(
+      "polluted",
+    );
+    expect(query.constructor).toBe("ctor");
+    expect(Object.getPrototypeOf(query)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype);
+  });
+});
+
+describe("parseNodeHeaders", () => {
+  it("keeps prototype-shadowing header names as own properties", () => {
+    const rawHeaders: Record<string, string | string[] | undefined> = {
+      "x-ok": "yes",
+      "x-multi": ["a", "b"],
+      "x-missing": undefined,
+    };
+    Object.defineProperty(rawHeaders, "__proto__", {
+      value: "polluted",
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+
+    const headers = parseNodeHeaders({ headers: rawHeaders });
+
+    expect(Object.keys(headers).sort()).toEqual(["__proto__", "x-ok"]);
+    expect(Object.hasOwn(headers, "__proto__")).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(headers, "__proto__")?.value).toBe(
+      "polluted",
+    );
+    expect(Object.getPrototypeOf(headers)).toBe(Object.prototype);
   });
 });
 

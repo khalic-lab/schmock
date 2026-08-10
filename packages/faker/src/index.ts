@@ -9,6 +9,7 @@ import { version as packageVersion } from "../package.json";
 import { MAX_ARRAY_SIZE, NULLABLE_NULL_PROBABILITY } from "./constants.js";
 import {
   createSeededRandom,
+  DETERMINISTIC_REF_DATE,
   generateWithJsf,
   resolveGenerationSeed,
 } from "./jsf-config.js";
@@ -101,9 +102,13 @@ export async function generateFromSchema(
     };
   }
 
+  // A caller-supplied seed promises reproducible output, so date fields are
+  // anchored to a fixed reference date instead of the wall clock. Unseeded
+  // generation stays wall-clock relative (`date.future` must stay in the future).
   let generated: unknown = await generateWithJsf(
     enhancedSchema,
     generationSeed,
+    seed !== undefined ? DETERMINISTIC_REF_DATE : undefined,
   );
   generated = postProcessGenerated(generated, enhancedSchema, random);
 

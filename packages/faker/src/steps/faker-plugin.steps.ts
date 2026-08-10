@@ -1,5 +1,5 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
-import { expect } from "vitest";
+import { expect, vi } from "vitest";
 import { generateFromSchema } from "../index";
 import { isJSONSchema7 } from "../validation";
 
@@ -273,6 +273,65 @@ describeFeature(feature, ({ Scenario }) => {
   );
 
   Scenario(
+    "Declared constraints win over field name guesses",
+    ({ Given, When, Then, And }) => {
+      let schema: Schmock.SchemaGenerationContext["schema"];
+      let samples: Record<string, unknown>[] = [];
+
+      Given("I create a schema plugin with:", (_, docString: string) => {
+        schema = parseSchema(docString);
+      });
+
+      When(
+        "I generate data from the schema with {int} different seeds",
+        async (_, seedCount: number) => {
+          samples = [];
+          for (let seed = 1; seed <= seedCount; seed++) {
+            const sample = await generateFromSchema({ schema, seed });
+            if (!isRecord(sample)) {
+              throw new Error("Expected generated data to be an object");
+            }
+            samples.push(sample);
+          }
+        },
+      );
+
+      Then(
+        "every generated {string} should be an ISO date-time",
+        (_, property: string) => {
+          for (const sample of samples) {
+            expect(String(sample[property])).toMatch(
+              /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/,
+            );
+          }
+        },
+      );
+
+      And(
+        "every generated {string} should be an IPv4 address",
+        (_, property: string) => {
+          for (const sample of samples) {
+            expect(String(sample[property])).toMatch(/^(\d{1,3}\.){3}\d{1,3}$/);
+          }
+        },
+      );
+
+      And(
+        "every generated {string} should be a multiple of {int}",
+        (_, property: string, multiple: number) => {
+          for (const sample of samples) {
+            const value = sample[property];
+            expect(typeof value).toBe("number");
+            // Math.abs keeps a legitimate negative multiple (-30 % 10 === -0)
+            // from tripping Object.is equality against +0.
+            expect(Math.abs(Number(value) % multiple)).toBe(0);
+          }
+        },
+      );
+    },
+  );
+
+  Scenario(
     "Generate useful text for an unconstrained string",
     ({ Given, When, Then }) => {
       let schema: Schmock.SchemaGenerationContext["schema"];
@@ -294,6 +353,98 @@ describeFeature(feature, ({ Scenario }) => {
           const value = generated[property];
           expect(typeof value).toBe("string");
           expect(value).not.toBe("");
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Seeded generation repeats its dates as the clock advances",
+    ({ Given, When, Then }) => {
+      let schema: Schmock.SchemaGenerationContext["schema"];
+      let earlier: unknown;
+      let later: unknown;
+
+      Given("I create a schema plugin with:", (_, docString: string) => {
+        schema = parseSchema(docString);
+      });
+
+      When(
+        "I generate data with seed {int} five years apart",
+        async (_, seed: number) => {
+          vi.useFakeTimers({ toFake: ["Date"] });
+          try {
+            vi.setSystemTime(new Date("2026-03-01T00:00:00.000Z"));
+            earlier = await generateFromSchema({ schema, seed });
+            vi.setSystemTime(new Date("2031-03-01T00:00:00.000Z"));
+            later = await generateFromSchema({ schema, seed });
+          } finally {
+            vi.useRealTimers();
+          }
+        },
+      );
+
+      Then("both generations should hold the same valid date", () => {
+        if (!isRecord(earlier) || !isRecord(later)) {
+          throw new Error("Expected generated data to be an object");
+        }
+        const value = earlier.createdAt;
+        expect(typeof value).toBe("string");
+        expect(Number.isNaN(Date.parse(String(value)))).toBe(false);
+        expect(later).toEqual(earlier);
+      });
+    },
+  );
+
+  Scenario(
+    "Mutating a generated item leaves later requests untouched",
+    ({ Given, When, Then, And }) => {
+      let schema: Schmock.SchemaGenerationContext["schema"];
+      let items: unknown[];
+
+      Given("I create a schema plugin with:", (_, docString: string) => {
+        schema = parseSchema(docString);
+      });
+
+      function settingsOf(item: unknown): Record<string, unknown> {
+        if (!isRecord(item) || !isRecord(item.settings)) {
+          throw new Error("Expected an item carrying a settings object");
+        }
+        return item.settings;
+      }
+
+      When(
+        "I generate two items and mutate the first item's settings",
+        async () => {
+          const result = await generateFromSchema({
+            schema,
+            count: 2,
+            seed: 42,
+          });
+          if (!isUnknownArray(result)) {
+            throw new Error("Expected generated data to be an array");
+          }
+          items = result;
+          settingsOf(items[0]).theme = "MUTATED";
+        },
+      );
+
+      Then("the second item's settings should be unchanged", () => {
+        expect(settingsOf(items[1])).toEqual({ theme: "dark" });
+      });
+
+      And(
+        "a fresh generation should return the original settings",
+        async () => {
+          const result = await generateFromSchema({
+            schema,
+            count: 1,
+            seed: 42,
+          });
+          if (!isUnknownArray(result)) {
+            throw new Error("Expected generated data to be an array");
+          }
+          expect(settingsOf(result[0])).toEqual({ theme: "dark" });
         },
       );
     },

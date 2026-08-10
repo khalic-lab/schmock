@@ -44,6 +44,16 @@ describe("browser compatibility fixes", () => {
       expect(staticNodeImports).not.toContain("node:fs");
     });
 
+    // The shape assertions above all pass with a fully INLINED Node crypto
+    // polyfill in the bundle (no literal `node:crypto` survives minification),
+    // so only a byte ceiling actually guards against re-importing one. The
+    // polyfill was ~500KB of the 560KB bundle; anything near that is a
+    // regression, not growth.
+    it("openapi build carries no inlined Node crypto polyfill", () => {
+      const content = readDist("dist/index.js");
+      expect(content.length).toBeLessThan(150_000);
+    });
+
     it("openapi build only references node:fs inside dynamic import()", () => {
       const content = readDist("dist/index.js");
       const nodefsRefs = [...content.matchAll(/["']node:fs["']/g)];

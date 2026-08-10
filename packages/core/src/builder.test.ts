@@ -286,4 +286,58 @@ describe("schmock callable API", () => {
       });
     });
   });
+
+  describe("request-spy path filters", () => {
+    it("matches the literal path spelling passed to handle()", async () => {
+      const mock = schmock();
+      mock("GET /users/:name", ({ params }) => ({ name: params.name }), {});
+
+      await mock.handle("GET", "/users/José");
+
+      // history stores the canonical (encoded) form, so the filter must be
+      // canonicalized too — otherwise the very string handed to handle()
+      // fails to find its own record.
+      expect(mock.called("GET", "/users/José")).toBe(true);
+      expect(mock.callCount("GET", "/users/José")).toBe(1);
+      expect(mock.history("GET", "/users/José")).toHaveLength(1);
+      expect(mock.lastRequest("GET", "/users/José")?.path).toBe(
+        "/users/Jos%C3%A9",
+      );
+    });
+
+    it("also matches the already-encoded spelling a transport delivers", async () => {
+      const mock = schmock();
+      mock("GET /users/:name", ({ params }) => ({ name: params.name }), {});
+
+      await mock.handle("GET", "/users/José");
+
+      expect(mock.called("GET", "/users/Jos%C3%A9")).toBe(true);
+      expect(mock.callCount("GET", "/users/Jos%C3%A9")).toBe(1);
+      expect(mock.history("GET", "/users/Jos%C3%A9")).toHaveLength(1);
+      expect(mock.lastRequest("GET", "/users/Jos%C3%A9")?.path).toBe(
+        "/users/Jos%C3%A9",
+      );
+    });
+
+    it("matches a path containing a space", async () => {
+      const mock = schmock();
+      mock("GET /my docs", { ok: true }, {});
+
+      await mock.handle("GET", "/my docs");
+
+      expect(mock.called("GET", "/my docs")).toBe(true);
+      expect(mock.called("GET", "/my%20docs")).toBe(true);
+    });
+
+    it("still discriminates between distinct paths", async () => {
+      const mock = schmock();
+      mock("GET /a", { a: 1 }, {});
+      mock("GET /b", { b: 1 }, {});
+
+      await mock.handle("GET", "/a");
+
+      expect(mock.called("GET", "/b")).toBe(false);
+      expect(mock.callCount("GET", "/a")).toBe(1);
+    });
+  });
 });

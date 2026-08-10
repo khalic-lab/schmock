@@ -258,3 +258,78 @@ describe("collectUnresolvedRefs", () => {
     expect(collectUnresolvedRefs(node)).toEqual(["./models.json#/Thing"]);
   });
 });
+
+describe("http resolver diagnostics", () => {
+  function httpResolver(diagnostics?: Map<string, string>) {
+    const http = buildRefParserOptions(policy, diagnostics).resolve?.http;
+    if (typeof http !== "object" || http === null) {
+      throw new Error("expected an http resolver object");
+    }
+    return http;
+  }
+
+  const policy: RefPolicy = {
+    external: true,
+    allowHttp: true,
+    allowedHosts: ["schemas.example.com"],
+    maxBytes: 32,
+  };
+
+  it("records a non-ok status under the url it failed on", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("nope", { status: 503 }));
+    try {
+      const diagnostics = new Map<string, string>();
+      const http = httpResolver(diagnostics);
+      await expect(
+        http.read({ url: "https://schemas.example.com/m.json" }),
+      ).rejects.toThrow(/responded with 503/);
+
+      expect(diagnostics.get("https://schemas.example.com/m.json")).toMatch(
+        /responded with 503/,
+      );
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("records an over-size body under the url it failed on", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("x".repeat(200)));
+    try {
+      const diagnostics = new Map<string, string>();
+      const http = httpResolver(diagnostics);
+      await expect(
+        http.read({ url: "https://schemas.example.com/big.json" }),
+      ).rejects.toThrow(/above the 32 byte limit/);
+
+      expect(diagnostics.get("https://schemas.example.com/big.json")).toMatch(
+        /above the 32 byte limit/,
+      );
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("stays optional — no map, no behaviour change", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("nope", { status: 503 }));
+    try {
+      const http = httpResolver();
+      await expect(
+        http.read({ url: "https://schemas.example.com/m.json" }),
+      ).rejects.toThrow(/responded with 503/);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("keeps the exported options shape free of the diagnostics map", () => {
+    const diagnostics = new Map<string, string>();
+    const withMap = buildRefParserOptions({ external: true }, diagnostics);
+    expect(withMap).toEqual({ resolve: { external: true, http: false } });
+  });
+});

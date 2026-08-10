@@ -66,6 +66,52 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     },
   );
 
+  Scenario(
+    "A literal unicode route is matched by both URL spellings",
+    ({ Given, When, Then, And }) => {
+      let unicodeResponses: Response[] = [];
+
+      Given(
+        'a Schmock instance with route "GET /café/:name" returning the captured name',
+        () => {
+          setup();
+          unicodeResponses = [];
+          mock("GET /café/:name", ({ params }) => ({ name: params.name }));
+        },
+      );
+
+      And("fetch is intercepted with passthrough enabled", () => {
+        handle = mock.intercept({ passthrough: true });
+      });
+
+      When(
+        "I fetch the literal unicode URL and the percent-encoded URL",
+        async () => {
+          unicodeResponses = [
+            await fetch("http://localhost/café/Ana Lía"),
+            await fetch("http://localhost/caf%C3%A9/Ana%20L%C3%ADa"),
+          ];
+        },
+      );
+
+      Then(
+        "both fetch responses should be 200 with the decoded captured name",
+        async () => {
+          expect(unicodeResponses.map((each) => each.status)).toEqual([
+            200, 200,
+          ]);
+          for (const each of unicodeResponses) {
+            expect(await each.json()).toEqual({ name: "Ana Lía" });
+          }
+        },
+      );
+
+      And("the original fetch should not have been called", () => {
+        expect(savedFetch).not.toHaveBeenCalled();
+      });
+    },
+  );
+
   Scenario("Passthrough for unmatched routes", ({ Given, When, Then, And }) => {
     Given(
       'a Schmock instance with route "GET /api/users" returning users',
@@ -955,6 +1001,158 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
       And("the unmatched HEAD response body should be empty", async () => {
         expect(await fetchResponse?.text()).toBe("");
+      });
+    },
+  );
+
+  Scenario(
+    "A generator exception reaches the error formatter",
+    ({ Given, When, Then, And }) => {
+      let errorFormatter: Mock<(error: Error) => unknown>;
+
+      Given("an intercepted route whose generator throws", () => {
+        setup();
+        errorFormatter = vi.fn((error: Error) => ({
+          formatted: true,
+          message: error.message,
+        }));
+        mock("GET /boom", () => {
+          throw new Error("kaboom");
+        });
+        handle = mock.intercept({ passthrough: false, errorFormatter });
+      });
+
+      When("I fetch the throwing route", async () => {
+        fetchResponse = await fetch("http://localhost/boom");
+      });
+
+      Then("the fetch response status should be 500", () => {
+        expect(fetchResponse?.status).toBe(500);
+      });
+
+      And("the formatted error body should be returned", async () => {
+        expect(await fetchResponse?.json()).toEqual({
+          formatted: true,
+          message: "kaboom",
+        });
+      });
+
+      And("the error formatter should have been called once", () => {
+        expect(errorFormatter).toHaveBeenCalledTimes(1);
+      });
+    },
+  );
+
+  Scenario(
+    "A cloning beforeResponse hook keeps exception provenance",
+    ({ Given, When, Then, And }) => {
+      let errorFormatter: Mock<(error: Error) => unknown>;
+
+      Given(
+        "an intercepted throwing route with a spreading beforeResponse hook",
+        () => {
+          setup();
+          errorFormatter = vi.fn((error: Error) => ({
+            formatted: true,
+            message: error.message,
+          }));
+          mock("GET /boom", () => {
+            throw new Error("kaboom");
+          });
+          handle = mock.intercept({
+            passthrough: false,
+            errorFormatter,
+            // The documented clone pattern: it copies own enumerable
+            // properties only, dropping the non-enumerable provenance mark.
+            beforeResponse: (response) => ({ ...response }),
+          });
+        },
+      );
+
+      When("I fetch the throwing route", async () => {
+        fetchResponse = await fetch("http://localhost/boom");
+      });
+
+      Then("the fetch response status should be 500", () => {
+        expect(fetchResponse?.status).toBe(500);
+      });
+
+      And("the formatted error body should be returned", async () => {
+        expect(await fetchResponse?.json()).toEqual({
+          formatted: true,
+          message: "kaboom",
+        });
+      });
+    },
+  );
+
+  Scenario(
+    "An ordinary 500 route response is not reformatted",
+    ({ Given, When, Then, And }) => {
+      let errorFormatter: Mock<(error: Error) => unknown>;
+
+      Given("an intercepted route returning a plain 500 error body", () => {
+        setup();
+        errorFormatter = vi.fn(() => ({ formatted: true }));
+        mock("GET /domain-error", () => [
+          500,
+          { error: "upstream unavailable", code: "UPSTREAM_DOWN" },
+        ]);
+        handle = mock.intercept({ passthrough: false, errorFormatter });
+      });
+
+      When("I fetch the plain error route", async () => {
+        fetchResponse = await fetch("http://localhost/domain-error");
+      });
+
+      Then("the fetch response status should be 500", () => {
+        expect(fetchResponse?.status).toBe(500);
+      });
+
+      And("the plain error body should be returned unchanged", async () => {
+        expect(await fetchResponse?.json()).toEqual({
+          error: "upstream unavailable",
+          code: "UPSTREAM_DOWN",
+        });
+      });
+
+      And("the error formatter should not have been called", () => {
+        expect(errorFormatter).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  Scenario(
+    "A beforeResponse hook that rewrites an exception status is honoured",
+    ({ Given, When, Then, And }) => {
+      let errorFormatter: Mock<(error: Error) => unknown>;
+
+      Given(
+        "an intercepted throwing route with a beforeResponse hook that rewrites the status",
+        () => {
+          setup();
+          errorFormatter = vi.fn(() => ({ formatted: true }));
+          mock("GET /boom", () => {
+            throw new Error("kaboom");
+          });
+          handle = mock.intercept({
+            passthrough: false,
+            errorFormatter,
+            beforeResponse: (response) => ({ ...response, status: 503 }),
+          });
+        },
+      );
+
+      When("I fetch the throwing route", async () => {
+        fetchResponse = await fetch("http://localhost/boom");
+      });
+
+      Then("the fetch response status should be 503", () => {
+        expect(fetchResponse?.status).toBe(503);
+      });
+
+      And("the error formatter should not have been called", () => {
+        expect(errorFormatter).not.toHaveBeenCalled();
       });
     },
   );

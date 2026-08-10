@@ -8,7 +8,13 @@
     "composite": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.steps.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.steps.ts",
+    "src/test-utils.ts"
+  ],
   "references": [
     { "path": "../core" }
   ]

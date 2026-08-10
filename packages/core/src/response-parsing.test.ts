@@ -300,6 +300,74 @@ describe("response parsing", () => {
     });
   });
 
+  describe("tuple header intake", () => {
+    it("does not mutate a caller-owned tuple header object", async () => {
+      const callerHeaders: Record<string, string> = {};
+      const mock = schmock();
+      mock(
+        "GET /binary",
+        () =>
+          [200, new Uint8Array([1, 2, 3]), callerHeaders] as [
+            number,
+            any,
+            Record<string, string>,
+          ],
+      );
+
+      const response = await mock.handle("GET", "/binary");
+
+      expect(response.headers).toMatchObject({
+        "content-type": "application/octet-stream",
+      });
+      expect(callerHeaders).toEqual({});
+    });
+
+    it("keeps a reused header object from leaking a content type across requests", async () => {
+      const shared: Record<string, string> = {};
+      const mock = schmock();
+      mock(
+        "GET /bytes",
+        () =>
+          [200, new Uint8Array([1, 2, 3]), shared] as [
+            number,
+            any,
+            Record<string, string>,
+          ],
+      );
+      mock(
+        "GET /json",
+        () =>
+          [200, { ok: true }, shared] as [number, any, Record<string, string>],
+      );
+
+      await mock.handle("GET", "/bytes");
+      const response = await mock.handle("GET", "/json");
+
+      // Tuple headers stay caller-controlled, so the JSON route emits none —
+      // but it must not inherit the binary route's injected content type.
+      expect(response.headers["content-type"]).toBeUndefined();
+      expect(shared).toEqual({});
+    });
+
+    it.each([
+      [null, "Invalid response: headers must be a string record"],
+      ["not-obj", "Invalid response: headers must be a string record"],
+      [42, "Invalid response: headers must be a string record"],
+      [{ n: 5 }, "Invalid response: header values must be strings"],
+    ])("reports malformed tuple headers %p as an invalid response", async (headers, message) => {
+      const mock = schmock();
+      mock("GET /malformed", () => [200, "body", headers] as any);
+
+      const response = await mock.handle("GET", "/malformed");
+
+      expect(response.status).toBe(500);
+      expect(response.body).toMatchObject({
+        code: "INVALID_RESPONSE",
+        error: message,
+      });
+    });
+  });
+
   describe("edge cases", () => {
     it("rejects circular response bodies before transport", async () => {
       const mock = schmock();

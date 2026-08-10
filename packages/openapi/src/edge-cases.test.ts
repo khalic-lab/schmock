@@ -380,6 +380,37 @@ describe("content-negotiation edge cases", () => {
       );
       expect(result).toBeNull();
     });
+
+    it("does not let a */* wildcard re-admit a q=0 exclusion", () => {
+      const result = negotiateContentType("*/*;q=1, application/json;q=0", [
+        "application/json",
+        "application/xml",
+      ]);
+      expect(result).toBe("application/xml");
+    });
+
+    it("does not let a type wildcard re-admit a q=0 exclusion", () => {
+      const result = negotiateContentType(
+        "application/*;q=0.9, application/json;q=0",
+        ["application/json", "application/xml"],
+      );
+      expect(result).toBe("application/xml");
+    });
+
+    it("prefers the more specific wildcard when two wildcards disagree", () => {
+      const result = negotiateContentType("text/*;q=0, */*;q=0.5", [
+        "text/plain",
+        "application/json",
+      ]);
+      expect(result).toBe("application/json");
+    });
+
+    it("returns null when a q=0 exclusion leaves nothing acceptable", () => {
+      const result = negotiateContentType("*/*;q=1, application/json;q=0", [
+        "application/json",
+      ]);
+      expect(result).toBeNull();
+    });
   });
 
   describe("Accept header with malformed q-value", () => {

@@ -1378,4 +1378,112 @@ describe("Angular Adapter", () => {
       expect(typeof interceptor.intercept).toBe("function");
     });
   });
+
+  describe("request header combining", () => {
+    async function capturedHeaders(
+      headers: HttpHeaders,
+    ): Promise<Record<string, string>> {
+      mockInstance.handle = vi
+        .fn()
+        .mockResolvedValue({ status: 200, body: { ok: true }, headers: {} });
+      const InterceptorClass = createSchmockInterceptor(mockInstance);
+      const interceptor = new InterceptorClass();
+      const request = new HttpRequest("GET", "/api/test", { headers });
+      const next: HttpHandler = {
+        handle: vi.fn().mockReturnValue(of(new HttpResponse({ body: "real" }))),
+      };
+
+      await new Promise<void>((resolve) => {
+        interceptor.intercept(request, next).subscribe({
+          next: () => resolve(),
+          error: () => resolve(),
+        });
+      });
+
+      const call = (mockInstance.handle as ReturnType<typeof vi.fn>).mock
+        .calls[0];
+      return call[2].headers as Record<string, string>;
+    }
+
+    it("combines a repeated header into one comma-joined field value", async () => {
+      const headers = new HttpHeaders()
+        .append("x-tag", "a")
+        .append("x-tag", "b")
+        .append("x-tag", "c");
+
+      expect(await capturedHeaders(headers)).toEqual({ "x-tag": "a, b, c" });
+    });
+
+    it("leaves a single-valued header untouched", async () => {
+      const headers = new HttpHeaders({ "x-single": "only" });
+
+      expect(await capturedHeaders(headers)).toEqual({ "x-single": "only" });
+    });
+
+    it("omits a header whose value list is empty", async () => {
+      // HttpHeaders keeps the key but reports an empty value list, so an
+      // unguarded join would deliver an empty-string header.
+      const headers = new HttpHeaders({ "x-empty": [], "x-kept": "yes" });
+
+      expect(await capturedHeaders(headers)).toEqual({ "x-kept": "yes" });
+    });
+  });
+
+  describe("status texts", () => {
+    async function emitted(status: number): Promise<{
+      response?: HttpResponse<unknown>;
+      error?: HttpErrorResponse;
+    }> {
+      mockInstance.handle = vi
+        .fn()
+        .mockResolvedValue({ status, body: { any: true }, headers: {} });
+      const InterceptorClass = createSchmockInterceptor(mockInstance);
+      const interceptor = new InterceptorClass();
+      const request = new HttpRequest("GET", "/api/test");
+      const next: HttpHandler = {
+        handle: vi.fn().mockReturnValue(of(new HttpResponse({ body: "real" }))),
+      };
+
+      return new Promise((resolve) => {
+        interceptor.intercept(request, next).subscribe({
+          next: (event: HttpEvent<unknown>) => {
+            if (event instanceof HttpResponse) resolve({ response: event });
+          },
+          error: (error: unknown) =>
+            resolve({ error: error as HttpErrorResponse }),
+        });
+      });
+    }
+
+    it.each([
+      [202, "Accepted"],
+      [206, "Partial Content"],
+    ])("reports %i as %s on the success channel", async (status, text) => {
+      const { response } = await emitted(status);
+      expect(response?.statusText).toBe(text);
+    });
+
+    it.each([
+      [307, "Temporary Redirect"],
+      [402, "Payment Required"],
+      [410, "Gone"],
+      [415, "Unsupported Media Type"],
+      [451, "Unavailable For Legal Reasons"],
+      [501, "Not Implemented"],
+      [504, "Gateway Timeout"],
+    ])("reports %i as %s on the error channel", async (status, text) => {
+      const { error } = await emitted(status);
+      expect(error?.statusText).toBe(text);
+    });
+
+    it("falls back to OK for a non-registry 2xx status", async () => {
+      const { response } = await emitted(299);
+      expect(response?.statusText).toBe("OK");
+    });
+
+    it("falls back to Unknown Error for a non-registry error status", async () => {
+      const { error } = await emitted(599);
+      expect(error?.statusText).toBe("Unknown Error");
+    });
+  });
 });

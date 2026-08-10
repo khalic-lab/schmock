@@ -5,6 +5,11 @@ import {
   generate,
   type JsonSchema,
 } from "json-schema-faker";
+import { DETERMINISTIC_REF_DATE, JSF_MAX_DEPTH } from "./constants.js";
+
+// Re-exported here because this module owns the seeded-generation contract the
+// constant serves; `constants.ts` is its home.
+export { DETERMINISTIC_REF_DATE };
 
 const MAX_GENERATION_SEED = 2_147_483_647;
 type JsfObjectSchema = Exclude<JsonSchema, boolean>;
@@ -12,13 +17,85 @@ type JsfObjectSchema = Exclude<JsonSchema, boolean>;
 /**
  * Create isolated faker instance to avoid race conditions.
  * Each generation gets its own faker instance to ensure thread-safety.
+ *
+ * @param refDate - Anchors faker's relative date methods. Supplied for seeded
+ *   generation so `date.recent`/`date.future` reproduce; omitted otherwise, so
+ *   unseeded output stays wall-clock relative.
  */
-export function createFakerInstance(seed?: number) {
+export function createFakerInstance(seed?: number, refDate?: string) {
   const faker = new Faker({ locale: [en, base] });
   if (seed !== undefined) {
     faker.seed(seed);
   }
+  if (refDate !== undefined) {
+    faker.setDefaultRefDate(refDate);
+  }
   return faker;
+}
+
+/**
+ * Deep-copy a value away from whoever owns it.
+ *
+ * `structuredClone` alone is not enough: it preserves the input's object
+ * graph, so two array items generated from one shared sub-schema stay aliased
+ * and mutating one changes the other. Walking plain objects and arrays breaks
+ * that sharing; exotic values (Map, Set, RegExp, class instances) have no
+ * structure to walk and fall back to `structuredClone`, then to the value
+ * itself when even that fails.
+ */
+function cloneOwnedValue(value: unknown, ancestors: Set<object>): unknown {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (ancestors.has(value)) {
+    // Self-referential input: stop rather than recurse forever.
+    return value;
+  }
+  if (value instanceof Date) {
+    return new Date(value.getTime());
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  const isPlainObject = prototype === Object.prototype || prototype === null;
+  if (!Array.isArray(value) && !isPlainObject) {
+    try {
+      return structuredClone(value);
+    } catch {
+      return value;
+    }
+  }
+
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map((entry) => cloneOwnedValue(entry, ancestors));
+    }
+    const copy: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      // defineProperty, not assignment: a literal "__proto__" key in a schema
+      // default must stay data instead of reaching the prototype setter.
+      Object.defineProperty(copy, key, {
+        value: cloneOwnedValue(entry, ancestors),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    return copy;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+/**
+ * Detach a value from its owner so mutating it cannot reach the owner.
+ *
+ * Returns `unknown` rather than echoing the input type: a clone of a class
+ * instance may come back as a plain object (see the `structuredClone`
+ * fallback), so promising the caller its own type back would be a lie.
+ */
+export function cloneOwned(value: unknown): unknown {
+  return cloneOwnedValue(value, new Set());
 }
 
 export function resolveGenerationSeed(seed?: number): number {
@@ -142,15 +219,31 @@ export function normalizeSchemaForJsf(schema: JSONSchema7): JsfObjectSchema {
 export async function generateWithJsf(
   schema: JSONSchema7,
   seed: number,
+  refDate?: string,
 ): Promise<unknown> {
   const options: GenerateOptions = {
     seed,
+    // json-schema-faker defaults to 5, which silently drops required
+    // properties below that depth. `JSF_MAX_DEPTH` is derived from
+    // `MAX_NESTING_DEPTH` (constants.ts) and is itself the only bound on how
+    // deep a generated body can get: `validateSchema`'s schema-node and
+    // generated-node budgets bound the schema-side walk and the estimated
+    // output of the schema as written, but they never resolve `$ref`, so a
+    // `$defs` subtree that references itself is bounded by this option alone.
+    maxDepth: JSF_MAX_DEPTH,
     optionalsProbability: 1.0,
     alwaysFakeOptionals: true,
     useDefaultValue: true,
     failOnInvalidTypes: false,
-    extensions: { faker: createFakerInstance(seed) },
+    // Start from the built-in formats only: json-schema-faker's format
+    // registry is module-global, so a consumer's own registration would
+    // otherwise change Schmock's generation.
+    formats: {},
+    extensions: { faker: createFakerInstance(seed, refDate) },
   };
 
-  return generate(normalizeSchemaForJsf(schema), options);
+  // Cloned on the way out so nothing generated stays aliased to the schema, to
+  // json-schema-faker's internals, or to a sibling item built from the same
+  // sub-schema.
+  return cloneOwned(await generate(normalizeSchemaForJsf(schema), options));
 }

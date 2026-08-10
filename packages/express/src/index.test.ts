@@ -1,7 +1,14 @@
 import { EventEmitter } from "node:events";
 import type { CallableMockInstance } from "@schmock/core";
 import { ROUTE_NOT_FOUND_CODE, SchmockError, schmock } from "@schmock/core";
-import type { NextFunction, Request, Response } from "express";
+import type {
+  ErrorRequestHandler,
+  NextFunction,
+  Request,
+  Response,
+} from "express";
+import express from "express";
+import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { toExpress } from "./index";
 
@@ -1093,6 +1100,266 @@ describe("toExpress", () => {
         "/",
         expect.objectContaining({ query: { custom: "query" } }),
       );
+    });
+  });
+
+  describe("hook-owned responses", () => {
+    /**
+     * A response double with no `once`, so the middleware's `res.once('close')`
+     * abort wiring is never registered. Whatever stops the middleware here is
+     * the explicit ownership check, not the abort race.
+     */
+    function createOwnableRes() {
+      const res = {
+        headersSent: false,
+        writableEnded: false,
+        status: vi.fn().mockReturnThis(),
+        set: vi.fn().mockReturnThis(),
+        json: vi.fn(),
+        send: vi.fn(),
+        end: vi.fn(),
+      };
+      return res as unknown as Response & {
+        headersSent: boolean;
+        writableEnded: boolean;
+      };
+    }
+
+    it("does not call the mock when beforeRequest began sending (no abort wiring)", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const res = createOwnableRes();
+      const next = vi.fn() as NextFunction;
+      expect(typeof (res as unknown as { once?: unknown }).once).not.toBe(
+        "function",
+      );
+
+      await toExpress(mock, {
+        beforeRequest: (_req, hookRes) => {
+          const owned = hookRes as unknown as { headersSent: boolean };
+          owned.headersSent = true;
+          return undefined;
+        },
+      })(createReq(), res, next);
+
+      expect(mock.handle).not.toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalled();
+      expect(res.end).not.toHaveBeenCalled();
+    });
+
+    it("does not write the mock response when beforeResponse began sending", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const res = createOwnableRes();
+      const next = vi.fn() as NextFunction;
+
+      await toExpress(mock, {
+        beforeResponse: (_response, _req, hookRes) => {
+          const owned = hookRes as unknown as { headersSent: boolean };
+          owned.headersSent = true;
+          return undefined;
+        },
+      })(createReq(), res, next);
+
+      expect(mock.handle).toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalled();
+      expect(res.set).not.toHaveBeenCalled();
+      expect(res.end).not.toHaveBeenCalled();
+    });
+
+    it("does not format an exception when beforeResponse began sending", async () => {
+      const mock = createMock(() => Promise.resolve(markedException()));
+      const res = createOwnableRes();
+      const errorFormatter = vi.fn(() => ({ formatted: true }));
+
+      await toExpress(mock, {
+        errorFormatter,
+        beforeResponse: (_response, _req, hookRes) => {
+          const owned = hookRes as unknown as { headersSent: boolean };
+          owned.headersSent = true;
+          return undefined;
+        },
+      })(createReq(), res, vi.fn() as NextFunction);
+
+      expect(errorFormatter).not.toHaveBeenCalled();
+      expect(res.end).not.toHaveBeenCalled();
+    });
+
+    it("treats a hook that only ended the response as owning it", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const res = createOwnableRes();
+      const next = vi.fn() as NextFunction;
+
+      await toExpress(mock, {
+        beforeRequest: (_req, hookRes) => {
+          const owned = hookRes as unknown as { writableEnded: boolean };
+          owned.writableEnded = true;
+          return undefined;
+        },
+      })(createReq(), res, next);
+
+      expect(mock.handle).not.toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it("keeps running the mock when the hooks leave the response alone", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const res = createOwnableRes();
+
+      await toExpress(mock, {
+        beforeRequest: () => undefined,
+        beforeResponse: () => undefined,
+      })(createReq(), res, vi.fn() as NextFunction);
+
+      expect(mock.handle).toHaveBeenCalled();
+      expect(endedText(res)).toBe("ok");
+    });
+
+    it("stops before the generator when a real beforeRequest streams a partial body", async () => {
+      const realMock = schmock();
+      const generator = vi.fn(() => ({ generated: true }));
+      realMock("GET /api/partial", generator);
+
+      const app = express();
+      const errorHandler = vi.fn();
+      app.use(
+        toExpress(realMock, {
+          beforeRequest: async (_req, res) => {
+            res.status(207);
+            res.setHeader("content-type", "text/plain");
+            res.write("partial;");
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            res.end("done");
+            return undefined;
+          },
+        }),
+      );
+      app.use(((error, _req, res, _next) => {
+        errorHandler(error);
+        res.status(599).end();
+      }) as ErrorRequestHandler);
+
+      const response = await request(app).get("/api/partial");
+
+      expect(generator).not.toHaveBeenCalled();
+      expect(errorHandler).not.toHaveBeenCalled();
+      expect(response.status).toBe(207);
+      expect(response.text).toBe("partial;done");
+    });
+
+    it("does not crash when a real beforeResponse streams a partial body", async () => {
+      const realMock = schmock();
+      realMock("GET /api/partial-response", { generated: true });
+
+      const app = express();
+      const errorHandler = vi.fn();
+      app.use(
+        toExpress(realMock, {
+          beforeResponse: async (_schmockResponse, _req, res) => {
+            res.status(207);
+            res.setHeader("content-type", "text/plain");
+            res.write("partial;");
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            res.end("done");
+            return undefined;
+          },
+        }),
+      );
+      app.use(((error, _req, res, _next) => {
+        errorHandler(error);
+        res.status(599).end();
+      }) as ErrorRequestHandler);
+
+      const response = await request(app).get("/api/partial-response");
+
+      expect(errorHandler).not.toHaveBeenCalled();
+      expect(response.status).toBe(207);
+      expect(response.text).toBe("partial;done");
+    });
+
+    it("does not format or forward when beforeRequest throws after sending", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const res = createOwnableRes();
+      const next = vi.fn() as NextFunction;
+      const errorFormatter = vi.fn(() => ({ formatted: true }));
+
+      await toExpress(mock, {
+        errorFormatter,
+        beforeRequest: (_req, hookRes) => {
+          const owned = hookRes as unknown as { headersSent: boolean };
+          owned.headersSent = true;
+          throw new Error("hook exploded after sending");
+        },
+      })(createReq(), res, next);
+
+      expect(mock.handle).not.toHaveBeenCalled();
+      expect(errorFormatter).not.toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalled();
+      expect(res.end).not.toHaveBeenCalled();
+    });
+
+    it("does not call next when beforeResponse throws after sending", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const res = createOwnableRes();
+      const next = vi.fn() as NextFunction;
+
+      await toExpress(mock, {
+        beforeResponse: (_response, _req, hookRes) => {
+          const owned = hookRes as unknown as { writableEnded: boolean };
+          owned.writableEnded = true;
+          throw new Error("hook exploded after ending");
+        },
+      })(createReq(), res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.end).not.toHaveBeenCalled();
+      expect(res.set).not.toHaveBeenCalled();
+    });
+
+    it("does not end a hook's stream when the hook throws mid-write", async () => {
+      const realMock = schmock();
+      const generator = vi.fn(() => ({ generated: true }));
+      realMock("GET /api/throw-mid-stream", generator);
+
+      const app = express();
+      const errorHandler = vi.fn();
+      const errorFormatter = vi.fn(() => ({ formatted: true }));
+      app.use(
+        toExpress(realMock, {
+          errorFormatter,
+          beforeRequest: (_req, res) => {
+            res.status(200);
+            res.setHeader("content-type", "text/plain");
+            res.write("partial;");
+            setTimeout(() => {
+              res.end("done");
+            }, 10);
+            throw new Error("hook exploded after sending");
+          },
+        }),
+      );
+      app.use(((error, _req, res, _next) => {
+        errorHandler(error);
+        res.status(599).end();
+      }) as ErrorRequestHandler);
+
+      const response = await request(app).get("/api/throw-mid-stream");
+
+      expect(generator).not.toHaveBeenCalled();
+      expect(errorFormatter).not.toHaveBeenCalled();
+      expect(errorHandler).not.toHaveBeenCalled();
+      expect(response.status).toBe(200);
+      expect(response.text).toBe("partial;done");
     });
   });
 });

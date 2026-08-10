@@ -201,10 +201,17 @@ async function fetchJson(
   method: string,
   path: string,
   headers: Record<string, string> = {},
+  requestBody?: unknown,
 ): Promise<JsonResponse> {
   const response = await fetch(
     `http://${server.hostname}:${server.port}${path}`,
-    { method, headers },
+    requestBody === undefined
+      ? { method, headers }
+      : {
+          method,
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify(requestBody),
+        },
   );
   if (response.status === 204) {
     return {
@@ -357,18 +364,30 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         const mockResponse = await requestMockApi();
         expect(payload(mockResponse)).toEqual({ status: 200, body: [] });
 
+        const historyResponse = await adminFetch(
+          "GET",
+          "/schmock-admin/history",
+        );
+        expect(historyRecords(historyResponse.body)).toEqual(expectedHistory);
+
+        // A read no longer materializes collection state, so the state this
+        // scenario resets has to come from a write. Sequenced after the history
+        // assertion above, which pins the single GET record.
+        const created = await fetchJson(
+          requireServer(),
+          "POST",
+          "/items",
+          {},
+          { name: "Widget" },
+        );
+        expect(created.status).toBe(201);
+
         const stateResponse = await adminFetch("GET", "/schmock-admin/state");
         expect(isRecord(stateResponse.body)).toBe(true);
         if (!isRecord(stateResponse.body)) {
           throw new Error("Expected populated state before reset");
         }
         expect(Object.keys(stateResponse.body).length).toBeGreaterThan(0);
-
-        const historyResponse = await adminFetch(
-          "GET",
-          "/schmock-admin/history",
-        );
-        expect(historyRecords(historyResponse.body)).toEqual(expectedHistory);
       },
     );
 

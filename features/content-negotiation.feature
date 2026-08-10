@@ -37,6 +37,16 @@ Feature: Content Negotiation
     When I post an item with no Content-Type header
     Then the request response status is 201
 
+  Scenario: A wildcard does not re-admit a type excluded with q=0
+    Given a mock with a spec defining JSON and XML responses
+    When I request with Accept header "*/*;q=1, application/json;q=0"
+    Then the negotiated content type is "application/xml"
+
+  Scenario: Excluding every declared type with q=0 returns 406
+    Given a mock with a spec defining JSON and XML responses
+    When I request with Accept header "application/json;q=0, application/xml;q=0"
+    Then the response status is 406
+
   Scenario: Error responses negotiate their own declared media type
     Given a CRUD mock whose success is JSON and missing response is problem JSON
     When I read a missing negotiated item requesting problem JSON

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -313,6 +313,65 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
           expect(response.status).toBe(200);
         },
       );
+    },
+  );
+
+  Scenario(
+    "An atomic editor save still triggers a reload",
+    ({ Given, And, When, Then }) => {
+      Given("a temp spec file with one route", () => {
+        createTempSpec();
+      });
+
+      And("a CLI server is started with file watching", async () => {
+        await startWatchedServer();
+      });
+
+      When(
+        "the spec file is replaced by an atomic save adding a new route",
+        () => {
+          // What vim, JetBrains and VS Code actually do: write a sibling file
+          // and rename it over the target. The spec keeps its path but gets a
+          // new inode, so a watch bound to the old inode goes deaf.
+          const staging = `${specPath}.tmp`;
+          writeFileSync(
+            staging,
+            makeSpec({
+              ...initialPaths(),
+              "/users": {
+                get: { responses: { "200": { description: "OK" } } },
+              },
+            }),
+          );
+          renameSync(staging, specPath);
+        },
+      );
+
+      Then(
+        "the new route responds successfully on the original port",
+        async () => {
+          expect(await waitForRoute(requireServer(), "/users")).toBe(200);
+          expect(requireServer().port).toBe(originalPort);
+        },
+      );
+
+      // The assertion that fails hardest against an inode watch: the atomic
+      // rename may still be reported, but every later edit is silent.
+      And("a later in-place edit still triggers a reload", async () => {
+        writeFileSync(
+          specPath,
+          makeSpec({
+            ...initialPaths(),
+            "/users": {
+              get: { responses: { "200": { description: "OK" } } },
+            },
+            "/orders": {
+              get: { responses: { "200": { description: "OK" } } },
+            },
+          }),
+        );
+        expect(await waitForRoute(requireServer(), "/orders")).toBe(200);
+      });
     },
   );
 

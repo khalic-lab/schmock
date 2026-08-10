@@ -1,5 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import { DEFAULT_ARRAY_COUNT } from "./constants.js";
+import { cloneOwned } from "./jsf-config.js";
 
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
@@ -11,7 +12,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Determine number of items to generate for array schema
  * Prefers explicit count, then schema minItems/maxItems, with sane defaults
  * @param schema - Array schema with optional minItems/maxItems
- * @param explicitCount - Explicit count override from plugin options
+ * @param explicitCount - Explicit count override from plugin options; negative
+ *   counts yield 0, fractional counts round down, and NaN is treated as absent
  * @returns Number of array items to generate
  */
 export function determineArrayCount(
@@ -19,12 +21,13 @@ export function determineArrayCount(
   explicitCount?: number,
   random: () => number = Math.random,
 ): number {
-  if (explicitCount !== undefined) {
-    // Handle negative or invalid counts
+  // A NaN count carries no intent, so the schema decides instead. Fractions
+  // round down; +Infinity is kept so the caller still hits the array-size limit.
+  if (explicitCount !== undefined && !Number.isNaN(explicitCount)) {
     if (explicitCount < 0) {
       return 0;
     }
-    return explicitCount;
+    return Math.floor(explicitCount);
   }
 
   if (schema.minItems !== undefined && schema.maxItems !== undefined) {
@@ -94,7 +97,7 @@ export function applyOverrides(
         // Template processing
         result[key] = processTemplate(value, { params, state, query });
       } else {
-        result[key] = value;
+        result[key] = cloneOwned(value);
       }
     }
   }
@@ -131,7 +134,7 @@ function setNestedProperty(
   if (typeof value === "string" && value.includes("{{")) {
     current[finalKey] = processTemplate(value, context);
   } else {
-    current[finalKey] = value;
+    current[finalKey] = cloneOwned(value);
   }
 }
 
@@ -165,7 +168,7 @@ function processTemplate(template: string, context: TemplateContext): unknown {
   if (singleTemplateMatch) {
     // For single templates, return the actual value without string conversion
     const result = resolveTemplatePath(context, singleTemplateMatch[1]);
-    return result !== undefined ? result : template;
+    return result !== undefined ? cloneOwned(result) : template;
   }
 
   // For templates mixed with other text, do string replacement

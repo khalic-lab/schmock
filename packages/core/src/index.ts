@@ -103,7 +103,6 @@ export {
   InvalidResponseError,
   PluginError,
   ResourceLimitError,
-  ResponseGenerationError,
   RouteDefinitionError,
   RouteNotFoundError,
   RouteParseError,

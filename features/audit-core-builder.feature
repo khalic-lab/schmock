@@ -20,6 +20,17 @@ Feature: Core Builder Correctness
     And I register GET /users with trailing slash
     Then only one route exists for GET /users
 
+  Scenario: A matched route whose generator throws is recorded in history
+    Given a mock with a healthy route and a route whose generator throws
+    When I request the healthy route and then the throwing route
+    Then the throwing request should be recorded in history with status 500
+    And the call count for the throwing route should be 1
+
+  Scenario: A failing route honours its own delay override
+    Given a mock with a global delay and a slower failing route override
+    When I request the failing route
+    Then the failing response should be 500 after the route delay
+
   Scenario: reset() does not mutate the caller's state object
     Given a mock with external state containing key "a" equal to 1
     When I call mock reset

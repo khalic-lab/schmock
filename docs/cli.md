@@ -41,6 +41,29 @@ schmock <spec> [options]
 | `--refs-allow-http <hosts>` | Also resolve http(s) `$ref`s, limited to this comma-separated host list | — |
 | `-h, --help` | Show help | — |
 
+### Argument validation
+
+Bad invocations fail at startup rather than starting a server that quietly does
+something else:
+
+- `--seed-random` must be a finite integer. Negatives are fine (`--seed-random=-1`;
+  the `=` form is required for a leading dash). `abc`, an empty value and `1.5`
+  are rejected, where they previously became `NaN`, "no seed at all" and a
+  fractional seed.
+- `--hostname` must be a non-empty host. A blank value is rejected: it is *not*
+  the `127.0.0.1` default — `listen(port, '')` binds every interface, so a typo
+  used to publish the mock to the network. The same check applies to
+  `createCliServer({ hostname })`.
+- Exactly one spec path. `schmock a.json b.json` is an error instead of silently
+  serving `a.json`. (`--spec` still wins over a single positional.)
+
+### Shutting down
+
+`SIGINT`/`SIGTERM` starts a graceful shutdown bounded by `shutdownGraceMs`
+(default 5000). Pressing Ctrl-C again during that window does not force an
+exit — the drain is already bounded — but it is acknowledged on stderr once so
+you can tell the signal was received.
+
 ### Multi-file specs and `$ref` policy
 
 The CLI is handed a spec path by whoever runs it, and `$ref` is a file-read and
@@ -141,7 +164,15 @@ Reloads are serialized and the listening socket is never unbound: the new mock
 is built first and then swapped in behind the running server, atomically. An
 invalid intermediate save is reported on stderr and leaves the current mock
 serving; connections opened before a reload stay usable across it, and requests
-already in flight finish against the mock they started on.
+already in flight finish against the mock they started on. The mock a reload
+replaces is retired, so its plugins' `uninstall` hooks run once every request
+admitted against it has finished.
+
+Watching is on the spec's **directory**, not its inode, so an atomic editor
+save — write a temp file, rename it over the spec, which is what vim, JetBrains
+and VS Code do — keeps working, as do all the edits after it. Writes to other
+files in that directory are ignored. A symlinked spec is watched at the link's
+own directory, so saving the link *target* elsewhere is not seen.
 
 `--watch` is also available programmatically as `watch: true` — see
 [Programmatic usage](#programmatic-usage).

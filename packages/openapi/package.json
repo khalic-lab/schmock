@@ -3,11 +3,19 @@
   "description": "OpenAPI/Swagger spec-driven auto-registration plugin for Schmock",
   "version": "2.3.0",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khalic-lab/schmock.git",
+    "directory": "packages/openapi"
+  },
+  "homepage": "https://github.com/khalic-lab/schmock/tree/main/packages/openapi#readme",
+  "bugs": {
+    "url": "https://github.com/khalic-lab/schmock/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "exports": {
     ".": {

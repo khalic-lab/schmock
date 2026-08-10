@@ -3,6 +3,15 @@
   "description": "CLI for running Schmock mock servers from OpenAPI specs",
   "version": "2.3.0",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khalic-lab/schmock.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/khalic-lab/schmock/tree/main/packages/cli#readme",
+  "bugs": {
+    "url": "https://github.com/khalic-lab/schmock/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
@@ -32,6 +41,9 @@
     "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
   "license": "MIT",
+  "engines": {
+    "node": ">=18.11.0"
+  },
   "dependencies": {
     "@schmock/core": "^2.3.0",
     "@schmock/openapi": "^2.3.0"

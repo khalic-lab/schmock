@@ -23,6 +23,13 @@ Feature: Watch Mode
     When the spec file is changed to invalid JSON
     Then the original route remains available after the failed reload
 
+  Scenario: An atomic editor save still triggers a reload
+    Given a temp spec file with one route
+    And a CLI server is started with file watching
+    When the spec file is replaced by an atomic save adding a new route
+    Then the new route responds successfully on the original port
+    And a later in-place edit still triggers a reload
+
   Scenario: The admin token survives a reload
     Given a temp spec file with one route
     And a CLI server is started with file watching and the admin API

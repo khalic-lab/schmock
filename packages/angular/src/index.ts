@@ -146,31 +146,92 @@ function toSupportedHttpMethod(method: string): Schmock.HttpMethod | undefined {
   return undefined;
 }
 
+/**
+ * Canonical reason phrases from the IANA HTTP status code registry.
+ *
+ * The phrasing follows Node's `http.STATUS_CODES`, which is what an app
+ * talking to a real backend through the same code sees. This is a static
+ * table on purpose: the package builds for the browser, so `node:http` is not
+ * available to it — its tests merely happen to run under Bun.
+ */
 const statusTexts: Record<number, string> = {
+  100: "Continue",
+  101: "Switching Protocols",
+  102: "Processing",
+  103: "Early Hints",
   200: "OK",
   201: "Created",
+  202: "Accepted",
+  203: "Non-Authoritative Information",
   204: "No Content",
+  205: "Reset Content",
+  206: "Partial Content",
+  207: "Multi-Status",
+  208: "Already Reported",
+  226: "IM Used",
+  300: "Multiple Choices",
   301: "Moved Permanently",
   302: "Found",
+  303: "See Other",
   304: "Not Modified",
+  305: "Use Proxy",
+  307: "Temporary Redirect",
+  308: "Permanent Redirect",
   400: "Bad Request",
   401: "Unauthorized",
+  402: "Payment Required",
   403: "Forbidden",
   404: "Not Found",
   405: "Method Not Allowed",
+  406: "Not Acceptable",
+  407: "Proxy Authentication Required",
+  408: "Request Timeout",
   409: "Conflict",
+  410: "Gone",
+  411: "Length Required",
+  412: "Precondition Failed",
+  413: "Payload Too Large",
+  414: "URI Too Long",
+  415: "Unsupported Media Type",
+  416: "Range Not Satisfiable",
+  417: "Expectation Failed",
+  418: "I'm a Teapot",
+  421: "Misdirected Request",
   422: "Unprocessable Entity",
+  423: "Locked",
+  424: "Failed Dependency",
+  425: "Too Early",
+  426: "Upgrade Required",
+  428: "Precondition Required",
   429: "Too Many Requests",
+  431: "Request Header Fields Too Large",
+  451: "Unavailable For Legal Reasons",
   500: "Internal Server Error",
+  501: "Not Implemented",
   502: "Bad Gateway",
   503: "Service Unavailable",
+  504: "Gateway Timeout",
+  505: "HTTP Version Not Supported",
+  506: "Variant Also Negotiates",
+  507: "Insufficient Storage",
+  508: "Loop Detected",
+  510: "Not Extended",
+  511: "Network Authentication Required",
 };
 
 /**
- * Get HTTP status text for a status code
+ * Get HTTP status text for a status code.
+ *
+ * A status outside the registry falls back the way Angular's own classes do:
+ * `HttpResponse` defaults to "OK" and `HttpErrorResponse` to "Unknown Error",
+ * and the adapter emits on exactly those channels — 2xx as `HttpResponse`,
+ * everything else as `HttpErrorResponse` — so the fallback follows the status
+ * class.
  */
 function getStatusText(status: number): string {
-  return statusTexts[status] || "Unknown";
+  const text = statusTexts[status];
+  if (text !== undefined) return text;
+  return status >= 200 && status < 300 ? "OK" : "Unknown Error";
 }
 
 /**
@@ -315,7 +376,19 @@ function parseBaseUrl(baseUrl: string): {
 }
 
 /**
- * Convert Angular headers to plain object
+ * Convert Angular headers to plain object.
+ *
+ * A repeated header is combined into one field value with ", " (RFC 9110
+ * field-list combining) rather than reduced to its first value: that is what
+ * `HttpHeaders.get()` would return, and what the other adapters already
+ * deliver — the fetch interceptor reads through `Headers`, which comma-joins
+ * repeats, and Node comma-joins repeated request headers before Express sees
+ * them. `set-cookie` is a response header and never reaches this function, so
+ * the join is safe here.
+ *
+ * Casing is deliberately NOT folded here: it is folded once at the
+ * `mock.handle()` call site so a `transformHeaders` override sees the same
+ * shape Angular gave it.
  */
 function headersToObject(
   request: HttpRequest<unknown>,
@@ -323,9 +396,9 @@ function headersToObject(
   const headers: Record<string, string> = {};
 
   request.headers.keys().forEach((key) => {
-    const value = request.headers.get(key);
-    if (value !== null) {
-      headers[key] = value;
+    const values = request.headers.getAll(key);
+    if (values !== null && values.length > 0) {
+      headers[key] = values.join(", ");
     }
   });
 
