@@ -29,6 +29,12 @@ Feature: Callback/Webhook Mocking
     Then the response status is 201
     And no callback request is dispatched
 
+  Scenario: Callback payload comes from the callback's declared request body
+    Given a mock with a spec defining a callback on POST
+    And an application callback dispatcher is configured
+    When I create a resource with a callback URL
+    Then the dispatched callback body matches the callback request body schema
+
   Scenario: Callback expressions follow JSON Pointer escaping and array indexes
     Given a mock with a spec defining a callback on POST
     And an application callback dispatcher is configured

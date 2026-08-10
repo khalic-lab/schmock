@@ -1,5 +1,6 @@
 import type * as Schmock from "@schmock/core";
 import { isStatusTuple } from "@schmock/core";
+import { generateFromSchema } from "@schmock/faker";
 import type { ParsedCallback } from "./parser.js";
 import { isRecord } from "./utils.js";
 
@@ -14,18 +15,36 @@ export function getRouteCallbacks(
 /**
  * Resolve and deliver callbacks through the application-owned dispatcher.
  * Schmock deliberately performs no network I/O itself.
+ *
+ * The dispatched payload is generated from the callback operation's own
+ * declared request body. Only when the callback declares no request body does
+ * it fall back to the primary endpoint's response body.
  */
 export async function dispatchCallbacks(
   callbacks: ParsedCallback[],
   dispatcher: Schmock.OpenApiCallbackOptions["dispatch"],
   context: Schmock.PluginContext,
   response: unknown,
+  seed?: number,
 ): Promise<void> {
   for (const callback of callbacks) {
     const url = resolveCallbackUrl(callback.urlExpression, context, response);
     if (!url) continue;
 
-    const body = getResponseBody(response);
+    let body: unknown;
+    if (callback.requestBody) {
+      try {
+        body = await generateFromSchema({ schema: callback.requestBody, seed });
+      } catch (error) {
+        console.warn(
+          `[@schmock/openapi] Callback body generation failed for ${callback.method} ${url}:`,
+          error instanceof Error ? error.message : error,
+        );
+        continue;
+      }
+    } else {
+      body = getResponseBody(response);
+    }
 
     try {
       await dispatcher({

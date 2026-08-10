@@ -103,7 +103,10 @@ describe("Incomplete specs: missing structures", () => {
       "GET",
       "/items",
     );
-    expect(res.status).toBe(200);
+    // A schema the generator cannot produce a value from is a spec bug the mock
+    // surfaces, not something it hides behind a declared 200 with an empty body.
+    expect(res.status).toBe(500);
+    expect((res.body as { code: string }).code).toBe("SCHEMA_VALIDATION_ERROR");
   });
 
   it("property with no type", async () => {
@@ -133,10 +136,14 @@ describe("Incomplete specs: missing structures", () => {
       "GET",
       "/items",
     );
-    expect(res.status).toBe(200);
-    expect(res.body).toBeTruthy();
+    // Untyped properties reach faker as empty schemas — same rule as above.
+    expect(res.status).toBe(500);
+    expect((res.body as { code: string }).code).toBe("SCHEMA_VALIDATION_ERROR");
   });
 
+  // The neighbouring "operation with no responses object", "response with no
+  // content/schema" and this case stay at 200: nothing is generated for them,
+  // so the throw introduced here is narrow to actual generation failures.
   it("object with no properties key", async () => {
     const res = await probe(
       spec3({
@@ -183,7 +190,9 @@ describe("Incomplete specs: missing structures", () => {
       "GET",
       "/items",
     );
-    expect(res.status).toBe(200);
+    // faker rejects an array schema with no items definition.
+    expect(res.status).toBe(500);
+    expect((res.body as { code: string }).code).toBe("SCHEMA_VALIDATION_ERROR");
   });
 });
 
@@ -261,7 +270,10 @@ describe("Incomplete specs: composition edge cases", () => {
       "GET",
       "/items",
     );
-    expect(res.status).toBe(200);
+    // No branch to pick, so generation blows up inside faker rather than at its
+    // schema check — SCHEMA_GENERATION_ERROR, still a structured, coded 500.
+    expect(res.status).toBe(500);
+    expect((res.body as { code: string }).code).toBe("SCHEMA_GENERATION_ERROR");
   });
 
   it("allOf with one empty branch", async () => {
@@ -355,7 +367,9 @@ describe("Incomplete specs: composition edge cases", () => {
       "GET",
       "/items",
     );
-    expect(res.status).toBe(200);
+    // An enum with no members has no generatable value.
+    expect(res.status).toBe(500);
+    expect((res.body as { code: string }).code).toBe("SCHEMA_GENERATION_ERROR");
   });
 });
 
@@ -385,8 +399,10 @@ describe("Incomplete specs: type edge cases", () => {
       "GET",
       "/items",
     );
-    // Should not crash — may return empty or 200 with fallback
-    expect(res.status).toBe(200);
+    // Should not crash the process — but an unsupported type is reported as a
+    // coded 500 rather than laundered into a declared 200 with an empty body.
+    expect(res.status).toBe(500);
+    expect((res.body as { code: string }).code).toBe("SCHEMA_VALIDATION_ERROR");
   });
 
   it("property with type as array (OpenAPI 3.1 style)", async () => {
@@ -955,6 +971,69 @@ describe("schemas option", () => {
     );
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("a");
+  });
+
+  it("is visible to a CRUD list route, not only to static routes", async () => {
+    const crudSpec = spec3({
+      "/items": {
+        get: {
+          responses: {
+            "200": {
+              description: "OK",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      results: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: { id: { type: "integer" } },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: { responses: { "201": { description: "Created" } } },
+      },
+      "/items/{itemId}": {
+        get: { responses: { "200": { description: "OK" } } },
+      },
+    });
+
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: crudSpec,
+        schemas: {
+          "GET /items": {
+            type: "object",
+            properties: {
+              rows: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: { id: { type: "integer" } },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    await mock.handle("POST", "/items", { body: { name: "one" } });
+    const res = await mock.handle("GET", "/items");
+    expect(res.status).toBe(200);
+    const body = res.body as Record<string, unknown>;
+    expect(body).toHaveProperty("rows");
+    expect(body.rows).toHaveLength(1);
+    expect(body).not.toHaveProperty("results");
   });
 });
 

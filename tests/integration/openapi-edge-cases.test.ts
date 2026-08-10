@@ -536,17 +536,14 @@ describe("OpenAPI Edge Cases", () => {
     mock.pipe(await openapi({ spec: NULLABLE_ALLOF_SPEC, fakerSeed: 42 }));
 
     const res = await mock.handle("GET", "/items");
-    // nullable wraps allOf in oneOf: [object, null]. When faker picks null,
-    // the builder may return 204 (no content). When it picks the object branch,
-    // it returns 200 with a valid object. Both are acceptable.
-    expect([200, 204]).toContain(res.status);
-    // A nullable schema may legitimately yield no content (null OR undefined):
-    // the null branch can surface as a 200 with an empty body. Use loose `!= null`
-    // so both are skipped. (The branch choice is not seed-stable — see audit 1.4,
-    // the schmockNullable Math.random roll ignores fakerSeed — hence the guard.)
-    if (res.status === 200 && res.body != null) {
-      expect(typeof res.body).toBe("object");
-    }
+    // A composition-only `nullable: true` normalizes to
+    // `anyOf: [{type:"null"}, {allOf:[…]}]` plus the schmockNullable marker.
+    // The generation path strips the union back to the allOf, and the ~5% null
+    // roll is driven by the seeded RNG — so this is deterministic at fakerSeed 42.
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(
+      expect.objectContaining({ name: expect.any(String) }),
+    );
   });
 
   it("nullable string fields use deterministic seeded null decisions", async () => {

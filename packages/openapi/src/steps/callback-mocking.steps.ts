@@ -253,6 +253,52 @@ describeFeature(feature, ({ Scenario }) => {
   );
 
   Scenario(
+    "Callback payload comes from the callback's declared request body",
+    ({ Given, When, Then, And }) => {
+      Given("a mock with a spec defining a callback on POST", () => {
+        mock = schmock({ state: {} });
+        dispatchedRequests = [];
+        fetchSpy = vi.spyOn(globalThis, "fetch");
+      });
+
+      And("an application callback dispatcher is configured", async () => {
+        mock.pipe(
+          await openapi({
+            spec: callbackSpec,
+            callbacks: {
+              dispatch(request) {
+                dispatchedRequests.push(request);
+              },
+            },
+          }),
+        );
+      });
+
+      When("I create a resource with a callback URL", async () => {
+        response = await mock.handle("POST", "/orders", {
+          body: {
+            item: "widget",
+            callbackUrl: "https://callbacks.example.test/order",
+          },
+          headers: { "content-type": "application/json" },
+        });
+      });
+
+      Then(
+        "the dispatched callback body matches the callback request body schema",
+        () => {
+          expect(response.status).toBe(201);
+          expect(dispatchedRequests).toHaveLength(1);
+          const body = dispatchedRequests[0]?.body as Record<string, unknown>;
+          expect(typeof body.status).toBe("string");
+          expect(body).not.toHaveProperty("result");
+          expect(fetchSpy).not.toHaveBeenCalled();
+        },
+      );
+    },
+  );
+
+  Scenario(
     "Callback expressions follow JSON Pointer escaping and array indexes",
     ({ Given, When, Then, And }) => {
       Given("a mock with a spec defining a callback on POST", () => {

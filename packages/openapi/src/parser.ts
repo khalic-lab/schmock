@@ -1,14 +1,21 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
 import type * as Schmock from "@schmock/core";
-import { toHttpMethod } from "@schmock/core";
+import { SchmockError, toHttpMethod } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import type { OpenAPI } from "openapi-types";
 import { normalizeSchema } from "./normalizer.js";
 import {
+  buildRefParserOptions,
+  checkRef,
+  collectUnresolvedRefs,
+  type RefPolicy,
+  resolveRefPolicy,
+} from "./ref-policy.js";
+import {
   parseResponseStatusKey,
   type ResponseStatusKey,
 } from "./response-status.js";
-import { isRecord } from "./utils.js";
+import { isRecord, normalizeMediaType } from "./utils.js";
 
 export interface SecurityScheme {
   type: "apiKey" | "http" | "oauth2" | "openIdConnect";
@@ -23,10 +30,17 @@ export interface SecurityScheme {
 export interface ParsedSpec {
   title: string;
   version: string;
-  basePath: string;
   paths: ParsedPath[];
   securitySchemes?: Map<string, SecurityScheme>;
   globalSecurity?: string[][];
+  /**
+   * Everything the parser skipped rather than failed on, one line each.
+   *
+   * Always collected, never fatal: `strict` decides whether the document is
+   * validated up-front, this decides whether the caller can find out what was
+   * dropped along the way. Surfaced by the plugin under `debug: true`.
+   */
+  warnings: string[];
 }
 
 export interface ParsedResponseEntry {
@@ -39,7 +53,7 @@ export interface ParsedResponseEntry {
   content?: Map<string, ParsedResponseContent>;
 }
 
-interface ParsedResponseContent {
+export interface ParsedResponseContent {
   schema?: JSONSchema7;
   examples?: Map<string, unknown>;
 }
@@ -59,8 +73,17 @@ export interface ParsedPath {
   method: Schmock.HttpMethod;
   operationId?: string;
   parameters: ParsedParameter[];
+  /**
+   * The JSON-ish request schema, kept as the default contract and as the
+   * fallback used when a request carries no `Content-Type`.
+   */
   requestBody?: JSONSchema7;
   requestBodyRequired: boolean;
+  /**
+   * Request schemas keyed by normalized media type. A media type declared
+   * without a schema maps to `undefined`: accepted, but not validated.
+   */
+  requestContent?: Map<string, JSONSchema7 | undefined>;
   responses: Map<ResponseStatusKey, ParsedResponseEntry>;
   tags: string[];
   /** Per-operation security requirements (each entry is OR, keys within are AND) */
@@ -86,8 +109,28 @@ const HTTP_METHOD_KEYS = new Set([
   "options",
 ]);
 
+/** Path-item keys that are legitimately not operations. */
+const NON_METHOD_PATH_ITEM_KEYS = new Set([
+  "parameters",
+  "summary",
+  "description",
+  "servers",
+  "$ref",
+  "trace",
+]);
+
+function isExtensionKey(key: string): boolean {
+  return key.startsWith("x-");
+}
+
 function isOpenApiDocument(value: unknown): value is OpenAPI.Document {
   return isRecord(value) && ("swagger" in value || "openapi" in value);
+}
+
+function getStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const entries = value.filter((v): v is string => typeof v === "string");
+  return entries.length > 0 ? entries : undefined;
 }
 
 function getString(value: unknown): string | undefined {
@@ -120,61 +163,160 @@ function ensurePathsKey(spec: object): void {
   }
 }
 
+export interface ParseSpecOptions {
+  /**
+   * Validate the document against the OpenAPI schema and specification at load
+   * time. Default `false`: incomplete specs are deliberately tolerated.
+   */
+  strict?: boolean;
+  /** External `$ref` resolution policy. External refs are off by default. */
+  refs?: RefPolicy;
+}
+
 /**
- * Parse an OpenAPI/Swagger spec into a normalized internal model.
- * Supports Swagger 2.0, OpenAPI 3.0, and 3.1.
+ * Load, resolve and (optionally) validate a spec into a real document.
+ *
+ * Two things changed here relative to the naive two-call form and both matter:
+ * the parse and the dereference run on ONE parser instance with the source URI
+ * retained, so a relative external `$ref` resolves against the spec's own
+ * directory rather than `process.cwd()`; and every `$ref` leaving the root
+ * document is ruled on by policy BEFORE resolution starts, so a blocked ref is
+ * reported as a policy decision and no file is opened and no request is sent.
  */
-export async function parseSpec(source: string | object): Promise<ParsedSpec> {
-  let api: OpenAPI.Document;
+async function loadDocument(
+  source: string | object,
+  options: ParseSpecOptions,
+): Promise<OpenAPI.Document> {
+  const policy = resolveRefPolicy(options.refs);
+  const refOptions = buildRefParserOptions(options.refs);
+  const strict = options.strict === true;
+  const derefOptions = {
+    ...refOptions,
+    validate: { schema: strict, spec: strict },
+  };
+  const parser = new SwaggerParser();
+
+  let raw: OpenAPI.Document;
+  let baseUrl: string | undefined;
   if (typeof source === "string") {
-    // Parse raw YAML/JSON first (no ref resolution)
-    const raw = await SwaggerParser.parse(source);
-    stripRootExtensions(raw);
-    ensurePathsKey(raw);
-    api = await SwaggerParser.dereference(raw);
+    // Read the root document only — `parse` resolves nothing, which is what
+    // lets the policy rule on its refs before any of them are followed.
+    raw = await parser.parse(source, refOptions);
+    baseUrl = source;
   } else if (isOpenApiDocument(source)) {
-    const copy = structuredClone(source);
-    stripRootExtensions(copy);
-    ensurePathsKey(copy);
-    const hasRefs = JSON.stringify(copy).includes('"$ref"');
-    if (hasRefs) {
-      api = await SwaggerParser.dereference(copy);
-    } else {
-      api = copy as OpenAPI.Document;
-    }
+    raw = structuredClone(source);
   } else {
     throw new Error(
       "Invalid OpenAPI spec: must be a string path or an OpenAPI document object",
     );
   }
 
+  // Order matters: root `x-*` extensions are stripped precisely because they
+  // may carry `$ref`s to things that are not schemas (markdown, changelogs).
+  // Scanning before the strip would reject specs that parse fine today.
+  stripRootExtensions(raw);
+  ensurePathsKey(raw);
+
+  const blocked: string[] = [];
+  for (const ref of collectUnresolvedRefs(raw)) {
+    const verdict = checkRef(ref, policy);
+    if (!verdict.allowed) blocked.push(`${ref} (${verdict.reason})`);
+  }
+  if (blocked.length > 0) throw externalRefBlocked(blocked, source);
+
+  const api = await dereferenceDocument(
+    parser,
+    baseUrl,
+    raw,
+    derefOptions,
+    strict,
+    source,
+  );
+
+  // Defence in depth for refs reached through a nested document: only
+  // reachable once external resolution is on, and skipping the walk otherwise
+  // keeps multi-megabyte specs off a second full traversal.
+  if (policy.external) {
+    const residual = collectUnresolvedRefs(api);
+    if (residual.length > 0) throw externalRefBlocked(residual, source);
+  }
+
+  return api;
+}
+
+async function dereferenceDocument(
+  parser: SwaggerParser,
+  baseUrl: string | undefined,
+  raw: OpenAPI.Document,
+  derefOptions: SwaggerParser.Options,
+  strict: boolean,
+  source: string | object,
+): Promise<OpenAPI.Document> {
+  // Ref-free object sources keep their fast path: no resolver, no clone, no
+  // validator. `browser-compat.test.ts` pins it.
+  const hasRefs =
+    baseUrl !== undefined || JSON.stringify(raw).includes('"$ref"');
+  if (!hasRefs && !strict) return raw;
+
+  try {
+    // `validate()` dereferences first and only then runs the validators, which
+    // are disabled unless strict. The 3-argument form is what retains the
+    // source URI.
+    const validated =
+      baseUrl !== undefined
+        ? await parser.validate(baseUrl, raw, derefOptions)
+        : await parser.validate(raw, derefOptions);
+    return validated as OpenAPI.Document;
+  } catch (error) {
+    if (!strict) throw error;
+    throw new SchmockError(
+      `OpenAPI spec failed validation: ${error instanceof Error ? error.message : String(error)}`,
+      "OPENAPI_INVALID_SPEC",
+      { spec: typeof source === "string" ? source : undefined },
+    );
+  }
+}
+
+function externalRefBlocked(
+  refs: string[],
+  source: string | object,
+): SchmockError {
+  const shown = refs.slice(0, 5).join(", ");
+  const more = refs.length > 5 ? `, and ${refs.length - 5} more` : "";
+  return new SchmockError(
+    `OpenAPI spec contains ${refs.length} external $ref(s) that were not resolved: ${shown}${more}. ` +
+      "Enable them with refs: { external: true } (and refs: { allowHttp: true } for http(s) refs).",
+    "OPENAPI_EXTERNAL_REF_BLOCKED",
+    { refs, spec: typeof source === "string" ? source : undefined },
+  );
+}
+
+/**
+ * Parse an OpenAPI/Swagger spec into a normalized internal model.
+ * Supports Swagger 2.0, OpenAPI 3.0, and 3.1.
+ */
+export async function parseSpec(
+  source: string | object,
+  options: ParseSpecOptions = {},
+): Promise<ParsedSpec> {
+  const api = await loadDocument(source, options);
+  const warnings: string[] = [];
+
   const isSwagger2 = "swagger" in api && typeof api.swagger === "string";
   const title = api.info?.title ?? "Untitled";
   const version = api.info?.version ?? "0.0.0";
 
-  let basePath = "";
-  if (isSwagger2 && "basePath" in api) {
-    const bp = api.basePath;
-    basePath = typeof bp === "string" ? bp : "";
-  } else if (
-    "servers" in api &&
-    Array.isArray(api.servers) &&
-    api.servers.length > 0
-  ) {
-    const firstServer = api.servers[0];
-    if (isRecord(firstServer) && typeof firstServer.url === "string") {
-      try {
-        const url = new URL(firstServer.url, "http://localhost");
-        basePath = url.pathname === "/" ? "" : url.pathname;
-      } catch {
-        basePath = "";
-      }
-    }
-  }
-  // Strip trailing slash from basePath
-  if (basePath.endsWith("/") && basePath !== "/") {
-    basePath = basePath.slice(0, -1);
-  }
+  // Swagger 2.0 `basePath` and OAS3 `servers[].url` pathnames are intentionally
+  // ignored: routes register at the spec's own path templates. Mount the mock
+  // under a prefix with the adapter's `baseUrl` option instead.
+
+  const rootDocument: Record<string, unknown> = isRecord(api) ? api : {};
+  const rootConsumes = isSwagger2
+    ? getStringArray(rootDocument.consumes)
+    : undefined;
+  const rootProduces = isSwagger2
+    ? getStringArray(rootDocument.produces)
+    : undefined;
 
   // Extract security schemes
   const securitySchemes = extractSecuritySchemes(api, isSwagger2);
@@ -188,24 +330,43 @@ export async function parseSpec(source: string | object): Promise<ParsedSpec> {
     "paths" in api && isRecord(api.paths) ? api.paths : undefined;
 
   if (!rawPaths) {
-    return { title, version, basePath, paths, securitySchemes, globalSecurity };
+    return { title, version, paths, securitySchemes, globalSecurity, warnings };
   }
 
   for (const [pathTemplate, pathItemRaw] of Object.entries(rawPaths)) {
-    if (!isRecord(pathItemRaw)) continue;
+    if (!isRecord(pathItemRaw)) {
+      warnings.push(`path ${pathTemplate}: not an object, skipped`);
+      continue;
+    }
     const pathItem = pathItemRaw;
 
     // Extract path-level parameters
     const pathLevelParams = extractParameters(
       Array.isArray(pathItem.parameters) ? pathItem.parameters : undefined,
       isSwagger2,
+      warnings,
+      `path ${pathTemplate}`,
     );
 
     for (const methodKey of Object.keys(pathItem)) {
-      if (!HTTP_METHOD_KEYS.has(methodKey)) continue;
+      if (!HTTP_METHOD_KEYS.has(methodKey)) {
+        if (
+          !NON_METHOD_PATH_ITEM_KEYS.has(methodKey) &&
+          !isExtensionKey(methodKey)
+        ) {
+          warnings.push(
+            `path ${pathTemplate}: "${methodKey}" is not an HTTP method, skipped`,
+          );
+        }
+        continue;
+      }
 
       const operation = pathItem[methodKey];
-      if (!isRecord(operation)) continue;
+      const label = `${methodKey.toUpperCase()} ${pathTemplate}`;
+      if (!isRecord(operation)) {
+        warnings.push(`${label}: operation is not an object, skipped`);
+        continue;
+      }
 
       const method = toHttpMethod(methodKey.toUpperCase());
 
@@ -213,17 +374,24 @@ export async function parseSpec(source: string | object): Promise<ParsedSpec> {
       const operationParams = extractParameters(
         Array.isArray(operation.parameters) ? operation.parameters : undefined,
         isSwagger2,
+        warnings,
+        label,
       );
       const mergedParams = mergeParameters(pathLevelParams, operationParams);
 
       // Extract request body
       let requestBody: JSONSchema7 | undefined;
       let requestBodyRequired = false;
+      let requestContent: Map<string, JSONSchema7 | undefined> | undefined;
       if (isSwagger2) {
         requestBody = extractSwagger2RequestBody(mergedParams);
         requestBodyRequired =
           mergedParams.find((parameter) => parameter.in === "body")?.required ??
           false;
+        requestContent = buildSwagger2RequestContent(
+          getStringArray(operation.consumes) ?? rootConsumes,
+          requestBody,
+        );
       } else {
         const rawRequestBody = isRecord(operation.requestBody)
           ? operation.requestBody
@@ -232,12 +400,16 @@ export async function parseSpec(source: string | object): Promise<ParsedSpec> {
         requestBodyRequired = rawRequestBody
           ? getBoolean(rawRequestBody.required, false)
           : false;
+        requestContent = extractOpenApi3RequestContent(rawRequestBody);
       }
 
       // Extract responses
       const responses = extractResponses(
         isRecord(operation.responses) ? operation.responses : undefined,
         isSwagger2,
+        getStringArray(operation.produces) ?? rootProduces,
+        warnings,
+        label,
       );
 
       // Convert path template: {petId} -> :petId
@@ -268,6 +440,7 @@ export async function parseSpec(source: string | object): Promise<ParsedSpec> {
         parameters: filteredParams,
         requestBody,
         requestBodyRequired,
+        requestContent,
         responses,
         tags,
         security: operationSecurity,
@@ -276,7 +449,7 @@ export async function parseSpec(source: string | object): Promise<ParsedSpec> {
     }
   }
 
-  return { title, version, basePath, paths, securitySchemes, globalSecurity };
+  return { title, version, paths, securitySchemes, globalSecurity, warnings };
 }
 
 interface InternalParameter {
@@ -303,6 +476,8 @@ function isNotBodyParam(param: InternalParameter): param is ParsedParameter {
 function extractParameters(
   params: unknown[] | undefined,
   isSwagger2: boolean,
+  warnings?: string[],
+  label?: string,
 ): InternalParameter[] {
   if (!params || !Array.isArray(params)) return [];
 
@@ -311,6 +486,9 @@ function extractParameters(
     .map((p): InternalParameter | null => {
       const location = getString(p.in);
       if (!location || !isValidParamLocation(location, isSwagger2)) {
+        warnings?.push(
+          `${label}: parameter "${getString(p.name) ?? "?"}" has unsupported location "${location ?? "(none)"}", skipped`,
+        );
         return null;
       }
 
@@ -337,7 +515,10 @@ function extractParameters(
       }
 
       const name = getString(p.name);
-      if (!name) return null;
+      if (!name) {
+        warnings?.push(`${label}: parameter without a name, skipped`);
+        return null;
+      }
 
       return {
         name,
@@ -393,19 +574,79 @@ function extractOpenApi3RequestBody(
   return normalizeSchema(schema, "request");
 }
 
+/**
+ * Every declared request media type with its own schema.
+ *
+ * Distinct from {@link extractOpenApi3RequestBody}, which collapses the whole
+ * `content` map to one JSON-ish schema — the reason a JSON+XML operation used
+ * to validate an XML body against the JSON contract. Each media type gets its
+ * own `normalizeSchema` call, so the resulting schemas are distinct objects and
+ * each compiles once in the pipeline's validator cache.
+ */
+function extractOpenApi3RequestContent(
+  requestBody: Record<string, unknown> | undefined,
+): Map<string, JSONSchema7 | undefined> | undefined {
+  const content = isRecord(requestBody?.content)
+    ? requestBody.content
+    : undefined;
+  if (!content) return undefined;
+
+  const result = new Map<string, JSONSchema7 | undefined>();
+  for (const [mediaType, entry] of Object.entries(content)) {
+    const schema =
+      isRecord(entry) && isRecord(entry.schema)
+        ? normalizeSchema(entry.schema, "request")
+        : undefined;
+    result.set(normalizeMediaType(mediaType), schema);
+  }
+
+  return result.size > 0 ? result : undefined;
+}
+
+/**
+ * Swagger 2.0 has one body parameter and a list of media types it may arrive
+ * as, so every declared type maps to that same schema. No `consumes` means no
+ * declared surface at all: stay lenient and never answer 415.
+ */
+function buildSwagger2RequestContent(
+  consumes: string[] | undefined,
+  requestBody: JSONSchema7 | undefined,
+): Map<string, JSONSchema7 | undefined> | undefined {
+  if (!consumes || consumes.length === 0) return undefined;
+
+  const result = new Map<string, JSONSchema7 | undefined>();
+  for (const mediaType of consumes) {
+    result.set(normalizeMediaType(mediaType), requestBody);
+  }
+  return result.size > 0 ? result : undefined;
+}
+
 function extractResponses(
   responses: Record<string, unknown> | undefined,
   isSwagger2: boolean,
+  produces?: string[],
+  warnings?: string[],
+  label?: string,
 ): Map<ResponseStatusKey, ParsedResponseEntry> {
   const result = new Map<ResponseStatusKey, ParsedResponseEntry>();
 
   if (!responses) return result;
 
   for (const [statusCode, response] of Object.entries(responses)) {
-    if (!isRecord(response)) continue;
+    if (!isRecord(response)) {
+      warnings?.push(
+        `${label}: response "${statusCode}" is not an object, skipped`,
+      );
+      continue;
+    }
 
     const code = parseResponseStatusKey(statusCode);
-    if (code === undefined) continue;
+    if (code === undefined) {
+      warnings?.push(
+        `${label}: response status key "${statusCode}" is not recognized, skipped`,
+      );
+      continue;
+    }
 
     const description = getString(response.description) ?? "";
 
@@ -424,6 +665,13 @@ function extractResponses(
         for (const [key, value] of Object.entries(response.examples)) {
           examples.set(key, value);
         }
+      }
+      // `produces` gives Swagger 2.0 the media types negotiation needs.
+      // Deliberately NOT a `content` map: `validateResponse` treats a populated
+      // `content` as the authoritative per-media-type contract, and Swagger 2.0
+      // declares exactly one schema for all of them.
+      if (produces && produces.length > 0) {
+        contentTypes = produces.map(normalizeMediaType);
       }
     } else {
       const content = isRecord(response.content) ? response.content : undefined;

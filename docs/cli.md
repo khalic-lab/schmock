@@ -34,7 +34,32 @@ schmock <spec> [options]
 | `--errors` | Enable request validation | `false` |
 | `--watch` | Watch spec file for changes | `false` |
 | `--admin` | Enable admin API endpoints | `false` |
+| `--strict` | Validate the spec against the OpenAPI schema at startup | `false` |
+| `--refs-external` | Resolve `$ref`s outside the spec document | `false` |
+| `--refs-allow-http <hosts>` | Also resolve http(s) `$ref`s, limited to this comma-separated host list | — |
 | `-h, --help` | Show help | — |
+
+### Multi-file specs and `$ref` policy
+
+The CLI is handed a spec path by whoever runs it, and `$ref` is a file-read and
+network primitive, so nothing outside the root document resolves by default. A
+spec split across files needs `--refs-external`; relative refs then resolve
+against the spec file's own directory.
+
+```sh
+schmock ./api/openapi.yaml --refs-external
+schmock ./api/openapi.yaml --refs-external --refs-allow-http schemas.example.com
+```
+
+`--refs-allow-http` requires `--refs-external`; on its own it is a no-op. Passing
+it with an empty list allows any public host. Loopback, link-local and private
+addresses are always refused. Fetched refs use a 5s timeout, refuse redirects and
+are capped at 1 MB; those limits are not flags — use the plugin's `refs` option
+programmatically to change them.
+
+`--strict` rejects a spec that fails OpenAPI schema validation instead of
+skipping the parts that do not parse. It is off by default because it is both
+stricter and noticeably slower on large specs.
 
 ## Examples
 
@@ -55,6 +80,29 @@ Create a `seed.json`:
 ```sh
 schmock api.yaml --seed seed.json --port 8080
 ```
+
+#### Manifest rules
+
+Each entry must be an array, a file path, or `{ "count": <number> }`. Anything
+else — a bare number, a `{ "count": "20" }` string — is **rejected loudly**;
+earlier versions dropped unrecognised entries in silence and started a server
+whose collections were unexpectedly empty.
+
+File-path entries resolve **relative to the manifest**, not to the process
+working directory, and may not escape the manifest's directory. Both sides are
+resolved through symlinks first, so `"../pets.json"`, `"/etc/passwd"`, and a
+symlink planted inside the directory that points outside it are all refused
+with `Seed entry "…" must stay inside the seed manifest directory`.
+
+Because entry paths are resolved when the manifest is read, a typo'd path now
+fails at startup with `Seed entry "…" points to a missing file` rather than
+later, from inside seed loading.
+
+The manifest itself is capped at 1 MiB (`MAX_SEED_MANIFEST_BYTES`), each
+referenced seed file at 5 MiB, and each resource at 10 000 items; a breach
+raises `RESOURCE_LIMIT_ERROR` before the server starts. Malformed JSON is
+reported as `Seed file "…" contains invalid JSON` instead of a raw
+`SyntaxError`.
 
 ### CORS for frontend development
 

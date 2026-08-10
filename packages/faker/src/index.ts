@@ -14,7 +14,7 @@ import {
 } from "./jsf-config.js";
 import { applyOverrides, determineArrayCount } from "./overrides.js";
 import { enhanceSchemaWithSmartMapping } from "./schema-enhancement.js";
-import { isJSONSchema7, validateSchema } from "./validation.js";
+import { hasType, isJSONSchema7, validateSchema } from "./validation.js";
 
 export type SchemaGenerationContext = Schmock.SchemaGenerationContext;
 
@@ -87,7 +87,7 @@ export async function generateFromSchema(
 
   // Resolve the top-level array size once, then let JSF generate the complete
   // array so tuple positions, uniqueness, and a seeded sequence are preserved.
-  if (schema.type === "array" && schema.items) {
+  if (hasType(schema, "array") && schema.items) {
     const itemCount = determineArrayCount(schema, count, random);
 
     if (itemCount > MAX_ARRAY_SIZE) {

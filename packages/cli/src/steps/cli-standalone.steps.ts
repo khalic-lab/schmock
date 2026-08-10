@@ -1,4 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { connect, createServer as createPortReservation } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -195,13 +201,22 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     return `http://${server.hostname}:${server.port}`;
   }
 
+  function makeTempDir(directoryPrefix: string): string {
+    // realpath so a manifest under the macOS /tmp → /private/tmp symlink is not
+    // read as escaping its own directory.
+    const directory = realpathSync(
+      mkdtempSync(join(tmpdir(), directoryPrefix)),
+    );
+    tempDirs.add(directory);
+    return directory;
+  }
+
   function writeTempFile(
     directoryPrefix: string,
     filename: string,
     content: string,
   ): string {
-    const directory = mkdtempSync(join(tmpdir(), directoryPrefix));
-    tempDirs.add(directory);
+    const directory = makeTempDir(directoryPrefix);
     const path = join(directory, filename);
     writeFileSync(path, content);
     return path;
@@ -464,6 +479,62 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     });
   });
 
+  Scenario(
+    "Strict mode rejects a spec that only parses leniently",
+    ({ Given, When, Then, And }) => {
+      Given("I have an incomplete but parseable spec file", () => {
+        // A path parameter with no `schema` — valid enough for the tolerant
+        // default path, rejected by the OpenAPI schema itself.
+        specPath = writeTempFile(
+          "schmock-lenient-",
+          "lenient.json",
+          JSON.stringify({
+            openapi: "3.0.3",
+            info: { title: "Lenient", version: "1.0.0" },
+            paths: {
+              "/items/{itemId}": {
+                get: {
+                  parameters: [{ name: "itemId", in: "path", required: true }],
+                  responses: { "200": { description: "OK" } },
+                },
+              },
+            },
+          }),
+        );
+      });
+
+      When(
+        "I create a CLI server from that spec with strict mode",
+        async () => {
+          try {
+            cliServer = await createCliServer({
+              spec: specPath,
+              port: 0,
+              strict: true,
+            });
+            thrownError = undefined;
+          } catch (error) {
+            thrownError =
+              error instanceof Error ? error : new Error(String(error));
+          }
+        },
+      );
+
+      Then("the CLI error should contain {string}", (_, message: string) => {
+        expect(requireThrownError().message).toContain(message);
+      });
+
+      And("the same spec starts a CLI server without strict mode", async () => {
+        cliServer = await createCliServer({ spec: specPath, port: 0 });
+        expect(requireServer().server.listening).toBe(true);
+      });
+
+      When("I stop the CLI server", async () => {
+        await stopServerThroughPublicApi();
+      });
+    },
+  );
+
   Scenario("Reject unsupported HTTP methods", ({ Given, When, Then, And }) => {
     Given("I have a running CLI petstore server", async () => {
       specPath = resolve(fixturesDir, "petstore-openapi3.json");
@@ -630,6 +701,132 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
           expect(requireRawHttpResponse().body).toContain(`"code":"${code}"`);
         },
       );
+    },
+  );
+
+  Scenario(
+    "Seed manifest resolves file entries relative to the manifest",
+    ({ Given, When, And, Then }) => {
+      Given("I have a petstore spec file", () => {
+        specPath = resolve(fixturesDir, "petstore-openapi3.json");
+      });
+
+      And(
+        "I have a seed manifest whose entry points at a sibling data file",
+        () => {
+          const directory = makeTempDir("schmock-seed-manifest-");
+          writeFileSync(
+            join(directory, "pets.json"),
+            JSON.stringify([{ id: 1, name: "Buddy", tag: "dog" }]),
+          );
+          seedPath = join(directory, "seed.json");
+          // Relative to the manifest, not to the process CWD.
+          writeFileSync(seedPath, JSON.stringify({ pets: "./pets.json" }));
+        },
+      );
+
+      When("I create a CLI server with seed data", async () => {
+        cliServer = await createCliServer({
+          spec: specPath,
+          port: 0,
+          seed: seedPath,
+        });
+      });
+
+      And("I fetch {string} from the CLI server", async (_, route: string) => {
+        const [, path] = route.split(" ");
+        httpResponse = await fetch(`${baseUrl()}${path}`);
+      });
+
+      Then("the CLI response status should be {int}", (_, status: number) => {
+        expect(requireHttpResponse().status).toBe(status);
+      });
+
+      And("the CLI response body should contain the seeded pet", async () => {
+        const body: unknown = await requireHttpResponse().json();
+        if (!Array.isArray(body)) {
+          throw new Error("Expected CLI response body to be an array");
+        }
+        expect(body.some((pet) => isRecord(pet) && pet.name === "Buddy")).toBe(
+          true,
+        );
+      });
+
+      When("I stop the CLI server", async () => {
+        await stopServerThroughPublicApi();
+      });
+    },
+  );
+
+  Scenario(
+    "Seed manifest rejects an entry outside its directory",
+    ({ Given, When, And, Then }) => {
+      Given("I have a petstore spec file", () => {
+        specPath = resolve(fixturesDir, "petstore-openapi3.json");
+      });
+
+      And("I have a seed manifest whose entry escapes its directory", () => {
+        const directory = makeTempDir("schmock-seed-escape-");
+        writeFileSync(join(directory, "pets.json"), "[]");
+        const manifestDirectory = join(directory, "manifest");
+        mkdirSync(manifestDirectory);
+        seedPath = join(manifestDirectory, "seed.json");
+        writeFileSync(seedPath, JSON.stringify({ pets: "../pets.json" }));
+      });
+
+      When("I create a CLI server with that seed manifest", async () => {
+        try {
+          cliServer = await createCliServer({
+            spec: specPath,
+            port: 0,
+            seed: seedPath,
+          });
+          thrownError = undefined;
+        } catch (error) {
+          thrownError =
+            error instanceof Error ? error : new Error(String(error));
+        }
+      });
+
+      Then("the CLI error should contain {string}", (_, message: string) => {
+        expect(requireThrownError().message).toContain(message);
+      });
+    },
+  );
+
+  Scenario(
+    "Seed manifest rejects an invalid entry shape",
+    ({ Given, When, And, Then }) => {
+      Given("I have a petstore spec file", () => {
+        specPath = resolve(fixturesDir, "petstore-openapi3.json");
+      });
+
+      And("I have a seed manifest with a numeric entry", () => {
+        // Previously dropped in silence, leaving an unexpectedly empty mock.
+        seedPath = writeTempFile(
+          "schmock-seed-shape-",
+          "seed.json",
+          JSON.stringify({ pets: 42 }),
+        );
+      });
+
+      When("I create a CLI server with that seed manifest", async () => {
+        try {
+          cliServer = await createCliServer({
+            spec: specPath,
+            port: 0,
+            seed: seedPath,
+          });
+          thrownError = undefined;
+        } catch (error) {
+          thrownError =
+            error instanceof Error ? error : new Error(String(error));
+        }
+      });
+
+      Then("the CLI error should contain {string}", (_, message: string) => {
+        expect(requireThrownError().message).toContain(message);
+      });
     },
   );
 });

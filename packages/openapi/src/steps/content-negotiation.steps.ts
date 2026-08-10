@@ -164,6 +164,70 @@ const negotiatedErrorCrudSpec = {
   },
 };
 
+const requestMediaTypeSpec = {
+  openapi: "3.0.3",
+  info: { title: "Request media types", version: "1.0.0" },
+  paths: {
+    "/typed-items": {
+      get: {
+        responses: {
+          "200": {
+            description: "List",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: { itemId: { type: "integer" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["name"],
+                properties: { name: { type: "string" } },
+              },
+            },
+            "application/xml": {
+              schema: {
+                type: "object",
+                required: ["label"],
+                properties: { label: { type: "string" } },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    itemId: { type: "integer" },
+                    name: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -262,6 +326,72 @@ describeFeature(feature, ({ Scenario }) => {
 
       Then("the response status is 406", () => {
         expect(response.status).toBe(406);
+      });
+    },
+  );
+
+  Scenario(
+    "Unsupported request content type returns 415",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a validating mock with a spec declaring JSON and XML request bodies",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: requestMediaTypeSpec,
+              validateRequests: true,
+            }),
+          );
+        },
+      );
+
+      When('I post an item with Content-Type "text/csv"', async () => {
+        response = await mock.handle("POST", "/typed-items", {
+          body: { name: "csv" },
+          headers: { "content-type": "text/csv" },
+        });
+      });
+
+      Then("the request response status is {number}", (_, status: number) => {
+        expect(response.status).toBe(status);
+      });
+
+      And('the error body has a "supported" array', () => {
+        expect(isRecord(response.body)).toBe(true);
+        if (!isRecord(response.body)) return;
+        expect(response.body.code).toBe("UNSUPPORTED_MEDIA_TYPE");
+        expect(response.body.supported).toEqual(
+          expect.arrayContaining(["application/json", "application/xml"]),
+        );
+      });
+    },
+  );
+
+  Scenario(
+    "Missing request content type falls back to the JSON schema",
+    ({ Given, When, Then }) => {
+      Given(
+        "a validating mock with a spec declaring JSON and XML request bodies",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: requestMediaTypeSpec,
+              validateRequests: true,
+            }),
+          );
+        },
+      );
+
+      When("I post an item with no Content-Type header", async () => {
+        response = await mock.handle("POST", "/typed-items", {
+          body: { name: "untyped" },
+        });
+      });
+
+      Then("the request response status is {number}", (_, status: number) => {
+        expect(response.status).toBe(status);
       });
     },
   );

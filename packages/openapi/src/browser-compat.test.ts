@@ -263,6 +263,8 @@ describe("browser compatibility fixes", () => {
             basePath: "/items",
             itemPath: "/items/:id",
             idParam: "id",
+            idProperty: "id",
+            idKind: "integer",
             operations: ["list"],
           },
         ]),
@@ -421,7 +423,9 @@ describe("browser compatibility fixes", () => {
       });
       expect(created.status).toBe(201);
       expect(created.body).toHaveProperty("name", "Sprocket");
-      const id = (created.body as any).widgetId;
+      // The item schema declares `id`, not the path parameter's `widgetId`,
+      // so the stored identifier property is `id`.
+      const id = (created.body as any).id;
 
       // Read
       const read = await mock.handle("GET", `/widgets/${id}`);

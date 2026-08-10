@@ -53,6 +53,13 @@ Feature: CLI Standalone Server
     When I create a CLI server from the invalid spec
     Then the CLI error should contain "not a valid Openapi API definition"
 
+  Scenario: Strict mode rejects a spec that only parses leniently
+    Given I have an incomplete but parseable spec file
+    When I create a CLI server from that spec with strict mode
+    Then the CLI error should contain "OpenAPI spec failed validation"
+    And the same spec starts a CLI server without strict mode
+    When I stop the CLI server
+
   Scenario: Reject unsupported HTTP methods
     Given I have a running CLI petstore server
     When I send a raw CLI request with method "PROPFIND" target "/pets" and host "localhost"
@@ -85,3 +92,24 @@ Feature: CLI Standalone Server
     When I send a raw CLI request with malformed JSON
     Then the raw CLI response status should be 400
     And the raw CLI response body should contain code "MALFORMED_JSON"
+
+  Scenario: Seed manifest resolves file entries relative to the manifest
+    Given I have a petstore spec file
+    And I have a seed manifest whose entry points at a sibling data file
+    When I create a CLI server with seed data
+    And I fetch "GET /pets" from the CLI server
+    Then the CLI response status should be 200
+    And the CLI response body should contain the seeded pet
+    When I stop the CLI server
+
+  Scenario: Seed manifest rejects an entry outside its directory
+    Given I have a petstore spec file
+    And I have a seed manifest whose entry escapes its directory
+    When I create a CLI server with that seed manifest
+    Then the CLI error should contain "must stay inside"
+
+  Scenario: Seed manifest rejects an invalid entry shape
+    Given I have a petstore spec file
+    And I have a seed manifest with a numeric entry
+    When I create a CLI server with that seed manifest
+    Then the CLI error should contain "must be an array, a file path"

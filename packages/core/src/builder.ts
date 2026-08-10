@@ -1124,6 +1124,7 @@ export class CallableMockInstance {
           headers: pluginContext.headers,
           body: pluginContext.body,
           state: pluginContext.routeState ?? requestState,
+          pluginState: pluginContext.state,
           signal,
         };
 

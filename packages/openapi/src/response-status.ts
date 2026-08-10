@@ -87,3 +87,30 @@ export function findSuccessResponse<T>(
 
   return undefined;
 }
+
+/**
+ * The status a mock answers an operation with.
+ *
+ * The spec-declared success status when one exists, otherwise the lowest
+ * declared status — so an operation declaring only `404` and `503` answers
+ * `404` from the `404` schema rather than inventing an undeclared `200 {}`.
+ *
+ * The minimum is taken in a single pass over *effective* numeric values, so a
+ * range key beats a higher numeric one: `{"4XX", 503}` resolves to 400, not 503.
+ */
+export function findRepresentativeResponse<T>(
+  responses: Map<ResponseStatusKey, T>,
+): [status: number, entry: T] | undefined {
+  const success = findSuccessResponse(responses);
+  if (success) return success;
+
+  let lowest: [status: number, entry: T] | undefined;
+  for (const [key, entry] of responses) {
+    // "default" is already consumed by findSuccessResponse; reaching here means
+    // the map has none.
+    if (key === "default") continue;
+    const status = typeof key === "number" ? key : Number(key[0]) * 100;
+    if (!lowest || status < lowest[0]) lowest = [status, entry];
+  }
+  return lowest;
+}

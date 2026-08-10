@@ -45,6 +45,13 @@ Feature: OpenAPI Response Compliance
     And the response has header "X-Request-ID"
     And the response has header "X-Pagination-Total"
 
+  Scenario: Response headers from spec definitions on a non-CRUD route
+    Given a mock with a spec whose non-CRUD GET declares response headers
+    When I check service health
+    Then the response status is 200
+    And the response has header "X-Request-ID"
+    And the response has header "X-Rate-Limit"
+
   Scenario: Manual override forces wrapping on a flat-array spec
     Given a mock with the Petstore spec and listWrapProperty "items" override
     When I list all pets
@@ -63,3 +70,17 @@ Feature: OpenAPI Response Compliance
     Then the response status is 404
     And the error body has a "message" property
     And the error body has a "statusCode" property
+
+  Scenario: Operation declaring no 2xx response answers with its lowest declared status
+    Given a mock with a spec whose only responses are 404 and 503
+    When I check the archive endpoint
+    Then the response status is 404
+    And the body was generated from the 404 schema
+    And the response has header "X-Error-Code"
+
+  Scenario: Response schema generation failure returns a structured 500
+    Given a mock with a spec whose response schema cannot be generated
+    When I check the broken endpoint
+    Then the response status is 500
+    And the error body has a non-empty "code"
+    And the error body message names the route

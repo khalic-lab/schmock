@@ -1,5 +1,6 @@
 /// <reference path="../../core/schmock.d.ts" />
 
+import { ResourceLimitError } from "@schmock/core";
 import { describe, expect, it } from "vitest";
 import { negotiateContentType } from "./content-negotiation.js";
 import type { CrudResource } from "./crud-detector.js";
@@ -11,6 +12,7 @@ import {
   createUpdateGenerator,
   findArrayProperty,
 } from "./generators.js";
+import { MAX_SEED_ITEMS_PER_RESOURCE, MAX_SEED_ITEMS_TOTAL } from "./limits.js";
 import {
   processContentNegotiation,
   processPreferHeader,
@@ -28,7 +30,10 @@ function makeResource(overrides?: Partial<CrudResource>): CrudResource {
     basePath: "/pets",
     itemPath: "/pets/:petId",
     idParam: "petId",
+    idProperty: "petId",
+    idKind: "integer",
     operations: ["list", "create", "read", "update", "delete"],
+    routes: [],
     schema: {
       type: "object",
       properties: {
@@ -80,7 +85,7 @@ describe("generators edge cases", () => {
     it("returns empty array when collection state is empty", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [],
+        "openapi:collections:/pets": [],
       };
 
       const list = createListGenerator(resource);
@@ -102,7 +107,7 @@ describe("generators edge cases", () => {
     it("returns 404 when collection has items but none match the requested ID", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [
+        "openapi:collections:/pets": [
           { petId: 1, name: "Buddy" },
           { petId: 2, name: "Max" },
         ],
@@ -124,7 +129,7 @@ describe("generators edge cases", () => {
     it("returns 404 when deleting an item that does not exist", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [{ petId: 1, name: "Buddy" }],
+        "openapi:collections:/pets": [{ petId: 1, name: "Buddy" }],
       };
 
       const del = createDeleteGenerator(resource);
@@ -146,7 +151,7 @@ describe("generators edge cases", () => {
         { petId: 2, name: "B" },
       ];
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": items,
+        "openapi:collections:/pets": items,
       };
 
       const del = createDeleteGenerator(resource);
@@ -159,7 +164,7 @@ describe("generators edge cases", () => {
         }),
       );
 
-      const collection = state["openapi:collections:pets"] as unknown[];
+      const collection = state["openapi:collections:/pets"] as unknown[];
       expect(collection).toHaveLength(2);
     });
   });
@@ -168,8 +173,8 @@ describe("generators edge cases", () => {
     it("works with non-object body by using empty object as merge source", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [{ petId: 1, name: "Buddy" }],
-        "openapi:counter:pets": 1,
+        "openapi:collections:/pets": [{ petId: 1, name: "Buddy" }],
+        "openapi:counter:/pets": 1,
       };
 
       const update = createUpdateGenerator(resource);
@@ -190,7 +195,7 @@ describe("generators edge cases", () => {
     it("works with null body", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [{ petId: 1, name: "Buddy" }],
+        "openapi:collections:/pets": [{ petId: 1, name: "Buddy" }],
       };
 
       const update = createUpdateGenerator(resource);
@@ -210,7 +215,7 @@ describe("generators edge cases", () => {
     it("works with undefined body", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [{ petId: 1, name: "Buddy" }],
+        "openapi:collections:/pets": [{ petId: 1, name: "Buddy" }],
       };
 
       const update = createUpdateGenerator(resource);
@@ -232,8 +237,8 @@ describe("generators edge cases", () => {
     it("auto-increments IDs sequentially across creates", async () => {
       const resource = makeResource();
       const state: Record<string, unknown> = {
-        "openapi:collections:pets": [],
-        "openapi:counter:pets": 0,
+        "openapi:collections:/pets": [],
+        "openapi:counter:/pets": 0,
       };
 
       const create = createCreateGenerator(resource);
@@ -251,7 +256,7 @@ describe("generators edge cases", () => {
       expect(r1).toEqual([201, { name: "A", petId: 1 }]);
       expect(r2).toEqual([201, { name: "B", petId: 2 }]);
       expect(r3).toEqual([201, { name: "C", petId: 3 }]);
-      expect(state["openapi:counter:pets"]).toBe(3);
+      expect(state["openapi:counter:/pets"]).toBe(3);
     });
 
     it("starts from 1 when counter state is not initialised", async () => {
@@ -703,6 +708,21 @@ describe("request-pipeline edge cases", () => {
       const result = processContentNegotiation(context, 200);
       expect(result).toBeUndefined();
     });
+
+    it("skips negotiation for a declared entry that has no content", () => {
+      // A 404-only operation now preflights at status 404, and a bare
+      // `404: { description }` declares no media types at all. Negotiation must
+      // fall through rather than 406 the route out of existence.
+      const context = makePluginContext({
+        headers: { accept: "application/json" },
+        route: {
+          "openapi:responses": new Map([[404, { description: "Not found" }]]),
+        },
+      });
+
+      const result = processContentNegotiation(context, 404);
+      expect(result).toBeUndefined();
+    });
   });
 });
 
@@ -754,6 +774,57 @@ describe("seed edge cases", () => {
       await expect(loadSeed(config, resources)).rejects.toThrow(
         /non-negative integer/,
       );
+    });
+  });
+
+  describe("loadSeed item budgets", () => {
+    it("rejects a generated count above the per-resource budget", async () => {
+      const resources: CrudResource[] = [makeResource()];
+      const config = {
+        pets: { count: MAX_SEED_ITEMS_PER_RESOURCE + 1 },
+      };
+
+      // Rejected before a single item is generated, not after 10_001 awaits.
+      await expect(loadSeed(config, resources)).rejects.toThrow(
+        ResourceLimitError,
+      );
+      await expect(loadSeed(config, resources)).rejects.toThrow(
+        /seed items for "pets"/,
+      );
+    });
+
+    it("rejects an inline array above the per-resource budget", async () => {
+      const resources: CrudResource[] = [makeResource()];
+      const oversized = Array.from(
+        { length: MAX_SEED_ITEMS_PER_RESOURCE + 1 },
+        (_, index) => ({ petId: index + 1, name: "x" }),
+      );
+
+      await expect(loadSeed({ pets: oversized }, resources)).rejects.toThrow(
+        ResourceLimitError,
+      );
+    });
+
+    it("rejects resources that individually fit but together exceed the total", async () => {
+      const perResource = MAX_SEED_ITEMS_PER_RESOURCE;
+      const resourceCount = Math.floor(MAX_SEED_ITEMS_TOTAL / perResource) + 1;
+      const config: Record<string, unknown[]> = {};
+      const resources: CrudResource[] = [];
+      for (let index = 0; index < resourceCount; index++) {
+        const name = `res${index}`;
+        config[name] = Array.from({ length: perResource }, () => ({}));
+        resources.push(makeResource({ name, basePath: `/${name}` }));
+      }
+
+      await expect(loadSeed(config, resources)).rejects.toThrow(
+        /seed items \(all resources\)/,
+      );
+    });
+
+    it("still accepts a small count", async () => {
+      const resources: CrudResource[] = [makeResource()];
+      const result = await loadSeed({ pets: { count: 3 } }, resources);
+      expect(result.get("pets")).toHaveLength(3);
     });
   });
 });

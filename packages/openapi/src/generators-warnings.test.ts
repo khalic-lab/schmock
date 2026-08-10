@@ -1,13 +1,21 @@
 /// <reference path="../../core/schmock.d.ts" />
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  ResourceLimitError,
+  SchemaGenerationError,
+  type SchmockError,
+} from "@schmock/core";
+import { generateFromSchema } from "@schmock/faker";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createStaticGenerator } from "./generators.js";
 import type { ParsedPath } from "./parser.js";
 
 // Mock @schmock/faker to force schema generation failures
 vi.mock("@schmock/faker", () => ({
-  generateFromSchema: vi.fn().mockRejectedValue(new Error("Schema too deep")),
+  generateFromSchema: vi.fn(),
 }));
+
+const generateFromSchemaMock = vi.mocked(generateFromSchema);
 
 function makeParsedPath(overrides: Partial<ParsedPath> = {}): ParsedPath {
   return {
@@ -28,58 +36,79 @@ function makeParsedPath(overrides: Partial<ParsedPath> = {}): ParsedPath {
   };
 }
 
-describe("generators — schema failure warnings", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
+function makeContext(
+  overrides: Partial<Schmock.RequestContext> = {},
+): Schmock.RequestContext {
+  return {
+    path: "/test",
+    method: "GET",
+    params: {},
+    query: {},
+    headers: {},
+    state: {},
+    ...overrides,
+  } as Schmock.RequestContext;
+}
+
+describe("generators — schema failure semantics", () => {
+  beforeEach(() => {
+    generateFromSchemaMock.mockReset();
   });
 
-  it("logs a warning when static route schema generation fails", async () => {
+  it("throws a coded SchemaGenerationError naming the route", async () => {
+    generateFromSchemaMock.mockRejectedValue(new Error("Schema too deep"));
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const generator = createStaticGenerator(makeParsedPath());
-    const result = await generator({
-      path: "/test",
-      method: "GET",
-      params: {},
-      query: {},
-      headers: {},
-      state: {},
-    } as Schmock.RequestContext);
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Schema generation failed for GET /test"),
-      "Schema too deep",
+    // A laundered `[200, {}]` used to hide a broken contract behind a declared
+    // success. Core renders this throw as a structured 500 instead.
+    await expect(generator(makeContext())).rejects.toThrow(
+      SchemaGenerationError,
     );
+    await expect(generator(makeContext())).rejects.toThrow(
+      /Schema generation failed for route GET \/test/,
+    );
+    expect(warnSpy).not.toHaveBeenCalled();
 
-    // Falls back to a tuple [status, {}] so the spec-declared status (200 here,
-    // since the parsedPath has only a 200 response) is preserved through
-    // parseResponse — returning raw {} would let parseResponse think it was a
-    // schmock fallback and *not* flip its 200→204 conversion for null bodies,
-    // but tuple form is the established contract for spec-driven generators.
-    expect(result).toEqual([200, {}]);
+    warnSpy.mockRestore();
   });
 
-  it("returns empty object as fallback but does not swallow silently", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("carries the SCHEMA_GENERATION_ERROR code and the original cause", async () => {
+    const cause = new Error("Schema too deep");
+    generateFromSchemaMock.mockRejectedValue(cause);
 
     const generator = createStaticGenerator(
-      makeParsedPath({
-        path: "/users",
-        method: "POST",
-      }),
+      makeParsedPath({ path: "/users", method: "POST" }),
     );
 
-    await generator({
-      path: "/users",
-      method: "POST",
-      params: {},
-      query: {},
-      headers: {},
-      state: {},
-    } as Schmock.RequestContext);
+    const error = await generator(
+      makeContext({ path: "/users", method: "POST" }),
+    ).then(
+      () => undefined,
+      (thrown: unknown) => thrown,
+    );
 
-    // The key assertion: console.warn was called (not silently swallowed)
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toContain("[@schmock/openapi]");
+    expect(error).toBeInstanceOf(SchemaGenerationError);
+    expect((error as SchmockError).code).toBe("SCHEMA_GENERATION_ERROR");
+    expect((error as Error).message).toContain("POST /users");
+    expect((error as Error).message).toContain("Schema too deep");
+  });
+
+  it("rethrows a SchmockError from faker with its own code intact", async () => {
+    generateFromSchemaMock.mockRejectedValue(
+      new ResourceLimitError("schema_nesting_depth", 10, 11),
+    );
+
+    const generator = createStaticGenerator(makeParsedPath());
+
+    const error = await generator(makeContext()).then(
+      () => undefined,
+      (thrown: unknown) => thrown,
+    );
+
+    // Wrapping it would launder RESOURCE_LIMIT_ERROR into a generic code.
+    expect(error).toBeInstanceOf(ResourceLimitError);
+    expect((error as SchmockError).code).toBe("RESOURCE_LIMIT_ERROR");
   });
 });

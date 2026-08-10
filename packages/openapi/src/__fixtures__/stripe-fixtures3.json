@@ -466,10 +466,7 @@
       "default_return_url": null,
       "features": {
         "customer_update": {
-          "allowed_updates": [
-            "email",
-            "tax_id"
-          ],
+          "allowed_updates": ["email", "tax_id"],
           "enabled": true
         },
         "invoice_history": {
@@ -908,9 +905,7 @@
         "parent": null
       },
       "payment_method_options": {},
-      "payment_method_types": [
-        "card"
-      ],
+      "payment_method_types": ["card"],
       "payment_status": "unpaid",
       "phone_number_collection": {
         "enabled": false
@@ -923,9 +918,7 @@
       },
       "setup_intent": null,
       "shipping_address_collection": {
-        "allowed_countries": [
-          "SC"
-        ]
+        "allowed_countries": ["SC"]
       },
       "shipping_cost": {
         "amount_subtotal": 1555417355,
@@ -1171,9 +1164,7 @@
           "last4": "6789",
           "networks": {
             "preferred": "ach",
-            "supported": [
-              "ach"
-            ]
+            "supported": ["ach"]
           },
           "routing_number": "110000000",
           "status_details": {}
@@ -1202,21 +1193,10 @@
       "id": "US",
       "object": "country_spec",
       "supported_bank_account_currencies": {
-        "usd": [
-          "US"
-        ]
+        "usd": ["US"]
       },
-      "supported_payment_currencies": [
-        "...",
-        "aed",
-        "afn",
-        "usd"
-      ],
-      "supported_payment_methods": [
-        "ach",
-        "card",
-        "stripe"
-      ],
+      "supported_payment_currencies": ["...", "aed", "afn", "usd"],
+      "supported_payment_methods": ["ach", "card", "stripe"],
       "supported_transfer_countries": [
         "AE",
         "AG",
@@ -1706,9 +1686,7 @@
         "payment_element": {
           "enabled": false,
           "features": {
-            "payment_method_allow_redisplay_filters": [
-              "unspecified"
-            ],
+            "payment_method_allow_redisplay_filters": ["unspecified"],
             "payment_method_redisplay": "disabled",
             "payment_method_redisplay_limit": null,
             "payment_method_remove": "enabled",
@@ -1944,9 +1922,7 @@
       },
       "reason": "general",
       "status": "warning_needs_response",
-      "enhanced_eligibility_types": [
-        "visa_compelling_evidence_3"
-      ]
+      "enhanced_eligibility_types": ["visa_compelling_evidence_3"]
     },
     "entitlements.active_entitlement": {
       "feature": "feat_test_61QGU1MWyFMSP9YBZ41ClCIKljWvsTgu",
@@ -2170,9 +2146,7 @@
       "status": "active",
       "subcategory": "checking",
       "subscriptions": [],
-      "supported_payment_method_types": [
-        "us_bank_account"
-      ],
+      "supported_payment_method_types": ["us_bank_account"],
       "transaction_refresh": {
         "id": "obj_123",
         "last_attempted_at": 1981828143,
@@ -2206,10 +2180,7 @@
       "id": "fcsess_1Pgc76B7WZ01zgkWnYmFk7mZ",
       "livemode": false,
       "object": "financial_connections.session",
-      "permissions": [
-        "balances",
-        "payment_method"
-      ],
+      "permissions": ["balances", "payment_method"],
       "prefetch": []
     },
     "financial_connections.transaction": {
@@ -2271,10 +2242,7 @@
         "country": "US",
         "financial_addresses": [
           {
-            "supported_networks": [
-              "ach",
-              "domestic_wire_us"
-            ],
+            "supported_networks": ["ach", "domestic_wire_us"],
             "type": "aba"
           }
         ],
@@ -2451,9 +2419,7 @@
                 "proration_details": {
                   "credited_items": {
                     "invoice": "invoice",
-                    "invoice_line_items": [
-                      "invoice_line_items"
-                    ]
+                    "invoice_line_items": ["invoice_line_items"]
                   }
                 },
                 "subscription": null
@@ -2464,9 +2430,7 @@
                 "proration_details": {
                   "credited_items": {
                     "invoice": "invoice",
-                    "invoice_line_items": [
-                      "invoice_line_items"
-                    ]
+                    "invoice_line_items": ["invoice_line_items"]
                   }
                 },
                 "subscription": "subscription",
@@ -2647,9 +2611,7 @@
           "name": "Jenny Rosen",
           "object": "issuing.cardholder",
           "phone_number": "+18008675309",
-          "preferred_locales": [
-            "en"
-          ],
+          "preferred_locales": ["en"],
           "requirements": {
             "disabled_reason": null,
             "past_due": []
@@ -2871,9 +2833,7 @@
         "name": "Jenny Rosen",
         "object": "issuing.cardholder",
         "phone_number": "+18008675309",
-        "preferred_locales": [
-          "en"
-        ],
+        "preferred_locales": ["en"],
         "requirements": {
           "disabled_reason": null,
           "past_due": []
@@ -3001,9 +2961,7 @@
       "name": "Jenny Rosen",
       "object": "issuing.cardholder",
       "phone_number": "+18008675309",
-      "preferred_locales": [
-        "en"
-      ],
+      "preferred_locales": ["en"],
       "requirements": {
         "disabled_reason": null,
         "past_due": []
@@ -3227,9 +3185,7 @@
           "proration_details": {
             "credited_items": {
               "invoice": "invoice",
-              "invoice_line_items": [
-                "invoice_line_items"
-              ]
+              "invoice_line_items": ["invoice_line_items"]
             }
           },
           "subscription": null
@@ -3240,9 +3196,7 @@
           "proration_details": {
             "credited_items": {
               "invoice": "invoice",
-              "invoice_line_items": [
-                "invoice_line_items"
-              ]
+              "invoice_line_items": ["invoice_line_items"]
             }
           },
           "subscription": "subscription",
@@ -3324,9 +3278,7 @@
         "parent": null
       },
       "payment_method_options": {},
-      "payment_method_types": [
-        "card"
-      ],
+      "payment_method_types": ["card"],
       "processing": {
         "type": "card"
       },
@@ -3437,9 +3389,7 @@
         }
       },
       "shipping_address_collection": {
-        "allowed_countries": [
-          "SC"
-        ]
+        "allowed_countries": ["SC"]
       },
       "shipping_options": [],
       "submit_type": "auto",
@@ -3511,9 +3461,7 @@
         },
         "last4": "4242",
         "networks": {
-          "available": [
-            "visa"
-          ],
+          "available": ["visa"],
           "preferred": null
         },
         "three_d_secure_usage": {
@@ -4322,12 +4270,7 @@
     "reporting.report_type": {
       "data_available_end": 1234567890,
       "data_available_start": 1234567890,
-      "default_columns": [
-        "category",
-        "currency",
-        "description",
-        "net_amount"
-      ],
+      "default_columns": ["category", "currency", "description", "net_amount"],
       "id": "balance.summary.1",
       "livemode": true,
       "name": "Balance summary",
@@ -4467,9 +4410,7 @@
         "parent": null
       },
       "payment_method_options": {},
-      "payment_method_types": [
-        "card"
-      ],
+      "payment_method_types": ["card"],
       "single_use_mandate": null,
       "status": "requires_payment_method",
       "usage": "off_session",
@@ -5571,10 +5512,7 @@
             "bank_name": "STRIPE TEST BANK",
             "routing_number": "0000000001"
           },
-          "supported_networks": [
-            "ach",
-            "us_domestic_wire"
-          ],
+          "supported_networks": ["ach", "us_domestic_wire"],
           "type": "aba"
         }
       ],
@@ -5587,14 +5525,10 @@
       "status": "open",
       "status_details": {
         "closed": {
-          "reasons": [
-            "closed_by_platform"
-          ]
+          "reasons": ["closed_by_platform"]
         }
       },
-      "supported_currencies": [
-        "usd"
-      ]
+      "supported_currencies": ["usd"]
     },
     "treasury.financial_account_features": {
       "card_issuing": {
@@ -5990,10 +5924,7 @@
       "application": null,
       "created": 1234567890,
       "description": "This is my webhook, I like it a lot",
-      "enabled_events": [
-        "charge.failed",
-        "charge.succeeded"
-      ],
+      "enabled_events": ["charge.failed", "charge.succeeded"],
       "id": "we_1Pgc6yB7WZ01zgkWzAudq4eU",
       "livemode": false,
       "metadata": {},
