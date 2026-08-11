@@ -85,9 +85,35 @@ toExpress(mock, {
 })
 ```
 
+### Hook-owned responses
+
+A hook that sends — or begins sending — the response and returns normally owns
+it. Once `res.headersSent` or `res.writableEnded` is true, the middleware stops:
+it does not call the mock, does not run `errorFormatter`, and does not fall
+through to `next()`.
+
+```typescript
+toExpress(mock, {
+  beforeRequest: (req, res) => {
+    if (!req.headers.authorization) {
+      res.status(401).json({ error: 'unauthorized' })
+      return // the mock never runs for this request
+    }
+  },
+})
+```
+
+A hook that returns normally while owning the response is responsible for
+ending it; the middleware will not end it on the hook's behalf. A throw changes
+the ownership rule. If the response is already committed, the middleware never
+runs `errorFormatter` or writes another body. With `passErrorsToNext: true`, it
+immediately forwards the original error to Express error middleware. With
+`passErrorsToNext: false`, it immediately ends the response without appending a
+body if the response is still open.
+
 ### `errorFormatter`
 
-Custom error response format:
+Custom internal-error response format:
 
 ```typescript
 toExpress(mock, {
@@ -96,6 +122,30 @@ toExpress(mock, {
   }),
 })
 ```
+
+The formatter receives core-marked internal exceptions and errors thrown by
+adapter hooks or request handling before the Express response is committed. It
+does not reinterpret an ordinary user-defined 500 route response.
+
+Exception provenance is captured before `beforeResponse` runs, so a hook that
+clones the response with `{ ...response }` does not suppress the formatter.
+The formatted response keeps the (post-hook) response headers — `retry-after`
+and friends survive — with `content-type` forced to `application/json`. A
+post-hook header that cannot be transported (a non-string value, a control
+character in the value, or a case-duplicate name) is dropped rather than
+discarding the formatted body. If
+`beforeResponse` rewrites an exception to a non-500 status, that response is
+sent as-is and the formatter is not called.
+
+## Response Behavior
+
+- Final statuses must be integers from 200 through 599.
+- HEAD, 204, 205, and 304 responses are sent without a body.
+- Ordinary response framing headers are adapter-owned. HEAD may retain an
+  explicit representation `Content-Length`, and 304 headers are preserved.
+- If the client disconnects, pending adapter-hook awaits settle early and core
+  plugins, delays, and route generators receive an aborted signal. Adapter
+  hooks do not receive the signal directly, and no response is written.
 
 ## OpenAPI with Express
 

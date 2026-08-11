@@ -22,7 +22,45 @@ app.use(schmockPlugin, { mock })
 app.mount('#app')
 ```
 
-`schmockPlugin` patches `globalThis.fetch` when the plugin is installed and restores it when the app unmounts. Any `fetch()` call — whether from your code, pinia actions, or any HTTP library — is intercepted automatically.
+`schmockPlugin` patches `globalThis.fetch` in the browser when the plugin is installed and restores it when the app unmounts. Calls from your code, Pinia actions, or other clients are intercepted only when they use `globalThis.fetch`; clients using another transport are not intercepted.
+
+Calling `mock.reset()` while the app is mounted clears routes, state, history,
+plugins, and listeners but preserves the Vue plugin's explicit interception
+lease. Re-register routes on the same mock without reinstalling the plugin.
+
+### Releasing interception
+
+Unmounting the app releases its lease. For an app that never reaches an
+unmount — one that is never mounted, or whose `mount()` throws — release it
+explicitly:
+
+```typescript
+import { restoreSchmockInterception } from '@schmock/vue'
+
+const app = createApp(App)
+app.use(schmockPlugin, { mock })
+
+// ...never mounted, or torn down some other way
+restoreSchmockInterception(app)
+```
+
+`restoreSchmockInterception(app)` is idempotent and safe for an app that never
+intercepted. A `mount()` that throws releases the lease before rethrowing, so a
+failed startup does not leave `globalThis.fetch` patched.
+
+Several apps may share one mock: each `app.use(schmockPlugin, { mock })` takes
+its own lease, and the newest one is consulted first. A manual
+`mock.intercept()` stacks the same way, and `globalThis.fetch` is restored only
+once the last lease of any kind is released.
+
+### Server-side rendering
+
+With no `document` — SSR, or any server render — the plugin does **not** patch
+`globalThis.fetch`. A server's `fetch` is shared by every concurrent request, so
+patching it would leak one render's mock into another's. `app.provide` still
+runs, so `useSchmock()` works during SSR; only fetch interception is skipped.
+Mock your data layer directly on the server, or intercept at the transport your
+server actually uses.
 
 ## Options
 
@@ -58,6 +96,29 @@ When `true` (default), requests that don't match any Schmock route are forwarded
 ### `baseUrl`
 
 Only intercept requests whose pathname starts with this string. Non-matching requests go straight to real `fetch` without being processed.
+
+### `errorFormatter`
+
+`errorFormatter(error)` formats core-marked internal exceptions — an error
+thrown by a route generator or a plugin — and errors thrown by the
+`beforeRequest`/`beforeResponse` hooks, matching the Express and Angular
+adapters. It does not reinterpret an ordinary user-defined 500 route response
+such as `[500, { error: 'domain failure' }]`.
+
+On the core-marked exception path, provenance is captured before
+`beforeResponse` runs, so a hook that clones the response with
+`{ ...response }` does not suppress the formatter. The post-hook status gates
+the replacement: a `beforeResponse` that rewrites an exception into a `503` (or
+a `200`) is honoured and the formatter is not invoked. That response keeps the
+post-hook response headers — `retry-after` and friends survive — with
+`content-type` forced to `application/json`, and a formatter that throws, or
+that returns a body which cannot be serialized, yields
+`{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }` without being
+invoked a second time.
+
+A hook that *throws* is handled separately: that response inherits no headers
+beyond `content-type: application/json`, and a formatter that throws while
+handling it propagates, rejecting the `fetch` call.
 
 ## `useSchmock` Composable
 
@@ -108,10 +169,10 @@ describe('UserList', () => {
 
   beforeEach(() => {
     mock = schmock()
-    mock('GET /api/users', [{ id: 1, name: 'Alice' }])
   })
 
   it('renders users', async () => {
+    mock('GET /api/users', [{ id: 1, name: 'Alice' }])
     const wrapper = mount(UserList, {
       global: { plugins: [[schmockPlugin, { mock }]] },
     })

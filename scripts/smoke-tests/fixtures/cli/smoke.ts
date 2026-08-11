@@ -1,5 +1,5 @@
-import { createCliServer } from "@schmock/cli";
 import { resolve } from "node:path";
+import { createCliServer } from "@schmock/cli";
 
 const server = await createCliServer({
   spec: resolve(import.meta.dirname, "spec.yaml"),
@@ -14,9 +14,10 @@ try {
   if (res.status !== 200) throw new Error("Status: " + res.status);
 
   const body = await res.json();
-  if (typeof body !== "object") throw new Error("Body not object: " + typeof body);
+  if (typeof body !== "object")
+    throw new Error("Body not object: " + typeof body);
 
   console.log("@schmock/cli: all checks passed");
 } finally {
-  server.close();
+  await server.close();
 }

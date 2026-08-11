@@ -3,16 +3,36 @@ Feature: Watch Mode
   I want the CLI server to reload when the spec file changes
   So that I can iterate on my API spec without restarting
 
-  Scenario: Server reloads with new routes after spec change
+  Scenario: Watching enabled through createCliServer reloads on a spec change
     Given a temp spec file with one route
-    And a CLI server is started
+    And a CLI server is started with file watching
     When the spec file is updated to include a new route
-    And the server is reloaded
-    Then the reloaded server is listening
-    And the new route responds successfully
+    Then the new route responds successfully on the original port
 
-  Scenario: Reload preserves the port
+  Scenario: A reload keeps the listening socket bound
     Given a temp spec file with one route
-    And a CLI server is started on a random port
-    When the server is reloaded
-    Then the port number is the same as before
+    And a CLI server is started with file watching
+    And a client keeps a connection open to the CLI server
+    When the spec file is updated to include a new route
+    Then the new route responds successfully on the original port
+    And the connection opened before the reload still serves requests
+
+  Scenario: Invalid spec changes keep the current server online
+    Given a temp spec file with one route
+    And a CLI server is started with file watching
+    When the spec file is changed to invalid JSON
+    Then the original route remains available after the failed reload
+
+  Scenario: An atomic editor save still triggers a reload
+    Given a temp spec file with one route
+    And a CLI server is started with file watching
+    When the spec file is replaced by an atomic save adding a new route
+    Then the new route responds successfully on the original port
+    And a later in-place edit still triggers a reload
+
+  Scenario: The admin token survives a reload
+    Given a temp spec file with one route
+    And a CLI server is started with file watching and the admin API
+    When the spec file is updated to include a new route
+    Then the new route responds successfully on the original port
+    And the admin API still accepts the token issued at startup

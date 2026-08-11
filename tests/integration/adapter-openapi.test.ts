@@ -48,9 +48,9 @@ describe("Express + OpenAPI Integration", () => {
     const single = await request(app).get(`/pets/${petId}`).expect(200);
     expect(single.body).toHaveProperty("name", "Buddy");
 
-    // PATCH update
+    // PUT update (petstore-openapi3 declares only put on /pets/{petId})
     await request(app)
-      .patch(`/pets/${petId}`)
+      .put(`/pets/${petId}`)
       .send({ name: "Buddy Jr" })
       .expect(200);
 

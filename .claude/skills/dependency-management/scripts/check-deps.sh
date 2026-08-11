@@ -25,7 +25,7 @@ check_publish() {
 
 check_audit() {
   echo "━━━ Security Audit ━━━"
-  npm audit 2>&1 || true
+  bun audit 2>&1 || true
   echo ""
 }
 

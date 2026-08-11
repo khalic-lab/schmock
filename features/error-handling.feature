@@ -42,6 +42,13 @@ Feature: Error Handling
     And the response should contain error "Generator failed"
     And the response should have error code "INTERNAL_ERROR"
 
+  Scenario: Generator throwing a non-Error value keeps the thrown value
+    Given I create a mock with a generator that throws the raw string "boom-string"
+    When I request "GET /raw-throw"
+    Then I should receive status 500
+    And the response should contain error "boom-string"
+    And the response should have error code "INTERNAL_ERROR"
+
   Scenario: Namespace mismatch returns 404
     Given I create a mock with namespace "/api/v1" and a GET /users route
     When I request "GET /users"
@@ -60,6 +67,12 @@ Feature: Error Handling
     Then I should receive status 500
     And the response should contain error 'Plugin "broken-handler" failed'
 
+  Scenario: Downstream error handler recovers an earlier plugin failure
+    Given I create a failing plugin followed by a recovery plugin
+    When I request "GET /downstream-recovery"
+    Then I should receive status 503
+    And the response should have error code "RECOVERED_DOWNSTREAM"
+
   Scenario: Empty parameter in route returns 404
     Given I create a mock with a parameterized route "GET /users/:id"
     When I request "GET /users/"
@@ -77,13 +90,13 @@ Feature: Error Handling
     When I request "GET /error"
     Then I should receive status 500
     And the content-type should be "application/json"
-    And the response body should be valid JSON
+    And the response body should be a structured "INTERNAL_ERROR" error for "Test error"
 
-  Scenario: Plugin onError returns response with status 0
+  Scenario: Invalid plugin recovery status returns a structured error
     Given I create a mock with a plugin whose error handler returns status 0
     When I request "GET /zero"
-    Then I should receive status 0
-    And I should receive text "zero status"
+    Then I should receive status 500
+    And the response should have error code "INVALID_RESPONSE"
 
   Scenario: Plugin null/undefined return handling
     Given I create a mock with a plugin that returns null

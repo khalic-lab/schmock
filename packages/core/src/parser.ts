@@ -1,4 +1,4 @@
-import { toHttpMethod } from "./constants.js";
+import { canonicalizePath, normalizePath, toHttpMethod } from "./constants.js";
 import { RouteParseError } from "./errors.js";
 import type { HttpMethod } from "./types.js";
 
@@ -21,8 +21,13 @@ export interface ParsedRoute {
  * // => { method: 'GET', path: '/users/:id', pattern: /^\/users\/([^/]+)$/, params: ['id'] }
  */
 export function parseRouteKey(routeKey: string): ParsedRoute {
+  // The path group must start with "/": every transport (server, interceptor,
+  // adapters) delivers a leading-slash pathname, so a slash-less key such as
+  // "GET users" compiles a route no request can ever reach. `.*` is kept
+  // deliberately — hostile-but-reachable segments (spaces, tabs, unicode) must
+  // still parse.
   const match = routeKey.match(
-    /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) (.+)$/,
+    /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) (\/.*)$/,
   );
 
   if (!match) {
@@ -32,7 +37,12 @@ export function parseRouteKey(routeKey: string): ParsedRoute {
     );
   }
 
-  const [, method, path] = match;
+  const [, method, rawPath] = match;
+
+  // Canonicalize once, here, so `path`, `pattern`, the duplicate check, the
+  // static-route Map key and getRoutes() all agree on one spelling: the
+  // percent-encoded transport form with a single trailing slash stripped.
+  const path = normalizePath(canonicalizePath(rawPath));
 
   // Parameter names are restricted to [A-Za-z0-9_-] so that surrounding
   // literals (".json", brackets, parens, etc.) terminate the name and can

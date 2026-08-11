@@ -69,8 +69,7 @@ import { validationPlugin } from '@schmock/validation'
 beforeEach(() => {
   mock = schmock()
 
-  mock('POST /users', ({ body }) => [201, body])
-    .pipe(validationPlugin({
+  mock.pipe(validationPlugin({
       request: {
         body: {
           type: 'object',
@@ -82,6 +81,7 @@ beforeEach(() => {
         },
       },
     }))
+  mock('POST /users', ({ body }) => [201, body])
 })
 
 it('rejects invalid request bodies', async () => {
@@ -192,9 +192,8 @@ describe('Express integration', () => {
 ```typescript
 import { TestBed } from '@angular/core/testing'
 import { HttpClient, provideHttpClient, withInterceptorsFromDi } from '@angular/common/http'
-import { HTTP_INTERCEPTORS } from '@angular/common/http'
 import { schmock } from '@schmock/core'
-import { createSchmockInterceptor } from '@schmock/angular'
+import { provideSchmockInterceptor } from '@schmock/angular'
 
 describe('UserService', () => {
   let http: HttpClient
@@ -202,16 +201,13 @@ describe('UserService', () => {
 
   beforeEach(() => {
     mock = schmock()
-    mock('GET /api/users', [{ id: 1, name: 'Alice' }])
+    // Register the route WITHOUT the baseUrl prefix — see the note below.
+    mock('GET /users', [{ id: 1, name: 'Alice' }])
 
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(withInterceptorsFromDi()),
-        {
-          provide: HTTP_INTERCEPTORS,
-          useClass: createSchmockInterceptor(mock, { baseUrl: '/api' }),
-          multi: true,
-        },
+        provideSchmockInterceptor(mock, { baseUrl: '/api' }),
       ],
     })
 
@@ -227,6 +223,17 @@ describe('UserService', () => {
   })
 })
 ```
+
+Two things differ from the other adapters:
+
+- The Angular adapter's `baseUrl` both filters requests **and strips** the
+  prefix before route lookup, so `/api/users` is matched against the route
+  `GET /users`. (Core's `mock.intercept()` filters without stripping — routes
+  there keep the prefix.)
+- Use `provideSchmockInterceptor`, not a hand-written
+  `{ provide: HTTP_INTERCEPTORS, useClass: ... }` entry. The interceptor class
+  is built at runtime, so `useClass` fails with NG0204 ("needs JIT compiler")
+  in AOT builds; the helper provides it with `useFactory` instead.
 
 ### OpenAPI-driven Angular tests
 
@@ -331,3 +338,40 @@ describe('paginated list', () => {
 - Use `fakerSeed` in OpenAPI tests for deterministic data
 - Use `mock.listen(0)` when you need a real HTTP server — port 0 picks a random available port
 - Use `mock.history()` to verify the exact requests your code made, not just the responses
+
+## Repository Quality Gates
+
+Run the complete local verification matrix before submitting a change:
+
+```bash
+bun run test:all
+bun run test:e2e
+bun run lint
+bun run eslint
+bun run knip
+bun run build
+```
+
+BDD step definitions are also compiled under the repository's strict TypeScript
+configuration. Run that gate alone while editing scenarios or steps:
+
+```bash
+bun run typecheck:bdd
+```
+
+The root `typecheck` and CI typecheck jobs include this BDD gate automatically.
+
+Package manifests, exports, build output, or release changes also require the
+packed release-candidate gate:
+
+```bash
+bun run check:publish
+```
+
+It first runs `check:manifests` (publish shape per package: `files`, `license`,
+`repository`, `homepage`, `bugs`, `engines`, README, and script symmetry), then
+verifies clean/repeated build equality and stale-artifact removal, packs all
+11 workspaces, runs Node and Bun consumers, compiles 12 strict standalone
+declaration entries, compiles packed Core declarations with TypeScript 5.6,
+checks React root/testing context identity, exercises the CLI and browser
+bundle, and runs `publint` plus `attw`.

@@ -1,0 +1,49 @@
+{
+  "name": "@schmock/{{PACKAGE_NAME}}",
+  "version": "{{PACKAGE_VERSION}}",
+  "description": "{{DESCRIPTION}}",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist && rm -f tsconfig.tsbuildinfo",
+    "build": "bun run clean && bun run build:lib && bun run build:types",
+    "build:lib": "bun build --minify --target {{TARGET}} --outdir=dist src/index.ts --external @schmock/core",
+    "build:types": "tsc -p tsconfig.json",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "test:bdd": "vitest run --config vitest.config.bdd.ts",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write --unsafe src/",
+    "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@amiceli/vitest-cucumber": "{{CUCUMBER_VERSION}}",
+    "typescript": "{{TYPESCRIPT_VERSION}}",
+    "vitest": "{{VITEST_VERSION}}"
+  },
+  "peerDependencies": {
+    "@schmock/core": "^{{CORE_VERSION}}"
+  },
+  "keywords": [
+    "schmock",
+    "mock",
+    "api",
+    "{{PACKAGE_NAME}}",
+    "testing",
+    "development"
+  ],
+  "author": "Khalic Lab",
+  "license": "MIT"
+}

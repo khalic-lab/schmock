@@ -5,6 +5,84 @@
 
 declare namespace Schmock {
   type JSONSchema7 = import("json-schema").JSONSchema7;
+
+  /**
+   * A `Schema` or the boolean shorthand, wherever draft-07 allows a subschema.
+   */
+  type SchemaDefinition = Schema | boolean;
+
+  /**
+   * JSON Schema draft-07 plus the keywords Schmock's own tooling understands,
+   * applied recursively so nested subschemas accept them too.
+   *
+   * `JSONSchema7` rejects these keywords in an object literal, which is why
+   * schemas carrying them otherwise need a cast at every level that uses one.
+   * A `Schema` is assignable to `JSONSchema7`, so it can be handed to
+   * `fakerPlugin`, `validationPlugin` or any other schema-typed option.
+   *
+   * Only `@schmock/*` packages know these keywords. `@schmock/validation`
+   * registers them on its own Ajv instance; a strict Ajv of your own throws
+   * `strict mode: unknown keyword` until you do the same.
+   *
+   * @example
+   * ```typescript
+   * const schema: Schmock.Schema = {
+   *   type: 'object',
+   *   properties: {
+   *     name: { type: 'string', faker: 'person.fullName' },
+   *     nickname: { type: ['string', 'null'], schmockNullable: true },
+   *     active: { type: 'boolean', schmockTrueProbability: 0.8 },
+   *   },
+   * }
+   * ```
+   */
+  interface Schema
+    extends Omit<
+      JSONSchema7,
+      | "properties"
+      | "patternProperties"
+      | "additionalProperties"
+      | "items"
+      | "additionalItems"
+      | "contains"
+      | "propertyNames"
+      | "allOf"
+      | "anyOf"
+      | "oneOf"
+      | "not"
+      | "if"
+      | "then"
+      | "else"
+      | "$defs"
+      | "definitions"
+      | "dependencies"
+    > {
+    /** json-schema-faker method path, e.g. `"person.fullName"`. */
+    faker?: string | Record<string, unknown>;
+    /** Marks a null-permitting field: ~5% of generated values are `null`. */
+    schmockNullable?: boolean;
+    /** Probability (0–1) that a generated boolean is `true`. */
+    schmockTrueProbability?: number;
+
+    properties?: Record<string, SchemaDefinition>;
+    patternProperties?: Record<string, SchemaDefinition>;
+    additionalProperties?: SchemaDefinition;
+    items?: SchemaDefinition | SchemaDefinition[];
+    additionalItems?: SchemaDefinition;
+    contains?: SchemaDefinition;
+    propertyNames?: SchemaDefinition;
+    allOf?: SchemaDefinition[];
+    anyOf?: SchemaDefinition[];
+    oneOf?: SchemaDefinition[];
+    not?: SchemaDefinition;
+    if?: SchemaDefinition;
+    then?: SchemaDefinition;
+    else?: SchemaDefinition;
+    $defs?: Record<string, SchemaDefinition>;
+    definitions?: Record<string, SchemaDefinition>;
+    dependencies?: Record<string, SchemaDefinition | string[]>;
+  }
+
   /**
    * HTTP methods supported by Schmock
    */
@@ -20,13 +98,18 @@ declare namespace Schmock {
   /**
    * Route key format: 'METHOD /path'
    *
+   * The path must start with '/': transports always deliver a leading-slash
+   * pathname, so a slash-less key would register a route no request can reach.
+   * `parseRouteKey` rejects it at runtime; the template type surfaces the same
+   * mistake at compile time.
+   *
    * @example
    * 'GET /users'
    * 'POST /users/:id'
    * 'DELETE /api/posts/:postId/comments/:commentId'
    */
-  type RouteKey = `${HttpMethod} ${string}`;
-  
+  type RouteKey = `${HttpMethod} /${string}`;
+
   /**
    * Plugin interface for extending Schmock functionality
    */
@@ -38,10 +121,27 @@ declare namespace Schmock {
 
     /**
      * Called once when the plugin is added via .pipe()
-     * Use this to register routes or configure the instance at setup time
-     * @param instance - The callable mock instance
+     * Route registrations are committed atomically only when this hook returns
+     * synchronously. The scoped instance must not be retained or used later.
+     * Returning a Promise is unsupported and leaves the plugin inactive.
+     * @param instance - A synchronous, installation-scoped callable instance
      */
     install?(instance: CallableMockInstance): void;
+
+    /**
+     * Called during reset after every request admitted with this plugin settles.
+     * Cleanup runs in reverse registration order and must complete synchronously.
+     */
+    uninstall?(instance: CallableMockInstance): void;
+
+    /**
+     * Inspect or transform a request before its route generator executes.
+     * Returning a response short-circuits the generator, while returning only
+     * a context allows request changes to flow into the generator.
+     */
+    beforeRequest?(
+      context: PluginContext,
+    ): PluginResult | void | Promise<PluginResult | void>;
 
     /**
      * Process the request through this plugin
@@ -50,16 +150,22 @@ declare namespace Schmock {
      * @param response - Response from previous plugin (if any)
      * @returns Updated context and response
      */
-    process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>;
+    process(
+      context: PluginContext,
+      response?: unknown,
+    ): PluginResult | Promise<PluginResult>;
 
     /**
-     * Called when an error occurs
-     * Can handle, transform, or suppress errors
+     * Called when this plugin or an earlier pipeline stage fails. If this hook
+     * does not recover, downstream handlers are tried in registration order.
      * @param error - The error that occurred
      * @param context - Plugin context
      * @returns Modified error, response data, or void to continue error propagation
      */
-    onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
+    onError?(
+      error: Error,
+      context: PluginContext,
+    ): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
   }
 
   /**
@@ -97,8 +203,12 @@ declare namespace Schmock {
     body?: unknown;
     /** Shared state between plugins for this request */
     state: Map<string, unknown>;
+    /** True when a beforeRequest hook supplied the response instead of the route generator. */
+    requestShortCircuited?: boolean;
     /** Route-specific state */
     routeState?: Record<string, unknown>;
+    /** Abort signal associated with the admitted request */
+    readonly signal?: AbortSignal;
   }
 
   // ===== Callable API Types =====
@@ -118,6 +228,10 @@ declare namespace Schmock {
     /**
      * Maximum number of requests retained in history (FIFO eviction).
      * Defaults to unbounded; set this to cap memory growth in long-running servers.
+     *
+     * Must be a non-negative integer — `0` disables history entirely, and any
+     * other value (negative, fractional, NaN, Infinity) is rejected with a
+     * `SchmockError` (`INVALID_CONFIG`) when the mock is created.
      */
     maxHistorySize?: number;
   }
@@ -134,8 +248,10 @@ declare namespace Schmock {
      * Extension point for plugin-specific metadata.
      *
      * Intentionally open: `@schmock/openapi` stores "openapi:*" keys here
-     * (e.g. `"openapi:operationId"`, `"openapi:tags"`), and third-party plugins
-     * may do the same. Removing this signature would be a breaking change.
+     * (e.g. `"openapi:operationId"`, `"openapi:tags"`, `"openapi:owner"`,
+     * `"openapi:requestContent"`), and
+     * third-party plugins may do the same. Removing this signature would be a
+     * breaking change.
      *
      * **Known tradeoff:** typos in known keys (e.g. `{ contenType: "…" }`) compile
      * silently. Prefer using the explicitly typed properties above when possible.
@@ -144,22 +260,40 @@ declare namespace Schmock {
   }
 
   /**
-   * Generator types that can be passed to route definitions
+   * Generator types that can be passed to route definitions.
+   *
+   * Core dispatches on exactly two shapes: a function is called per request,
+   * and anything else is returned verbatim as static data. There is no
+   * schema-generation arm — a JSON Schema handed to a route is serialized back
+   * to the client as a literal schema document. Schema-driven responses come
+   * from a plugin: `.pipe(fakerPlugin({ schema }))`.
    */
-  type Generator = 
-    | GeneratorFunction
-    | StaticData
-    | JSONSchema7;
+  type Generator = GeneratorFunction | StaticData;
 
   /**
    * Function that generates responses
    */
-  type GeneratorFunction = (context: RequestContext) => ResponseResult | Promise<ResponseResult>;
+  type GeneratorFunction = (
+    context: RequestContext,
+  ) => ResponseResult | Promise<ResponseResult>;
 
   /**
-   * Static data (non-function) that gets returned as-is
+   * Static data (non-function) that gets returned as-is.
+   *
+   * `Record<string, unknown>` accepts object literals but not a value whose
+   * declared type is an interface without an index signature (e.g. a variable
+   * typed `JSONSchema7`); pass such values as literals or widen them.
    */
-  type StaticData = string | number | boolean | null | undefined | Record<string, unknown> | unknown[];
+  type StaticData =
+    | string
+    | number
+    | boolean
+    | null
+    | undefined
+    | Record<string, unknown>
+    | unknown[]
+    | ArrayBuffer
+    | ArrayBufferView;
 
   /**
    * Context passed to generator functions
@@ -179,6 +313,16 @@ declare namespace Schmock {
     body?: unknown;
     /** Shared mutable state */
     state: Record<string, unknown>;
+    /**
+     * Per-request plugin state — the same `Map` as `PluginContext.state`.
+     *
+     * Lets a generator hand request-scoped data to the plugins that post-process
+     * its response (e.g. mutations staged until the final status is known).
+     * Absent when a generator is invoked outside the request pipeline.
+     */
+    pluginState?: Map<string, unknown>;
+    /** Abort signal associated with the request */
+    readonly signal?: AbortSignal;
   }
 
   /**
@@ -186,11 +330,22 @@ declare namespace Schmock {
    * - Any value: returns as 200 OK
    * - [status, body]: custom status with body
    * - [status, body, headers]: custom status, body, and headers
+   * - { status, body, headers? }: object envelope, equivalent to the tuple
+   *   forms and produced by plugin error recovery
+   *
+   * The object envelope is detected by shape, so any returned object carrying a
+   * numeric `status` alongside a `body` is unwrapped rather than delivered as
+   * the payload — a domain object such as `{ status: 200, body: "draft" }` is
+   * indistinguishable from an envelope. An object whose `headers` is present
+   * but not a string record is *not* an envelope and is delivered whole. To
+   * return such a shape as data, nest it (`{ value: { status, body } }`) or use
+   * an explicit `[status, body]` tuple for the envelope instead.
    */
   type ResponseResult =
     | ResponseBody
     | [number, unknown]
-    | [number, unknown, Record<string, string>];
+    | [number, unknown, Record<string, string>]
+    | { status: number; body: unknown; headers?: Record<string, string> };
 
   /**
    * Response object returned by handle method
@@ -208,6 +363,7 @@ declare namespace Schmock {
     headers?: Record<string, string>;
     body?: unknown;
     query?: Record<string, string>;
+    signal?: AbortSignal;
   }
 
   /**
@@ -238,12 +394,14 @@ declare namespace Schmock {
   interface CallableMockInstance {
     /**
      * Define a route by calling the instance directly
-     * 
+     *
      * @param route - Route pattern in format 'METHOD /path'
-     * @param generator - Response generator (function, static data, or schema)
+     * @param generator - Response generator: a function called per request, or
+     *   static data returned verbatim. There is no schema arm — use
+     *   `.pipe(fakerPlugin({ schema }))` for schema-driven responses.
      * @param config - Route-specific configuration
      * @returns The same instance for method chaining
-     * 
+     *
      * @example
      * ```typescript
      * const mock = schmock()
@@ -251,19 +409,22 @@ declare namespace Schmock {
      * mock('POST /users', userData, { contentType: 'application/json' })
      * ```
      */
-    (route: RouteKey, generator: Generator, config?: RouteConfig): CallableMockInstance;
+    (
+      route: RouteKey,
+      generator: Generator,
+      config?: RouteConfig,
+    ): CallableMockInstance;
 
     /**
      * Add a plugin to the pipeline
-     * 
+     *
      * @param plugin - Plugin to add to the pipeline
      * @returns The same instance for method chaining
-     * 
+     *
      * @example
      * ```typescript
+     * mock.pipe(authPlugin()).pipe(corsPlugin())
      * mock('GET /users', generator, config)
-     *   .pipe(authPlugin())
-     *   .pipe(corsPlugin())
      * ```
      */
     pipe(plugin: Plugin): CallableMockInstance;
@@ -283,7 +444,11 @@ declare namespace Schmock {
      * })
      * ```
      */
-    handle(method: HttpMethod, path: string, options?: RequestOptions): Promise<Response>;
+    handle(
+      method: HttpMethod,
+      path: string,
+      options?: RequestOptions,
+    ): Promise<Response>;
 
     // ===== Request Spy / History API =====
 
@@ -326,7 +491,9 @@ declare namespace Schmock {
     // ===== Reset / Lifecycle =====
 
     /**
-     * Clear all routes, state, plugins, and history
+     * Clear routes, state, plugins, listeners, and history, and stop the Node
+     * server. An explicitly acquired fetch interception remains active until
+     * its InterceptHandle is restored.
      */
     reset(): void;
 
@@ -345,12 +512,18 @@ declare namespace Schmock {
     /**
      * Register an event listener
      */
-    on<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => void): CallableMockInstance;
+    on<E extends SchmockEvent>(
+      event: E,
+      listener: (data: SchmockEventMap[E]) => void,
+    ): CallableMockInstance;
 
     /**
      * Remove an event listener
      */
-    off<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => void): CallableMockInstance;
+    off<E extends SchmockEvent>(
+      event: E,
+      listener: (data: SchmockEventMap[E]) => void,
+    ): CallableMockInstance;
 
     // ===== Introspection =====
 
@@ -387,9 +560,14 @@ declare namespace Schmock {
      * Intercept globalThis.fetch and route requests through this mock.
      * Client-side equivalent of listen().
      *
+     * A mock may hold any number of concurrent leases — nested providers,
+     * separate roots, or an adapter alongside a manual call. Each lease owns
+     * its own options and is released independently; the newest lease is
+     * consulted first.
+     *
      * @param options - Intercept configuration
-     * @returns Handle with restore() to stop intercepting
-     * @throws If already intercepting (call restore() first)
+     * @returns Handle with restore() to release this lease and update() to
+     *   change its options without changing its position in the stack
      */
     intercept(options?: InterceptOptions): InterceptHandle;
   }
@@ -436,6 +614,7 @@ declare namespace Schmock {
     headers: Record<string, string>;
     body?: unknown;
     query: Record<string, string>;
+    readonly signal?: AbortSignal;
   }
 
   interface AdapterResponse {
@@ -475,37 +654,52 @@ declare namespace Schmock {
   }
 
   interface InterceptHandle {
-    /** Stop intercepting and restore original fetch */
+    /** Release this lease; restores original fetch once the last lease goes */
     restore(): void;
+    /**
+     * Reconfigure this lease in place, keeping its position in the
+     * interception stack. Options are replaced wholesale — omitted fields fall
+     * back to their defaults, so `update({})` restores `passthrough: true`.
+     * No-op once the lease has been restored.
+     */
+    update(options?: InterceptOptions): void;
     /** Whether this interceptor is currently active */
     readonly active: boolean;
   }
 
   // ===== Lifecycle Events =====
 
+  /**
+   * Every lifecycle event carries `path`: the ORIGINAL request path in its
+   * canonical percent-encoded form, namespace prefix included. The
+   * namespace-stripped route form is available only as `routePath` on
+   * `request:match`.
+   */
   interface RequestStartEvent {
-    method: HttpMethod;
-    path: string;
-    headers: Record<string, string>;
+    readonly method: HttpMethod;
+    readonly path: string;
+    readonly headers: Readonly<Record<string, string>>;
   }
 
   interface RequestMatchEvent {
-    method: HttpMethod;
-    path: string;
-    routePath: string;
-    params: Record<string, string>;
+    readonly method: HttpMethod;
+    /** Original request path, namespace prefix included */
+    readonly path: string;
+    /** Registered route path, namespace prefix stripped */
+    readonly routePath: string;
+    readonly params: Readonly<Record<string, string>>;
   }
 
   interface RequestNotFoundEvent {
-    method: HttpMethod;
-    path: string;
+    readonly method: HttpMethod;
+    readonly path: string;
   }
 
   interface RequestEndEvent {
-    method: HttpMethod;
-    path: string;
-    status: number;
-    duration: number;
+    readonly method: HttpMethod;
+    readonly path: string;
+    readonly status: number;
+    readonly duration: number;
   }
 
   type SchmockEventMap = {
@@ -553,10 +747,20 @@ declare namespace Schmock {
   interface CrudOperationMeta {
     /** Full success response schema (wrapper + items) */
     responseSchema?: JSONSchema7;
+    /** Concrete success status selected from the operation contract. */
+    responseStatus?: number;
     /** Response headers from spec */
     responseHeaders?: Record<string, ResponseHeaderDef>;
     /** Error response schemas keyed by status code */
     errorSchemas?: Map<number, JSONSchema7>;
+    /** Declared media types for the success response, in spec order. */
+    responseContentTypes?: string[];
+    /**
+     * Success response schemas keyed by declared media type (OAS3 `content`).
+     * When present it takes precedence over `responseSchema`, so anything that
+     * replaces `responseSchema` must clear this map too.
+     */
+    responseSchemasByMediaType?: Map<string, JSONSchema7>;
   }
 
   // ===== Faker Plugin Types =====
@@ -625,13 +829,54 @@ declare namespace Schmock {
     passthrough?: boolean;
     errorFormatter?: (error: Error, request: unknown) => unknown;
     transformRequest?: (request: unknown) => AdapterRequestOverride;
-    transformResponse?: (
-      response: Response,
-      request: unknown,
-    ) => Response;
+    transformResponse?: (response: Response, request: unknown) => Response;
   }
 
   // ===== OpenAPI Plugin Options =====
+
+  /** A callback request resolved from an OpenAPI callback expression. */
+  interface OpenApiCallbackRequest {
+    url: string;
+    method: HttpMethod;
+    headers: Record<string, string>;
+    body?: unknown;
+  }
+
+  /** Explicit application-owned delivery for OpenAPI callbacks. */
+  interface OpenApiCallbackOptions {
+    dispatch(request: OpenApiCallbackRequest): void | Promise<void>;
+  }
+
+  /**
+   * Policy governing `$ref`s that leave the root spec document.
+   *
+   * A spec is untrusted input — on the CLI it is a path a caller hands over —
+   * and `$ref` is a file-read and network primitive, so nothing outside the
+   * root document resolves unless it is opted into here.
+   */
+  interface OpenApiRefPolicy {
+    /** Allow any `$ref` that leaves the root document. Default `false`. */
+    external?: boolean;
+    /** Allow `http(s)` `$ref`s. Requires `external`. Default `false`. */
+    allowHttp?: boolean;
+    /**
+     * Hostnames an `http(s)` `$ref` may target. Empty or omitted means any
+     * host, still minus loopback, link-local and private ranges.
+     */
+    allowedHosts?: string[];
+    /** Per-request timeout for http `$ref`s, in ms. Default 5000. */
+    timeoutMs?: number;
+    /**
+     * Redirects to follow for an http `$ref`. Default 0.
+     *
+     * `fetch` exposes no numeric redirect cap, so this behaves as a boolean:
+     * `0` refuses redirects, any positive value follows up to the platform
+     * default. Use `allowedHosts` when the exact destination matters.
+     */
+    redirects?: number;
+    /** Maximum size of a single http `$ref` document, in bytes. Default 1 MB. */
+    maxBytes?: number;
+  }
 
   /**
    * Options for the OpenAPI plugin
@@ -639,8 +884,17 @@ declare namespace Schmock {
   interface OpenApiOptions {
     spec: string | object;
     seed?: SeedConfig;
+    /**
+     * Validate the spec against the OpenAPI schema and specification when it is
+     * loaded. Default `false`: incomplete specs are deliberately tolerated, and
+     * validation is expensive on large documents.
+     */
+    strict?: boolean;
+    /** External `$ref` resolution policy. External refs are off by default. */
+    refs?: OpenApiRefPolicy;
     validateRequests?: boolean;
     validateResponses?: boolean;
+    /** @deprecated Unsupported. Supplying this option throws OPENAPI_UNSUPPORTED_OPTION. */
     queryFeatures?: {
       pagination?: boolean;
       sorting?: boolean;
@@ -650,12 +904,24 @@ declare namespace Schmock {
     debug?: boolean;
     fakerSeed?: number;
     security?: boolean;
+    /**
+     * Enable callback delivery through an application-supplied dispatcher.
+     * Callbacks are disabled when this option is omitted; Schmock never
+     * performs callback network requests implicitly.
+     */
+    callbacks?: OpenApiCallbackOptions;
     /** Replace response schemas for specific routes. Key format: "METHOD /path" or "METHOD /path STATUS" */
     schemas?: Record<string, import("json-schema").JSONSchema7>;
     /** Called before generating a response body. Return a schema to replace the original, or void to keep it. */
     onSchema?: (
       schema: import("json-schema").JSONSchema7,
-      context: { method: string; path: string; params: Record<string, string>; query: Record<string, string>; headers: Record<string, string> },
+      context: {
+        method: string;
+        path: string;
+        params: Record<string, string>;
+        query: Record<string, string>;
+        headers: Record<string, string>;
+      },
     ) => import("json-schema").JSONSchema7 | undefined;
   }
 
@@ -685,16 +951,68 @@ declare namespace Schmock {
     errors?: boolean;
     watch?: boolean;
     admin?: boolean;
+    /**
+     * Bearer token required by every `/schmock-admin/*` request
+     * (`--admin-token`). When `admin` is on and this is omitted, a random
+     * token is minted once and surfaced on {@link CliServer.adminToken}.
+     */
+    adminToken?: string;
+    /**
+     * How many requests the mock retains for `GET /schmock-admin/history`
+     * (`--admin-history-limit`, default 500). Ignored — history is disabled
+     * entirely — when `admin` is off.
+     */
+    adminHistoryLimit?: number;
+    /** Validate the spec against the OpenAPI schema at startup (`--strict`). */
+    strict?: boolean;
+    /** Resolve `$ref`s outside the spec document (`--refs-external`). */
+    refsExternal?: boolean;
+    /**
+     * Hosts an `http(s)` `$ref` may target (`--refs-allow-http`). Supplying
+     * this also enables http resolution, which still requires `refsExternal`.
+     */
+    refsAllowHttp?: string[];
+    /**
+     * How long {@link CliServer.close} waits for in-flight requests before
+     * the remaining sockets are destroyed (default 5000 ms). A half-sent
+     * request never completes on its own, so without a bound the close would
+     * hang.
+     */
+    shutdownGraceMs?: number;
+  }
+
+  /** Browser-safe subset of the Node server exposed by a CLI instance. */
+  interface CliHttpServer {
+    readonly listening: boolean;
+    address():
+      | string
+      | { address: string; family: string; port: number }
+      | null;
+    close(callback?: (error?: Error) => void): this;
+    closeAllConnections(): void;
+    closeIdleConnections(): void;
+    ref(): this;
+    unref(): this;
   }
 
   /**
-   * Running CLI server instance
+   * Running CLI server instance. Import `CliServer` from `@schmock/cli` for
+   * the exact Node.js server type.
    */
   interface CliServer {
-    server: import("node:http").Server;
+    server: CliHttpServer;
     port: number;
     hostname: string;
-    close(): void;
+    /**
+     * The bearer token this server requires on `/schmock-admin/*`. Present
+     * only when admin is enabled.
+     */
+    adminToken?: string;
+    /**
+     * Stop watching, stop accepting, and settle once the socket is released —
+     * within {@link CliOptions.shutdownGraceMs}. Memoized: closing twice is
+     * safe and resolves twice.
+     */
+    close(): Promise<void>;
   }
-
 }

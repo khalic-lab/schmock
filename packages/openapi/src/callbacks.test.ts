@@ -1,7 +1,7 @@
 /// <reference path="../../core/schmock.d.ts" />
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireCallbacks } from "./callbacks.js";
+import { dispatchCallbacks } from "./callbacks.js";
 
 function makeContext(
   overrides: Partial<Schmock.PluginContext> = {},
@@ -19,72 +19,191 @@ function makeContext(
   };
 }
 
-describe("fireCallbacks", () => {
+describe("dispatchCallbacks", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("logs a warning when callback fetch fails", async () => {
+  it("logs a warning when the application dispatcher fails", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockRejectedValue(new Error("Connection refused"));
+    const dispatcher = vi.fn((_request: Schmock.OpenApiCallbackRequest) =>
+      Promise.reject(new Error("Connection refused")),
+    );
 
-    fireCallbacks(
+    await dispatchCallbacks(
       [{ urlExpression: "http://example.com/hook", method: "POST" }],
+      dispatcher,
       makeContext(),
       { id: 1 },
     );
 
-    // Wait for the fire-and-forget promise to settle
-    await vi.waitFor(() => {
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Callback POST http://example.com/hook failed"),
-        "Connection refused",
-      );
-    });
-
-    fetchSpy.mockRestore();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Callback dispatcher failed for POST http://example.com/hook",
+      ),
+      "Connection refused",
+    );
   });
 
-  it("skips callbacks with non-http URLs without logging", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("skips callbacks whose runtime URL resolves to an empty value", async () => {
+    const dispatcher = vi.fn((_request: Schmock.OpenApiCallbackRequest) => {});
+
+    await dispatchCallbacks(
+      [
+        {
+          urlExpression: "{$request.body#/missingCallbackUrl}",
+          method: "POST",
+        },
+      ],
+      dispatcher,
+      makeContext({ body: { id: 1 } }),
+      { id: 1 },
+    );
+
+    expect(dispatcher).not.toHaveBeenCalled();
+  });
+
+  it("dispatches the resolved method and tuple body without using fetch", async () => {
+    const dispatcher = vi.fn((_request: Schmock.OpenApiCallbackRequest) => {});
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    fireCallbacks(
-      [{ urlExpression: "not-a-url", method: "POST" }],
+    await dispatchCallbacks(
+      [{ urlExpression: "http://example.com/hook", method: "POST" }],
+      dispatcher,
       makeContext(),
-      { id: 1 },
+      [201, { result: "created" }],
     );
 
-    // Give time for any async work to complete
-    await new Promise((r) => setTimeout(r, 50));
-
+    expect(dispatcher).toHaveBeenCalledWith({
+      url: "http://example.com/hook",
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: { result: "created" },
+    });
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(warnSpy).not.toHaveBeenCalled();
-
-    fetchSpy.mockRestore();
   });
 
-  it("fires callback with correct method and body", async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response("ok"));
+  it("generates the callback payload from the callback operation's declared request body", async () => {
+    const dispatcher = vi.fn((_request: Schmock.OpenApiCallbackRequest) => {});
 
-    fireCallbacks(
-      [{ urlExpression: "http://example.com/hook", method: "POST" }],
+    await dispatchCallbacks(
+      [
+        {
+          urlExpression: "http://example.com/hook",
+          method: "POST",
+          requestBody: {
+            type: "object",
+            properties: { status: { type: "string" } },
+            required: ["status"],
+          },
+        },
+      ],
+      dispatcher,
       makeContext(),
-      { result: "created" },
+      [201, { result: "created" }],
+      42,
     );
 
-    await vi.waitFor(() => {
-      expect(fetchSpy).toHaveBeenCalledWith("http://example.com/hook", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ result: "created" }),
-      });
-    });
+    expect(dispatcher).toHaveBeenCalledTimes(1);
+    const body = dispatcher.mock.calls[0][0].body as Record<string, unknown>;
+    expect(typeof body.status).toBe("string");
+    expect(body).not.toHaveProperty("result");
+  });
 
-    fetchSpy.mockRestore();
+  it("falls back to the response body when the callback declares no request body", async () => {
+    const dispatcher = vi.fn((_request: Schmock.OpenApiCallbackRequest) => {});
+
+    await dispatchCallbacks(
+      [{ urlExpression: "http://example.com/hook", method: "POST" }],
+      dispatcher,
+      makeContext(),
+      [201, { result: "created" }],
+      42,
+    );
+
+    expect(dispatcher).toHaveBeenCalledWith({
+      url: "http://example.com/hook",
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: { result: "created" },
+    });
+  });
+
+  it("skips the callback and warns when body generation fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const dispatcher = vi.fn((_request: Schmock.OpenApiCallbackRequest) => {});
+
+    await dispatchCallbacks(
+      [
+        {
+          urlExpression: "http://example.com/hook",
+          method: "POST",
+          // An empty schema makes @schmock/faker reject.
+          requestBody: {},
+        },
+      ],
+      dispatcher,
+      makeContext(),
+      [201, { result: "created" }],
+    );
+
+    expect(dispatcher).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/Callback body generation failed for POST/),
+      expect.anything(),
+    );
+  });
+
+  it("generates deterministic callback bodies under a faker seed", async () => {
+    const callbacks = [
+      {
+        urlExpression: "http://example.com/hook",
+        method: "POST" as const,
+        requestBody: {
+          type: "object" as const,
+          properties: {
+            status: { type: "string" as const },
+            attempts: { type: "integer" as const },
+          },
+          required: ["status", "attempts"],
+        },
+      },
+    ];
+
+    const first = vi.fn((_request: Schmock.OpenApiCallbackRequest) => {});
+    const second = vi.fn((_request: Schmock.OpenApiCallbackRequest) => {});
+
+    await dispatchCallbacks(callbacks, first, makeContext(), undefined, 1234);
+    await dispatchCallbacks(callbacks, second, makeContext(), undefined, 1234);
+
+    expect(JSON.stringify(first.mock.calls[0][0].body)).toBe(
+      JSON.stringify(second.mock.calls[0][0].body),
+    );
+  });
+
+  it("resolves escaped array pointers and unwraps response objects", async () => {
+    const dispatcher = vi.fn((_request: Schmock.OpenApiCallbackRequest) => {});
+    const body = {
+      targets: [{ "callback~/url": "https://callbacks.example.test/response" }],
+    };
+
+    await dispatchCallbacks(
+      [
+        {
+          urlExpression: "{$response.body#/targets/0/callback~0~1url}",
+          method: "POST",
+        },
+      ],
+      dispatcher,
+      makeContext(),
+      { status: 202, body, headers: { "x-result": "created" } },
+    );
+
+    expect(dispatcher).toHaveBeenCalledWith({
+      url: "https://callbacks.example.test/response",
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
   });
 });

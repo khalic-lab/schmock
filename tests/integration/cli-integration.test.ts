@@ -3,16 +3,20 @@
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-// Import from cli.ts directly to avoid index.ts auto-run side effect
-import { createCliServer } from "../../packages/cli/src/cli";
 import { afterEach, describe, expect, it } from "vitest";
-import { PETSTORE_SPEC, fetchJson } from "./helpers";
+// Import from cli.ts directly to avoid index.ts auto-run side effect
+import type { CliServer } from "../../packages/cli/src/cli";
+import { createCliServer } from "../../packages/cli/src/cli";
+import { fetchJson, PETSTORE_SPEC } from "./helpers";
 
 describe("CLI Integration", () => {
-  let server: Schmock.CliServer | undefined;
+  // The concrete type, not ambient `Schmock.CliServer`: this one types
+  // `server` as the real `http.Server` rather than the browser-safe subset.
+  let server: CliServer | undefined;
 
-  afterEach(() => {
-    server?.close();
+  afterEach(async () => {
+    // Awaited so the port is released before the next test binds one.
+    await server?.close();
     server = undefined;
   });
 
@@ -85,15 +89,33 @@ describe("CLI Integration", () => {
     });
     const { port } = server;
 
-    // OPTIONS preflight
+    // A real browser preflight: Origin and Access-Control-Request-Method are
+    // what tell the transport to answer instead of the mock, and the requested
+    // headers come back echoed rather than as a fixed list.
     const preflight = await fetch(`http://127.0.0.1:${port}/pets`, {
       method: "OPTIONS",
+      headers: {
+        origin: "http://localhost:5173",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "x-my-token",
+      },
     });
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get("access-control-allow-origin")).toBe("*");
     expect(preflight.headers.get("access-control-allow-methods")).toContain(
       "GET",
     );
+    expect(preflight.headers.get("access-control-allow-headers")).toBe(
+      "x-my-token",
+    );
+
+    // A bare OPTIONS is not a preflight: it reaches the mock instead of being
+    // masked by a 204, so an unrouted path still reports not found.
+    const bareOptions = await fetch(
+      `http://127.0.0.1:${port}/definitely-not-a-route`,
+      { method: "OPTIONS" },
+    );
+    expect(bareOptions.status).toBe(404);
 
     // Regular request should also have CORS headers
     const res = await fetchJson(port, "/pets");
@@ -107,6 +129,8 @@ describe("CLI Integration", () => {
       admin: true,
     });
     const { port } = server;
+    // Every /schmock-admin/* call needs the bearer token the server issued.
+    const admin = { authorization: `Bearer ${server.adminToken ?? ""}` };
 
     // Create some data first
     await fetchJson(port, "/pets", {
@@ -116,17 +140,23 @@ describe("CLI Integration", () => {
     });
 
     // GET routes
-    const routes = await fetchJson(port, "/schmock-admin/routes");
+    const routes = await fetchJson(port, "/schmock-admin/routes", {
+      headers: admin,
+    });
     expect(routes.status).toBe(200);
     expect(Array.isArray(routes.body)).toBe(true);
     expect(routes.body.length).toBeGreaterThan(0);
 
     // GET state
-    const state = await fetchJson(port, "/schmock-admin/state");
+    const state = await fetchJson(port, "/schmock-admin/state", {
+      headers: admin,
+    });
     expect(state.status).toBe(200);
 
     // GET history
-    const history = await fetchJson(port, "/schmock-admin/history");
+    const history = await fetchJson(port, "/schmock-admin/history", {
+      headers: admin,
+    });
     expect(history.status).toBe(200);
     expect(Array.isArray(history.body)).toBe(true);
     expect(history.body.length).toBeGreaterThan(0);
@@ -134,11 +164,14 @@ describe("CLI Integration", () => {
     // POST reset
     const reset = await fetchJson(port, "/schmock-admin/reset", {
       method: "POST",
+      headers: admin,
     });
     expect(reset.status).toBe(204);
 
     // Verify history cleared
-    const afterReset = await fetchJson(port, "/schmock-admin/history");
+    const afterReset = await fetchJson(port, "/schmock-admin/history", {
+      headers: admin,
+    });
     expect(afterReset.body.length).toBe(0);
   });
 

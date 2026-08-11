@@ -73,5 +73,52 @@ Feature: Request History & Spy API
 
   Scenario: maxHistorySize bounds the history with FIFO eviction
     Given I create a mock with maxHistorySize 3 and a users route
-    When I issue 5 requests to "GET /users"
+    When I issue 5 sequenced requests to "GET /users"
     Then the call count should be 3
+    And the retained request sequence should be "3,4,5"
+
+  Scenario: maxHistorySize 0 disables history
+    Given I create a mock with maxHistorySize 0 and a users route
+    When I issue 3 sequenced requests to "GET /users"
+    Then the call count should be 0
+
+  Scenario Outline: Invalid history limits are rejected at construction
+    When I create a mock with maxHistorySize "<limit>"
+    Then a configuration error should be thrown with message matching "maxHistorySize"
+
+    Examples:
+      | limit     |
+      | -1        |
+      | 2.5       |
+      | NaN       |
+      | Infinity  |
+
+  Scenario: Resetting history preserves routes and shared state
+    Given I create a stateful mock and record a request
+    When I reset only the request history
+    Then the call count should be 0
+    And the registered route should still respond
+    And the shared state marker should still be "preserved"
+
+  Scenario: Full reset prevents stale requests from entering new history
+    Given an admitted request is paused before completion
+    When I reset and complete a request in the new generation
+    And I release the admitted request
+    Then the admitted caller should receive its original response
+    And history should contain only the new generation request
+
+  Scenario: Resetting history is a barrier for pending commits
+    Given an admitted request is paused before completion
+    When I reset history before releasing the request
+    And I release the admitted request
+    Then request history should remain empty
+
+  Scenario: History snapshots request and response sources when recorded
+    Given a route and mutable nested request options
+    When I handle the mutable request and then mutate its sources
+    Then history should retain the original nested request and response values
+
+  Scenario: Shared memory is copied into isolated history snapshots
+    Given a route and a nested shared-memory request body
+    When I handle the shared-memory request and mutate its source and first history result
+    Then a later history result should contain the original bytes in ordinary memory

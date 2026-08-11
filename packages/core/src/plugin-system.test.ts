@@ -86,6 +86,57 @@ describe("plugin system", () => {
   });
 
   describe("plugin execution pipeline", () => {
+    it("runs request guards before the route generator", async () => {
+      const mock = schmock();
+      const generator = vi.fn(() => ({ created: true }));
+      const guard: Schmock.Plugin = {
+        name: "guard",
+        beforeRequest(context) {
+          return {
+            context,
+            response: [401, { code: "AUTH_REQUIRED" }],
+          };
+        },
+        process: (context, currentResponse) => ({
+          context,
+          response: currentResponse,
+        }),
+      };
+
+      mock("POST /guarded", generator).pipe(guard);
+
+      const response = await mock.handle("POST", "/guarded");
+      expect(response.status).toBe(401);
+      expect(response.body).toEqual({ code: "AUTH_REQUIRED" });
+      expect(generator).not.toHaveBeenCalled();
+    });
+
+    it("passes pre-request context changes into the generator", async () => {
+      const mock = schmock();
+      const plugin: Schmock.Plugin = {
+        name: "request-transformer",
+        beforeRequest(context) {
+          return {
+            context: {
+              ...context,
+              headers: { ...context.headers, "x-added": "yes" },
+            },
+          };
+        },
+        process: (context, currentResponse) => ({
+          context,
+          response: currentResponse,
+        }),
+      };
+
+      mock("GET /context", ({ headers }) => ({
+        added: headers["x-added"],
+      })).pipe(plugin);
+
+      const response = await mock.handle("GET", "/context");
+      expect(response.body).toEqual({ added: "yes" });
+    });
+
     it("passes context between plugins", async () => {
       const mock = schmock();
       let receivedContext: any;
@@ -251,6 +302,50 @@ describe("plugin system", () => {
   });
 
   describe("plugin error handling", () => {
+    it("allows a downstream error handler to recover an earlier failure", async () => {
+      const mock = schmock();
+      const failingPlugin: Schmock.Plugin = {
+        name: "failing",
+        process() {
+          throw new Error("failed");
+        },
+      };
+      const recoveryPlugin: Schmock.Plugin = {
+        name: "recovery",
+        process: (context, currentResponse) => ({
+          context,
+          response: currentResponse,
+        }),
+        onError: () => [503, { code: "RECOVERED" }],
+      };
+
+      mock("GET /recover", "original").pipe(failingPlugin).pipe(recoveryPlugin);
+
+      const response = await mock.handle("GET", "/recover");
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ code: "RECOVERED" });
+    });
+
+    it("allows a plugin error handler to recover a generator failure", async () => {
+      const mock = schmock();
+      const recoveryPlugin: Schmock.Plugin = {
+        name: "generator-recovery",
+        process: (context, currentResponse) => ({
+          context,
+          response: currentResponse,
+        }),
+        onError: () => [502, { code: "GENERATOR_RECOVERED" }],
+      };
+
+      mock("GET /generator-failure", () => {
+        throw new Error("generator failed");
+      }).pipe(recoveryPlugin);
+
+      const response = await mock.handle("GET", "/generator-failure");
+      expect(response.status).toBe(502);
+      expect(response.body).toEqual({ code: "GENERATOR_RECOVERED" });
+    });
+
     it("throws PluginError when plugin process fails", async () => {
       const mock = schmock();
 
@@ -418,12 +513,56 @@ describe("plugin system", () => {
       const response = await mock.handle("GET", "/test");
       expect(response.body).toBe("async-recovered");
     });
+
+    it("preserves cancellation when a plugin replaces its context", async () => {
+      const mock = schmock();
+      let announceProcessStart = () => {};
+      let releaseProcess = () => {};
+      const processStarted = new Promise<void>((resolve) => {
+        announceProcessStart = resolve;
+      });
+      const processBarrier = new Promise<void>((resolve) => {
+        releaseProcess = resolve;
+      });
+      mock("GET /replace-context", "response").pipe({
+        name: "context-replacer",
+        beforeRequest(context) {
+          const { signal: _signal, ...replacement } = context;
+          return { context: replacement };
+        },
+        async process(context, response) {
+          announceProcessStart();
+          await processBarrier;
+          return { context, response };
+        },
+      });
+      const controller = new AbortController();
+
+      try {
+        const pending = mock.handle("GET", "/replace-context", {
+          signal: controller.signal,
+        });
+        await processStarted;
+        controller.abort();
+
+        await expect(
+          Promise.race([
+            pending,
+            new Promise<Schmock.Response>((_, reject) => {
+              setTimeout(() => reject(new Error("abort timed out")), 100);
+            }),
+          ]),
+        ).rejects.toMatchObject({ name: "AbortError" });
+      } finally {
+        releaseProcess();
+      }
+    });
   });
 
   describe("plugin install hook", () => {
-    it("calls install with callable instance when pipe() is invoked", () => {
+    it("calls install with a scoped callable instance", () => {
       const mock = schmock();
-      let receivedInstance: unknown;
+      let receivedInstance: Schmock.CallableMockInstance | undefined;
 
       const plugin: Schmock.Plugin = {
         name: "install-test",
@@ -434,7 +573,105 @@ describe("plugin system", () => {
       };
 
       mock.pipe(plugin);
-      expect(receivedInstance).toBe(mock);
+      expect(receivedInstance).toBeDefined();
+      expect(receivedInstance).not.toBe(mock);
+      expect(typeof receivedInstance).toBe("function");
+      if (!receivedInstance) throw new Error("Expected an install instance");
+      expect(() => receivedInstance("GET /late", "late")).toThrowError(
+        expect.objectContaining({ code: "PLUGIN_INSTALL_SCOPE_EXPIRED" }),
+      );
+    });
+
+    it("rolls back every route when synchronous installation fails", () => {
+      const mock = schmock();
+      const circular: Record<string, unknown> = {};
+      circular.self = circular;
+
+      expect(() =>
+        mock.pipe({
+          name: "partially-failing-install",
+          install(instance) {
+            instance("GET /staged", "staged");
+            instance("GET /invalid", circular, {
+              contentType: "application/json",
+            });
+          },
+          process: (context, response) => ({ context, response }),
+        }),
+      ).toThrow();
+
+      expect(mock.getRoutes()).toEqual([]);
+    });
+
+    it("rolls back routes and expires the facade for async installation", async () => {
+      const mock = schmock();
+      let capturedInstance: Schmock.CallableMockInstance | undefined;
+
+      expect(() =>
+        mock.pipe({
+          name: "async-route-install",
+          async install(instance) {
+            capturedInstance = instance;
+            instance("GET /before-await", "before");
+            await Promise.resolve();
+            instance("GET /after-await", "after");
+          },
+          process: (context, response) => ({ context, response }),
+        }),
+      ).toThrowError(
+        expect.objectContaining({ code: "PLUGIN_ASYNC_INSTALL_UNSUPPORTED" }),
+      );
+
+      await Promise.resolve();
+      expect(mock.getRoutes()).toEqual([]);
+      if (!capturedInstance) throw new Error("Expected an install instance");
+      expect(() => capturedInstance("GET /later", "later")).toThrowError(
+        expect.objectContaining({ code: "PLUGIN_INSTALL_SCOPE_EXPIRED" }),
+      );
+    });
+
+    it("does not expose live mutating methods through the install facade", async () => {
+      const mock = schmock();
+      let childProcessCount = 0;
+      const child: Schmock.Plugin = {
+        name: "child",
+        process(context, response) {
+          childProcessCount += 1;
+          return { context, response };
+        },
+      };
+
+      expect(() =>
+        mock.pipe({
+          name: "nested-install",
+          install(instance) {
+            instance.pipe(child);
+          },
+          process: (context, response) => ({ context, response }),
+        }),
+      ).toThrowError(
+        expect.objectContaining({
+          code: "PLUGIN_INSTALL_OPERATION_UNSUPPORTED",
+        }),
+      );
+
+      expect(() =>
+        mock.pipe({
+          name: "async-nested-install",
+          async install(instance) {
+            await Promise.resolve();
+            instance.pipe(child);
+          },
+          process: (context, response) => ({ context, response }),
+        }),
+      ).toThrowError(
+        expect.objectContaining({ code: "PLUGIN_ASYNC_INSTALL_UNSUPPORTED" }),
+      );
+      await Promise.resolve();
+
+      mock("GET /test", "ok");
+      await mock.handle("GET", "/test");
+      expect(childProcessCount).toBe(0);
     });
 
     it("works normally when plugin has no install method", async () => {
@@ -508,6 +745,48 @@ describe("plugin system", () => {
       const response = await mock.handle("GET", "/items/42");
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ id: "42", name: "test" });
+    });
+
+    it("defers uninstall until every admitted request settles", async () => {
+      const mock = schmock();
+      const releases: Array<() => void> = [];
+      const barriers = [
+        new Promise<void>((resolve) => releases.push(resolve)),
+        new Promise<void>((resolve) => releases.push(resolve)),
+      ];
+      let enteredCount = 0;
+      let announceBothEntered = () => {};
+      const bothEntered = new Promise<void>((resolve) => {
+        announceBothEntered = resolve;
+      });
+      const uninstall = vi.fn();
+
+      mock("GET /paused", { ok: true }).pipe({
+        name: "leased-plugin",
+        async beforeRequest(context) {
+          const requestIndex = enteredCount;
+          enteredCount += 1;
+          if (enteredCount === 2) announceBothEntered();
+          await barriers[requestIndex];
+          return { context };
+        },
+        process: (context, response) => ({ context, response }),
+        uninstall,
+      });
+
+      const first = mock.handle("GET", "/paused");
+      const second = mock.handle("GET", "/paused");
+      await bothEntered;
+      mock.reset();
+      expect(uninstall).not.toHaveBeenCalled();
+
+      releases[0]();
+      await first;
+      expect(uninstall).not.toHaveBeenCalled();
+
+      releases[1]();
+      await second;
+      expect(uninstall).toHaveBeenCalledOnce();
     });
   });
 

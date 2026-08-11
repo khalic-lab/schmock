@@ -14,8 +14,8 @@ import { provideSchmockInterceptor } from '@schmock/angular'
 import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http'
 
 const mock = schmock()
-mock('GET /api/users', [{ id: 1, name: 'Alice' }])
-mock('POST /api/users', ({ body }) => [201, { id: 2, ...body }])
+mock('GET /users', [{ id: 1, name: 'Alice' }])
+mock('POST /users', ({ body }) => [201, { id: 2, ...body }])
 
 export const appConfig = {
   providers: [
@@ -77,6 +77,16 @@ Only intercept requests whose URL starts with this string. The base URL is strip
 // Request to /api/users → Schmock matches route /users
 provideSchmockInterceptor(mock, { baseUrl: '/api' })
 ```
+
+### `transformRequest`
+
+Rewrite the request before Schmock matches it. Header names — both the
+request's own and any the override supplies — are lowercased before reaching
+handlers, so `{ 'X-Tenant': 'dev' }` arrives as `headers['x-tenant']`.
+
+`transformRequest` runs per subscription, inside the interceptor's error
+boundary: if it throws, the subscriber receives a 500 `HttpErrorResponse`
+shaped by `errorFormatter` rather than a bare `Error`.
 
 ## OpenAPI-Driven Interceptor
 
@@ -204,7 +214,35 @@ describe('UserService', () => {
 
 ## Response Behavior
 
-- Status >= 400 → Converted to Angular `HttpErrorResponse`
-- Status < 400 → Wrapped in Angular `HttpResponse`
-- ROUTE_NOT_FOUND + `passthrough: true` → Request forwarded to real backend
-- ROUTE_NOT_FOUND + `passthrough: false` → Error returned
+- Final 2xx status → Emitted as an Angular `HttpResponse`
+- 3xx through 5xx status → Emitted through `error` as an `HttpErrorResponse`
+- HEAD, 204, 205, and 304 → Body removed before Angular conversion. 204 emits
+  `null`; HEAD, 205, and 304 emit the empty value of the requested
+  `responseType` (see below)
+- ROUTE_NOT_FOUND + `passthrough: true` → Request forwarded to the real backend
+- ROUTE_NOT_FOUND + `passthrough: false` → 404 `HttpErrorResponse`
+- Request header names are lowercased before reaching handlers, so a handler
+  always reads `headers.authorization` however the caller spelled it. A header
+  the caller set more than once arrives as all of its values joined with `, `
+  in Angular's order, not as the first value alone
+- Bodies are shaped to the request's `responseType`: `text` yields a string,
+  `arraybuffer` an `ArrayBuffer`, `blob` a `Blob`. `json` passes the value
+  through untouched — a route returning a pre-serialized string stays a string
+- A body that never reaches the wire — `[200, null]`, a HEAD request, or a 205
+  or 304 — emits the *empty* value of that type: `''`, an empty `ArrayBuffer`,
+  an empty `Blob` labelled from the response's content type (`json` emits
+  `null`). This matches `HttpXhrBackend`, which nulls the body only at 204, so
+  `res.trim()` behaves the same against the mock as against a real backend. On
+  the error channel `HttpErrorResponse` maps a falsy body to `null`, so an
+  empty `text` error body arrives as `null` there — again as it does in Angular
+- Emitted `HttpResponse` and `HttpErrorResponse` report `request.urlWithParams`,
+  so serialized `HttpParams` appear on `.url`
+
+`errorFormatter` formats core-marked internal exceptions and thrown handling
+errors. It does not reinterpret an ordinary route response such as
+`[500, { error: 'domain failure' }]`. Exception provenance is captured before
+`transformResponse` runs, so a hook that clones the response with
+`{ ...response }` does not suppress the formatter.
+
+Unsubscribing aborts pending Schmock work and unsubscribes any unmatched
+passthrough request. No response is emitted after teardown.

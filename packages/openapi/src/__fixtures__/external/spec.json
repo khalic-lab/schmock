@@ -1,0 +1,20 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "External refs", "version": "1.0.0" },
+  "paths": {
+    "/things": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "A thing",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "./models.json#/Thing" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

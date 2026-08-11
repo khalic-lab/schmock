@@ -1,0 +1,34 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "External discriminator", "version": "1.0.0" },
+  "paths": {
+    "/pet": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "A pet",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "./discriminator-models.json#/Pet" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/colliding-cats": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Cats from different documents",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "./discriminator-models.json#/CollidingCats" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

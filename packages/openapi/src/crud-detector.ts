@@ -1,11 +1,34 @@
-/// <reference path="../../core/schmock.d.ts" />
-
+import type * as Schmock from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
-import { findArrayProperty } from "./generators.js";
+import { collectSchemaProperties, findArrayProperty } from "./generators.js";
 import type { ParsedPath } from "./parser.js";
-import { isRecord, toJsonSchema } from "./utils.js";
+import { findSuccessResponse } from "./response-status.js";
+import { hasType, isRecord, toJsonSchema } from "./utils.js";
 
 export type CrudOperation = "list" | "create" | "read" | "update" | "delete";
+
+/** How new identifier values are minted for a resource. */
+export type IdKind = "integer" | "string" | "uuid";
+
+/**
+ * One concrete, spec-declared HTTP method mapped onto a CRUD role.
+ *
+ * There is exactly one descriptor per declared operation, so `PUT` and `PATCH`
+ * on the same item path each keep their own response contract instead of
+ * collapsing onto a single shared `update` entry.
+ */
+export interface CrudRouteDescriptor {
+  /** CRUD role this concrete method plays. */
+  op: CrudOperation;
+  /** Concrete declared method e.g. "PUT". */
+  method: Schmock.HttpMethod;
+  /** Concrete path this method was declared on e.g. "/pets/:petId". */
+  path: string;
+  /** The ParsedPath this descriptor came from (the object install() mutates). */
+  parsed: ParsedPath;
+  /** Metadata built from THIS method's own operation object. */
+  meta: Schmock.CrudOperationMeta;
+}
 
 export interface CrudResource {
   /** Resource name e.g. "pets" */
@@ -14,14 +37,23 @@ export interface CrudResource {
   basePath: string;
   /** Item path e.g. "/pets/:petId" */
   itemPath: string;
-  /** ID parameter name e.g. "petId" */
+  /** ID parameter name e.g. "petId" — always the path segment, never renamed */
   idParam: string;
-  /** Detected CRUD operations */
+  /**
+   * Property carrying the primary key on stored and created items.
+   *
+   * The lookup VALUE always comes from `ctx.params[idParam]`; only the stored
+   * property NAME follows this field, so path routing is untouched.
+   */
+  idProperty: string;
+  /** How new identifier values are minted for this resource. */
+  idKind: IdKind;
+  /** Detected CRUD operations, deduped, in discovery order */
   operations: CrudOperation[];
+  /** One entry per declared method — the registration source of truth */
+  routes: CrudRouteDescriptor[];
   /** Response schema for the resource item */
   schema?: JSONSchema7;
-  /** Per-operation metadata auto-detected from spec */
-  operationMeta?: Map<CrudOperation, Schmock.CrudOperationMeta>;
 }
 
 interface DetectionResult {
@@ -59,13 +91,14 @@ export function detectCrudResources(paths: ParsedPath[]): DetectionResult {
   const resources: CrudResource[] = [];
 
   for (const [basePath, groupPaths] of groups) {
-    const resource = buildResource(basePath, groupPaths);
+    const { resource, leftovers } = buildResource(basePath, groupPaths);
     if (resource) {
       resources.push(resource);
-    } else {
-      // If no CRUD pattern detected, treat as non-CRUD
-      nonCrudPaths.push(...groupPaths);
     }
+    // Either the whole group (no CRUD pattern detected) or the methods the CRUD
+    // generators cannot serve — both are registered as static routes rather
+    // than silently swallowed.
+    nonCrudPaths.push(...leftovers);
   }
 
   return { resources, nonCrudPaths };
@@ -92,30 +125,66 @@ function getCollectionPath(path: string): string | undefined {
   return `/${segments.join("/")}`;
 }
 
+interface BuildResourceResult {
+  resource?: CrudResource;
+  /** Paths in this group that no CRUD generator can serve. */
+  leftovers: ParsedPath[];
+}
+
+/**
+ * Split a path in a group into its trailing `:param` segment, if it has exactly
+ * one and the path really sits under `basePath`.
+ */
+function itemIdParam(basePath: string, path: string): string | undefined {
+  if (!path.startsWith(basePath)) return undefined;
+  const segments = path.slice(basePath.length).split("/").filter(Boolean);
+  if (segments.length !== 1 || !segments[0].startsWith(":")) return undefined;
+  return segments[0].slice(1);
+}
+
 function buildResource(
   basePath: string,
   paths: ParsedPath[],
-): CrudResource | undefined {
-  const operations: CrudOperation[] = [];
+): BuildResourceResult {
+  // Pass 1 — the first item-shaped path in the group fixes idParam/itemPath.
   let itemPath = "";
   let idParam = "";
+  for (const p of paths) {
+    if (p.path === basePath) continue;
+    const param = itemIdParam(basePath, p.path);
+    if (param) {
+      idParam = param;
+      itemPath = p.path;
+      break;
+    }
+  }
+
+  // Pass 2 — classify each declared method, preserving iteration order so the
+  // `schema = schema ?? …` fallback chain resolves exactly as it did before.
+  const routes: CrudRouteDescriptor[] = [];
+  const leftovers: ParsedPath[] = [];
   let schema: JSONSchema7 | undefined;
-  const operationMeta = new Map<CrudOperation, Schmock.CrudOperationMeta>();
+
+  const classify = (p: ParsedPath, op: CrudOperation) => {
+    routes.push({
+      op,
+      method: p.method,
+      path: p.path,
+      parsed: p,
+      meta: buildOperationMeta(p),
+    });
+  };
 
   for (const p of paths) {
-    const isCollection = p.path === basePath;
-    const isItem = !isCollection && p.path.startsWith(basePath);
-
-    if (isCollection) {
+    if (p.path === basePath) {
       if (p.method === "GET") {
-        operations.push("list");
         const listSchema = getSuccessResponseSchema(p);
         if (listSchema) {
           // Extract item schema from both flat arrays and wrapped lists
           const arrayInfo = findArrayProperty(listSchema);
           if (arrayInfo.itemSchema) {
             schema = schema ?? arrayInfo.itemSchema;
-          } else if (listSchema.type === "array" && listSchema.items) {
+          } else if (hasType(listSchema, "array") && listSchema.items) {
             // Fallback: direct flat array
             const items = Array.isArray(listSchema.items)
               ? listSchema.items[0]
@@ -125,49 +194,38 @@ function buildResource(
             }
           }
         }
-
-        // Capture list operation metadata
-        const meta = buildOperationMeta(p);
-        operationMeta.set("list", meta);
+        classify(p, "list");
       } else if (p.method === "POST") {
-        operations.push("create");
-        const meta = buildOperationMeta(p);
-        operationMeta.set("create", meta);
+        classify(p, "create");
+      } else {
+        leftovers.push(p);
       }
-    } else if (isItem) {
-      // Extract ID param from the item path
-      const paramSegments = p.path
-        .slice(basePath.length)
-        .split("/")
-        .filter(Boolean);
-      if (paramSegments.length === 1 && paramSegments[0].startsWith(":")) {
-        const param = paramSegments[0].slice(1);
-        if (!idParam) {
-          idParam = param;
-          itemPath = p.path;
-        }
+      continue;
+    }
 
-        if (p.method === "GET") {
-          operations.push("read");
-          schema = schema ?? getSuccessResponseSchema(p);
-          const meta = buildOperationMeta(p);
-          operationMeta.set("read", meta);
-        } else if (p.method === "PUT" || p.method === "PATCH") {
-          if (!operations.includes("update")) {
-            operations.push("update");
-            const meta = buildOperationMeta(p);
-            operationMeta.set("update", meta);
-          }
-        } else if (p.method === "DELETE") {
-          operations.push("delete");
-          const meta = buildOperationMeta(p);
-          operationMeta.set("delete", meta);
-        }
-      }
+    // Item paths must use the id param the resource settled on: a CRUD
+    // generator only ever reads ctx.params[resource.idParam], so an aliased
+    // param (PUT /pets/:id next to GET /pets/:petId) would 404 forever.
+    if (p.path !== itemPath) {
+      leftovers.push(p);
+      continue;
+    }
+
+    if (p.method === "GET") {
+      schema = schema ?? getSuccessResponseSchema(p);
+      classify(p, "read");
+    } else if (p.method === "PUT" || p.method === "PATCH") {
+      classify(p, "update");
+    } else if (p.method === "DELETE") {
+      classify(p, "delete");
+    } else {
+      leftovers.push(p);
     }
   }
 
-  if (operations.length === 0) return undefined;
+  const operations = [...new Set(routes.map((r) => r.op))];
+
+  if (operations.length === 0) return { leftovers: paths };
 
   // Require evidence of a genuine CRUD collection:
   // either item-level operations (read/update/delete) exist,
@@ -178,7 +236,7 @@ function buildResource(
   );
   const hasList = operations.includes("list");
   const hasCreate = operations.includes("create");
-  if (!hasItemOps && !(hasList && hasCreate)) return undefined;
+  if (!hasItemOps && !(hasList && hasCreate)) return { leftovers: paths };
 
   // If we only have collection operations, infer item path
   if (!itemPath) {
@@ -191,39 +249,82 @@ function buildResource(
   }
 
   const name = basePath.split("/").filter(Boolean).pop() ?? basePath;
+  const { idProperty, idKind } = resolveIdentifier(schema, idParam);
 
   return {
-    name,
-    basePath,
-    itemPath,
-    idParam,
-    operations,
-    schema,
-    operationMeta: operationMeta.size > 0 ? operationMeta : undefined,
+    resource: {
+      name,
+      basePath,
+      itemPath,
+      idParam,
+      idProperty,
+      idKind,
+      operations,
+      routes,
+      schema,
+    },
+    leftovers,
+  };
+}
+
+/**
+ * Decide which property carries the resource's primary key, and how new values
+ * for it are minted. Resolved once per resource from the item schema.
+ *
+ * - the path parameter's name (`petId`) when the item schema declares it;
+ * - otherwise `id` when the schema declares that;
+ * - otherwise the path parameter's name, so schema-less specs keep the old
+ *   behaviour.
+ */
+function resolveIdentifier(
+  schema: JSONSchema7 | undefined,
+  idParam: string,
+): { idProperty: string; idKind: IdKind } {
+  const props = collectSchemaProperties(schema);
+  const idProperty =
+    idParam in props ? idParam : "id" in props ? "id" : idParam;
+  const declared = props[idProperty];
+  const type = Array.isArray(declared?.type)
+    ? declared.type.find((t) => t !== "null")
+    : declared?.type;
+
+  if (type !== "string") return { idProperty, idKind: "integer" };
+  return {
+    idProperty,
+    idKind: declared?.format === "uuid" ? "uuid" : "string",
   };
 }
 
 function buildOperationMeta(p: ParsedPath): Schmock.CrudOperationMeta {
   const meta: Schmock.CrudOperationMeta = {};
 
-  // Capture full success response schema
-  const responseSchema = getSuccessResponseSchema(p);
-  if (responseSchema) {
-    meta.responseSchema = responseSchema;
-  }
+  const successResponse = findSuccessResponse(p.responses);
+  if (successResponse) {
+    const [status, response] = successResponse;
+    meta.responseStatus = status;
+    if (response.schema) meta.responseSchema = response.schema;
+    if (response.headers) meta.responseHeaders = response.headers;
 
-  // Capture success response headers
-  for (const [code, resp] of p.responses) {
-    if (code >= 200 && code < 300 && resp.headers) {
-      meta.responseHeaders = resp.headers;
-      break;
+    // Per-media-type contracts, so a CRUD route can honour a negotiated
+    // `Accept` the same way a static route already does.
+    if (response.contentTypes?.length) {
+      meta.responseContentTypes = [...response.contentTypes];
+    }
+    if (response.content && response.content.size > 0) {
+      const byMediaType = new Map<string, JSONSchema7>();
+      for (const [mediaType, content] of response.content) {
+        if (content.schema) byMediaType.set(mediaType, content.schema);
+      }
+      if (byMediaType.size > 0) {
+        meta.responseSchemasByMediaType = byMediaType;
+      }
     }
   }
 
   // Capture error response schemas (4xx)
   const errorSchemas = new Map<number, JSONSchema7>();
   for (const [code, resp] of p.responses) {
-    if (code >= 400 && code < 600 && resp.schema) {
+    if (typeof code === "number" && code >= 400 && code < 600 && resp.schema) {
       errorSchemas.set(code, resp.schema);
     }
   }
@@ -235,15 +336,5 @@ function buildOperationMeta(p: ParsedPath): Schmock.CrudOperationMeta {
 }
 
 function getSuccessResponseSchema(p: ParsedPath): JSONSchema7 | undefined {
-  // Try 200, then 201, then first 2xx
-  for (const code of [200, 201]) {
-    const resp = p.responses.get(code);
-    if (resp?.schema) return resp.schema;
-  }
-
-  for (const [code, resp] of p.responses) {
-    if (code >= 200 && code < 300 && resp.schema) return resp.schema;
-  }
-
-  return undefined;
+  return findSuccessResponse(p.responses)?.[1].schema;
 }

@@ -1,5 +1,7 @@
 import { CallableMockInstance } from "./builder.js";
 
+const REQUEST_ADMISSION = Symbol.for("@schmock/core.request-admission");
+
 /**
  * Create a new Schmock mock instance with callable API.
  *
@@ -75,13 +77,19 @@ export function schmock(
     },
   );
 
+  Object.defineProperty(callableInstance, REQUEST_ADMISSION, {
+    value: () => instance.createRequestAdmission(),
+  });
+
   instance.setCallableRef(callableInstance);
 
   return callableInstance;
 }
 
+export { isBinaryBody } from "./binary.js";
 // Re-export constants and utilities
 export {
+  getResponseException,
   HTTP_METHODS,
   isHttpMethod,
   isRouteNotFound,
@@ -92,9 +100,9 @@ export {
 } from "./constants.js";
 // Re-export errors
 export {
+  InvalidResponseError,
   PluginError,
   ResourceLimitError,
-  ResponseGenerationError,
   RouteDefinitionError,
   RouteNotFoundError,
   RouteParseError,
@@ -113,39 +121,61 @@ export {
   serverError,
   unauthorized,
 } from "./helpers.js";
+export type { HttpIngressErrorCode } from "./http-helpers.js";
 // Re-export HTTP server helpers
 export {
   collectBody,
+  HttpIngressError,
   parseNodeHeaders,
   parseNodeQuery,
+  writeRejectedSchmockResponse,
   writeSchmockResponse,
 } from "./http-helpers.js";
 // Re-export types
 // Re-export interceptor
 export { createFetchInterceptor } from "./interceptor.js";
+export {
+  normalizeResponse,
+  serializeResponseBody,
+} from "./response-normalizer.js";
 // Re-export types
 export type {
   AdapterRequest,
+  AdapterRequestOverride,
   AdapterResponse,
+  AngularAdapterOptions,
   CallableMockInstance,
+  CrudOperationMeta,
+  ExpressAdapterOptions,
+  FakerPluginOptions,
   Generator,
   GeneratorFunction,
   GlobalConfig,
   HttpMethod,
   InterceptHandle,
   InterceptOptions,
+  OpenApiCallbackOptions,
+  OpenApiCallbackRequest,
+  OpenApiOptions,
   Plugin,
   PluginContext,
   PluginResult,
   RequestContext,
   RequestOptions,
   RequestRecord,
+  ResourceOverride,
   Response,
   ResponseBody,
+  ResponseHeaderDef,
   ResponseResult,
   RouteConfig,
   RouteInfo,
   RouteKey,
+  Schema,
+  SchemaDefinition,
+  SchemaGenerationContext,
+  SeedConfig,
+  SeedSource,
   ServerInfo,
   StaticData,
 } from "./types.js";

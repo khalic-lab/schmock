@@ -1,5 +1,36 @@
+/** Longest stringification of a non-Error throw kept in a message. */
+const MAX_THROWN_VALUE_LENGTH = 200;
+
+function truncateThrownValue(text: string): string {
+  return text.length > MAX_THROWN_VALUE_LENGTH
+    ? `${text.slice(0, MAX_THROWN_VALUE_LENGTH)}…`
+    : text;
+}
+
+/**
+ * Describe a thrown value.
+ *
+ * Non-Error throws keep whatever they carry — a bare string, a primitive or the
+ * JSON of a plain object — because "Unknown error" is useless while debugging a
+ * mock. Only `null`/`undefined` (which carry nothing) and values that cannot be
+ * stringified safely fall back to "Unknown error"; a throwing `toString`, a
+ * throwing getter or a circular reference must never turn the error path into a
+ * second exception. Long stringifications are truncated so 500 bodies and debug
+ * logs stay bounded.
+ */
 export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unknown error";
+  if (error instanceof Error) return error.message;
+  if (error === null || error === undefined) return "Unknown error";
+  if (typeof error === "string") return truncateThrownValue(error);
+
+  try {
+    const text =
+      typeof error === "object" ? JSON.stringify(error) : String(error);
+    if (typeof text !== "string" || text.length === 0) return "Unknown error";
+    return truncateThrownValue(text);
+  } catch {
+    return "Unknown error";
+  }
 }
 
 /**
@@ -47,16 +78,15 @@ export class RouteParseError extends SchmockError {
 }
 
 /**
- * Error thrown when response generation fails
+ * Error thrown when a response cannot be represented safely by transports
  */
-export class ResponseGenerationError extends SchmockError {
-  constructor(route: string, error: Error) {
-    super(
-      `Failed to generate response for route ${route}: ${error.message}`,
-      "RESPONSE_GENERATION_ERROR",
-      { route, originalError: error },
-    );
-    this.name = "ResponseGenerationError";
+export class InvalidResponseError extends SchmockError {
+  constructor(reason: string, context: Record<string, unknown> = {}) {
+    super(`Invalid response: ${reason}`, "INVALID_RESPONSE", {
+      ...context,
+      reason,
+    });
+    this.name = "InvalidResponseError";
   }
 }
 

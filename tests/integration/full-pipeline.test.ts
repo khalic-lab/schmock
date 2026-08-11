@@ -44,9 +44,9 @@ describe("Full Pipeline: schmock → openapi → listen → fetch → close", ()
     expect(fetched.status).toBe(200);
     expect(fetched.body).toHaveProperty("name", "Fluffy");
 
-    // PATCH — update
+    // PUT — update (petstore-openapi3 declares only put on /pets/{petId})
     const updated = await fetchJson(port, `/pets/${petId}`, {
-      method: "PATCH",
+      method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "Fluffy II", tag: "dog" }),
     });

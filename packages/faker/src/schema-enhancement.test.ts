@@ -86,6 +86,40 @@ describe("enhanceSchemaWithSmartMapping", () => {
     expect(allOf[1].properties.phone.faker).toBeDefined();
   });
 
+  it("does not expand a compact shared allOf DAG exponentially", () => {
+    let allOfReads = 0;
+    let schema: JSONSchema7 = { type: "string" };
+    for (let depth = 0; depth < 25; depth += 1) {
+      const child = schema;
+      const parent: JSONSchema7 = {};
+      Object.defineProperty(parent, "allOf", {
+        enumerable: true,
+        get() {
+          allOfReads += 1;
+          if (allOfReads > 100) {
+            throw new Error("Shared schema was expanded by path");
+          }
+          return [child, child];
+        },
+      });
+      schema = parent;
+    }
+
+    let enhanced = enhanceSchemaWithSmartMapping(schema);
+
+    expect(allOfReads).toBe(25);
+    for (let depth = 0; depth < 25; depth += 1) {
+      const branches = enhanced.allOf;
+      expect(branches).toHaveLength(2);
+      expect(branches?.[0]).toBe(branches?.[1]);
+      const child = branches?.[0];
+      if (!child || typeof child === "boolean") {
+        throw new Error("Expected an enhanced allOf schema");
+      }
+      enhanced = child;
+    }
+  });
+
   it("enhancement recurses into anyOf branches", () => {
     const schema: JSONSchema7 = {
       anyOf: [
@@ -170,10 +204,94 @@ describe("enhanceSchemaWithSmartMapping", () => {
     expect(props.email.faker).toBe("lorem.word");
   });
 
-  it("handles schema without properties gracefully", () => {
+  it("never replaces a declared format with a mapping format", () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: {
+        createdAt: { type: "string", format: "date" },
+        email: { type: "string", format: "date-time" },
+      },
+    };
+
+    const enhanced = enhanceSchemaWithSmartMapping(schema);
+    const props = enhanced.properties as Record<
+      string,
+      JSONSchema7 & { faker?: string }
+    >;
+
+    expect(props.createdAt.format).toBe("date");
+    expect(props.createdAt.faker).toBeUndefined();
+    expect(props.email.format).toBe("date-time");
+    expect(props.email.faker).toBeUndefined();
+  });
+
+  it("adds useful text generation to an unconstrained root string", () => {
     const schema: JSONSchema7 = { type: "string" };
     const enhanced = enhanceSchemaWithSmartMapping(schema);
-    expect(enhanced).toEqual({ type: "string" });
+    expect(enhanced).toEqual({ type: "string", faker: "lorem.word" });
+  });
+
+  it("preserves an explicit zero minimum length", () => {
+    const schema: JSONSchema7 = { type: "string", minLength: 0 };
+    const enhanced = enhanceSchemaWithSmartMapping(schema);
+    expect(enhanced).toEqual(schema);
+  });
+
+  // M20-b: the enhancer recurses through composition, additionalProperties and
+  // patternProperties, so a cyclic schema reaching it directly used to blow the
+  // stack (RangeError surfacing as a 500). Validation rejects these first, but
+  // the enhancer is exported and must not depend on that.
+  describe("cyclic schemas", () => {
+    it("tolerates a self-referential allOf", () => {
+      const schema: any = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
+      schema.allOf = [schema];
+
+      expect(() => enhanceSchemaWithSmartMapping(schema)).not.toThrow();
+    });
+
+    it("tolerates a self-referential additionalProperties", () => {
+      const schema: any = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
+      schema.additionalProperties = schema;
+
+      expect(() => enhanceSchemaWithSmartMapping(schema)).not.toThrow();
+    });
+
+    it("tolerates an A -> B -> A cycle through oneOf", () => {
+      const a: any = { type: "object", properties: {} };
+      const b: any = { type: "object", properties: {} };
+      a.oneOf = [b];
+      b.oneOf = [a];
+
+      expect(() => enhanceSchemaWithSmartMapping(a)).not.toThrow();
+    });
+
+    it("tolerates a self-referential property", () => {
+      const schema: any = { type: "object", properties: {} };
+      schema.properties.self = schema;
+
+      expect(() => enhanceSchemaWithSmartMapping(schema)).not.toThrow();
+    });
+
+    it("still enhances a sub-schema reused by two siblings", () => {
+      const shared: JSONSchema7 = {
+        type: "object",
+        properties: { email: { type: "string" } },
+      };
+      const enhanced = enhanceSchemaWithSmartMapping({
+        type: "object",
+        properties: { left: shared, right: shared },
+      });
+
+      const props = enhanced.properties as Record<string, any>;
+      expect(props.left.properties.email.faker).toBeDefined();
+      expect(props.right.properties.email.faker).toBeDefined();
+    });
   });
 
   it("handles null/undefined schema gracefully", () => {

@@ -22,7 +22,10 @@ schmock/
 │   ├── openapi/        # OpenAPI/Swagger auto-mock plugin
 │   ├── express/        # Express middleware adapter
 │   ├── angular/        # Angular HTTP interceptor adapter
-│   └── cli/            # Standalone CLI server
+│   ├── react/          # React provider, hook, and testing utilities
+│   ├── vue/            # Vue plugin and composable
+│   ├── cli/            # Standalone CLI server
+│   └── schmock/        # Core + non-framework plugins + CLI aggregate
 ├── features/           # BDD feature files (.feature)
 ├── tests/integration/  # Integration test suite
 ├── docs/               # API documentation
@@ -32,10 +35,11 @@ schmock/
 ## Testing
 
 ```sh
-bun test:all           # typecheck + unit + BDD + integration
-bun test:unit          # unit tests only
-bun test:bdd           # BDD tests only
-bun test:integration   # integration tests only
+bun run test:all       # typecheck + unit + BDD + integration
+bun run test:unit      # unit tests only
+bun run test:bdd       # BDD tests only
+bun run test:integration  # integration tests only
+bun run test:e2e       # cross-framework E2E tests
 bun run typecheck      # type checking
 bun run lint           # linting (Biome)
 bun run lint:fix       # auto-fix lint issues
@@ -64,5 +68,16 @@ Pre-commit hooks enforce:
 - TypeScript type checking
 - Unit + BDD tests
 - Benchmarks
+
+Before package or release changes, also run:
+
+```sh
+bun run check:publish
+```
+
+This gate verifies clean/repeated build reproducibility, stale-artifact removal,
+all 11 packed packages under Node and Bun, strict standalone declarations,
+packed Core declarations with TypeScript 5.6, React root/testing context
+identity, browser bundling, CLI startup, `publint`, and `attw`.
 
 See [CLAUDE.md](./CLAUDE.md) for detailed project architecture and conventions.

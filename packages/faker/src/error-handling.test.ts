@@ -1,5 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
+import { MAX_NESTING_DEPTH } from "./constants";
 import { fakerPlugin, generateFromSchema } from "./index";
 import { schemas } from "./test-utils";
 
@@ -127,7 +128,7 @@ describe("Schema Error Handling", () => {
 
     it("provides clear error for nesting depth", async () => {
       try {
-        const deepSchema = schemas.nested.deep(15);
+        const deepSchema = schemas.nested.deep(MAX_NESTING_DEPTH + 5);
         await generateFromSchema({ schema: deepSchema });
         expect.fail("Should have thrown");
       } catch (error: any) {
@@ -266,6 +267,389 @@ describe("Schema Error Handling", () => {
         // json-schema-faker throws its own error
         expect(error.message).toContain("Unresolved $ref");
       }
+    });
+  });
+
+  // M20-a/b/c: validation used to walk only `type: "object"` properties and
+  // `type: "array"` items, so anything hidden in $defs, composition,
+  // patternProperties or below an untyped node reached json-schema-faker
+  // unchecked — including invalid faker methods, oversized arrays and cycles
+  // that blew the stack.
+  describe("Unified schema traversal", () => {
+    async function expectThrown(schema: JSONSchema7): Promise<any> {
+      try {
+        await generateFromSchema({ schema });
+      } catch (error: unknown) {
+        return error;
+      }
+      expect.fail("Should have thrown");
+    }
+
+    it("rejects an invalid faker method inside $defs", async () => {
+      const error = await expectThrown({
+        type: "object",
+        properties: { user: { $ref: "#/$defs/user" } },
+        $defs: {
+          user: {
+            type: "object",
+            properties: {
+              name: { type: "string", faker: "not.a.method" },
+            } as any,
+          },
+        },
+      } as JSONSchema7);
+
+      expect(error.name).toBe("SchemaValidationError");
+      expect(error.message).toContain("Invalid faker method");
+    });
+
+    it("rejects an invalid faker method inside an allOf branch", async () => {
+      const error = await expectThrown({
+        allOf: [
+          { type: "object", properties: { id: { type: "string" } } },
+          {
+            type: "object",
+            properties: {
+              name: { type: "string", faker: "nope.nope" },
+            } as any,
+          },
+        ],
+      } as JSONSchema7);
+
+      expect(error.name).toBe("SchemaValidationError");
+      expect(error.message).toContain("Invalid faker method");
+    });
+
+    it("rejects an invalid faker method inside patternProperties", async () => {
+      const error = await expectThrown({
+        type: "object",
+        patternProperties: {
+          "^x-": { type: "string", faker: "bogus.method" },
+        } as any,
+      } as JSONSchema7);
+
+      expect(error.name).toBe("SchemaValidationError");
+      expect(error.message).toContain("Invalid faker method");
+    });
+
+    it("rejects an oversized array hidden in $defs", async () => {
+      const error = await expectThrown({
+        type: "object",
+        properties: { rows: { $ref: "#/$defs/rows" } },
+        $defs: {
+          rows: { type: "array", items: { type: "string" }, maxItems: 999999 },
+        },
+      } as JSONSchema7);
+
+      expect(error.code).toBe("RESOURCE_LIMIT_ERROR");
+      expect(error.context.resource).toBe("array_max_items");
+    });
+
+    it("rejects an oversized array hidden in an allOf branch", async () => {
+      const error = await expectThrown({
+        type: "object",
+        properties: {
+          rows: {
+            allOf: [
+              { type: "array", items: { type: "string" }, maxItems: 999999 },
+            ],
+          },
+        },
+      } as JSONSchema7);
+
+      expect(error.code).toBe("RESOURCE_LIMIT_ERROR");
+      expect(error.context.resource).toBe("array_max_items");
+    });
+
+    it("traverses an untyped object root", async () => {
+      // No `type` keyword: JSON Schema does not require one, and
+      // json-schema-faker still generates from `properties`.
+      const error = await expectThrown({
+        properties: {
+          rows: { type: "array", items: { type: "string" }, maxItems: 999999 },
+        },
+      } as JSONSchema7);
+
+      expect(error.code).toBe("RESOURCE_LIMIT_ERROR");
+      expect(error.context.resource).toBe("array_max_items");
+    });
+
+    it("still accepts and generates a legally composed schema", async () => {
+      const result: any = await generateFromSchema({
+        schema: {
+          type: "object",
+          properties: {
+            profile: {
+              allOf: [
+                {
+                  type: "object",
+                  properties: { id: { type: "string" } },
+                  required: ["id"],
+                },
+                {
+                  type: "object",
+                  properties: { active: { type: "boolean" } },
+                  required: ["active"],
+                },
+              ],
+            },
+            choice: { oneOf: [{ type: "string" }, { type: "integer" }] },
+            tags: {
+              type: "array",
+              items: { type: "string" },
+              minItems: 1,
+              maxItems: 3,
+            },
+          },
+          required: ["profile", "choice", "tags"],
+        } as JSONSchema7,
+        seed: 7,
+      });
+
+      expect(result.profile.id).toEqual(expect.any(String));
+      expect(typeof result.profile.active).toBe("boolean");
+      expect(["string", "number"]).toContain(typeof result.choice);
+      expect(Array.isArray(result.tags)).toBe(true);
+    });
+  });
+
+  describe("Circular references beyond properties and items", () => {
+    function expectCircular(schema: JSONSchema7): void {
+      try {
+        fakerPlugin({ schema });
+        expect.fail("Should have thrown");
+      } catch (error: any) {
+        expect(error.name).toBe("SchemaValidationError");
+        expect(error.message).toContain("circular");
+      }
+    }
+
+    it("detects a self-referential allOf", () => {
+      const schema: any = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
+      schema.allOf = [schema];
+      expectCircular(schema);
+    });
+
+    it("detects a self-referential additionalProperties", () => {
+      const schema: any = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
+      schema.additionalProperties = schema;
+      expectCircular(schema);
+    });
+
+    it("detects an A -> B -> A cycle through oneOf", () => {
+      const a: any = { type: "object", properties: {} };
+      const b: any = { type: "object", properties: {} };
+      a.oneOf = [b];
+      b.oneOf = [a];
+      expectCircular(a);
+    });
+
+    it("detects a cycle through patternProperties", () => {
+      const schema: any = { type: "object", patternProperties: {} };
+      schema.patternProperties["^a"] = schema;
+      expectCircular(schema);
+    });
+
+    it("still allows the same sub-schema to be reused by siblings", async () => {
+      const shared: JSONSchema7 = {
+        type: "object",
+        properties: { label: { type: "string" } },
+        required: ["label"],
+      };
+      const result: any = await generateFromSchema({
+        schema: {
+          type: "object",
+          properties: { left: shared, right: shared },
+          required: ["left", "right"],
+        },
+        seed: 3,
+      });
+
+      expect(result.left.label).toEqual(expect.any(String));
+      expect(result.right.label).toEqual(expect.any(String));
+    });
+  });
+
+  describe("Array size limits below the root", () => {
+    it("rejects a nested minItems above the maximum array size", async () => {
+      try {
+        await generateFromSchema({
+          schema: {
+            type: "object",
+            properties: {
+              rows: {
+                type: "array",
+                items: { type: "string" },
+                minItems: 50000,
+              },
+            },
+          },
+        });
+        expect.fail("Should have thrown");
+      } catch (error: any) {
+        expect(error.code).toBe("RESOURCE_LIMIT_ERROR");
+        expect(error.context.resource).toBe("array_max_items");
+        expect(error.context.actual).toBe(50000);
+      }
+    });
+
+    it("rejects a minItems above the maximum inside an allOf branch", async () => {
+      try {
+        await generateFromSchema({
+          schema: {
+            type: "object",
+            properties: {
+              rows: {
+                allOf: [
+                  { type: "array", items: { type: "string" }, minItems: 20000 },
+                ],
+              },
+            },
+          },
+        });
+        expect.fail("Should have thrown");
+      } catch (error: any) {
+        expect(error.code).toBe("RESOURCE_LIMIT_ERROR");
+        expect(error.context.resource).toBe("array_max_items");
+      }
+    });
+
+    it("still generates a nested array below the maximum", async () => {
+      const result: any = await generateFromSchema({
+        schema: {
+          type: "object",
+          properties: {
+            rows: {
+              type: "array",
+              items: { type: "string" },
+              minItems: 5000,
+              maxItems: 5000,
+            },
+          },
+          required: ["rows"],
+        },
+        seed: 11,
+      });
+
+      expect(result.rows).toHaveLength(5000);
+    });
+  });
+
+  // P5-budget: the bound has to cover schema WIDTH (every optional property is
+  // materialized), not only the number of schema nodes.
+  describe("Generation budgets", () => {
+    it("rejects a schema whose estimated output exceeds the node budget", async () => {
+      const wideItem: JSONSchema7 = {
+        type: "object",
+        properties: Object.fromEntries(
+          Array.from({ length: 1500 }, (_, i) => [
+            `field${i}`,
+            { type: "string" },
+          ]),
+        ),
+      };
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: {
+          rows: {
+            type: "array",
+            items: wideItem,
+            minItems: 1000,
+            maxItems: 1000,
+          },
+        },
+      };
+
+      try {
+        await generateFromSchema({ schema });
+        expect.fail("Should have thrown");
+      } catch (error: any) {
+        expect(error.code).toBe("RESOURCE_LIMIT_ERROR");
+        expect(error.context.resource).toBe("generated_nodes");
+        // ~1000 rows x 1501 nodes: a bound that only counted schema nodes
+        // (about 1503 here) would have let this through.
+        expect(error.context.actual).toBeGreaterThan(1_000_000);
+      }
+    });
+
+    it("rejects a composition chain deeper than the walk can safely follow", async () => {
+      // Composition does not add document depth, so MAX_NESTING_DEPTH cannot
+      // bound it; without its own cap this used to be a stack overflow.
+      let schema: JSONSchema7 = { type: "string" };
+      for (let i = 0; i < 250; i++) {
+        schema = { allOf: [schema] };
+      }
+
+      try {
+        await generateFromSchema({ schema });
+        expect.fail("Should have thrown");
+      } catch (error: any) {
+        expect(error.code).toBe("RESOURCE_LIMIT_ERROR");
+        expect(error.context.resource).toBe("schema_composition_depth");
+      }
+    });
+
+    it("counts shared sub-schemas once while rejecting their expanded output", async () => {
+      let level: JSONSchema7 = { type: "string" };
+      for (let i = 0; i < 9; i++) {
+        const child = level;
+        level = {
+          type: "object",
+          properties: { a: child, b: child, c: child, d: child, e: child },
+        };
+      }
+
+      try {
+        await generateFromSchema({ schema: level });
+        expect.fail("Should have thrown");
+      } catch (error: any) {
+        expect(error.code).toBe("RESOURCE_LIMIT_ERROR");
+        expect(error.context.resource).toBe("generated_nodes");
+        expect(error.context.actual).toBe(2_441_406);
+      }
+
+      if (!level.properties) throw new Error("Expected shared properties");
+      expect(level.properties.a).toBe(level.properties.b);
+    });
+
+    it("still generates a large but legal schema", async () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: {
+          ...Object.fromEntries(
+            Array.from({ length: 200 }, (_, i) => [
+              `field${i}`,
+              { type: "string" },
+            ]),
+          ),
+          rows: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                nested: {
+                  type: "object",
+                  properties: { value: { type: "string" } },
+                },
+              },
+            },
+            minItems: 500,
+            maxItems: 500,
+          },
+        },
+        required: ["rows"],
+      };
+
+      const result: any = await generateFromSchema({ schema, seed: 5 });
+      expect(Object.keys(result).length).toBeGreaterThanOrEqual(200);
+      expect(result.rows).toHaveLength(500);
     });
   });
 

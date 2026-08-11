@@ -1,0 +1,7 @@
+interface:
+  display_name: "Schmock Release Operations"
+  short_description: "Preflight and execute Schmock releases safely"
+  default_prompt: "Use $devops to preflight a Schmock release and show every guarded action before requesting approval."
+
+policy:
+  allow_implicit_invocation: false

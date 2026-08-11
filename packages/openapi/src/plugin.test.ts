@@ -6,6 +6,21 @@ import { openapi } from "./plugin";
 const fixturesDir = resolve(import.meta.dirname, "__fixtures__");
 
 describe("openapi plugin", () => {
+  it("rejects unsupported query features with a structured setup error", async () => {
+    const spec = {
+      openapi: "3.0.3",
+      info: { title: "test", version: "1.0.0" },
+      paths: {},
+    };
+
+    await expect(
+      openapi({ spec, queryFeatures: { pagination: true } }),
+    ).rejects.toMatchObject({
+      code: "OPENAPI_UNSUPPORTED_OPTION",
+      context: { option: "queryFeatures" },
+    });
+  });
+
   describe("Swagger 2.0 integration", () => {
     it("auto-registers all routes from Petstore spec", async () => {
       const mock = schmock({ state: {} });
@@ -179,6 +194,126 @@ describe("openapi plugin", () => {
     });
   });
 
+  describe("route metadata", () => {
+    const metadataSpec = {
+      openapi: "3.0.3",
+      info: { title: "Metadata", version: "1.0.0" },
+      paths: {
+        "/pets": {
+          get: {
+            operationId: "listPets",
+            tags: ["pets"],
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: { type: "array", items: { type: "object" } },
+                  },
+                },
+              },
+            },
+          },
+          post: {
+            operationId: "createPet",
+            tags: ["pets", "write"],
+            responses: {
+              "201": {
+                description: "Created",
+                content: {
+                  "application/json": { schema: { type: "object" } },
+                },
+              },
+            },
+          },
+        },
+        "/pets/{petId}": {
+          get: {
+            operationId: "readPet",
+            tags: ["pets"],
+            parameters: [
+              {
+                name: "petId",
+                in: "path",
+                required: true,
+                schema: { type: "string" },
+              },
+            ],
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": { schema: { type: "object" } },
+                },
+              },
+            },
+          },
+        },
+        "/health": {
+          get: {
+            operationId: "checkHealth",
+            tags: ["ops"],
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": { schema: { type: "object" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    async function probeRoutes(): Promise<Map<string, Schmock.RouteConfig>> {
+      const seen = new Map<string, Schmock.RouteConfig>();
+      const mock = schmock({ state: {} });
+      mock.pipe(await openapi({ spec: metadataSpec }));
+      mock.pipe({
+        name: "metadata-probe",
+        beforeRequest(context) {
+          seen.set(`${context.method} ${context.path}`, context.route);
+          return undefined;
+        },
+        process(context, response) {
+          return { context, response };
+        },
+      });
+
+      await mock.handle("GET", "/pets");
+      await mock.handle("POST", "/pets", { body: {} });
+      await mock.handle("GET", "/health");
+      return seen;
+    }
+
+    it("carries operationId and tags on both CRUD and non-CRUD routes", async () => {
+      const seen = await probeRoutes();
+
+      expect(seen.get("GET /pets")?.["openapi:operationId"]).toBe("listPets");
+      expect(seen.get("GET /pets")?.["openapi:tags"]).toEqual(["pets"]);
+      expect(seen.get("POST /pets")?.["openapi:operationId"]).toBe("createPet");
+      expect(seen.get("GET /health")?.["openapi:operationId"]).toBe(
+        "checkHealth",
+      );
+      expect(seen.get("GET /health")?.["openapi:tags"]).toEqual(["ops"]);
+    });
+
+    it("keeps the preflight status asymmetry between CRUD list, CRUD create and non-CRUD", async () => {
+      const seen = await probeRoutes();
+
+      expect(
+        seen.get("GET /pets")?.["openapi:preflightResponseStatus"],
+      ).toBeUndefined();
+      expect(seen.get("POST /pets")?.["openapi:preflightResponseStatus"]).toBe(
+        201,
+      );
+      expect(seen.get("GET /health")?.["openapi:preflightResponseStatus"]).toBe(
+        200,
+      );
+    });
+  });
+
   describe("state isolation", () => {
     it("isolates state between separate mock instances", async () => {
       const mock1 = schmock({ state: {} });
@@ -203,7 +338,94 @@ describe("openapi plugin", () => {
     });
   });
 
+  describe("transactional mutations", () => {
+    it("commits a create exactly once when two plugins are piped", async () => {
+      // The second instance owns none of the routes (first registration wins),
+      // so it early-returns before settling; the queue is cleared by the first
+      // process() either way.
+      const mock = schmock({ state: {} });
+      mock.pipe(
+        await openapi({ spec: `${fixturesDir}/petstore-swagger2.json` }),
+      );
+      mock.pipe(
+        await openapi({ spec: `${fixturesDir}/petstore-swagger2.json` }),
+      );
+
+      const created = await mock.handle("POST", "/pets", {
+        body: { name: "Buddy" },
+      });
+      expect(created.status).toBe(201);
+
+      const list = await mock.handle("GET", "/pets");
+      expect(list.body).toHaveLength(1);
+    });
+
+    it("clears the pending queue after committing", async () => {
+      const state: Record<string, unknown> = {};
+      const mock = schmock({ state });
+      mock.pipe(
+        await openapi({ spec: `${fixturesDir}/petstore-swagger2.json` }),
+      );
+
+      await mock.handle("POST", "/pets", { body: { name: "A" } });
+      await mock.handle("POST", "/pets", { body: { name: "B" } });
+
+      const list = await mock.handle("GET", "/pets");
+      expect(list.body).toHaveLength(2);
+      // The queue lives in the per-request plugin Map, never in shared state.
+      expect(state["openapi:pendingMutations"]).toBeUndefined();
+    });
+  });
+
   describe("validator isolation", () => {
+    it("isolates request and response schemas with the same $id", async () => {
+      const sharedSchema = {
+        $id: "https://example.com/schemas/item.json",
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      };
+      const spec = {
+        openapi: "3.0.3",
+        info: { title: "test", version: "1.0.0" },
+        paths: {
+          "/echo": {
+            post: {
+              requestBody: {
+                required: true,
+                content: {
+                  "application/json": { schema: sharedSchema },
+                },
+              },
+              responses: {
+                "201": {
+                  description: "created",
+                  content: {
+                    "application/json": { schema: sharedSchema },
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+      const mock = schmock();
+      mock.pipe(
+        await openapi({
+          spec,
+          validateRequests: true,
+          validateResponses: true,
+        }),
+      );
+
+      const response = await mock.handle("POST", "/echo", {
+        body: { name: "valid" },
+        headers: { accept: "application/json" },
+      });
+
+      expect(response.status).toBe(201);
+    });
+
     it("two plugins with overlapping schema $id values don't collide on AJV compile", async () => {
       const sharedId = "https://example.com/schemas/user.json";
       const specBuilder = (minLen: number) => ({
@@ -251,5 +473,480 @@ describe("openapi plugin", () => {
       expect(resA.status).toBeLessThan(400);
       expect(resB.status).toBe(400);
     });
+  });
+});
+
+describe("schema overrides", () => {
+  const twoMediaTypeSpec = {
+    openapi: "3.0.3",
+    info: { title: "Media", version: "1.0.0" },
+    paths: {
+      "/items": {
+        get: {
+          responses: {
+            "200": {
+              description: "OK",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { kind: { type: "string", const: "json" } },
+                  },
+                },
+                "application/xml": {
+                  schema: {
+                    type: "object",
+                    properties: { kind: { type: "string", const: "xml" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  it("patches only the JSON branch of a multi-media-type response", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: twoMediaTypeSpec,
+        schemas: {
+          "GET /items": {
+            type: "object",
+            properties: { patched: { type: "string", const: "yes" } },
+          },
+        },
+      }),
+    );
+
+    const json = await mock.handle("GET", "/items");
+    expect(json.body).toEqual({ patched: "yes" });
+
+    const xml = await mock.handle("GET", "/items", {
+      headers: { accept: "application/xml" },
+    });
+    expect(xml.body).toEqual({ kind: "xml" });
+  });
+
+  it("still patches an operation declaring a single non-JSON media type", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: {
+          openapi: "3.0.3",
+          info: { title: "XmlOnly", version: "1.0.0" },
+          paths: {
+            "/reports": {
+              get: {
+                responses: {
+                  "200": {
+                    description: "OK",
+                    content: {
+                      "application/xml": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            kind: { type: "string", const: "xml" },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        schemas: {
+          "GET /reports": {
+            type: "object",
+            properties: { patched: { type: "string", const: "yes" } },
+          },
+        },
+      }),
+    );
+
+    const res = await mock.handle("GET", "/reports", {
+      headers: { accept: "application/xml" },
+    });
+    expect(res.body).toEqual({ patched: "yes" });
+  });
+
+  it("applies before CRUD seeding, so generated seed items match the override", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: `${fixturesDir}/petstore-openapi3.json`,
+        schemas: {
+          "GET /pets": {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["petId", "nickname"],
+              properties: {
+                petId: { type: "integer" },
+                nickname: { type: "string" },
+              },
+            },
+          },
+        },
+        seed: { pets: { count: 2 } },
+      }),
+    );
+
+    const list = await mock.handle("GET", "/pets");
+    expect(list.status).toBe(200);
+    const items = list.body as Record<string, unknown>[];
+    expect(items).toHaveLength(2);
+    for (const item of items) {
+      expect(item).toHaveProperty("nickname");
+      expect(item).not.toHaveProperty("tag");
+    }
+  });
+});
+
+describe("schema override key validation", () => {
+  const widgetsSpec = {
+    openapi: "3.0.3",
+    info: { title: "Widgets", version: "1.0.0" },
+    paths: {
+      "/widgets": {
+        get: {
+          responses: {
+            "200": {
+              description: "OK",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { id: { type: "integer" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/gone": {
+        get: {
+          responses: {
+            "404": {
+              description: "Missing",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { error: { type: "string" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const override = {
+    type: "object" as const,
+    properties: { patched: { type: "string" as const, const: "yes" } },
+  };
+
+  function withKey(key: string): Promise<Schmock.Plugin> {
+    return openapi({ spec: widgetsSpec, schemas: { [key]: override } });
+  }
+
+  it.each([
+    ["extra trailing token", "GET /widgets 200 extra"],
+    ["a non-numeric status", "GET /widgets 2xx"],
+    ["a lowercase method", "get /widgets"],
+    ["no space between method and path", "GET/widgets"],
+    ["a path with no leading slash", "GET widgets"],
+    ["an unknown HTTP method", "FETCH /widgets"],
+    ["a status outside 1xx-5xx", "GET /widgets 600"],
+  ])("rejects a key with %s", async (_label, key) => {
+    await expect(withKey(key)).rejects.toMatchObject({
+      code: "OPENAPI_INVALID_SCHEMA_OVERRIDE",
+    });
+    await expect(withKey(key)).rejects.toThrow(key);
+  });
+
+  it("rejects a well-formed key naming a route the spec does not declare", async () => {
+    await expect(withKey("GET /nope")).rejects.toMatchObject({
+      code: "OPENAPI_INVALID_SCHEMA_OVERRIDE",
+    });
+    await expect(withKey("GET /nope")).rejects.toThrow("GET /nope");
+  });
+
+  // Regression: `Number.parseInt("2xx", 10) === 2` used to inject a phantom
+  // `responses[2]` entry, which `findRepresentativeResponse` then picked as the
+  // representative response — the generator emitted `[2, body]` and core passed
+  // the whole tuple through as the BODY at status 200.
+  it("no longer injects a phantom status-2 response from a '2xx' key", async () => {
+    await expect(withKey("GET /gone 2xx")).rejects.toMatchObject({
+      code: "OPENAPI_INVALID_SCHEMA_OVERRIDE",
+    });
+
+    const mock = schmock({ state: {} });
+    mock.pipe(await openapi({ spec: widgetsSpec }));
+    const res = await mock.handle("GET", "/gone");
+    expect(res.status).toBe(404);
+  });
+
+  it("accepts the documented grammar", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: widgetsSpec,
+        schemas: { "GET /widgets": override, "GET /gone 404": override },
+      }),
+    );
+
+    expect((await mock.handle("GET", "/widgets")).body).toEqual({
+      patched: "yes",
+    });
+    const gone = await mock.handle("GET", "/gone");
+    expect(gone.status).toBe(404);
+    expect(gone.body).toEqual({ patched: "yes" });
+  });
+
+  // A parameterized path has two spellings: the `{petId}` form the author reads
+  // out of their own spec, and the `:petId` form the parser converts it to.
+  // Both must resolve to the same operation — rejecting the spec-native one
+  // with "the spec declares no ... operation" was a false statement.
+  describe("parameterized paths", () => {
+    // A report summary rather than an item route: `/pets/{petId}` alone is
+    // detected as a CRUD read and 404s on an empty collection, which would hide
+    // whether the override landed.
+    const reportsSpec = {
+      openapi: "3.0.3",
+      info: { title: "Reports", version: "1.0.0" },
+      paths: {
+        "/reports/{reportId}/summary": {
+          get: {
+            parameters: [
+              {
+                name: "reportId",
+                in: "path",
+                required: true,
+                schema: { type: "string" },
+              },
+            ],
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { id: { type: "integer" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    it.each([
+      ["the spec's own {param} spelling", "GET /reports/{reportId}/summary"],
+      ["the Express :param spelling", "GET /reports/:reportId/summary"],
+    ])("accepts an override key written with %s", async (_label, key) => {
+      const mock = schmock({ state: {} });
+      mock.pipe(
+        await openapi({ spec: reportsSpec, schemas: { [key]: override } }),
+      );
+
+      const res = await mock.handle("GET", "/reports/7/summary");
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ patched: "yes" });
+    });
+
+    it("still rejects a parameterized key naming an undeclared route", async () => {
+      await expect(
+        openapi({
+          spec: reportsSpec,
+          schemas: { "GET /reports/{reportId}/lines": override },
+        }),
+      ).rejects.toMatchObject({ code: "OPENAPI_INVALID_SCHEMA_OVERRIDE" });
+    });
+
+    it("still rejects a key whose parameter name differs from the spec's", async () => {
+      // The parameter NAME is part of the route key: `/reports/{id}/summary`
+      // converts to `/reports/:id/summary`, not the `:reportId` form declared.
+      await expect(
+        openapi({
+          spec: reportsSpec,
+          schemas: { "GET /reports/{id}/summary": override },
+        }),
+      ).rejects.toThrow("GET /reports/{id}/summary");
+    });
+  });
+});
+
+describe("identifier policy", () => {
+  const thingsSpec = {
+    openapi: "3.0.3",
+    info: { title: "Things", version: "1.0.0" },
+    paths: {
+      "/things": {
+        get: {
+          responses: {
+            "200": {
+              description: "OK",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        id: { type: "integer" },
+                        name: { type: "string" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          responses: {
+            "201": {
+              description: "Created",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["id", "name"],
+                    properties: {
+                      id: { type: "integer" },
+                      name: { type: "string" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/things/{thingId}": {
+        get: {
+          parameters: [
+            {
+              name: "thingId",
+              in: "path",
+              required: true,
+              schema: { type: "integer" },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "OK",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      id: { type: "integer" },
+                      name: { type: "string" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  it("normalizes legacy seed rows onto the declared id property", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: thingsSpec,
+        seed: { things: [{ thingId: 5, name: "Seeded" }] },
+      }),
+    );
+
+    const list = await mock.handle("GET", "/things");
+    expect(list.body).toEqual([{ id: 5, name: "Seeded" }]);
+
+    // Read still goes through the path parameter's value.
+    const read = await mock.handle("GET", "/things/5");
+    expect(read.status).toBe(200);
+    expect((read.body as Record<string, unknown>).name).toBe("Seeded");
+
+    // The counter continued past the seeded maximum.
+    const created = await mock.handle("POST", "/things", {
+      body: { name: "Fresh" },
+    });
+    expect((created.body as Record<string, unknown>).id).toBe(6);
+  });
+
+  it("returns the declared create contract instead of the path parameter key", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(await openapi({ spec: thingsSpec }));
+
+    const created = await mock.handle("POST", "/things", {
+      body: { name: "Fresh" },
+    });
+    expect(created.status).toBe(201);
+    const body = created.body as Record<string, unknown>;
+    expect(body.id).toBe(1);
+    expect(body.name).toBe("Fresh");
+    expect(body).not.toHaveProperty("thingId");
+
+    const read = await mock.handle("GET", `/things/${body.id}`);
+    expect(read.status).toBe(200);
+  });
+});
+
+describe("server URLs", () => {
+  // `ParsedSpec.basePath` was computed and never applied. Removing it turns an
+  // accident into a decision: routes register at the spec's own path templates
+  // and a prefix is the adapter's `baseUrl` to choose, not the spec's.
+  it("does not prefix routes with the servers[].url pathname", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: {
+          openapi: "3.0.3",
+          info: { title: "Prefixed", version: "1.0.0" },
+          servers: [{ url: "https://api.example.com/v2" }],
+          paths: {
+            "/pets": {
+              get: {
+                responses: {
+                  "200": {
+                    description: "OK",
+                    content: {
+                      "application/json": {
+                        schema: {
+                          type: "array",
+                          items: {
+                            type: "object",
+                            properties: { petId: { type: "integer" } },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    expect((await mock.handle("GET", "/pets")).status).toBe(200);
+    expect((await mock.handle("GET", "/v2/pets")).status).toBe(404);
   });
 });

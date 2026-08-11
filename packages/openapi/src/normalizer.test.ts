@@ -1,15 +1,29 @@
+import Ajv2020 from "ajv/dist/2020.js";
+import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
+import { findArrayProperty } from "./generators";
 import { normalizeSchema } from "./normalizer";
+import { hasType } from "./utils";
+
+/** Compile with the exact AJV the request pipeline uses (request-pipeline.ts). */
+function acceptsNull(schema: JSONSchema7): boolean {
+  const ajv = new Ajv2020({
+    allErrors: true,
+    strictSchema: false,
+    strictTypes: false,
+  });
+  return ajv.compile(schema)(null);
+}
 
 describe("normalizeSchema", () => {
   describe("nullable", () => {
-    it("converts nullable: true to schmockNullable marker", () => {
+    it("converts nullable: true to a null-permitting type union plus the marker", () => {
       const result = normalizeSchema(
         { type: "string", nullable: true },
         "response",
       );
       expect(result).toEqual({
-        type: "string",
+        type: ["string", "null"],
         schmockNullable: true,
       });
     });
@@ -20,6 +34,126 @@ describe("normalizeSchema", () => {
         "response",
       );
       expect(result).toEqual({ type: "string" });
+    });
+  });
+
+  describe("nullable emits validation-visible null", () => {
+    it("appends null to a scalar type", () => {
+      const result = normalizeSchema(
+        { type: "string", nullable: true },
+        "response",
+      );
+      expect(result).toEqual({
+        type: ["string", "null"],
+        schmockNullable: true,
+      });
+      expect(acceptsNull(result)).toBe(true);
+    });
+
+    it("appends null once to an existing type union", () => {
+      const result = normalizeSchema(
+        { type: ["string", "integer"], nullable: true },
+        "response",
+      );
+      expect(result.type).toEqual(["string", "integer", "null"]);
+      expect(acceptsNull(result)).toBe(true);
+    });
+
+    it("widens an enum so the union actually accepts null", () => {
+      const result = normalizeSchema(
+        { type: "string", enum: ["a", "b"], nullable: true },
+        "response",
+      );
+      expect(result.type).toEqual(["string", "null"]);
+      expect(result.enum).toEqual(["a", "b", null]);
+      expect(acceptsNull(result)).toBe(true);
+    });
+
+    it("wraps a composition-only nullable in anyOf with a null branch", () => {
+      const result = normalizeSchema(
+        { nullable: true, allOf: [{ type: "object" }] },
+        "response",
+      );
+      expect(result).toEqual({
+        anyOf: [{ type: "null" }, { allOf: [{ type: "object" }] }],
+        schmockNullable: true,
+      });
+      expect(acceptsNull(result)).toBe(true);
+    });
+
+    it("leaves a typeless composition-free schema alone but marks it", () => {
+      const result = normalizeSchema({ nullable: true }, "response");
+      expect(result).toEqual({ schmockNullable: true });
+      expect(acceptsNull(result)).toBe(true);
+    });
+
+    it("keeps list detection working for a nullable array schema", () => {
+      const result = normalizeSchema(
+        { type: "array", items: { type: "string" }, nullable: true },
+        "response",
+      );
+      expect(hasType(result, "array")).toBe(true);
+      expect(acceptsNull(result)).toBe(true);
+
+      const wrapped = normalizeSchema(
+        {
+          type: "object",
+          properties: {
+            data: { type: "array", items: { type: "string" }, nullable: true },
+          },
+        },
+        "response",
+      );
+      expect(findArrayProperty(wrapped)).toEqual({
+        property: "data",
+        itemSchema: { type: "string" },
+      });
+    });
+
+    it("keeps list detection working for a composition-only nullable schema", () => {
+      const result = normalizeSchema(
+        {
+          nullable: true,
+          allOf: [
+            {
+              type: "object",
+              properties: {
+                data: { type: "array", items: { type: "string" } },
+              },
+            },
+          ],
+        },
+        "response",
+      );
+
+      expect(acceptsNull(result)).toBe(true);
+      expect(findArrayProperty(result)).toEqual({
+        property: "data",
+        itemSchema: { type: "string" },
+      });
+    });
+  });
+
+  describe("shared subschemas", () => {
+    it("normalizes a reused subschema in every slot instead of blanking it", () => {
+      const shared = { type: "string", example: "hi" };
+      const result = normalizeSchema(
+        { type: "object", properties: { first: shared, second: shared } },
+        "response",
+      );
+
+      const props = result.properties as Record<string, unknown>;
+      expect(props.first).toEqual({ type: "string", default: "hi" });
+      expect(props.second).toEqual({ type: "string", default: "hi" });
+    });
+
+    it("still truncates a true self-cycle to {} without overflowing", () => {
+      const a: Record<string, unknown> = { type: "object", properties: {} };
+      (a.properties as Record<string, unknown>).self = a;
+
+      const result = normalizeSchema(a, "response");
+      const props = result.properties as Record<string, unknown>;
+      expect(props.self).toEqual({});
     });
   });
 
@@ -178,7 +312,7 @@ describe("normalizeSchema", () => {
       expect(branches).toHaveLength(2);
       // First branch: nullable string → schmockNullable marker
       expect(branches[0]).toHaveProperty("schmockNullable", true);
-      expect(branches[0]).toHaveProperty("type", "string");
+      expect(branches[0].type).toEqual(["string", "null"]);
       // Second branch: example → default
       expect(branches[1]).toHaveProperty("default", 42);
     });
@@ -212,7 +346,7 @@ describe("normalizeSchema", () => {
   });
 
   describe("discriminator", () => {
-    it("adds required and enum constraints for discriminator", () => {
+    it("requires inline discriminator properties without inventing enum values", () => {
       const result = normalizeSchema(
         {
           discriminator: {
@@ -249,6 +383,7 @@ describe("normalizeSchema", () => {
       // Each branch should have petType as required
       for (const branch of branches) {
         expect(branch.required).toContain("petType");
+        expect(branch).not.toHaveProperty("properties.petType.enum");
       }
     });
   });
