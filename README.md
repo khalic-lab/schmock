@@ -1,6 +1,10 @@
 # Schmock
 
-Mock APIs from OpenAPI specs or hand-crafted routes. Callable API, plugin pipeline, framework adapters.
+I developed Schmock for internal use, and I've been using it as a stand-in for our development backend for a year now.
+
+It grew out of a practical need: frontend and integration work should not have to stop because a backend environment is unavailable, unstable, or still catching up. Schmock lets us point at an OpenAPI spec or define a few routes by hand, keep realistic state between requests, and carry on building.
+
+Over time it became the kind of tool I wanted to share: quick to drop into a test or local app, predictable enough to rely on every day, and able to grow beyond the first happy-path demo. At its core, Schmock is a callable mock API with a plugin pipeline and adapters for the frameworks we use.
 
 ```typescript
 import { schmock } from '@schmock/core'
@@ -19,6 +23,8 @@ const res = await mock.handle('GET', '/pets')
 
 ## Why Schmock?
 
+After living with it in day-to-day development, these are the parts that have mattered most:
+
 - **OpenAPI-first**: Point at a spec to register mock routes with stateful CRUD collections, seed data, security validation, and content negotiation
 - **Callable API**: No HTTP server needed — call `mock.handle()` directly in tests
 - **Plugin pipeline**: Chain plugins with `.pipe()` for validation, pagination, filtering, or custom logic
@@ -32,17 +38,19 @@ const res = await mock.handle('GET', '/pets')
 |---------|-------------|
 | [`@schmock/core`](./docs/getting-started.md) | Core mock builder, routing, and plugin pipeline |
 | [`@schmock/openapi`](./docs/openapi.md) | Auto-register routes from OpenAPI/Swagger specs |
-| [`@schmock/faker`](./docs/api.md#faker-plugin) | Faker-powered automatic data generation |
-| [`@schmock/validation`](./docs/api.md#validation-plugin) | Request/response validation via AJV |
-| [`@schmock/query`](./docs/api.md#query-plugin) | Pagination, sorting, and filtering |
+| [`@schmock/faker`](./docs/api.md#faker-plugin-schmockfaker) | Faker-powered automatic data generation |
+| [`@schmock/validation`](./docs/api.md#validation-plugin-schmockvalidation) | Request/response validation via AJV |
+| [`@schmock/query`](./docs/api.md#query-plugin-schmockquery) | Pagination, sorting, and filtering |
 | [`@schmock/express`](./docs/express.md) | Express middleware adapter |
 | [`@schmock/angular`](./docs/angular.md) | Angular HTTP interceptor adapter |
 | [`@schmock/react`](./docs/react.md) | React provider, hook, and testing utilities |
 | [`@schmock/vue`](./docs/vue.md) | Vue plugin and composable |
 | [`@schmock/cli`](./docs/cli.md) | Standalone CLI mock server |
-| `@schmock/schmock` | Aggregate package for Core, non-framework plugins, and CLI |
+| [`@schmock/schmock`](./packages/schmock/README.md) | Aggregate package for Core, non-framework plugins, and CLI |
 
 ## Quick Start
+
+If you want to try it out, the smallest setup is just the core package:
 
 ```sh
 npm install @schmock/core
@@ -173,7 +181,7 @@ schmock petstore.yaml --port 8080 --cors --seed seed.json
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and workflow.
+Contributions, bug reports, and questions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the development setup and workflow.
 
 ## License
 

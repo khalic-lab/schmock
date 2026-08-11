@@ -164,6 +164,65 @@ describe("parseSpec", () => {
       ).toBe("object");
     });
 
+    it("reuses shared schemas without crossing request and response directions", async () => {
+      const sharedSchema = {
+        type: "object",
+        properties: {
+          common: { type: "string" },
+          requestOnly: { type: "string", writeOnly: true },
+          responseOnly: { type: "string", readOnly: true },
+        },
+      };
+      const parsed = await parseSpec({
+        openapi: "3.0.3",
+        info: { title: "Shared schemas", version: "1.0.0" },
+        paths: {
+          "/first": {
+            post: {
+              requestBody: {
+                content: { "application/json": { schema: sharedSchema } },
+              },
+              responses: {
+                "200": {
+                  description: "OK",
+                  content: { "application/json": { schema: sharedSchema } },
+                },
+              },
+            },
+          },
+          "/second": {
+            get: {
+              responses: {
+                "200": {
+                  description: "OK",
+                  content: { "application/json": { schema: sharedSchema } },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const first = parsed.paths.find((path) => path.path === "/first");
+      const second = parsed.paths.find((path) => path.path === "/second");
+      const requestSchema = first?.requestBody;
+      const firstResponse = first?.responses.get(200);
+      const responseSchema = firstResponse?.schema;
+
+      expect(first?.requestContent?.get("application/json")).toBe(
+        requestSchema,
+      );
+      expect(firstResponse?.content?.get("application/json")?.schema).toBe(
+        responseSchema,
+      );
+      expect(second?.responses.get(200)?.schema).toBe(responseSchema);
+      expect(requestSchema).not.toBe(responseSchema);
+      expect(requestSchema?.properties).toHaveProperty("requestOnly");
+      expect(requestSchema?.properties).not.toHaveProperty("responseOnly");
+      expect(responseSchema?.properties).toHaveProperty("responseOnly");
+      expect(responseSchema?.properties).not.toHaveProperty("requestOnly");
+    });
+
     it("resolves $ref pointers via dereference", async () => {
       const spec = await parseSpec(`${fixturesDir}/petstore-openapi3.json`);
       const getPet = spec.paths.find(

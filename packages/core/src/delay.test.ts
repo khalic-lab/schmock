@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { schmock } from "./index";
 
 describe("response delay functionality", () => {
@@ -56,16 +56,21 @@ describe("response delay functionality", () => {
     });
 
     it("applies fixed delay to responses", async () => {
-      const mock = schmock({ delay: 100 });
-      mock("GET /test", "response");
+      vi.useFakeTimers();
+      try {
+        const mock = schmock({ delay: 100 });
+        mock("GET /test", "response");
 
-      const start = Date.now();
-      const response = await mock.handle("GET", "/test");
-      const duration = Date.now() - start;
+        const start = Date.now();
+        const pending = mock.handle("GET", "/test");
+        await vi.runAllTimersAsync();
+        const response = await pending;
 
-      expect(response.body).toBe("response");
-      expect(duration).toBeGreaterThanOrEqual(95); // Allow some tolerance
-      expect(duration).toBeLessThan(150);
+        expect(response.body).toBe("response");
+        expect(Date.now() - start).toBe(100);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("applies delay to all routes", async () => {
