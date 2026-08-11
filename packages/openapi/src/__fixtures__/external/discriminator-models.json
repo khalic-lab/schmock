@@ -1,0 +1,37 @@
+{
+  "Pet": {
+    "oneOf": [
+      { "$ref": "#/Cat" },
+      { "$ref": "#/Dog" },
+      { "$ref": "./anonymous-cat.json" }
+    ],
+    "discriminator": { "propertyName": "petType" }
+  },
+  "Cat": {
+    "type": "object",
+    "properties": {
+      "petType": { "type": "string" },
+      "meow": { "type": "boolean" }
+    }
+  },
+  "Dog": {
+    "type": "object",
+    "properties": {
+      "petType": { "type": "string" },
+      "bark": { "type": "boolean" }
+    }
+  },
+  "CollidingCats": {
+    "oneOf": [
+      { "$ref": "./house-cats.json#/Cat" },
+      { "$ref": "./wild-cats.json#/Cat" }
+    ],
+    "discriminator": {
+      "propertyName": "petType",
+      "mapping": {
+        "house": "./house-cats.json#/Cat",
+        "wild": "./wild-cats.json#/Cat"
+      }
+    }
+  }
+}

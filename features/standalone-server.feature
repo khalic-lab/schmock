@@ -51,8 +51,48 @@ Feature: Standalone Server
     And I stop the server
     Then stopping the server again should not throw
 
+  Scenario: Close permits an immediate restart on the same port
+    Given I create a mock with a GET /hello route
+    When I start the server on a random port
+    And I stop and immediately restart on the same port
+    Then the restarted server should return the hello response
+
   Scenario: Reset stops the server
     Given I create a mock with a GET /hello route
     When I start the server on a random port
     And I reset the mock
     Then the server should not be running
+
+  Scenario: A pending start reserves the server
+    Given I create a mock with a GET /hello route
+    When I call listen twice before the first call settles
+    Then the second listen call should fail with code "SERVER_ALREADY_RUNNING"
+    And the pending start should resolve to one reachable server
+
+  Scenario: Reset cancels a pending server start
+    Given I create a mock with a GET /hello route
+    When I start and immediately reset the server
+    Then the pending start should reject with code "SERVER_START_CANCELLED"
+    And listening again after route registration should succeed
+
+  Scenario: Oversized chunked requests receive a structured client error
+    Given I create a mock that accepts POST requests at "/upload"
+    When I start the server on a random port
+    And I stream an oversized chunked request to "/upload"
+    Then the HTTP response status should be 413
+    And the HTTP response error code should be "PAYLOAD_TOO_LARGE"
+    And the server should accept a valid request afterward
+
+  Scenario: Malformed JSON is rejected before route execution
+    Given I create a tracked JSON echo route at "/json"
+    When I start the server on a random port
+    And I send malformed JSON to "/json"
+    Then the HTTP response status should be 400
+    And the HTTP response error code should be "MALFORMED_JSON"
+    And the JSON route should not have executed or entered history
+
+  Scenario: JSON media types are matched case-insensitively
+    Given I create a tracked JSON echo route at "/json"
+    When I start the server on a random port
+    And I send valid JSON with mixed-case media type to "/json"
+    Then the echoed JSON property "valid" should be true

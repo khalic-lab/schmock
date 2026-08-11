@@ -1,0 +1,7 @@
+interface:
+  display_name: "Schmock Dependency Management"
+  short_description: "Safely inspect and update Schmock dependencies"
+  default_prompt: "Use $dependency-management to preflight Schmock dependencies and propose a safe, explicit update workflow."
+
+policy:
+  allow_implicit_invocation: false

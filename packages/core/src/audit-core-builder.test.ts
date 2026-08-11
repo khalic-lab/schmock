@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { schmock } from "./index";
+import { getResponseException } from "./constants.js";
+import { isRouteNotFound, schmock } from "./index";
+
+function requireRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Expected a record");
+  }
+  return Object.fromEntries(Object.entries(value));
+}
 
 // ── FIX 1.2: defineRoute must shallow-clone the config ────────────────────────
 
@@ -214,5 +222,128 @@ describe("FIX 2.3 — history() and lastRequest() return deep clones", () => {
     expect((again.response.body as { msg: { text: string } }).msg.text).toBe(
       "hello",
     );
+  });
+
+  it("records a descriptor instead of retaining non-cloneable request bodies", async () => {
+    const mock = schmock();
+    const body = { mutable: "original", callback: () => "value" };
+    mock("POST /non-cloneable", { accepted: true });
+
+    await mock.handle("POST", "/non-cloneable", { body });
+    body.mutable = "changed";
+
+    const first = mock.lastRequest();
+    expect(first?.body).toMatchObject({
+      kind: "unavailable",
+      reason: "not-structured-cloneable",
+    });
+    if (typeof first?.body === "object" && first.body !== null) {
+      Reflect.set(first.body, "kind", "mutated");
+    }
+    expect(mock.lastRequest()?.body).toMatchObject({
+      kind: "unavailable",
+      reason: "not-structured-cloneable",
+    });
+  });
+
+  it("copies nested shared memory into isolated history snapshots", async () => {
+    const mock = schmock();
+    const shared = new SharedArrayBuffer(4);
+    const source = new Uint8Array(shared);
+    source.set([1, 2, 3, 4]);
+    mock("POST /shared", { accepted: true });
+
+    await mock.handle("POST", "/shared", {
+      body: {
+        buffer: shared,
+        view: new Uint8Array(shared, 1, 2),
+      },
+    });
+    source.fill(9);
+
+    const first = requireRecord(mock.lastRequest()?.body);
+    expect(first.buffer).toBeInstanceOf(ArrayBuffer);
+    expect(first.view).toBeInstanceOf(Uint8Array);
+    if (!(first.buffer instanceof ArrayBuffer)) {
+      throw new Error("Expected an ordinary ArrayBuffer snapshot");
+    }
+    if (!(first.view instanceof Uint8Array)) {
+      throw new Error("Expected a Uint8Array snapshot");
+    }
+    expect(first.view.buffer).toBeInstanceOf(ArrayBuffer);
+    expect([...new Uint8Array(first.buffer)]).toEqual([1, 2, 3, 4]);
+    expect([...first.view]).toEqual([2, 3]);
+    new Uint8Array(first.buffer).fill(8);
+    first.view.fill(7);
+
+    const second = requireRecord(mock.lastRequest()?.body);
+    if (!(second.buffer instanceof ArrayBuffer)) {
+      throw new Error("Expected an ordinary ArrayBuffer snapshot");
+    }
+    if (!(second.view instanceof Uint8Array)) {
+      throw new Error("Expected a Uint8Array snapshot");
+    }
+    expect([...new Uint8Array(second.buffer)]).toEqual([1, 2, 3, 4]);
+    expect([...second.view]).toEqual([2, 3]);
+  });
+
+  it("copies shared memory from non-enumerable structured-clone fields", async () => {
+    const mock = schmock();
+    const shared = new SharedArrayBuffer(3);
+    const source = new Uint8Array(shared);
+    source.set([4, 5, 6]);
+    mock("POST /error-cause", { accepted: true });
+
+    await mock.handle("POST", "/error-cause", {
+      body: new Error("request failed", { cause: shared }),
+    });
+    source.fill(9);
+
+    const first = mock.lastRequest()?.body;
+    if (!(first instanceof Error) || !(first.cause instanceof ArrayBuffer)) {
+      throw new Error("Expected an Error with an ordinary buffer cause");
+    }
+    expect([...new Uint8Array(first.cause)]).toEqual([4, 5, 6]);
+    new Uint8Array(first.cause).fill(8);
+
+    const second = mock.lastRequest()?.body;
+    if (!(second instanceof Error) || !(second.cause instanceof ArrayBuffer)) {
+      throw new Error("Expected an isolated Error cause snapshot");
+    }
+    expect([...new Uint8Array(second.cause)]).toEqual([4, 5, 6]);
+  });
+});
+
+describe("terminal HEAD responses", () => {
+  it("normalizes unmatched HEAD responses while retaining route provenance", async () => {
+    const response = await schmock().handle("HEAD", "/missing");
+
+    expect(response.status).toBe(404);
+    expect(response.body).toBeUndefined();
+    expect(isRouteNotFound(response)).toBe(true);
+  });
+
+  it("does not mark a custom HEAD 404 as an unmatched route", async () => {
+    const mock = schmock();
+    mock("HEAD /custom", () => [404, { code: "CUSTOM_NOT_FOUND" }]);
+
+    const response = await mock.handle("HEAD", "/custom");
+
+    expect(response.status).toBe(404);
+    expect(response.body).toBeUndefined();
+    expect(isRouteNotFound(response)).toBe(false);
+  });
+
+  it("normalizes thrown HEAD responses while retaining the exception", async () => {
+    const mock = schmock();
+    mock("HEAD /throws", () => {
+      throw new Error("head failure");
+    });
+
+    const response = await mock.handle("HEAD", "/throws");
+
+    expect(response.status).toBe(500);
+    expect(response.body).toBeUndefined();
+    expect(getResponseException(response)?.message).toBe("head failure");
   });
 });

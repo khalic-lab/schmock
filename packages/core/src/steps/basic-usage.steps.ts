@@ -1,78 +1,155 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
+import type * as PublicSchmock from "@schmock/core";
+import type { Schema, SchemaDefinition } from "@schmock/core";
 import { expect } from "vitest";
-import type { CallableMockInstance } from "../types";
 import { schmock } from "../index";
+import type { CallableMockInstance } from "../types";
 
 const feature = await loadFeature("../../features/basic-usage.feature");
+
+// Compile this step file as a public consumer so both export styles and both
+// recursive schema-definition keywords remain covered by typecheck:bdd.
+const recursiveSchemaDefinition: SchemaDefinition = {
+  type: "object",
+  definitions: {
+    branch: {
+      $defs: {
+        leaf: { type: "string", faker: "person.fullName" },
+      },
+    },
+  },
+};
+const namedSchema: Schema = {
+  $defs: { recursive: recursiveSchemaDefinition },
+};
+const namespaceSchema: PublicSchmock.Schema = namedSchema;
+const namespaceDefinition: PublicSchmock.SchemaDefinition = namespaceSchema;
+void namespaceDefinition;
 
 describeFeature(feature, ({ Scenario }) => {
   let mock: CallableMockInstance;
   let response: any;
 
-  Scenario("Simplest possible mock - plain text", ({ Given, When, Then, And }) => {
-    Given("I create a plain text mock returning {string} at {string}", (_, text: string, route: string) => {
-      const [method, path] = route.split(" ");
-      mock = schmock();
-      mock(`${method} ${path}` as Schmock.RouteKey, text);
-    });
+  Scenario(
+    "Simplest possible mock - plain text",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a plain text mock returning {string} at {string}",
+        (_, text: string, route: string) => {
+          const [method, path] = route.split(" ");
+          mock = schmock();
+          mock(`${method} ${path}` as Schmock.RouteKey, text);
+        },
+      );
 
-    When("I request {string}", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      response = await mock.handle(method as any, path);
-    });
+      When("I request {string}", async (_, request: string) => {
+        const [method, path] = request.split(" ");
+        response = await mock.handle(method as any, path);
+      });
 
-    Then("I should receive text {string}", (_, expectedText: string) => {
-      expect(response.body).toBe(expectedText);
-    });
+      Then("I should receive text {string}", (_, expectedText: string) => {
+        expect(response.body).toBe(expectedText);
+      });
 
-    And("the content-type should be {string}", (_, contentType: string) => {
-      expect(response.headers?.["content-type"]).toBe(contentType);
-    });
-  });
+      And("the content-type should be {string}", (_, contentType: string) => {
+        expect(response.headers?.["content-type"]).toBe(contentType);
+      });
+    },
+  );
 
-  Scenario("Return JSON without specifying contentType", ({ Given, When, Then, And }) => {
-    Given("I create a mock returning a JSON array at {string}", (_, route: string) => {
-      const [method, path] = route.split(" ");
-      mock = schmock();
-      mock(`${method} ${path}` as Schmock.RouteKey, [{ id: 1, name: "John" }]);
-    });
+  Scenario(
+    "Return JSON without specifying contentType",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a mock returning a JSON array at {string}",
+        (_, route: string) => {
+          const [method, path] = route.split(" ");
+          mock = schmock();
+          mock(`${method} ${path}` as Schmock.RouteKey, [
+            { id: 1, name: "John" },
+          ]);
+        },
+      );
 
-    When("I request {string}", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      response = await mock.handle(method as any, path);
-    });
+      When("I request {string}", async (_, request: string) => {
+        const [method, path] = request.split(" ");
+        response = await mock.handle(method as any, path);
+      });
 
-    Then("I should receive:", (_, docString: string) => {
-      const expected = JSON.parse(docString);
-      expect(response.body).toEqual(expected);
-    });
+      Then("I should receive:", (_, docString: string) => {
+        const expected = JSON.parse(docString);
+        expect(response.body).toEqual(expected);
+      });
 
-    And("the content-type should be {string}", (_, contentType: string) => {
-      expect(response.headers?.["content-type"]).toBe(contentType);
-    });
-  });
+      And("the content-type should be {string}", (_, contentType: string) => {
+        expect(response.headers?.["content-type"]).toBe(contentType);
+      });
+    },
+  );
 
-  Scenario("Return object without contentType", ({ Given, When, Then, And }) => {
-    Given("I create a mock returning a JSON object at {string}", (_, route: string) => {
-      const [method, path] = route.split(" ");
-      mock = schmock();
-      mock(`${method} ${path}` as Schmock.RouteKey, { id: 1, name: "John" });
-    });
+  Scenario(
+    "Return object without contentType",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a mock returning a JSON object at {string}",
+        (_, route: string) => {
+          const [method, path] = route.split(" ");
+          mock = schmock();
+          mock(`${method} ${path}` as Schmock.RouteKey, {
+            id: 1,
+            name: "John",
+          });
+        },
+      );
 
-    When("I request {string}", async (_, request: string) => {
-      const [method, path] = request.split(" ");
-      response = await mock.handle(method as any, path);
-    });
+      When("I request {string}", async (_, request: string) => {
+        const [method, path] = request.split(" ");
+        response = await mock.handle(method as any, path);
+      });
 
-    Then("I should receive:", (_, docString: string) => {
-      const expected = JSON.parse(docString);
-      expect(response.body).toEqual(expected);
-    });
+      Then("I should receive:", (_, docString: string) => {
+        const expected = JSON.parse(docString);
+        expect(response.body).toEqual(expected);
+      });
 
-    And("the content-type should be {string}", (_, contentType: string) => {
-      expect(response.headers?.["content-type"]).toBe(contentType);
-    });
-  });
+      And("the content-type should be {string}", (_, contentType: string) => {
+        expect(response.headers?.["content-type"]).toBe(contentType);
+      });
+    },
+  );
+
+  Scenario(
+    "Malformed response envelope with array headers stays a plain body",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a mock returning an object with array response headers",
+        () => {
+          mock = schmock();
+          mock("GET /malformed-envelope", {
+            status: 202,
+            body: { semantic: true },
+            headers: [],
+          });
+        },
+      );
+
+      When('I request "GET /malformed-envelope"', async () => {
+        response = await mock.handle("GET", "/malformed-envelope");
+      });
+
+      Then("the status should be 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And("I should receive the malformed response envelope unchanged", () => {
+        expect(response.body).toEqual({
+          status: 202,
+          body: { semantic: true },
+          headers: [],
+        });
+      });
+    },
+  );
 
   Scenario("Empty mock instance", ({ Given, When, Then }) => {
     Given("I create an empty mock with no routes", () => {
@@ -111,11 +188,14 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Function returning string", ({ Given, When, Then }) => {
-    Given("I create a mock with a string generator at {string}", (_, route: string) => {
-      const [method, path] = route.split(" ");
-      mock = schmock();
-      mock(`${method} ${path}` as Schmock.RouteKey, () => "Dynamic response");
-    });
+    Given(
+      "I create a mock with a string generator at {string}",
+      (_, route: string) => {
+        const [method, path] = route.split(" ");
+        mock = schmock();
+        mock(`${method} ${path}` as Schmock.RouteKey, () => "Dynamic response");
+      },
+    );
 
     When("I request {string}", async (_, request: string) => {
       const [method, path] = request.split(" ");
@@ -128,11 +208,16 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Function returning object", ({ Given, When, Then, And }) => {
-    Given("I create a mock with an object generator at {string}", (_, route: string) => {
-      const [method, path] = route.split(" ");
-      mock = schmock();
-      mock(`${method} ${path}` as Schmock.RouteKey, () => ({ timestamp: Date.now() }));
-    });
+    Given(
+      "I create a mock with an object generator at {string}",
+      (_, route: string) => {
+        const [method, path] = route.split(" ");
+        mock = schmock();
+        mock(`${method} ${path}` as Schmock.RouteKey, () => ({
+          timestamp: Date.now(),
+        }));
+      },
+    );
 
     When("I request {string}", async (_, request: string) => {
       const [method, path] = request.split(" ");
@@ -181,11 +266,18 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Override contentType detection", ({ Given, When, Then, And }) => {
-    Given("I create a mock with explicit text/plain contentType at {string}", (_, route: string) => {
-      const [method, path] = route.split(" ");
-      mock = schmock();
-      mock(`${method} ${path}` as Schmock.RouteKey, { foo: "bar" }, { contentType: "text/plain" });
-    });
+    Given(
+      "I create a mock with explicit text/plain contentType at {string}",
+      (_, route: string) => {
+        const [method, path] = route.split(" ");
+        mock = schmock();
+        mock(
+          `${method} ${path}` as Schmock.RouteKey,
+          { foo: "bar" },
+          { contentType: "text/plain" },
+        );
+      },
+    );
 
     When("I request {string}", async (_, request: string) => {
       const [method, path] = request.split(" ");
@@ -205,7 +297,9 @@ describeFeature(feature, ({ Scenario }) => {
     Given("I create a mock returning HTML at {string}", (_, route: string) => {
       const [method, path] = route.split(" ");
       mock = schmock();
-      mock(`${method} ${path}` as Schmock.RouteKey, "<h1>Hello</h1>", { contentType: "text/html" });
+      mock(`${method} ${path}` as Schmock.RouteKey, "<h1>Hello</h1>", {
+        contentType: "text/html",
+      });
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -223,11 +317,17 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Binary/buffer response detection", ({ Given, When, Then, And }) => {
-    Given("I create a mock returning a Buffer at {string}", (_, route: string) => {
-      const [method, path] = route.split(" ");
-      mock = schmock();
-      mock(`${method} ${path}` as Schmock.RouteKey, Buffer.from("binary data") as unknown as Schmock.Generator);
-    });
+    Given(
+      "I create a mock returning a Buffer at {string}",
+      (_, route: string) => {
+        const [method, path] = route.split(" ");
+        mock = schmock();
+        mock(
+          `${method} ${path}` as Schmock.RouteKey,
+          Buffer.from("binary data") as unknown as Schmock.Generator,
+        );
+      },
+    );
 
     When("I request {string}", async (_, request: string) => {
       const [method, path] = request.split(" ");
@@ -235,7 +335,8 @@ describeFeature(feature, ({ Scenario }) => {
     });
 
     Then("I should receive buffer data", () => {
-      expect(Buffer.isBuffer(response.body)).toBe(true);
+      expect(response.body).toBeInstanceOf(Uint8Array);
+      expect(new TextDecoder().decode(response.body)).toBe("binary data");
     });
 
     And("the content-type should be {string}", (_, contentType: string) => {

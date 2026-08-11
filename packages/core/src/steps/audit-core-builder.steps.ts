@@ -185,4 +185,146 @@ describeFeature(feature, ({ Scenario }) => {
       });
     },
   );
+
+  Scenario(
+    "Default shared state persists across requests",
+    ({ Given, When, Then, And }) => {
+      let mock: Schmock.CallableMockInstance;
+      let responses: Schmock.Response[];
+
+      Given("a mock with no configured state and an incrementing route", () => {
+        mock = schmock();
+        mock("GET /counter", ({ state }) => {
+          const counter =
+            typeof state.counter === "number" ? state.counter + 1 : 1;
+          state.counter = counter;
+          return { counter };
+        });
+      });
+
+      When("I request the default-state route twice", async () => {
+        responses = [
+          await mock.handle("GET", "/counter"),
+          await mock.handle("GET", "/counter"),
+        ];
+      });
+
+      Then("the counter responses should be 1 and 2", () => {
+        expect(responses.map((response) => response.body)).toEqual([
+          { counter: 1 },
+          { counter: 2 },
+        ]);
+      });
+
+      And("the mock shared counter state should be 2", () => {
+        expect(mock.getState().counter).toBe(2);
+      });
+    },
+  );
+
+  Scenario(
+    "A matched route whose generator throws is recorded in history",
+    ({ Given, When, Then, And }) => {
+      let mock: Schmock.CallableMockInstance;
+      let failure: Schmock.Response;
+
+      Given(
+        "a mock with a healthy route and a route whose generator throws",
+        () => {
+          mock = schmock();
+          mock("GET /ok", { ok: true });
+          mock("GET /boom", () => {
+            throw new Error("generator exploded");
+          });
+        },
+      );
+
+      When(
+        "I request the healthy route and then the throwing route",
+        async () => {
+          await mock.handle("GET", "/ok");
+          failure = await mock.handle("GET", "/boom");
+        },
+      );
+
+      Then(
+        "the throwing request should be recorded in history with status 500",
+        () => {
+          expect(failure.status).toBe(500);
+          const records = mock.history("GET", "/boom");
+          expect(records).toHaveLength(1);
+          expect(records[0].response.status).toBe(500);
+          expect(mock.history()).toHaveLength(2);
+        },
+      );
+
+      And("the call count for the throwing route should be 1", () => {
+        expect(mock.callCount("GET", "/boom")).toBe(1);
+      });
+    },
+  );
+
+  Scenario(
+    "A failing route honours its own delay override",
+    ({ Given, When, Then }) => {
+      let mock: Schmock.CallableMockInstance;
+      let response: Schmock.Response;
+      let elapsed = 0;
+
+      Given(
+        "a mock with a global delay and a slower failing route override",
+        () => {
+          mock = schmock({ delay: 0 });
+          mock(
+            "GET /slow-boom",
+            () => {
+              throw new Error("generator exploded");
+            },
+            { delay: 120 },
+          );
+        },
+      );
+
+      When("I request the failing route", async () => {
+        const started = performance.now();
+        response = await mock.handle("GET", "/slow-boom");
+        elapsed = performance.now() - started;
+      });
+
+      Then("the failing response should be 500 after the route delay", () => {
+        expect(response.status).toBe(500);
+        expect(elapsed).toBeGreaterThanOrEqual(100);
+      });
+    },
+  );
+
+  Scenario(
+    "Resetting state does not replace state on the caller config",
+    ({ Given, When, Then, And }) => {
+      let config: Schmock.GlobalConfig;
+      let externalState: Record<string, unknown>;
+      let mock: Schmock.CallableMockInstance;
+
+      Given("a caller config containing external state", () => {
+        externalState = { preserved: true };
+        config = { state: externalState };
+      });
+
+      When("I create a mock from the config and reset its state", () => {
+        mock = schmock(config);
+        mock.resetState();
+      });
+
+      Then(
+        "the caller config should still reference the external state",
+        () => {
+          expect(config.state).toBe(externalState);
+        },
+      );
+
+      And("the mock internal state is empty after resetState", () => {
+        expect(mock.getState()).toEqual({});
+      });
+    },
+  );
 });

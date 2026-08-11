@@ -3,7 +3,6 @@
 import { schmock } from "@schmock/core";
 import { openapi } from "@schmock/openapi";
 import { afterEach, describe, expect, it } from "vitest";
-import { fetchJson } from "./helpers";
 
 // ─── Inline spec helpers ────────────────────────────────────────────
 
@@ -40,9 +39,7 @@ function securedSpec(
     openapi: "3.0.3",
     info: { title: "Security Test", version: "1.0.0" },
     components: { securitySchemes },
-    ...(options?.globalSecurity
-      ? { security: options.globalSecurity }
-      : {}),
+    ...(options?.globalSecurity ? { security: options.globalSecurity } : {}),
     paths: options?.paths ?? { "/secure": endpoint },
   };
 }
@@ -200,9 +197,7 @@ describe("Security Edge Cases", () => {
     expect(res.status).toBe(401);
   });
 
-  it("API key in query: always passes (known gap)", async () => {
-    // Query-based API keys can't be checked from headers alone.
-    // The security checker returns true for query API keys.
+  it("API key in query: requires a non-empty query value", async () => {
     mock = schmock({ state: {} });
     mock.pipe(
       await openapi({
@@ -220,10 +215,21 @@ describe("Security Edge Cases", () => {
       }),
     );
 
-    // Request without any API key in query → still passes because
-    // query API keys aren't validated (checkSchemePresence returns true)
-    const res = await mock.handle("GET", "/secure");
-    expect(res.status).toBe(200);
+    const missing = await mock.handle("GET", "/secure");
+    expect(missing.status).toBe(401);
+    expect(missing.body).toEqual({
+      error: "Unauthorized",
+      code: "UNAUTHORIZED",
+    });
+    expect(missing.headers).not.toHaveProperty("www-authenticate");
+
+    const present = await mock.handle("GET", "/secure", {
+      query: { api_key: "key123" },
+    });
+    expect(present.status).toBe(200);
+    expect(present.body).toMatchObject({ data: expect.any(String) });
+    expect(present.body).not.toHaveProperty("code");
+    expect(present.headers["content-type"]).toBe("application/json");
   });
 
   // --- OR / AND security combos ---

@@ -1,0 +1,61 @@
+import type { PluginContext } from "@schmock/core";
+import { describe, expect, it } from "vitest";
+import { {{PLUGIN_CAMEL}}Plugin } from "./{{PLUGIN_NAME}}.js";
+
+function makeContext(): PluginContext {
+  return {
+    path: "/test",
+    route: {},
+    method: "GET",
+    params: {},
+    query: {},
+    headers: {},
+    body: undefined,
+    state: new Map<string, unknown>(),
+    routeState: {},
+  };
+}
+
+describe("{{PLUGIN_CAMEL}}Plugin", () => {
+  it("has stable metadata", () => {
+    const plugin = {{PLUGIN_CAMEL}}Plugin();
+    expect(plugin.name).toBe("{{PLUGIN_NAME}}");
+    expect(plugin.version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it("marks plain object responses with observable processing metadata", async () => {
+    const plugin = {{PLUGIN_CAMEL}}Plugin();
+    const context = makeContext();
+
+    const result = await plugin.process(context, { data: "existing" });
+
+    expect(result).toEqual({
+      context,
+      response: { data: "existing", processedBy: "{{PLUGIN_NAME}}" },
+    });
+  });
+
+  it("preserves non-object responses", async () => {
+    const plugin = {{PLUGIN_CAMEL}}Plugin();
+    const context = makeContext();
+
+    const result = await plugin.process(context, "existing");
+
+    expect(result).toEqual({ context, response: "existing" });
+  });
+
+  it.each([
+    ["Date", new Date("2026-01-01T00:00:00.000Z")],
+    ["Map", new Map([["key", "value"]])],
+    ["Error", new Error("existing")],
+    ["Response", new Response("existing")],
+  ])("preserves %s instances by identity", async (_type, response) => {
+    const plugin = {{PLUGIN_CAMEL}}Plugin();
+    const context = makeContext();
+
+    const result = await plugin.process(context, response);
+
+    expect(result).toEqual({ context, response });
+    expect(result.response).toBe(response);
+  });
+});

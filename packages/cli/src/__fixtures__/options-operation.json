@@ -1,0 +1,51 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Declared OPTIONS Fixture",
+    "version": "1.0.0",
+    "description": "A spec that declares an OPTIONS operation, so the CLI's CORS preflight handling can be told apart from an ordinary OPTIONS request."
+  },
+  "paths": {
+    "/things": {
+      "get": {
+        "operationId": "listThings",
+        "responses": {
+          "200": {
+            "description": "Every thing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": { "id": { "type": "integer" } },
+                    "required": ["id"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "options": {
+        "operationId": "describeThings",
+        "responses": {
+          "200": {
+            "description": "What this path supports",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "declaredOptions": { "type": "string", "enum": ["yes"] }
+                  },
+                  "required": ["declaredOptions"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

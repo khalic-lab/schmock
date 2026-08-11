@@ -287,7 +287,7 @@ describe("Pipeline Stress Tests", () => {
     // Update first 3
     for (let i = 0; i < 3; i++) {
       const updated = await fetchJson(port, `/pets/${ids[i]}`, {
-        method: "PATCH",
+        method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: `Updated-${i}` }),
       });

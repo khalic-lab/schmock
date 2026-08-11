@@ -1,0 +1,7 @@
+interface:
+  display_name: "Generate Schmock Package"
+  short_description: "Scaffold a version-aligned Schmock package"
+  default_prompt: "Use $package-generator to preview scaffolding a new @schmock package."
+
+policy:
+  allow_implicit_invocation: false

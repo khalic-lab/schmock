@@ -25,7 +25,30 @@ function App() {
 }
 ```
 
-`SchmockProvider` patches `globalThis.fetch` on mount and restores it on unmount. Any `fetch()` call inside the tree — whether from your code, React Query, SWR, or axios — is intercepted automatically.
+`SchmockProvider` patches `globalThis.fetch` on mount and restores it on unmount. Any client that uses `globalThis.fetch` — including React Query or SWR when configured with fetch — is intercepted automatically. Clients using another transport are not intercepted. The installer commits before descendant layout effects, so a child may safely fetch from `useLayoutEffect` on its first mount. Rendering on the server installs nothing: without a DOM the provider only supplies the mock through context.
+
+If another library replaces `globalThis.fetch`, a later Schmock provider wraps
+that current implementation as its passthrough boundary. Cleanup never
+overwrites a third-party replacement it no longer owns.
+
+### Ownership and precedence
+
+The provider takes an interception lease per mounted provider, and a mock can
+back several leases at once. Nesting a provider inside another provider for the
+same mock is allowed, as is `renderWithSchmock({ mock })` under an outer
+provider — both install, and neither disturbs the other.
+
+Changing `options` (including a fresh inline `beforeRequest` on every render)
+reconfigures the existing lease in place; it does not re-register it. The
+provider therefore keeps the dispatch position it acquired at mount, so
+reconfiguring one root never promotes it above a root that mounted later.
+Interception is re-acquired only when the `mock` prop itself changes — a new
+owner legitimately takes a new position at the front.
+
+Calling `mock.reset()` while the provider is mounted clears routes, state,
+history, plugins, and listeners but preserves the provider's explicit
+interception lease. Re-register routes on the same mock without remounting the
+provider.
 
 > **Strict Mode:** In React 18+ development mode, components mount → unmount → remount. `SchmockProvider` handles this correctly (it restores fetch on unmount and re-intercepts on remount), but there is a brief window between unmount and remount where fetch is unpatched. If you see intermittent failures in Strict Mode, this is why — they won't occur in production builds.
 
@@ -65,6 +88,29 @@ When `true` (default), requests that don't match any Schmock route are forwarded
 ### `baseUrl`
 
 Only intercept requests whose pathname starts with this string. Non-matching requests go straight to real `fetch` without being processed.
+
+### `errorFormatter`
+
+`errorFormatter(error)` formats core-marked internal exceptions — an error
+thrown by a route generator or a plugin — and errors thrown by the
+`beforeRequest`/`beforeResponse` hooks, matching the Express and Angular
+adapters. It does not reinterpret an ordinary user-defined 500 route response
+such as `[500, { error: 'domain failure' }]`.
+
+On the core-marked exception path, provenance is captured before
+`beforeResponse` runs, so a hook that clones the response with
+`{ ...response }` does not suppress the formatter. The post-hook status gates
+the replacement: a `beforeResponse` that rewrites an exception into a `503` (or
+a `200`) is honoured and the formatter is not invoked. That response keeps the
+post-hook response headers — `retry-after` and friends survive — with
+`content-type` forced to `application/json`, and a formatter that throws, or
+that returns a body which cannot be serialized, yields
+`{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }` without being
+invoked a second time.
+
+A hook that *throws* is handled separately: that response inherits no headers
+beyond `content-type: application/json`, and a formatter that throws while
+handling it propagates, rejecting the `fetch` call.
 
 ## `useSchmock` Hook
 
@@ -137,6 +183,10 @@ it('loads users', async () => {
 ```
 
 `renderWithSchmock` returns the standard `@testing-library/react` `RenderResult` plus a `mock` property for assertions.
+
+The testing entry imports the same provider context as the package root, so
+`useSchmock()` from `@schmock/react` works inside
+`renderWithSchmock()` from `@schmock/react/testing`.
 
 > **Note:** `renderWithSchmock` requires `@testing-library/react` as a peer dependency. It is exported from `@schmock/react/testing` (a separate entry point) so projects that don't use Testing Library are not affected.
 

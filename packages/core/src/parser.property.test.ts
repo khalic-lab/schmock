@@ -1,5 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
+import { canonicalizePath, normalizePath } from "./constants";
 import { RouteParseError } from "./errors";
 import { schmock } from "./index";
 import { parseRouteKey } from "./parser";
@@ -83,8 +84,6 @@ const doubleSlashPath = fc
   .array(safeSeg, { minLength: 2, maxLength: 4 })
   .map((segs) => `/${segs.join("//")}`);
 
-const trailingSlashPath = safePath.map((p) => `${p}/`);
-
 const deepPath = fc
   .array(safeSeg, { minLength: 10, maxLength: 30 })
   .map((segs) => `/${segs.join("/")}`);
@@ -106,14 +105,70 @@ const paramRouteKey = fc
     return `${m} /${parts.join("/")}`;
   });
 
-// Route keys with hostile characters in the path portion
-const hostileRouteKey = fc
-  .tuple(method, hostilePath)
-  .map(([m, p]) => `${m} ${p}`);
+const parameterizedRouteCase = fc
+  .tuple(
+    method,
+    fc.uniqueArray(
+      fc.record({
+        literal: safeSeg,
+        parameter: safeSeg,
+        value: safeSeg,
+      }),
+      {
+        minLength: 1,
+        maxLength: 4,
+        selector: (part) => part.parameter,
+      },
+    ),
+  )
+  .map(([httpMethod, parts]) => ({
+    key: `${httpMethod} /${parts
+      .map((part) => `${part.literal}/:${part.parameter}`)
+      .join("/")}`,
+    concretePath: `/${parts
+      .map((part) => `${part.literal}/${part.value}`)
+      .join("/")}`,
+    parameterNames: parts.map((part) => part.parameter),
+    parameterValues: parts.map((part) => part.value),
+  }));
 
 // --- Arbitrary inputs ---
 
-const arbitraryString = fc.string({ minLength: 0, maxLength: 200 });
+const asciiString = fc
+  .array(fc.integer({ min: 0, max: 0x7f }), {
+    minLength: 0,
+    maxLength: 200,
+  })
+  .map((codePoints) => String.fromCharCode(...codePoints));
+const unicodeString = fc.string({ minLength: 0, maxLength: 200 });
+
+// Captured parameters are decoded after segmentation; a malformed sequence is
+// handed back untouched. Mirrors decodePathSegment in constants.ts.
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function expectParseResultOrRouteError(input: string): void {
+  let result: ReturnType<typeof parseRouteKey>;
+  try {
+    result = parseRouteKey(input);
+  } catch (error) {
+    expect(error).toBeInstanceOf(RouteParseError);
+    return;
+  }
+
+  // parseRouteKey stores the canonical path form, so the round trip is against
+  // the canonicalized input rather than the raw one.
+  const rawPath = input.slice(result.method.length + 1);
+  expect(`${result.method} ${result.path}`).toBe(
+    `${result.method} ${normalizePath(canonicalizePath(rawPath))}`,
+  );
+  expect(result.pattern.test(result.path)).toBe(true);
+}
 
 // --- Namespace generators ---
 
@@ -132,48 +187,41 @@ const namespace = fc.oneof(
 // ============================================================
 
 describe("parseRouteKey — fuzz", () => {
-  it("never throws an unhandled error on arbitrary ASCII input", () => {
-    fc.assert(
-      fc.property(arbitraryString, (input) => {
-        try {
-          parseRouteKey(input);
-        } catch (e) {
-          expect(e).toBeInstanceOf(RouteParseError);
-        }
-      }),
-      { numRuns: 1000 },
-    );
+  it("never throws an unhandled error on arbitrary ASCII input", async () => {
+    fc.assert(fc.property(asciiString, expectParseResultOrRouteError), {
+      numRuns: 1000,
+    });
   });
 
-  it("never throws an unhandled error on arbitrary unicode input", () => {
-    fc.assert(
-      fc.property(arbitraryString, (input) => {
-        try {
-          parseRouteKey(input);
-        } catch (e) {
-          expect(e).toBeInstanceOf(RouteParseError);
-        }
-      }),
-      { numRuns: 1000 },
-    );
+  it("never throws an unhandled error on arbitrary unicode input", async () => {
+    fc.assert(fc.property(unicodeString, expectParseResultOrRouteError), {
+      numRuns: 1000,
+    });
   });
 
-  it("rejects inputs that look like methods but have hostile paths", () => {
+  it("escapes regex metacharacters in literal path segments", async () => {
     fc.assert(
-      fc.property(hostileRouteKey, (key) => {
-        try {
-          const result = parseRouteKey(key);
-          // If it parses, the regex must be valid
-          expect(result.pattern).toBeInstanceOf(RegExp);
-        } catch (e) {
-          expect(e).toBeInstanceOf(RouteParseError);
-        }
-      }),
+      fc.property(
+        method,
+        safeSeg,
+        regexMetaSeg,
+        safeSeg,
+        (httpMethod, prefix, literal, suffix) => {
+          const result = parseRouteKey(
+            `${httpMethod} /${prefix}/${literal}/${suffix}`,
+          );
+
+          expect(result.pattern.test(result.path)).toBe(true);
+          expect(result.pattern.test(`/${prefix}/literal/${suffix}`)).toBe(
+            false,
+          );
+        },
+      ),
       { numRuns: 500 },
     );
   });
 
-  it("always produces a valid regex for well-formed route keys", () => {
+  it("always produces a valid regex for well-formed route keys", async () => {
     fc.assert(
       fc.property(routeKey, (key) => {
         const result = parseRouteKey(key);
@@ -184,7 +232,7 @@ describe("parseRouteKey — fuzz", () => {
     );
   });
 
-  it("produced regex never matches a completely unrelated path", () => {
+  it("produced regex never matches a completely unrelated path", async () => {
     fc.assert(
       fc.property(routeKey, (key) => {
         const result = parseRouteKey(key);
@@ -195,40 +243,44 @@ describe("parseRouteKey — fuzz", () => {
     );
   });
 
-  it("produced regex is safe against hostile test paths", () => {
+  it("matches concrete parameterized paths and captures every value", async () => {
     fc.assert(
-      fc.property(routeKey, hostilePath, (key, reqPath) => {
-        const result = parseRouteKey(key);
-        const matched = result.pattern.test(reqPath);
-        expect(typeof matched).toBe("boolean");
+      fc.property(parameterizedRouteCase, (routeCase) => {
+        const result = parseRouteKey(routeCase.key);
+        const match = result.pattern.exec(routeCase.concretePath);
+
+        expect(match).not.toBeNull();
+        expect(match?.slice(1)).toEqual(routeCase.parameterValues);
+        expect(result.params).toEqual(routeCase.parameterNames);
       }),
       { numRuns: 1000 },
     );
   });
 
-  it("produced regex handles double-slash paths without crashing", () => {
+  it("rejects slash-delimited near misses for parameterized paths", async () => {
     fc.assert(
-      fc.property(routeKey, doubleSlashPath, (key, reqPath) => {
-        const result = parseRouteKey(key);
-        const matched = result.pattern.test(reqPath);
-        expect(typeof matched).toBe("boolean");
+      fc.property(parameterizedRouteCase, safeSeg, (routeCase, extra) => {
+        const result = parseRouteKey(routeCase.key);
+        const nearMiss = `${routeCase.concretePath}/${extra}`;
+
+        expect(result.pattern.test(nearMiss)).toBe(false);
       }),
-      { numRuns: 300 },
+      { numRuns: 500 },
     );
   });
 
-  it("produced regex handles trailing-slash paths without crashing", () => {
+  it("does not normalize malformed separators while matching", async () => {
     fc.assert(
-      fc.property(routeKey, trailingSlashPath, (key, reqPath) => {
+      fc.property(routeKey, (key) => {
         const result = parseRouteKey(key);
-        const matched = result.pattern.test(reqPath);
-        expect(typeof matched).toBe("boolean");
+        const doubledLeadingSlash = `/${result.path}`;
+        expect(result.pattern.test(doubledLeadingSlash)).toBe(false);
       }),
-      { numRuns: 300 },
+      { numRuns: 500 },
     );
   });
 
-  it("parameter count always matches colon segments", () => {
+  it("parameter count always matches colon segments", async () => {
     fc.assert(
       fc.property(paramRouteKey, (key) => {
         const result = parseRouteKey(key);
@@ -239,7 +291,7 @@ describe("parseRouteKey — fuzz", () => {
     );
   });
 
-  it("parameter names never contain slashes", () => {
+  it("parameter names never contain slashes", async () => {
     fc.assert(
       fc.property(paramRouteKey, (key) => {
         const result = parseRouteKey(key);
@@ -251,7 +303,7 @@ describe("parseRouteKey — fuzz", () => {
     );
   });
 
-  it("pattern is always anchored (^ and $)", () => {
+  it("pattern is always anchored (^ and $)", async () => {
     fc.assert(
       fc.property(routeKey, (key) => {
         const result = parseRouteKey(key);
@@ -263,7 +315,7 @@ describe("parseRouteKey — fuzz", () => {
     );
   });
 
-  it("method in result always matches method in input", () => {
+  it("method in result always matches method in input", async () => {
     fc.assert(
       fc.property(routeKey, (key) => {
         const result = parseRouteKey(key);
@@ -280,14 +332,14 @@ describe("parseRouteKey — fuzz", () => {
 // ============================================================
 
 describe("handle() — fuzz", () => {
-  it("never throws on arbitrary request paths", () => {
+  it("never throws on arbitrary request paths", async () => {
     const mock = schmock();
     mock("GET /users/:id", () => ({ id: 1 }));
     mock("POST /items", () => ({ ok: true }));
     mock("DELETE /items/:id/comments/:cid", () => ({ deleted: true }));
 
-    fc.assert(
-      fc.asyncProperty(method, arbitraryString, async (m, reqPath) => {
+    await fc.assert(
+      fc.asyncProperty(method, asciiString, async (m, reqPath) => {
         const response = await mock.handle(m, reqPath);
         expect(response).toBeDefined();
         expect(typeof response.status).toBe("number");
@@ -297,12 +349,12 @@ describe("handle() — fuzz", () => {
     );
   });
 
-  it("never throws on arbitrary unicode request paths", () => {
+  it("never throws on arbitrary unicode request paths", async () => {
     const mock = schmock();
     mock("GET /data/:key", () => ({ ok: true }));
 
-    fc.assert(
-      fc.asyncProperty(arbitraryString, async (reqPath) => {
+    await fc.assert(
+      fc.asyncProperty(unicodeString, async (reqPath) => {
         const response = await mock.handle("GET", reqPath);
         expect(response).toBeDefined();
         expect(typeof response.status).toBe("number");
@@ -311,11 +363,11 @@ describe("handle() — fuzz", () => {
     );
   });
 
-  it("never throws on hostile path segments", () => {
+  it("never throws on hostile path segments", async () => {
     const mock = schmock();
     mock("GET /api/:resource/:id", () => ({ found: true }));
 
-    fc.assert(
+    await fc.assert(
       fc.asyncProperty(hostilePath, async (reqPath) => {
         const response = await mock.handle("GET", reqPath);
         expect(response).toBeDefined();
@@ -325,11 +377,11 @@ describe("handle() — fuzz", () => {
     );
   });
 
-  it("never throws on double-slash paths", () => {
+  it("never throws on double-slash paths", async () => {
     const mock = schmock();
     mock("GET /a/:b", () => ({ ok: true }));
 
-    fc.assert(
+    await fc.assert(
       fc.asyncProperty(doubleSlashPath, async (reqPath) => {
         const response = await mock.handle("GET", reqPath);
         expect(response).toBeDefined();
@@ -339,11 +391,11 @@ describe("handle() — fuzz", () => {
     );
   });
 
-  it("never throws on deeply nested paths", () => {
+  it("never throws on deeply nested paths", async () => {
     const mock = schmock();
     mock("GET /a/:b", () => ({ ok: true }));
 
-    fc.assert(
+    await fc.assert(
       fc.asyncProperty(deepPath, async (reqPath) => {
         const response = await mock.handle("GET", reqPath);
         expect(response).toBeDefined();
@@ -352,7 +404,7 @@ describe("handle() — fuzz", () => {
     );
   });
 
-  it("matched params are always strings", () => {
+  it("matched params are always strings", async () => {
     let capturedParams: Record<string, string> = {};
     const mock = schmock();
     mock("GET /x/:a/:b", (ctx) => {
@@ -360,7 +412,7 @@ describe("handle() — fuzz", () => {
       return { ok: true };
     });
 
-    fc.assert(
+    await fc.assert(
       fc.asyncProperty(hostileSeg, hostileSeg, async (a, b) => {
         // Avoid slashes in segments since they'd split the path differently
         if (a.includes("/") || b.includes("/")) return;
@@ -368,15 +420,15 @@ describe("handle() — fuzz", () => {
         if (response.status === 200) {
           expect(typeof capturedParams.a).toBe("string");
           expect(typeof capturedParams.b).toBe("string");
-          expect(capturedParams.a).toBe(a);
-          expect(capturedParams.b).toBe(b);
+          expect(capturedParams.a).toBe(safeDecode(canonicalizePath(a)));
+          expect(capturedParams.b).toBe(safeDecode(canonicalizePath(b)));
         }
       }),
       { numRuns: 500 },
     );
   });
 
-  it("emoji params are captured verbatim", () => {
+  it("emoji params are captured verbatim", async () => {
     let capturedParams: Record<string, string> = {};
     const mock = schmock();
     mock("GET /emoji/:val", (ctx) => {
@@ -384,7 +436,7 @@ describe("handle() — fuzz", () => {
       return { ok: true };
     });
 
-    fc.assert(
+    await fc.assert(
       fc.asyncProperty(emojiSeg, async (emoji) => {
         const response = await mock.handle("GET", `/emoji/${emoji}`);
         expect(response.status).toBe(200);
@@ -394,11 +446,11 @@ describe("handle() — fuzz", () => {
     );
   });
 
-  it("mixed emoji + ASCII paths resolve without error", () => {
+  it("mixed emoji + ASCII paths resolve without error", async () => {
     const mock = schmock();
     mock("GET /search/:query", () => ({ results: [] }));
 
-    fc.assert(
+    await fc.assert(
       fc.asyncProperty(mixedEmojiSeg, async (seg) => {
         const response = await mock.handle("GET", `/search/${seg}`);
         expect(response).toBeDefined();
@@ -408,8 +460,8 @@ describe("handle() — fuzz", () => {
     );
   });
 
-  it("namespace stripping handles arbitrary prefixes", () => {
-    fc.assert(
+  it("namespace stripping handles arbitrary prefixes", async () => {
+    await fc.assert(
       fc.asyncProperty(namespace, hostilePath, async (ns, reqPath) => {
         const mock = schmock({ namespace: ns });
         mock("GET /test", () => ({ ok: true }));
@@ -421,8 +473,8 @@ describe("handle() — fuzz", () => {
     );
   });
 
-  it("namespace + valid route resolves correctly", () => {
-    fc.assert(
+  it("namespace + valid route resolves correctly", async () => {
+    await fc.assert(
       fc.asyncProperty(safeSeg, async (ns) => {
         const mock = schmock({ namespace: `/${ns}` });
         mock("GET /ping", () => ({ pong: true }));
@@ -433,7 +485,7 @@ describe("handle() — fuzz", () => {
     );
   });
 
-  it("unmatched routes always return 404 with ROUTE_NOT_FOUND code", () => {
+  it("unmatched routes always return 404 with ROUTE_NOT_FOUND code", async () => {
     const mock = schmock();
     mock("GET /only-this", () => ({ ok: true }));
 
@@ -442,7 +494,7 @@ describe("handle() — fuzz", () => {
       .array(safeSeg, { minLength: 2, maxLength: 5 })
       .map((segs) => `/${segs.join("/")}`);
 
-    fc.assert(
+    await fc.assert(
       fc.asyncProperty(nonMatchingPath, async (reqPath) => {
         const response = await mock.handle("GET", reqPath);
         expect(response.status).toBe(404);
@@ -452,7 +504,7 @@ describe("handle() — fuzz", () => {
     );
   });
 
-  it("regex matching terminates quickly (no ReDoS)", () => {
+  it("regex matching terminates quickly (no ReDoS)", async () => {
     const mock = schmock();
     mock("GET /a/:b/:c/:d/:e", () => ({ ok: true }));
 
@@ -460,7 +512,7 @@ describe("handle() — fuzz", () => {
       .integer({ min: 100, max: 1000 })
       .map((n) => `/${"a/".repeat(n)}z`);
 
-    fc.assert(
+    await fc.assert(
       fc.asyncProperty(longRepeated, async (reqPath) => {
         const start = performance.now();
         const response = await mock.handle("GET", reqPath);
@@ -472,14 +524,14 @@ describe("handle() — fuzz", () => {
     );
   });
 
-  it("many registered routes still resolve without delay", () => {
+  it("many registered routes still resolve without delay", async () => {
     const mock = schmock();
     // Register 100 routes
     for (let i = 0; i < 100; i++) {
       mock(`GET /r${i}/:id` as any, () => ({ route: i }));
     }
 
-    fc.assert(
+    await fc.assert(
       fc.asyncProperty(hostilePath, async (reqPath) => {
         const start = performance.now();
         const response = await mock.handle("GET", reqPath);
@@ -497,8 +549,8 @@ describe("handle() — fuzz", () => {
 // ============================================================
 
 describe("route matching round-trip — property", () => {
-  it("parameterized route: arbitrary param values are extracted correctly", () => {
-    fc.assert(
+  it("parameterized route: arbitrary param values are extracted correctly", async () => {
+    await fc.assert(
       fc.asyncProperty(
         safeSeg,
         safeSeg,
@@ -524,7 +576,7 @@ describe("route matching round-trip — property", () => {
     );
   });
 
-  it("any valid response format produces a valid Response with status/body/headers", () => {
+  it("any valid response format produces a valid Response with status/body/headers", async () => {
     const responseGen = fc.oneof(
       // Object body
       fc.record({ key: safeSeg }),
@@ -541,7 +593,7 @@ describe("route matching round-trip — property", () => {
       fc.constant(undefined),
     );
 
-    fc.assert(
+    await fc.assert(
       fc.asyncProperty(responseGen, async (genValue) => {
         const mock = schmock();
         mock("GET /test", () => genValue);
@@ -557,13 +609,13 @@ describe("route matching round-trip — property", () => {
     );
   });
 
-  it("header keys are always lowercased after extractHeaders in interceptor", () => {
+  it("header keys are always lowercased after extractHeaders in interceptor", async () => {
     const headerKey = fc
       .stringMatching(/^[A-Za-z][A-Za-z0-9-]{0,20}$/)
       .filter((k) => k.length > 0);
     const headerVal = safeSeg;
 
-    fc.assert(
+    await fc.assert(
       fc.asyncProperty(headerKey, headerVal, async (key, val) => {
         const mock = schmock();
         let capturedHeaders: Record<string, string> = {};

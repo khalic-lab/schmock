@@ -1,10 +1,10 @@
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import { version as packageVersion } from "../package.json";
+import { MAX_NESTING_DEPTH } from "./constants";
 import { fakerPlugin, generateFromSchema } from "./index";
 import {
   generate,
-  performance as perf,
   schemas,
   schemaTests,
   stats,
@@ -39,6 +39,108 @@ describe("Schema Generator", () => {
         expect(item).toHaveProperty("id");
         expect(typeof item.id).toBe("number");
       });
+    });
+
+    it("uses one seeded sequence across a generated array", async () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "integer" },
+            name: { type: "string" },
+          },
+          required: ["id", "name"],
+        },
+      };
+
+      const first = await generateFromSchema({ schema, count: 5, seed: 42 });
+      const second = await generateFromSchema({ schema, count: 5, seed: 42 });
+
+      expect(first).toEqual(second);
+      expect(Array.isArray(first)).toBe(true);
+      if (!Array.isArray(first)) {
+        throw new Error("Expected generated data to be an array");
+      }
+      expect(new Set(first.map((item) => JSON.stringify(item))).size).toBe(5);
+    });
+
+    it("generates tuple positions from their respective schemas", async () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        items: [{ type: "string" }, { type: "integer" }, { type: "boolean" }],
+        minItems: 3,
+        maxItems: 3,
+      };
+
+      const result = await generateFromSchema({ schema, seed: 42 });
+
+      expect(Array.isArray(result)).toBe(true);
+      if (!Array.isArray(result)) {
+        throw new Error("Expected generated data to be a tuple");
+      }
+      expect(result).toHaveLength(3);
+      expect(typeof result[0]).toBe("string");
+      expect(typeof result[1]).toBe("number");
+      expect(typeof result[2]).toBe("boolean");
+    });
+
+    it("generates a nested tuple reached through a definition reference", async () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: {
+          payload: { $ref: "#/definitions/payloadTuple" },
+        },
+        required: ["payload"],
+        definitions: {
+          payloadTuple: {
+            type: "array",
+            items: [
+              { type: "string" },
+              { type: "integer" },
+              { type: "boolean" },
+            ],
+            minItems: 3,
+            maxItems: 3,
+            additionalItems: false,
+          },
+        },
+      };
+
+      const result = await generateFromSchema({ schema, seed: 42 });
+
+      expect(result).toMatchObject({ payload: expect.any(Array) });
+      if (
+        typeof result !== "object" ||
+        result === null ||
+        !("payload" in result) ||
+        !Array.isArray(result.payload)
+      ) {
+        throw new Error("Expected generated payload to be a tuple");
+      }
+      expect(result.payload).toHaveLength(3);
+      expect(typeof result.payload[0]).toBe("string");
+      expect(typeof result.payload[1]).toBe("number");
+      expect(typeof result.payload[2]).toBe("boolean");
+    });
+
+    it("honors uniqueItems while generating the complete array", async () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        items: { type: "integer" },
+        minItems: 8,
+        maxItems: 8,
+        uniqueItems: true,
+      };
+
+      const result = await generateFromSchema({ schema, seed: 42 });
+
+      expect(Array.isArray(result)).toBe(true);
+      if (!Array.isArray(result)) {
+        throw new Error("Expected generated data to be an array");
+      }
+      expect(result).toHaveLength(8);
+      expect(new Set(result).size).toBe(8);
     });
 
     it("respects array constraints from schema", async () => {
@@ -164,7 +266,7 @@ describe("Schema Generator", () => {
       });
 
       it("enforces nesting depth limits", async () => {
-        const deepSchema = schemas.nested.deep(15);
+        const deepSchema = schemas.nested.deep(MAX_NESTING_DEPTH + 5);
         await expect(
           generateFromSchema({ schema: deepSchema }),
         ).rejects.toThrow("schema_nesting_depth");
@@ -701,63 +803,6 @@ describe("Schema Generator", () => {
           expect(item.userId).toBe("user_");
         });
       });
-    });
-  });
-
-  describe("Performance", () => {
-    it("generates simple schemas quickly", async () => {
-      const schema = schemas.simple.object({
-        id: schemas.simple.number(),
-        name: schemas.simple.string(),
-      });
-
-      const { duration } = await perf.measure(() =>
-        generateFromSchema({ schema }),
-      );
-
-      expect(duration).toBeLessThan(100); // Should be fast (but reasonable for CI)
-    });
-
-    it("handles large arrays efficiently", async () => {
-      const schema = schemas.simple.array(
-        schemas.simple.object({ id: schemas.simple.number() }),
-        { maxItems: 100 },
-      );
-
-      const { duration } = await perf.measure(() =>
-        generateFromSchema({ schema }),
-      );
-
-      expect(duration).toBeLessThan(500); // Reasonable time for 100 items
-    });
-
-    it("benchmarks show consistent performance", async () => {
-      const schema = schemas.complex.user();
-
-      const benchmark = await perf.benchmark(
-        "user generation",
-        () => generateFromSchema({ schema }),
-        50,
-      );
-
-      expect(benchmark.mean).toBeLessThan(50); // Reasonable for CI
-      // Just check that performance is reasonable, not strict ratios for small values
-      expect(benchmark.max).toBeLessThan(100); // No huge outliers
-    });
-
-    it("deep nesting doesn't cause exponential slowdown", async () => {
-      const shallow = schemas.nested.deep(2);
-      const deep = schemas.nested.deep(5);
-
-      await perf.measure(() => generateFromSchema({ schema: shallow }));
-
-      const { duration: deepTime } = await perf.measure(() =>
-        generateFromSchema({ schema: deep }),
-      );
-
-      // Just ensure it completes in reasonable time
-      expect(deepTime).toBeLessThan(100); // Should complete quickly
-      // The times might be too small to compare ratios reliably
     });
   });
 

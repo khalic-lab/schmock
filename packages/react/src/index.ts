@@ -1,13 +1,18 @@
-/// <reference path="../../core/schmock.d.ts" />
-
+import type * as Schmock from "@schmock/core";
 import {
   createContext,
   createElement,
   type ReactNode,
   useContext,
-  useEffect,
+  useLayoutEffect,
   useRef,
 } from "react";
+
+// Layout effects never run while rendering on the server, and calling
+// useLayoutEffect there only produces a warning. Interception is a browser
+// concern, so the installer is a no-op without a DOM.
+const useInterceptionEffect: typeof useLayoutEffect =
+  typeof document === "undefined" ? () => {} : useLayoutEffect;
 
 // ===== Context =====
 
@@ -22,41 +27,70 @@ export interface SchmockProviderProps {
   children: ReactNode;
 }
 
+interface InterceptionInstallerProps {
+  mock: Schmock.CallableMockInstance;
+  options?: Schmock.InterceptOptions;
+}
+
+function InterceptionInstaller({ mock, options }: InterceptionInstallerProps) {
+  const {
+    baseUrl,
+    passthrough,
+    beforeRequest,
+    beforeResponse,
+    errorFormatter,
+  } = options ?? {};
+
+  const handleRef = useRef<Schmock.InterceptHandle | null>(null);
+  const optionsRef = useRef<Schmock.InterceptOptions>({
+    baseUrl,
+    passthrough,
+    beforeRequest,
+    beforeResponse,
+    errorFormatter,
+  });
+
+  // The lease is keyed on the mock alone. A different mock is a genuinely new
+  // owner and legitimately takes a new position in the interception stack;
+  // option changes must not, or this provider would silently steal precedence
+  // from another root that registered later.
+  useInterceptionEffect(() => {
+    const handle = mock.intercept(optionsRef.current);
+    handleRef.current = handle;
+
+    return () => {
+      handleRef.current = null;
+      handle.restore();
+    };
+  }, [mock]);
+
+  // Declared after the lease effect so the handle exists on the first commit.
+  useInterceptionEffect(() => {
+    const nextOptions: Schmock.InterceptOptions = {
+      baseUrl,
+      passthrough,
+      beforeRequest,
+      beforeResponse,
+      errorFormatter,
+    };
+    optionsRef.current = nextOptions;
+    handleRef.current?.update(nextOptions);
+  }, [baseUrl, passthrough, beforeRequest, beforeResponse, errorFormatter]);
+
+  return null;
+}
+
 export function SchmockProvider({
   mock,
   options,
   children,
 }: SchmockProviderProps) {
-  // Intercept synchronously so child effects already see the patched fetch.
-  // Re-intercept whenever the mock reference or options change (by value).
-  const handleRef = useRef<Schmock.InterceptHandle | null>(null);
-  const prevMockRef = useRef<Schmock.CallableMockInstance | null>(null);
-  const prevOptionsRef = useRef<string | undefined>(undefined);
-
-  const serializedOptions =
-    options !== undefined ? JSON.stringify(options) : undefined;
-
-  if (
-    handleRef.current === null ||
-    prevMockRef.current !== mock ||
-    prevOptionsRef.current !== serializedOptions
-  ) {
-    handleRef.current?.restore();
-    handleRef.current = mock.intercept(options);
-    prevMockRef.current = mock;
-    prevOptionsRef.current = serializedOptions;
-  }
-
-  useEffect(() => {
-    return () => {
-      handleRef.current?.restore();
-      handleRef.current = null;
-      prevMockRef.current = null;
-      prevOptionsRef.current = undefined;
-    };
-  }, []);
-
-  return createElement(SchmockContext.Provider, { value: mock }, children);
+  return createElement(
+    SchmockContext.Provider,
+    { value: mock },
+    createElement(InterceptionInstaller, { mock, options }),
+    children,
+  );
 }
 
 // ===== Hook =====

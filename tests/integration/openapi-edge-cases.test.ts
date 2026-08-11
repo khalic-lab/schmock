@@ -3,7 +3,7 @@
 import { schmock } from "@schmock/core";
 import { openapi } from "@schmock/openapi";
 import { afterEach, describe, expect, it } from "vitest";
-import { PETSTORE_SPEC, fetchJson } from "./helpers";
+import { PETSTORE_SPEC } from "./helpers";
 
 // ─── Inline spec helpers ────────────────────────────────────────────
 
@@ -536,43 +536,35 @@ describe("OpenAPI Edge Cases", () => {
     mock.pipe(await openapi({ spec: NULLABLE_ALLOF_SPEC, fakerSeed: 42 }));
 
     const res = await mock.handle("GET", "/items");
-    // nullable wraps allOf in oneOf: [object, null]. When faker picks null,
-    // the builder may return 204 (no content). When it picks the object branch,
-    // it returns 200 with a valid object. Both are acceptable.
-    expect([200, 204]).toContain(res.status);
-    // A nullable schema may legitimately yield no content (null OR undefined):
-    // the null branch can surface as a 200 with an empty body. Use loose `!= null`
-    // so both are skipped. (The branch choice is not seed-stable — see audit 1.4,
-    // the schmockNullable Math.random roll ignores fakerSeed — hence the guard.)
-    if (res.status === 200 && res.body != null) {
-      expect(typeof res.body).toBe("object");
-    }
+    // A composition-only `nullable: true` normalizes to
+    // `anyOf: [{type:"null"}, {allOf:[…]}]` plus the schmockNullable marker.
+    // The generation path strips the union back to the allOf, and the ~5% null
+    // roll is driven by the seeded RNG — so this is deterministic at fakerSeed 42.
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(
+      expect.objectContaining({ name: expect.any(String) }),
+    );
   });
 
-  it("nullable string field can generate null", async () => {
+  it("nullable string fields use deterministic seeded null decisions", async () => {
     mock = schmock({ state: {} });
     mock.pipe(
-      await openapi({ spec: NULLABLE_STRING_FIELDS_SPEC, fakerSeed: 42 }),
+      await openapi({ spec: NULLABLE_STRING_FIELDS_SPEC, fakerSeed: 45 }),
     );
 
-    // Generate 20 responses to see if we get at least one null
-    // nullable is normalized to oneOf [string, null], so faker may pick either
-    let hasNull = false;
-    for (let i = 0; i < 20; i++) {
-      const res = await mock.handle("GET", "/things", {
-        headers: { prefer: "dynamic=true" },
-      });
-      if (res.status === 200 && typeof res.body === "object" && res.body !== null) {
-        const body = res.body as Record<string, unknown>;
-        if (Object.values(body).some((v) => v === null)) {
-          hasNull = true;
-          break;
-        }
-      }
+    const response = await mock.handle("GET", "/things", {
+      headers: { prefer: "dynamic=true" },
+    });
+
+    expect(response.status).toBe(200);
+    if (
+      typeof response.body !== "object" ||
+      response.body === null ||
+      Array.isArray(response.body)
+    ) {
+      throw new Error("Expected a generated object response");
     }
-    // This is a statistical test — document current behavior
-    // If hasNull is false, it means faker never picks null from oneOf
-    expect(typeof hasNull).toBe("boolean"); // Always passes; we document actual value below
+    expect(response.body.a).toBeNull();
   });
 
   it("readOnly field excluded from request validation", async () => {
@@ -596,9 +588,7 @@ describe("OpenAPI Edge Cases", () => {
 
   it("writeOnly field excluded from response schema", async () => {
     mock = schmock({ state: {} });
-    mock.pipe(
-      await openapi({ spec: WRITEONLY_SPEC, fakerSeed: 42 }),
-    );
+    mock.pipe(await openapi({ spec: WRITEONLY_SPEC, fakerSeed: 42 }));
 
     // The `password` writeOnly field should be stripped from the response schema.
     // When faker generates from the normalized response schema, password should be absent.
@@ -817,9 +807,7 @@ describe("OpenAPI Edge Cases", () => {
 
   it("Multiple response codes: Prefer selects each", async () => {
     mock = schmock({ state: {} });
-    mock.pipe(
-      await openapi({ spec: MULTI_RESPONSE_SPEC, fakerSeed: 42 }),
-    );
+    mock.pipe(await openapi({ spec: MULTI_RESPONSE_SPEC, fakerSeed: 42 }));
 
     for (const code of [200, 400, 404, 500]) {
       const res = await mock.handle("GET", "/items", {
@@ -850,9 +838,7 @@ describe("OpenAPI Edge Cases", () => {
 
   it("allOf composition merges properties from all branches", async () => {
     mock = schmock({ state: {} });
-    mock.pipe(
-      await openapi({ spec: ALLOF_COMPOSITION_SPEC, fakerSeed: 42 }),
-    );
+    mock.pipe(await openapi({ spec: ALLOF_COMPOSITION_SPEC, fakerSeed: 42 }));
 
     const res = await mock.handle("GET", "/items", {
       headers: { prefer: "dynamic=true" },

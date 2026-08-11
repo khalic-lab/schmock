@@ -1,4 +1,4 @@
-import { normalizePath } from "./constants.js";
+import { decodePathSegment, normalizePath } from "./constants.js";
 
 /**
  * Compiled callable route with pattern matching
@@ -52,6 +52,9 @@ export function findRoute(
 /**
  * Extract parameter values from path based on route pattern
  * Maps capture groups from regex match to parameter names
+ *
+ * Matching runs on the ENCODED path so `%2F` cannot act as a separator;
+ * captures are decoded afterwards, so a generator receives readable values.
  */
 export function extractParams(
   route: CompiledCallableRoute,
@@ -60,10 +63,14 @@ export function extractParams(
   const match = path.match(route.pattern);
   if (!match) return {};
 
-  const params: Record<string, string> = {};
-  route.params.forEach((param, index) => {
-    params[param] = match[index + 1];
-  });
-
-  return params;
+  // Object.fromEntries defines own properties, so a parameter named
+  // `__proto__` (or any other Object.prototype key) survives instead of being
+  // swallowed by the prototype setter. The prototype itself is retained so
+  // generators can still call params.hasOwnProperty(...).
+  return Object.fromEntries(
+    route.params.map((param, index) => [
+      param,
+      decodePathSegment(match[index + 1]),
+    ]),
+  );
 }

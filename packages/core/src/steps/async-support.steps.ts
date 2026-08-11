@@ -5,6 +5,10 @@ import type { CallableMockInstance, Plugin } from "../types";
 
 const feature = await loadFeature("../../features/async-support.feature");
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: CallableMockInstance;
   let response: any;
@@ -110,18 +114,30 @@ describeFeature(feature, ({ Scenario }) => {
       mock = schmock();
       const syncPlugin: Plugin = {
         name: "sync-step",
-        process: (ctx, response) => ({
-          context: ctx,
-          response: { ...response, syncStep: true },
-        }),
+        process: (ctx, pluginResponse) => {
+          if (!isRecord(pluginResponse)) {
+            throw new Error(
+              "Expected the sync plugin response to be an object",
+            );
+          }
+          return {
+            context: ctx,
+            response: { ...pluginResponse, syncStep: true },
+          };
+        },
       };
       const asyncPlugin: Plugin = {
         name: "async-step",
-        process: async (ctx, response) => {
+        process: async (ctx, pluginResponse) => {
           await new Promise(resolve => setTimeout(resolve, 5));
+          if (!isRecord(pluginResponse)) {
+            throw new Error(
+              "Expected the async plugin response to be an object",
+            );
+          }
           return {
             context: ctx,
-            response: { ...response, asyncStep: true },
+            response: { ...pluginResponse, asyncStep: true },
           };
         },
       };
@@ -365,13 +381,18 @@ describeFeature(feature, ({ Scenario }) => {
       };
       const plugin2: Plugin = {
         name: "async-step-2",
-        process: async (ctx, response) => {
+        process: async (ctx, pluginResponse) => {
           await new Promise(resolve => setTimeout(resolve, 3));
           const step1Status = ctx.state.get("step1");
+          if (!isRecord(pluginResponse)) {
+            throw new Error(
+              "Expected the stateful plugin response to be an object",
+            );
+          }
           return {
             context: ctx,
             response: {
-              ...response,
+              ...pluginResponse,
               step1: step1Status,
               step2: "completed",
             },

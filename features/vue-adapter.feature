@@ -13,23 +13,23 @@ Feature: Vue Adapter
     When I mount and unmount a Vue app with the Schmock plugin
     Then fetch should be restored to the original implementation
 
-  Scenario: Passthrough for unmatched routes
-    Given a Schmock instance with route "GET /api/users" returning users
-    And the plugin is configured with passthrough enabled
-    When the component fetches "/api/other"
-    Then the request should pass through to the original fetch
-
-  Scenario: Error status codes flow through correctly
-    Given a Schmock instance with a route returning status 404
-    When I mount a component that fetches that route with the Schmock plugin
-    Then the component should receive the error status
-
-  Scenario: POST with JSON body works through the plugin
-    Given a Schmock instance with a POST route that echoes the body
-    When I mount a component that posts data with the Schmock plugin
-    Then the component should display the echoed data
-
   Scenario: useSchmock throws without the plugin
     Given a component that calls useSchmock without the plugin
     When I try to mount it
     Then it should throw an error mentioning schmockPlugin
+
+  Scenario: A mounted plugin keeps interception across mock reset
+    Given a mounted Vue plugin with a first-generation route
+    When I reset and re-register the Vue plugin route
+    Then the mounted Vue plugin should return the second generation
+
+  Scenario: An app that never mounts can release interception
+    Given a Schmock instance and a Vue app that never mounts
+    When I install the plugin and release interception without mounting
+    Then fetch should be restored to the original implementation
+
+  Scenario: Installing the plugin under SSR does not patch fetch
+    Given a Schmock instance and a server environment without a document
+    When I install the plugin on a server-rendered app
+    Then globalThis.fetch should stay unpatched
+    And the server-rendered app should still provide the mock

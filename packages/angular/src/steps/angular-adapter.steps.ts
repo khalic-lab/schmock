@@ -4,13 +4,16 @@ import "@angular/compiler";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import {
   HttpErrorResponse,
+  type HttpEvent,
   type HttpHandler,
   HttpHeaders,
+  type HttpInterceptor,
+  HttpParams,
   HttpRequest,
   HttpResponse,
 } from "@angular/common/http";
 import type { CallableMockInstance } from "@schmock/core";
-import { schmock } from "@schmock/core";
+import { isHttpMethod, schmock, toRouteKey } from "@schmock/core";
 import { of } from "rxjs";
 import { expect } from "vitest";
 import type { AngularAdapterOptions } from "../index";
@@ -23,13 +26,17 @@ const feature = await loadFeature("../../features/angular-adapter.feature");
 
 describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   let mock: CallableMockInstance;
-  let response: HttpResponse<any> | null = null;
+  let response: HttpResponse<unknown> | null = null;
   let errorResponse: HttpErrorResponse | null = null;
   let interceptorOptions: AngularAdapterOptions | undefined;
 
   const mockNext: HttpHandler = {
     handle: () => of(new HttpResponse({ body: "passthrough" })),
   };
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
 
   function resetState() {
     mock = schmock();
@@ -41,27 +48,37 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   async function makeRequest(
     method: string,
     url: string,
-    body?: any,
+    body?: unknown,
     headers?: Record<string, string>,
+    extras?: {
+      responseType?: "arraybuffer" | "blob" | "json" | "text";
+      params?: Record<string, string>;
+    },
   ) {
     const InterceptorClass = createSchmockInterceptor(mock, interceptorOptions);
     const interceptor = new InterceptorClass();
 
-    const requestOptions: any = {};
-    if (headers) {
-      requestOptions.headers = new HttpHeaders(headers);
-    }
-
-    const request = new HttpRequest(method, url, body, requestOptions);
+    const request = new HttpRequest<unknown>(method, url, body, {
+      headers: new HttpHeaders(headers),
+      ...(extras?.responseType ? { responseType: extras.responseType } : {}),
+      ...(extras?.params
+        ? { params: new HttpParams({ fromObject: extras.params }) }
+        : {}),
+    });
 
     return new Promise<void>((resolve) => {
       interceptor.intercept(request, mockNext).subscribe({
-        next: (res: any) => {
-          response = res;
+        next: (event: HttpEvent<unknown>) => {
+          if (event instanceof HttpResponse) {
+            response = event;
+          }
           resolve();
         },
-        error: (err: any) => {
-          errorResponse = err;
+        error: (error: unknown) => {
+          errorResponse =
+            error instanceof HttpErrorResponse
+              ? error
+              : new HttpErrorResponse({ error });
           resolve();
         },
       });
@@ -79,7 +96,11 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           resetState();
           const [method, path] = variables.route.split(" ");
           const status = Number(variables.status);
-          mock(`${method} ${path}` as any, [
+          const normalizedMethod = method.toUpperCase();
+          if (!isHttpMethod(normalizedMethod)) {
+            throw new Error(`Unsupported scenario method: ${method}`);
+          }
+          mock(toRouteKey(normalizedMethod, path), [
             status,
             { error: `Error ${status}` },
           ]);
@@ -150,6 +171,36 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
     });
   });
 
+  Scenario(
+    "304 Not Modified returns an empty HttpErrorResponse",
+    ({ Given, When, Then, And }) => {
+      Given("I create an Angular mock returning 304 with a body", () => {
+        resetState();
+        mock("GET /api/cached", [304, { forbidden: true }]);
+      });
+
+      When(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          await makeRequest(method, path);
+        },
+      );
+
+      Then("the response should be an HttpErrorResponse", () => {
+        expect(errorResponse).toBeInstanceOf(HttpErrorResponse);
+      });
+
+      And("the error status should be {int}", (_, status: number) => {
+        expect(errorResponse?.status).toBe(status);
+      });
+
+      And("the Angular error body should be empty", () => {
+        expect(errorResponse?.error).toBeNull();
+      });
+    },
+  );
+
   // Adapter Configuration Options Scenarios
 
   Scenario(
@@ -161,6 +212,60 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           resetState();
           interceptorOptions = { baseUrl };
           mock("GET /api/users", [200, { users: [] }]);
+        },
+      );
+
+      When(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          await makeRequest(method, path);
+        },
+      );
+
+      Then("the request should pass through to the real backend", () => {
+        expect(response?.body).toBe("passthrough");
+      });
+    },
+  );
+
+  Scenario(
+    "Base URL only matches an exact path segment",
+    ({ Given, When, Then }) => {
+      Given(
+        "I create a strict Angular mock with baseUrl {string}",
+        (_, baseUrl: string) => {
+          resetState();
+          interceptorOptions = { baseUrl, passthrough: false };
+          mock("GET /users", [200, { source: "mock" }]);
+        },
+      );
+
+      When(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          await makeRequest(method, path);
+        },
+      );
+
+      Then("the request should pass through to the real backend", () => {
+        expect(response?.body).toBe("passthrough");
+      });
+    },
+  );
+
+  Scenario(
+    "Unsupported HTTP methods are passed through",
+    ({ Given, When, Then }) => {
+      Given(
+        "I create a strict Angular mock for {string}",
+        (_, route: string) => {
+          resetState();
+          interceptorOptions = { passthrough: false };
+          if (route === "GET /api/users") {
+            mock("GET /api/users", [200, { source: "mock" }]);
+          }
         },
       );
 
@@ -271,7 +376,10 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
         "the response body should contain the transformed authorization header",
         () => {
           expect(response?.body).toHaveProperty("auth");
-          expect(response?.body.auth).not.toBe("none");
+          if (!isRecord(response?.body)) {
+            throw new Error("Expected response body to be an object");
+          }
+          expect(response.body.auth).not.toBe("none");
         },
       );
     },
@@ -283,9 +391,12 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       Given("I create an Angular mock with transformResponse:", () => {
         resetState();
         interceptorOptions = {
-          transformResponse: (response) => ({
-            ...response,
-            body: { ...response.body, transformed: true },
+          transformResponse: (schmockResponse) => ({
+            ...schmockResponse,
+            body: {
+              ...(isRecord(schmockResponse.body) ? schmockResponse.body : {}),
+              transformed: true,
+            },
           }),
         };
         mock("GET /api/users", [200, { users: [] }]);
@@ -353,6 +464,162 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
     },
   );
 
+  // Request and Response Shaping
+
+  Scenario(
+    "Request header names are lowercased for handlers",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Angular mock that echoes the authorization header",
+        () => {
+          resetState();
+          mock("GET /api/whoami", ({ headers }) => [
+            200,
+            { auth: headers.authorization ?? "none" },
+          ]);
+        },
+      );
+
+      When(
+        'I make an Angular request to "GET /api/whoami" with a capitalized Authorization header',
+        async () => {
+          await makeRequest("GET", "/api/whoami", undefined, {
+            Authorization: "Bearer token123",
+          });
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And('the echoed authorization header should be "Bearer token123"', () => {
+        if (!isRecord(response?.body)) {
+          throw new Error("Expected response body to be an object");
+        }
+        expect(response.body.auth).toBe("Bearer token123");
+      });
+    },
+  );
+
+  Scenario(
+    "A repeated request header reaches the mock as a combined value",
+    ({ Given, When, Then, And }) => {
+      Given("I create an Angular mock that echoes the x-tag header", () => {
+        resetState();
+        mock("GET /api/tagged", ({ headers }) => [
+          200,
+          { tag: headers["x-tag"] ?? "none" },
+        ]);
+      });
+
+      When(
+        'I make an Angular request to "GET /api/tagged" with the x-tag header appended twice',
+        async () => {
+          const InterceptorClass = createSchmockInterceptor(
+            mock,
+            interceptorOptions,
+          );
+          const interceptor = new InterceptorClass();
+          const request = new HttpRequest<unknown>("GET", "/api/tagged", {
+            headers: new HttpHeaders()
+              .append("x-tag", "a")
+              .append("x-tag", "b"),
+          });
+
+          await new Promise<void>((resolve) => {
+            interceptor.intercept(request, mockNext).subscribe({
+              next: (event: HttpEvent<unknown>) => {
+                if (event instanceof HttpResponse) {
+                  response = event;
+                }
+                resolve();
+              },
+              error: (error: unknown) => {
+                errorResponse =
+                  error instanceof HttpErrorResponse
+                    ? error
+                    : new HttpErrorResponse({ error });
+                resolve();
+              },
+            });
+          });
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And('the echoed x-tag header should be "a, b"', () => {
+        if (!isRecord(response?.body)) {
+          throw new Error("Expected response body to be an object");
+        }
+        expect(response.body.tag).toBe("a, b");
+      });
+    },
+  );
+
+  Scenario(
+    "responseType text yields a string body",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'I create an Angular mock returning an object for "GET /api/users"',
+        () => {
+          resetState();
+          mock("GET /api/users", [200, { users: [] }]);
+        },
+      );
+
+      When(
+        'I make an Angular request to "GET /api/users" with responseType "text"',
+        async () => {
+          await makeRequest("GET", "/api/users", undefined, undefined, {
+            responseType: "text",
+          });
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And("the response body should be the string '{\"users\":[]}'", () => {
+        expect(response?.body).toBe('{"users":[]}');
+      });
+    },
+  );
+
+  Scenario(
+    "Emitted responses report the URL with params",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'I create an Angular mock returning an object for "GET /api/users"',
+        () => {
+          resetState();
+          mock("GET /api/users", [200, { users: [] }]);
+        },
+      );
+
+      When(
+        'I make an Angular request to "GET /api/users" with query params',
+        async () => {
+          await makeRequest("GET", "/api/users", undefined, undefined, {
+            params: { page: "2" },
+          });
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And('the response url should be "/api/users?page=2"', () => {
+        expect(response?.url).toBe("/api/users?page=2");
+      });
+    },
+  );
+
   // OpenAPI Spec with Angular Adapter Options
 
   const inlineSpec = {
@@ -388,7 +655,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   Scenario(
     "Auto-created interceptor respects baseUrl option",
     ({ Given, When, Then }) => {
-      let InterceptorClass: new () => any;
+      let InterceptorClass: new () => HttpInterceptor;
 
       Given(
         "I create an Angular interceptor from spec with baseUrl {string}",
@@ -406,16 +673,26 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
         "I make an Angular request to {string}",
         async (_, request: string) => {
           const [method, path] = request.split(" ");
+          if (!method || !path || !isHttpMethod(method)) {
+            throw new Error(
+              `Expected a supported METHOD /path request, got: ${request}`,
+            );
+          }
           const interceptor = new InterceptorClass();
-          const req = new HttpRequest(method, path);
+          const req = new HttpRequest(method, path, null);
           await new Promise<void>((resolve) => {
             interceptor.intercept(req, mockNext).subscribe({
-              next: (res: any) => {
-                response = res;
+              next: (event: HttpEvent<unknown>) => {
+                if (event instanceof HttpResponse) {
+                  response = event;
+                }
                 resolve();
               },
-              error: (err: any) => {
-                errorResponse = err;
+              error: (error: unknown) => {
+                errorResponse =
+                  error instanceof HttpErrorResponse
+                    ? error
+                    : new HttpErrorResponse({ error });
                 resolve();
               },
             });

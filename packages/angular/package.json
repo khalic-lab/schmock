@@ -1,8 +1,17 @@
 {
   "name": "@schmock/angular",
-  "version": "2.1.5",
+  "version": "2.3.1",
   "description": "Angular HTTP interceptor adapter for Schmock",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khalic-lab/schmock.git",
+    "directory": "packages/angular"
+  },
+  "homepage": "https://github.com/khalic-lab/schmock/tree/main/packages/angular#readme",
+  "bugs": {
+    "url": "https://github.com/khalic-lab/schmock/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -15,9 +24,10 @@
   "files": [
     "dist"
   ],
+  "license": "MIT",
   "scripts": {
     "dev": "bun build:lib --watch",
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist && rm -f tsconfig.tsbuildinfo",
     "build": "bun run clean && bun run build:lib && bun run build:types",
     "build:lib": "bun build --minify src/index.ts --outdir dist --target browser --format esm --external @angular/common --external @angular/core --external @schmock/core --external @schmock/openapi --external rxjs",
     "build:types": "rm -f tsconfig.tsbuildinfo && tsc --build",
@@ -31,8 +41,8 @@
   "peerDependencies": {
     "@angular/common": ">=15.0.0 <23.0.0",
     "@angular/core": ">=15.0.0 <23.0.0",
-    "@schmock/core": "^2.1.5",
-    "@schmock/openapi": "^2.1.5",
+    "@schmock/core": "^2.3.1",
+    "@schmock/openapi": "^2.3.1",
     "rxjs": "^7.8.2"
   },
   "peerDependenciesMeta": {
@@ -46,7 +56,7 @@
     "@angular/core": "^22.0.5",
     "@angular/platform-browser": "^22.0.5",
     "@angular/platform-browser-dynamic": "^22.0.5",
-    "@schmock/openapi": "^2.1.5",
+    "@schmock/openapi": "^2.3.1",
     "@types/node": "^26.1.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7",

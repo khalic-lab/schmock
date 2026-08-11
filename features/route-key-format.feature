@@ -29,6 +29,9 @@ Feature: Route Key Format
       | PATCH /settings            | PATCH  | /settings                  |
       | HEAD /health               | HEAD   | /health                    |
       | OPTIONS /users             | OPTIONS| /users                     |
+      | GET /users/                | GET    | /users                     |
+      | GET /                      | GET    | /                          |
+      | GET /café                  | GET    | /caf%C3%A9                 |
 
   Scenario Outline: Invalid route key formats
     When I parse route key "<key>"
@@ -41,6 +44,8 @@ Feature: Route Key Format
       | INVALID /path | Invalid route key format                 |
       | get /users    | Invalid route key format                 |
       | GET/users     | Invalid route key format                 |
+      | GET users     | Invalid route key format                 |
+      | POST api/v1   | Invalid route key format                 |
 
   Scenario: Extract parameters from path
     When I parse route key "GET /users/:userId/posts/:postId"

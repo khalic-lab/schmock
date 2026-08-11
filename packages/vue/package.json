@@ -1,8 +1,17 @@
 {
   "name": "@schmock/vue",
-  "version": "2.1.5",
+  "version": "2.3.1",
   "description": "Vue adapter for Schmock — Plugin and composables",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khalic-lab/schmock.git",
+    "directory": "packages/vue"
+  },
+  "homepage": "https://github.com/khalic-lab/schmock/tree/main/packages/vue#readme",
+  "bugs": {
+    "url": "https://github.com/khalic-lab/schmock/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -16,7 +25,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "bun build:lib && bun build:types",
+    "clean": "rm -rf dist && rm -f tsconfig.tsbuildinfo",
+    "build": "bun run clean && bun run build:lib && bun run build:types",
     "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts --external @schmock/core --external vue",
     "build:types": "tsc -p tsconfig.json",
     "test": "vitest run",
@@ -29,7 +39,7 @@
   "license": "MIT",
   "dependencies": {},
   "peerDependencies": {
-    "@schmock/core": "^2.1.5",
+    "@schmock/core": "^2.3.1",
     "vue": "^3.5.0"
   },
   "devDependencies": {

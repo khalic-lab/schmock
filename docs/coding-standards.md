@@ -21,12 +21,14 @@ TypeScript strict mode is enabled project-wide. Never use `// @ts-ignore` or `//
 
 ### Type System
 
-**Ambient types** live in `packages/core/schmock.d.ts` and are the single source of truth. Packages re-export them via `types.ts`:
+**Ambient types** live in `packages/core/schmock.d.ts` and are the single source of truth. Core re-exports them via `types.ts`; other packages bind them through explicit type imports so emitted declarations remain self-contained:
 
 ```typescript
-/// <reference path="../../core/schmock.d.ts" />
-export type HttpMethod = Schmock.HttpMethod;
-export type RouteKey = Schmock.RouteKey;
+import type * as Schmock from "@schmock/core";
+
+export function plugin(): Schmock.Plugin {
+  // ...
+}
 ```
 
 **Prefer type narrowing over casting.** Use type guards to narrow types at runtime:
@@ -606,6 +608,24 @@ Biome enforces these rules (see `biome.json`):
 | `noExplicitAny` | off | `any` is allowed where type safety isn't practical |
 
 Formatting: spaces (not tabs), auto-format on save.
+
+## Package And Release Verification
+
+Every package build owns cleanup of its `dist` directory and TypeScript build
+metadata. Keep runtime JavaScript generation separate from declaration emit so
+a clean build and a repeated build produce the same publishable artifacts.
+
+For manifest, export, declaration, build-output, or release changes, run:
+
+```bash
+bun run check:publish
+```
+
+The gate compares repeated builds, rejects stale output, packs every workspace,
+tests Node and Bun consumers, compiles public declarations both independently
+and with TypeScript 5.6 for Core, verifies React cross-entry context identity,
+and runs browser, CLI, `publint`, and `attw` checks. This is a release gate, not
+a substitute for the ordinary test and lint suite.
 
 ## Git
 

@@ -1,6 +1,8 @@
 /// <reference path="../schmock.d.ts" />
 
 // Re-export ambient types for consumers
+export type Schema = Schmock.Schema;
+export type SchemaDefinition = Schmock.SchemaDefinition;
 export type HttpMethod = Schmock.HttpMethod;
 export type RouteKey = Schmock.RouteKey;
 export type ResponseBody = Schmock.ResponseBody;
@@ -20,15 +22,18 @@ export type StaticData = Schmock.StaticData;
 export type RequestRecord = Schmock.RequestRecord;
 export type ServerInfo = Schmock.ServerInfo;
 export type RouteInfo = Schmock.RouteInfo;
+export type ResourceOverride = Schmock.ResourceOverride;
+export type ResponseHeaderDef = Schmock.ResponseHeaderDef;
+export type CrudOperationMeta = Schmock.CrudOperationMeta;
 export type SchemaGenerationContext = Schmock.SchemaGenerationContext;
 export type FakerPluginOptions = Schmock.FakerPluginOptions;
 export type ExpressAdapterOptions = Schmock.ExpressAdapterOptions;
 export type AngularAdapterOptions = Schmock.AngularAdapterOptions;
 export type OpenApiOptions = Schmock.OpenApiOptions;
+export type OpenApiCallbackRequest = Schmock.OpenApiCallbackRequest;
+export type OpenApiCallbackOptions = Schmock.OpenApiCallbackOptions;
 export type SeedSource = Schmock.SeedSource;
 export type SeedConfig = Schmock.SeedConfig;
-export type CliOptions = Schmock.CliOptions;
-export type CliServer = Schmock.CliServer;
 export type AdapterRequest = Schmock.AdapterRequest;
 export type AdapterResponse = Schmock.AdapterResponse;
 export type InterceptOptions = Schmock.InterceptOptions;

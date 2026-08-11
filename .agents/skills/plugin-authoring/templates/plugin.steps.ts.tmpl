@@ -1,0 +1,38 @@
+import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
+import { schmock, toHttpMethod } from "@schmock/core";
+import type { CallableMockInstance, Response } from "@schmock/core";
+import { expect } from "vitest";
+import { {{PLUGIN_CAMEL}}Plugin } from "../{{PLUGIN_NAME}}.js";
+
+const feature = await loadFeature(
+  "../../features/{{PLUGIN_NAME}}-plugin.feature",
+);
+
+describeFeature(feature, ({ Scenario }) => {
+  let mock: CallableMockInstance;
+  let response: Response | undefined;
+
+  Scenario("Mark an object response", ({ Given, When, Then }) => {
+    Given("I create a mock with the {{PLUGIN_NAME}} plugin", () => {
+      mock = schmock();
+      mock("GET /test", { message: "test" }).pipe({{PLUGIN_CAMEL}}Plugin());
+    });
+
+    When("I request {string}", async (_, request: string) => {
+      const separator = request.indexOf(" ");
+      if (separator < 1 || separator === request.length - 1) {
+        throw new Error(`Invalid request step value: ${request}`);
+      }
+      const method = toHttpMethod(request.slice(0, separator));
+      const path = request.slice(separator + 1);
+      response = await mock.handle(method, path);
+    });
+
+    Then(
+      "the response body should identify the {string} plugin",
+      (_, pluginName: string) => {
+        expect(response?.body).toMatchObject({ processedBy: pluginName });
+      },
+    );
+  });
+});

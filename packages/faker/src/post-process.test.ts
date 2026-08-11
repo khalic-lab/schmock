@@ -8,80 +8,106 @@ import { generateFromSchema } from "./index";
  */
 
 describe("postProcessGenerated — schmockNullable", () => {
-  it("schema with schmockNullable: true — over 100 runs, some should be null", async () => {
-    // We use a schema where the field has schmockNullable set.
-    // Since enhanceSchemaWithSmartMapping may add this marker for nullable fields,
-    // we test by adding the marker directly through a schema that triggers it.
-    // The simplest approach: craft a schema with the x-nullable pattern that
-    // enhanceSchemaWithSmartMapping would process, or use a type that gets
-    // the schmockNullable marker applied.
-    //
-    // Since schmockNullable is set by the enhancement layer for nullable fields,
-    // we test via a schema with nullable: true (OpenAPI pattern) or anyOf with null.
-    // However, the safest approach is to test a field that we know goes through
-    // postProcessGenerated with the schmockNullable flag.
-
-    // Direct approach: construct a schema that includes schmockNullable at the property level
-    const schema: JSONSchema7 & Record<string, unknown> = {
-      type: "object",
-      properties: {
-        value: {
-          type: "string",
-          schmockNullable: true,
-        } as JSONSchema7 & { schmockNullable: boolean },
+  it("uses the generation seed for a reproducible nullable distribution", async () => {
+    const nullableString: JSONSchema7 & { schmockNullable: boolean } = {
+      type: "string",
+      schmockNullable: true,
+    };
+    const schema: JSONSchema7 = {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { value: nullableString },
+        required: ["value"],
       },
-      required: ["value"],
     };
 
-    let nullCount = 0;
-    const runs = 200;
-    for (let i = 0; i < runs; i++) {
-      const result = (await generateFromSchema({ schema })) as Record<
-        string,
-        unknown
-      >;
-      if (result.value === null) {
-        nullCount++;
-      }
-    }
+    const first = await generateFromSchema({ schema, count: 200, seed: 42 });
+    const second = await generateFromSchema({ schema, count: 200, seed: 42 });
 
-    // With NULLABLE_NULL_PROBABILITY = 0.05, over 200 runs we expect ~10 nulls.
-    // We use a loose check: at least 1 null (very unlikely to get 0 in 200 trials at 5%)
-    expect(nullCount).toBeGreaterThan(0);
-    // And not all nulls
-    expect(nullCount).toBeLessThan(runs);
+    expect(first).toEqual(second);
+    if (!Array.isArray(first)) {
+      throw new Error("Expected generated nullable data to be an array");
+    }
+    const values = first.map((item) => {
+      if (typeof item !== "object" || item === null || !("value" in item)) {
+        throw new Error("Expected each nullable item to contain value");
+      }
+      return item.value;
+    });
+    expect(values.filter((value) => value === null)).toHaveLength(9);
+    expect(values.filter((value) => typeof value === "string")).toHaveLength(
+      191,
+    );
   });
 });
 
 describe("postProcessGenerated — schmockTrueProbability", () => {
-  it("schema with schmockTrueProbability: 0.8 — over 100 runs, ~80% should be true", async () => {
-    const schema: JSONSchema7 & Record<string, unknown> = {
-      type: "object",
-      properties: {
-        isActive: {
-          type: "boolean",
-          schmockTrueProbability: 0.8,
-        } as JSONSchema7 & { schmockTrueProbability: number },
+  it("uses the generation seed for deterministic weighted booleans", async () => {
+    const weightedBoolean: JSONSchema7 & {
+      schmockTrueProbability: number;
+    } = {
+      type: "boolean",
+      schmockTrueProbability: 0.5,
+    };
+    const schema: JSONSchema7 = {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { flag: weightedBoolean },
+        required: ["flag"],
       },
-      required: ["isActive"],
     };
 
-    let trueCount = 0;
-    const runs = 200;
-    for (let i = 0; i < runs; i++) {
-      const result = (await generateFromSchema({ schema })) as Record<
-        string,
-        unknown
-      >;
-      if (result.isActive === true) {
-        trueCount++;
-      }
-    }
+    const first = await generateFromSchema({ schema, count: 12, seed: 42 });
+    const second = await generateFromSchema({ schema, count: 12, seed: 42 });
 
-    const trueRate = trueCount / runs;
-    // With probability 0.8, expect trueRate to be roughly in [0.65, 0.95]
-    expect(trueRate).toBeGreaterThan(0.55);
-    expect(trueRate).toBeLessThan(0.95);
+    expect(first).toEqual(second);
+    expect(Array.isArray(first)).toBe(true);
+    if (!Array.isArray(first)) {
+      throw new Error("Expected generated data to be an array");
+    }
+    const flags = first.flatMap((item) => {
+      if (typeof item !== "object" || item === null || !("flag" in item)) {
+        return [];
+      }
+      return [item.flag];
+    });
+    expect(flags).toContain(true);
+    expect(flags).toContain(false);
+  });
+
+  it("applies a reproducible weighted boolean distribution", async () => {
+    const weightedBoolean: JSONSchema7 & {
+      schmockTrueProbability: number;
+    } = {
+      type: "boolean",
+      schmockTrueProbability: 0.8,
+    };
+    const schema: JSONSchema7 = {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { flag: weightedBoolean },
+        required: ["flag"],
+      },
+    };
+
+    const first = await generateFromSchema({ schema, count: 200, seed: 42 });
+    const second = await generateFromSchema({ schema, count: 200, seed: 42 });
+
+    expect(first).toEqual(second);
+    if (!Array.isArray(first)) {
+      throw new Error("Expected generated weighted data to be an array");
+    }
+    const flags = first.map((item) => {
+      if (typeof item !== "object" || item === null || !("flag" in item)) {
+        throw new Error("Expected each weighted item to contain flag");
+      }
+      return item.flag;
+    });
+    expect(flags.filter((flag) => flag === true)).toHaveLength(162);
+    expect(flags.filter((flag) => flag === false)).toHaveLength(38);
   });
 });
 

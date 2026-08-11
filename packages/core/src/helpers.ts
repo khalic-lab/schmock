@@ -43,12 +43,30 @@ export function noContent(): [number, null] {
   return [204, null];
 }
 
+/** Default page size used when `pageSize` is absent or not a positive integer. */
+const DEFAULT_PAGE_SIZE = 10;
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1
+    ? value
+    : fallback;
+}
+
+/**
+ * Slice `items` into a page envelope.
+ *
+ * `page` and `pageSize` are normalized to positive integers (falling back to
+ * page 1 and a page size of 10) so a fractional, negative, NaN or infinite
+ * option can never produce a nonsensical slice or a negative `totalPages`. The
+ * returned envelope always echoes the NORMALIZED values, so it is internally
+ * consistent with `data`.
+ */
 export function paginate<T>(
   items: T[],
   options: Schmock.PaginateOptions = {},
 ): Schmock.PaginatedResponse<T> {
-  const page = options.page || 1;
-  const pageSize = options.pageSize || 10;
+  const page = positiveInteger(options.page, 1);
+  const pageSize = positiveInteger(options.pageSize, DEFAULT_PAGE_SIZE);
   const total = items.length;
   const totalPages = Math.ceil(total / pageSize);
   const start = (page - 1) * pageSize;

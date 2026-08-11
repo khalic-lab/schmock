@@ -36,6 +36,13 @@ Feature: Angular Adapter
     Then the response should be an HttpResponse
     And the status should be 201
 
+  Scenario: 304 Not Modified returns an empty HttpErrorResponse
+    Given I create an Angular mock returning 304 with a body
+    When I make an Angular request to "GET /api/cached"
+    Then the response should be an HttpErrorResponse
+    And the error status should be 304
+    And the Angular error body should be empty
+
   # Adapter Configuration Options
 
   Scenario: Requests outside baseUrl are passed through
@@ -44,6 +51,16 @@ Feature: Angular Adapter
       mock('GET /api/users', [200, { users: [] }])
       """
     When I make an Angular request to "GET /external/data"
+    Then the request should pass through to the real backend
+
+  Scenario: Base URL only matches an exact path segment
+    Given I create a strict Angular mock with baseUrl "/api"
+    When I make an Angular request to "GET /apiv2/users"
+    Then the request should pass through to the real backend
+
+  Scenario: Unsupported HTTP methods are passed through
+    Given I create a strict Angular mock for "GET /api/users"
+    When I make an Angular request to "PROPFIND /api/users"
     Then the request should pass through to the real backend
 
   Scenario: Use passthrough option to handle unmatched routes
@@ -91,6 +108,32 @@ Feature: Angular Adapter
     Then the response should be an HttpErrorResponse
     And the error status should be 500
     And the error body should use the custom error format
+
+  # Request and Response Shaping
+
+  Scenario: Request header names are lowercased for handlers
+    Given I create an Angular mock that echoes the authorization header
+    When I make an Angular request to "GET /api/whoami" with a capitalized Authorization header
+    Then the response should be an HttpResponse
+    And the echoed authorization header should be "Bearer token123"
+
+  Scenario: A repeated request header reaches the mock as a combined value
+    Given I create an Angular mock that echoes the x-tag header
+    When I make an Angular request to "GET /api/tagged" with the x-tag header appended twice
+    Then the response should be an HttpResponse
+    And the echoed x-tag header should be "a, b"
+
+  Scenario: responseType text yields a string body
+    Given I create an Angular mock returning an object for "GET /api/users"
+    When I make an Angular request to "GET /api/users" with responseType "text"
+    Then the response should be an HttpResponse
+    And the response body should be the string '{"users":[]}'
+
+  Scenario: Emitted responses report the URL with params
+    Given I create an Angular mock returning an object for "GET /api/users"
+    When I make an Angular request to "GET /api/users" with query params
+    Then the response should be an HttpResponse
+    And the response url should be "/api/users?page=2"
 
   # OpenAPI Spec with Angular Adapter Options
 

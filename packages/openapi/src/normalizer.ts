@@ -1,13 +1,20 @@
-/// <reference path="../../core/schmock.d.ts" />
-
 import type { JSONSchema7 } from "json-schema";
 import { isRecord, toJsonSchema } from "./utils.js";
+
+/**
+ * Where the parser records the explicit mapping key or implicit component name
+ * for the branch at index i, before dereference erases its `$ref`. Written in
+ * parser.ts; read here; dropped with the whole `discriminator` object below.
+ */
+const DISCRIMINATOR_VALUES_MARKER = "x-schmock-discriminator-values";
 
 /**
  * Normalize an OpenAPI schema to pure JSON Schema 7 that json-schema-faker understands.
  *
  * Transforms applied:
- * - nullable: true -> oneOf with null type
+ * - nullable: true -> validation-visible null (`type: [T, "null"]`, or
+ *   `anyOf: [{type:"null"}, rest]` for composition-only schemas) plus the
+ *   `schmockNullable` marker the faker plugin uses to roll nulls at ~5%
  * - discriminator -> required + enum on branches
  * - readOnly/writeOnly -> strip based on direction
  * - example -> default (if default not set)
@@ -18,23 +25,74 @@ export function normalizeSchema(
   schema: Record<string, unknown>,
   direction: "request" | "response",
 ): JSONSchema7 {
-  return normalizeNode(structuredClone(schema), direction, new WeakSet());
+  return normalizeNode(
+    structuredClone(schema),
+    direction,
+    new Set<object>(),
+    new Map<object, JSONSchema7>(),
+  );
+}
+
+/**
+ * Apply nullability to an already-normalized node in a form AJV can see.
+ *
+ * The `schmockNullable` marker alone leaves the non-null `type` in place, so a
+ * generated `null` fails the plugin's own validator. Every branch below emits a
+ * schema that accepts `null` and keeps the marker so `postProcessGenerated`
+ * still rolls nulls at ~5%.
+ */
+function applyNullability(
+  node: Record<string, unknown>,
+): Record<string, unknown> {
+  if (typeof node.type === "string") {
+    node.type = [node.type, "null"];
+  } else if (Array.isArray(node.type)) {
+    if (!node.type.includes("null")) {
+      node.type = [...node.type, "null"];
+    }
+  } else if (node.allOf || node.anyOf || node.oneOf || node.$ref) {
+    // Composition-only nullable (the standard `allOf: [{$ref}], nullable: true`
+    // idiom): the whole node moves into the non-null branch.
+    return { anyOf: [{ type: "null" }, node], schmockNullable: true };
+  } else {
+    // Typeless and composition-free — already accepts null.
+    return { ...node, schmockNullable: true };
+  }
+
+  // A union type alone still rejects null when an enum constrains the values.
+  if (Array.isArray(node.enum) && !node.enum.includes(null)) {
+    node.enum = [...node.enum, null];
+  }
+
+  node.schmockNullable = true;
+  return node;
 }
 
 function normalizeNode(
   node: Record<string, unknown>,
   direction: "request" | "response",
-  visited: WeakSet<object>,
+  stack: Set<object>,
+  memo: Map<object, JSONSchema7>,
 ): JSONSchema7 {
   if (!node || typeof node !== "object" || Array.isArray(node)) {
     return toJsonSchema({});
   }
 
-  // Circular reference detection — break cycles
-  if (visited.has(node)) {
+  // Already normalized in this pass — `$ref` dereference makes two occurrences
+  // of one component the SAME object, and they must both normalize fully.
+  const cached = memo.get(node);
+  if (cached) {
+    return cached;
+  }
+
+  // Circular reference detection — break true cycles (node is on the stack)
+  if (stack.has(node)) {
     return toJsonSchema({});
   }
-  visited.add(node);
+  stack.add(node);
+
+  const isNullable = node.nullable === true;
+  delete node.nullable;
 
   // Strip x-* extensions
   for (const key of Object.keys(node)) {
@@ -43,53 +101,48 @@ function normalizeNode(
     }
   }
 
-  // Handle nullable: true — mark for post-processing instead of wrapping in oneOf.
-  // This avoids JSF picking null 50% of the time; the faker plugin applies ~5% null probability.
-  if (node.nullable === true) {
-    delete node.nullable;
-    const normalized = normalizeNode({ ...node }, direction, visited);
-    (normalized as Record<string, unknown>).schmockNullable = true;
-    return normalized;
-  }
-  delete node.nullable;
-
   // Handle discriminator
   if (node.discriminator && isRecord(node.discriminator)) {
     const disc = node.discriminator;
     const propName = disc.propertyName;
     if (typeof propName === "string" && Array.isArray(node.oneOf)) {
-      const mappingRaw = disc.mapping ?? {};
-      const mapping = isRecord(mappingRaw) ? mappingRaw : {};
-      // mapping keys ARE the discriminator values (e.g. "dog", "cat")
-      // mapping values are $ref strings — after dereference they can't be matched to branches
-      // Use key order to correspond to oneOf branch order
-      const discriminatorValues = Object.keys(mapping);
+      // Explicit mapping keys or implicit `$ref` component names are resolved
+      // BEFORE dereference in parser.ts and handed over index-aligned here.
+      const resolvedRaw = disc[DISCRIMINATOR_VALUES_MARKER];
+      const resolved = Array.isArray(resolvedRaw) ? resolvedRaw : undefined;
 
-      node.oneOf = node.oneOf
-        .filter((branch): branch is Record<string, unknown> => isRecord(branch))
-        .map((branch, index) => {
-          const normalized = normalizeNode(branch, direction, visited);
-          // Ensure discriminator property is required
-          if (isRecord(normalized)) {
-            const required = Array.isArray(normalized.required)
-              ? [...normalized.required]
-              : [];
-            if (!required.includes(propName)) {
-              required.push(propName);
-            }
-            normalized.required = required;
-
-            // Add enum constraint for the discriminator value
-            const mappingValue = discriminatorValues[index];
-            if (mappingValue && isRecord(normalized.properties)) {
-              const props = normalized.properties;
-              const existingRaw = props[propName] ?? {};
-              const existing = isRecord(existingRaw) ? existingRaw : {};
-              props[propName] = { ...existing, enum: [mappingValue] };
-            }
+      node.oneOf = node.oneOf.map((branch, index) => {
+        if (!isRecord(branch)) return branch;
+        const normalized = normalizeNode(branch, direction, stack, memo);
+        // Ensure discriminator property is required
+        if (isRecord(normalized)) {
+          const required = Array.isArray(normalized.required)
+            ? [...normalized.required]
+            : [];
+          if (!required.includes(propName)) {
+            required.push(propName);
           }
-          return normalized;
-        });
+          normalized.required = required;
+
+          // Add enum constraint for the discriminator value
+          const marked = resolved?.[index];
+          const mappingValues = Array.isArray(marked)
+            ? marked.filter(
+                (value): value is string => typeof value === "string",
+              )
+            : [];
+          if (mappingValues.length > 0) {
+            const props = isRecord(normalized.properties)
+              ? normalized.properties
+              : {};
+            const existingRaw = props[propName] ?? {};
+            const existing = isRecord(existingRaw) ? existingRaw : {};
+            props[propName] = { ...existing, enum: mappingValues };
+            normalized.properties = props;
+          }
+        }
+        return normalized;
+      });
     }
     delete node.discriminator;
   }
@@ -122,7 +175,7 @@ function normalizeNode(
       delete propSchema.writeOnly;
 
       // Recurse into property
-      props[propName] = normalizeNode(propSchema, direction, visited);
+      props[propName] = normalizeNode(propSchema, direction, stack, memo);
     }
 
     for (const key of keysToRemove) {
@@ -168,10 +221,10 @@ function normalizeNode(
   if (node.items) {
     if (Array.isArray(node.items)) {
       node.items = node.items.map((item: unknown) =>
-        isRecord(item) ? normalizeNode(item, direction, visited) : item,
+        isRecord(item) ? normalizeNode(item, direction, stack, memo) : item,
       );
     } else if (isRecord(node.items)) {
-      node.items = normalizeNode(node.items, direction, visited);
+      node.items = normalizeNode(node.items, direction, stack, memo);
     }
   }
 
@@ -180,7 +233,8 @@ function normalizeNode(
     node.additionalProperties = normalizeNode(
       node.additionalProperties,
       direction,
-      visited,
+      stack,
+      memo,
     );
   }
 
@@ -189,21 +243,23 @@ function normalizeNode(
     const keywordValue = node[keyword];
     if (Array.isArray(keywordValue)) {
       node[keyword] = keywordValue.map((branch: unknown) =>
-        isRecord(branch) ? normalizeNode(branch, direction, visited) : branch,
+        isRecord(branch)
+          ? normalizeNode(branch, direction, stack, memo)
+          : branch,
       );
     }
   }
 
   // Recurse into not
   if (isRecord(node.not)) {
-    node.not = normalizeNode(node.not, direction, visited);
+    node.not = normalizeNode(node.not, direction, stack, memo);
   }
 
   // Recurse into conditional
   for (const keyword of ["if", "then", "else"]) {
     const keywordValue = node[keyword];
     if (isRecord(keywordValue)) {
-      node[keyword] = normalizeNode(keywordValue, direction, visited);
+      node[keyword] = normalizeNode(keywordValue, direction, stack, memo);
     }
   }
 
@@ -212,10 +268,13 @@ function normalizeNode(
     const pp = node.patternProperties;
     for (const [pattern, schema] of Object.entries(pp)) {
       if (isRecord(schema)) {
-        pp[pattern] = normalizeNode(schema, direction, visited);
+        pp[pattern] = normalizeNode(schema, direction, stack, memo);
       }
     }
   }
 
-  return toJsonSchema(node);
+  const out = toJsonSchema(isNullable ? applyNullability(node) : node);
+  stack.delete(node);
+  memo.set(node, out);
+  return out;
 }

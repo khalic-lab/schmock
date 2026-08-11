@@ -2,7 +2,9 @@
 name: devops
 description: >
   Release management for Schmock packages. Version bumping, npm publishing,
-  and GitHub release creation.
+  and GitHub release creation. Use when cutting a release, bumping a package
+  version, publishing an @schmock/* package to npm, or creating a GitHub
+  release in this monorepo.
 argument-hint: "bump patch|minor|major | publish [package]"
 allowed-tools:
   - Bash(bun .claude/skills/devops/scripts/bump.ts *)
@@ -17,13 +19,14 @@ End-to-end release flow:
 
 1. **Validate** — All quality gates pass (`/code-quality validate`)
 2. **Bump** — Increment versions across all packages
-3. **Build** — `bun build` for all packages
-4. **Publish** — `npm publish` per package with `--access public`
-5. **Tag** — `gh release create` per package
+3. **Build** — `bun build:quiet` for all packages
+4. **Publish** — `npm publish ./packages/<pkg> --access public` per package (note the `./` — see Known Pitfalls)
+5. **Tag** — push `main`, then a single unified `gh release create vX.Y.Z` for the whole version (NOT per-package)
 
 ## Version Management
 
-8 packages with synchronized versions tracked in `packages/*/package.json`.
+11 packages with synchronized versions tracked in `packages/*/package.json`:
+`core`, `faker`, `validation`, `query`, `express`, `react`, `vue`, `openapi`, `angular`, `cli`, `schmock`.
 
 ### Current Versions
 
@@ -49,31 +52,34 @@ The bump script:
 Dependencies must be published before dependents:
 1. `core` (no deps)
 2. `faker` (depends on core)
-3. `express`, `angular`, `validation`, `query` (depend on core — parallel)
+3. `validation`, `query`, `express`, `react`, `vue` (depend on core — parallel)
 4. `openapi` (depends on core + faker)
-5. `cli` (depends on core + openapi)
+5. `angular` (depends on core; optional peer on openapi — publish after openapi)
+6. `cli` (depends on core + openapi)
+7. `schmock` (meta-package — depends on core, faker, validation, query, openapi, cli — publish LAST)
 
 ### Known Pitfalls
 
 - **CLI shebang**: Must be `#!/usr/bin/env node` (not `bun`) or npm strips the `bin` entry
 - **Never use `workspace:*`** in dependencies — npm publishes it literally. Use `^version` ranges instead.
+- **`npm publish` needs a `./` on the folder**: `npm publish packages/core` is parsed as a GitHub `owner/repo` shorthand — npm tries to clone `ssh://git@github.com/packages/core.git` and fails with "Repository not found". Use `npm publish ./packages/core --access public` (leading `./`), or `cd` into the package dir first.
+- **zsh doesn't word-split unquoted vars**: a publish loop like `for pkg in $order` runs ONCE with the whole string in zsh (this session's shell). Use a literal list — `for pkg in core faker validation …` — or a zsh array `order=(core faker …)`.
 
 ## Publishing Checklist
 
 Before publishing:
-- [ ] All tests pass (`bun test:all`)
-- [ ] Lint passes (`bun lint`)
-- [ ] Build succeeds (`bun build`)
-- [ ] Package exports are correct (`bun check:publish`)
+- [ ] All tests pass (`bun test:all:quiet`)
+- [ ] Lint passes (`bun lint:quiet`)
+- [ ] Build succeeds (`bun build:quiet`)
 - [ ] Versions are bumped
 - [ ] On `main` branch
 
 During publishing:
-- [ ] `npm publish --access public` per package
-- [ ] Verify packages appear on npm
+- [ ] `npm publish ./packages/<pkg> --access public` per package (in dependency order)
+- [ ] Verify packages appear on npm (`npm view @schmock/<pkg> version`)
 
 After publishing:
-- [ ] Create GitHub release per package with `gh release create`
+- [ ] Push `main` to origin, then create a single unified GitHub release `vX.Y.Z` with `gh release create` (not per-package) — `publish.sh` does both automatically
 - [ ] Update CHANGELOG if needed
 
 ## CI/CD Awareness

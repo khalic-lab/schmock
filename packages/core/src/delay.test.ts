@@ -3,6 +3,58 @@ import { schmock } from "./index";
 
 describe("response delay functionality", () => {
   describe("fixed delay", () => {
+    it("aborts a pending delay without recording history", async () => {
+      const mock = schmock({ delay: 1_000 });
+      mock("GET /abort-delay", { completed: true });
+      const controller = new AbortController();
+
+      const pending = mock.handle("GET", "/abort-delay", {
+        signal: controller.signal,
+      });
+      controller.abort();
+
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(mock.history()).toHaveLength(0);
+    });
+
+    it("aborts while an async generator remains pending", async () => {
+      const mock = schmock();
+      let announceStarted = () => {};
+      let releaseGenerator = () => {};
+      const started = new Promise<void>((resolve) => {
+        announceStarted = resolve;
+      });
+      const barrier = new Promise<void>((resolve) => {
+        releaseGenerator = resolve;
+      });
+      mock("GET /pending-generator", async () => {
+        announceStarted();
+        await barrier;
+        return { completed: true };
+      });
+      const controller = new AbortController();
+
+      try {
+        const pending = mock.handle("GET", "/pending-generator", {
+          signal: controller.signal,
+        });
+        await started;
+        controller.abort();
+
+        await expect(
+          Promise.race([
+            pending,
+            new Promise<Schmock.Response>((_, reject) => {
+              setTimeout(() => reject(new Error("abort timed out")), 100);
+            }),
+          ]),
+        ).rejects.toMatchObject({ name: "AbortError" });
+        expect(mock.history()).toHaveLength(0);
+      } finally {
+        releaseGenerator();
+      }
+    });
+
     it("applies fixed delay to responses", async () => {
       const mock = schmock({ delay: 100 });
       mock("GET /test", "response");

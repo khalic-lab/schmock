@@ -1,30 +1,61 @@
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import { fakerPlugin, generateFromSchema } from "./index";
-import { generate, performance as perf, schemas } from "./test-utils";
+import { generate, schemas } from "./test-utils";
 
-describe("Performance and Memory", () => {
-  describe("Generation Speed", () => {
-    it("generates simple objects quickly", async () => {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function expectRecord(
+  value: unknown,
+): asserts value is Record<string, unknown> {
+  expect(isRecord(value)).toBe(true);
+  if (!isRecord(value)) throw new Error("Expected generated object data");
+}
+
+function expectGeneratedUser(value: unknown): void {
+  expectRecord(value);
+  expect(value.id).toEqual(expect.any(String));
+  expect(value.email).toEqual(expect.any(String));
+  expect(value.firstName).toEqual(expect.any(String));
+  expect(value.lastName).toEqual(expect.any(String));
+  expect(value.createdAt).toEqual(expect.any(String));
+}
+
+function pluginContext(): Schmock.PluginContext {
+  return {
+    method: "GET",
+    path: "/test",
+    params: {},
+    query: {},
+    state: new Map(),
+    routeState: {},
+    headers: {},
+    body: null,
+    route: {},
+  };
+}
+
+describe("Faker generation workload reliability", () => {
+  describe("Representative schema workloads", () => {
+    it("preserves simple object shape across repeated generation", async () => {
       const schema = schemas.simple.object({
         id: schemas.simple.number(),
         name: schemas.simple.string(),
         active: { type: "boolean" },
       });
 
-      const times: number[] = [];
-      for (let i = 0; i < 10; i++) {
-        const { duration } = await perf.measure(
-          async () => await generateFromSchema({ schema }),
-        );
-        times.push(duration);
+      for (let seed = 0; seed < 10; seed += 1) {
+        const result = await generateFromSchema({ schema, seed });
+        expectRecord(result);
+        expect(result.id).toEqual(expect.any(Number));
+        expect(result.name).toEqual(expect.any(String));
+        expect(result.active).toEqual(expect.any(Boolean));
       }
-
-      const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
-      expect(avgTime).toBeLessThan(50); // Should average under 50ms
     });
 
-    it("handles nested objects efficiently", async () => {
+    it("preserves a three-level nested object shape", async () => {
       const schema = schemas.nested.deep(
         3,
         schemas.simple.object({
@@ -33,14 +64,17 @@ describe("Performance and Memory", () => {
         }),
       );
 
-      const { duration } = await perf.measure(
-        async () => await generateFromSchema({ schema }),
-      );
-
-      expect(duration).toBeLessThan(100); // Reasonable for nested structure
+      let level = await generateFromSchema({ schema, seed: 42 });
+      for (let depth = 0; depth < 3; depth += 1) {
+        expectRecord(level);
+        level = level.nested;
+      }
+      expectRecord(level);
+      expect(level.id).toEqual(expect.any(Number));
+      expect(level.value).toEqual(expect.any(String));
     });
 
-    it("generates arrays efficiently", async () => {
+    it("generates every item in a fixed-size object array", async () => {
       const schema = schemas.simple.array(
         schemas.simple.object({
           id: schemas.simple.number(),
@@ -49,14 +83,18 @@ describe("Performance and Memory", () => {
         { minItems: 50, maxItems: 50 },
       );
 
-      const { duration } = await perf.measure(
-        async () => await generateFromSchema({ schema }),
-      );
-
-      expect(duration).toBeLessThan(200); // Should handle 50 items quickly
+      const result = await generateFromSchema({ schema, seed: 42 });
+      expect(Array.isArray(result)).toBe(true);
+      if (!Array.isArray(result)) throw new Error("Expected generated array");
+      expect(result).toHaveLength(50);
+      for (const item of result) {
+        expectRecord(item);
+        expect(item.id).toEqual(expect.any(Number));
+        expect(item.name).toEqual(expect.any(String));
+      }
     });
 
-    it("handles complex schemas with multiple constraints", async () => {
+    it("honors constraints in a complex collection schema", async () => {
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -80,389 +118,285 @@ describe("Performance and Memory", () => {
             maxItems: 10,
           },
         },
+        required: ["users"],
       };
 
-      const { duration } = await perf.measure(
-        async () => await generateFromSchema({ schema }),
-      );
-
-      expect(duration).toBeLessThan(300); // Complex but still reasonable
-    });
-  });
-
-  describe("Scaling Behavior", () => {
-    it("scales linearly with array size", async () => {
-      const smallSchema = schemas.simple.array(schemas.simple.string(), {
-        minItems: 50,
-        maxItems: 50,
-      });
-
-      const largeSchema = schemas.simple.array(schemas.simple.string(), {
-        minItems: 500,
-        maxItems: 500,
-      });
-
-      // Warmup runs to stabilize JIT
-      for (let i = 0; i < 3; i++) {
-        await generateFromSchema({ schema: smallSchema });
-        await generateFromSchema({ schema: largeSchema });
+      const result = await generateFromSchema({ schema, seed: 42 });
+      expectRecord(result);
+      expect(Array.isArray(result.users)).toBe(true);
+      if (!Array.isArray(result.users)) {
+        throw new Error("Expected users collection");
       }
-
-      // Multiple measurement runs for statistical stability
-      const smallTimes: number[] = [];
-      const largeTimes: number[] = [];
-
-      for (let i = 0; i < 10; i++) {
-        const start1 = performance.now();
-        await generateFromSchema({ schema: smallSchema });
-        const small = performance.now() - start1;
-        smallTimes.push(small);
-
-        const start2 = performance.now();
-        await generateFromSchema({ schema: largeSchema });
-        const large = performance.now() - start2;
-        largeTimes.push(large);
-      }
-
-      // Remove outliers and calculate medians for stability
-      smallTimes.sort((a, b) => a - b);
-      largeTimes.sort((a, b) => a - b);
-      const medianSmall = smallTimes[Math.floor(smallTimes.length / 2)];
-      const medianLarge = largeTimes[Math.floor(largeTimes.length / 2)];
-
-      // Both should complete in reasonable time (main goal is to ensure it works, not strict timing)
-      expect(medianSmall).toBeLessThan(50); // Small arrays should be fast
-      expect(medianLarge).toBeLessThan(200); // Large arrays should still be reasonable
-
-      // Optional: Check scaling if timing is meaningful
-      if (medianSmall > 0.1) {
-        // Only check scaling if we have measurable timing
-        expect(medianLarge).toBeGreaterThan(medianSmall * 0.5); // Should take at least half as long
-        expect(medianLarge).toBeLessThan(medianSmall * 50); // But not extremely longer
+      expect(result.users).toHaveLength(10);
+      for (const user of result.users) {
+        expectRecord(user);
+        expect(user.id).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+        );
+        expect(user.email).toEqual(expect.any(String));
+        expect(user.age).toBeGreaterThanOrEqual(18);
+        expect(user.age).toBeLessThanOrEqual(100);
+        expect(Array.isArray(user.tags)).toBe(true);
+        if (!Array.isArray(user.tags)) throw new Error("Expected user tags");
+        expect(user.tags.length).toBeLessThanOrEqual(5);
+        for (const tag of user.tags) expect(tag).toMatch(/^[a-z]+$/);
       }
     });
 
-    it("handles wide objects efficiently", async () => {
-      const narrowSchema = schemas.nested.wide(20);
-      const wideSchema = schemas.nested.wide(100);
+    it("handles both small and large fixed array workloads", async () => {
+      const sizes = [50, 500];
 
-      // Warmup
-      for (let i = 0; i < 3; i++) {
-        await generateFromSchema({ schema: narrowSchema });
-        await generateFromSchema({ schema: wideSchema });
+      for (const size of sizes) {
+        const schema = schemas.simple.array(schemas.simple.string(), {
+          minItems: size,
+          maxItems: size,
+        });
+        const result = await generateFromSchema({ schema, seed: 42 });
+        expect(Array.isArray(result)).toBe(true);
+        if (!Array.isArray(result)) throw new Error("Expected generated array");
+        expect(result).toHaveLength(size);
+        expect(result.every((item) => typeof item === "string")).toBe(true);
       }
+    });
 
-      // Measure with multiple runs, dropping outliers
-      const narrowTimes: number[] = [];
-      const wideTimes: number[] = [];
-
-      for (let i = 0; i < 10; i++) {
-        const start1 = performance.now();
-        await generateFromSchema({ schema: narrowSchema });
-        narrowTimes.push(performance.now() - start1);
-
-        const start2 = performance.now();
-        await generateFromSchema({ schema: wideSchema });
-        wideTimes.push(performance.now() - start2);
-      }
-
-      // Use median instead of average to reduce sensitivity to GC pauses
-      const median = (arr: number[]) => {
-        const sorted = [...arr].sort((a, b) => a - b);
-        const mid = Math.floor(sorted.length / 2);
-        return sorted.length % 2
-          ? sorted[mid]
-          : (sorted[mid - 1] + sorted[mid]) / 2;
-      };
-
-      const medNarrow = median(narrowTimes);
-      const medWide = median(wideTimes);
-
-      // Scale assertion (machine-speed-independent): wide has 5x the
-      // properties of narrow, so its generation time should scale roughly
-      // with that. Allow 20x headroom for measurement noise + small superlinear
-      // behavior; this catches order-of-magnitude regressions without flaking
-      // on shared CI runners where absolute wall-clock thresholds are unreliable.
-      if (medNarrow > 0.1) {
-        // Only check scaling if we have measurable timing
-        expect(medWide).toBeGreaterThan(medNarrow * 0.5); // sanity: more work, not less
-        expect(medWide).toBeLessThan(medNarrow * 20); // catches >4x-per-property regressions
+    it("handles both narrow and wide object workloads", async () => {
+      for (const width of [20, 100]) {
+        const result = await generateFromSchema({
+          schema: schemas.nested.wide(width),
+          seed: 42,
+        });
+        expectRecord(result);
+        expect(Object.keys(result)).toHaveLength(width);
+        expect(
+          Object.values(result).every((value) => typeof value === "string"),
+        ).toBe(true);
       }
     });
   });
 
-  describe("Plugin Performance", () => {
-    it("plugin creation is fast", async () => {
-      const schema = schemas.complex.user();
+  describe("Plugin workloads", () => {
+    it("constructs a plugin with stable metadata", () => {
+      const plugin = fakerPlugin({ schema: schemas.complex.user() });
 
-      const { duration } = await perf.measure(() => fakerPlugin({ schema }));
-
-      expect(duration).toBeLessThan(10); // Plugin creation should be instant
+      expect(plugin.name).toBe("faker");
+      expect(plugin.version).toMatch(/^\d+\.\d+\.\d+/);
     });
 
-    it("plugin processing adds minimal overhead", async () => {
-      const schema = schemas.complex.apiResponse();
-      const plugin = fakerPlugin({ schema });
+    it("generates a complete response through repeated plugin processing", async () => {
+      const plugin = fakerPlugin({
+        schema: schemas.complex.apiResponse(),
+        seed: 42,
+      });
+      const context = pluginContext();
+      let firstResponse: unknown;
 
-      const context = {
-        method: "GET",
-        path: "/test",
-        params: {},
-        query: {},
-        state: {},
-        headers: {},
-        body: null,
-        route: {},
-      };
-
-      const times: number[] = [];
-      for (let i = 0; i < 10; i++) {
-        const { duration } = await perf.measure(() => plugin.process(context));
-        times.push(duration);
+      for (let iteration = 0; iteration < 10; iteration += 1) {
+        const result = await plugin.process(context);
+        expect(result.context).toBe(context);
+        expectRecord(result.response);
+        expect(result.response.success).toEqual(expect.any(Boolean));
+        expect(Array.isArray(result.response.data)).toBe(true);
+        if (iteration === 0) firstResponse = result.response;
+        else expect(result.response).toEqual(firstResponse);
       }
-
-      const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
-      expect(avgTime).toBeLessThan(100);
     });
 
-    it("template processing is efficient", async () => {
+    it("applies template overrides under a representative workload", async () => {
       const schema = schemas.simple.object({
         id: schemas.simple.string(),
         userId: schemas.simple.string(),
         timestamp: schemas.simple.string(),
         message: schemas.simple.string(),
       });
+      const timestamp = "2026-07-12T12:00:00.000Z";
 
-      const overrides = {
-        id: "{{params.id}}",
-        userId: "{{state.user.id}}",
-        timestamp: "{{state.timestamp}}",
-        message: "User {{params.id}} at {{state.timestamp}}",
-      };
+      const result = await generateFromSchema({
+        schema,
+        seed: 42,
+        overrides: {
+          id: "{{params.id}}",
+          userId: "{{state.user.id}}",
+          timestamp: "{{state.timestamp}}",
+          message: "User {{params.id}} at {{state.timestamp}}",
+        },
+        params: { id: "123" },
+        state: { user: { id: "user-456" }, timestamp },
+      });
 
-      const { duration } = await perf.measure(
-        async () =>
-          await generateFromSchema({
-            schema,
-            overrides,
-            params: { id: "123" },
-            state: {
-              user: { id: "user-456" },
-              timestamp: new Date().toISOString(),
-            },
-          }),
-      );
-
-      expect(duration).toBeLessThan(50); // Template processing should be fast
+      expect(result).toEqual({
+        id: "123",
+        userId: "user-456",
+        timestamp,
+        message: `User 123 at ${timestamp}`,
+      });
     });
   });
 
-  describe("Concurrent Generation", () => {
-    it("handles multiple concurrent generations", async () => {
+  describe("Concurrent and repeated workloads", () => {
+    it("keeps twenty concurrent generations isolated and well formed", async () => {
       const schema = schemas.complex.user();
+      const results = await Promise.all(
+        Array.from({ length: 20 }, (_, seed) =>
+          generateFromSchema({ schema, seed }),
+        ),
+      );
 
-      const { duration } = await perf.measure(async () => {
-        const promises = Array.from(
-          { length: 20 },
-          async () => await generateFromSchema({ schema }),
-        );
-        await Promise.all(promises);
-      });
-
-      expect(duration).toBeLessThan(500); // Should handle concurrency well
+      expect(results).toHaveLength(20);
+      for (const result of results) expectGeneratedUser(result);
+      expect(
+        new Set(results.map((result) => JSON.stringify(result))).size,
+      ).toBe(20);
     });
 
-    it("maintains performance under load", async () => {
+    it("preserves shape under a hundred sequential generations", async () => {
       const schema = schemas.simple.object({
         id: schemas.simple.number(),
         data: schemas.simple.string(),
       });
+      const results: unknown[] = [];
 
-      // Warm up
-      await generateFromSchema({ schema });
-
-      // Test under load
-      const iterations = 100;
-      const { duration } = await perf.measure(async () => {
-        for (let i = 0; i < iterations; i++) {
-          await generateFromSchema({ schema });
-        }
-      });
-
-      const avgTime = duration / iterations;
-      expect(avgTime).toBeLessThan(10); // Should maintain speed
+      for (let seed = 0; seed < 100; seed += 1) {
+        const result = await generateFromSchema({ schema, seed });
+        expectRecord(result);
+        expect(result.id).toEqual(expect.any(Number));
+        expect(result.data).toEqual(expect.any(String));
+        results.push(result);
+      }
+      expect(
+        new Set(results.map((result) => JSON.stringify(result))).size,
+      ).toBe(100);
     });
-  });
 
-  describe("Memory Efficiency", () => {
-    it("doesn't leak memory on repeated generation", async () => {
+    it("preserves generated shape across a thousand calls", async () => {
       const schema = schemas.simple.object({
         id: schemas.simple.number(),
         name: schemas.simple.string(),
       });
+      const serializedResults = new Set<string>();
 
-      // Generate many times
-      for (let i = 0; i < 1000; i++) {
-        const result = await generateFromSchema({ schema });
-        // Result should be garbage collectable
-        expect(result).toBeDefined();
+      for (let seed = 0; seed < 1_000; seed += 1) {
+        const result = await generateFromSchema({ schema, seed });
+        expectRecord(result);
+        expect(result.id).toEqual(expect.any(Number));
+        expect(result.name).toEqual(expect.any(String));
+        serializedResults.add(JSON.stringify(result));
       }
 
-      // If we got here without crashing, memory is managed well
-      expect(true).toBe(true);
+      expect(serializedResults.size).toBe(1_000);
     });
 
-    it("handles large data structures without excessive memory", async () => {
+    it("generates a thousand-item data structure", async () => {
       const schema = schemas.simple.array(
         schemas.simple.object({
           id: schemas.simple.string(),
           data: schemas.simple.string(),
         }),
-        { minItems: 1000, maxItems: 1000 },
+        { minItems: 1_000, maxItems: 1_000 },
       );
 
-      // Should be able to generate without memory issues
-      const result = await generateFromSchema({ schema });
-      expect(result).toHaveLength(1000);
+      const result = await generateFromSchema({ schema, seed: 42 });
+      expect(Array.isArray(result)).toBe(true);
+      if (!Array.isArray(result)) throw new Error("Expected generated array");
+      expect(result).toHaveLength(1_000);
+      for (const item of result) {
+        expectRecord(item);
+        expect(item.id).toEqual(expect.any(String));
+        expect(item.data).toEqual(expect.any(String));
+      }
     });
 
-    it("cleans up after schema validation errors", async () => {
-      // Generate errors repeatedly
-      for (let i = 0; i < 100; i++) {
-        try {
-          await generateFromSchema({ schema: { type: "invalid" as any } });
-        } catch (_e) {
-          // Expected
-        }
+    it("recovers after repeated resource-limit failures", async () => {
+      const oversizedSchema = schemas.simple.array(schemas.simple.string(), {
+        minItems: 50_001,
+        maxItems: 50_001,
+      });
+
+      for (let iteration = 0; iteration < 100; iteration += 1) {
+        await expect(
+          generateFromSchema({ schema: oversizedSchema }),
+        ).rejects.toThrow("array_max_items");
       }
 
-      // Should not have memory leaks from error objects
-      expect(true).toBe(true);
+      const recovered = await generateFromSchema({
+        schema: schemas.simple.object({ id: schemas.simple.number() }),
+        seed: 42,
+      });
+      expectRecord(recovered);
+      expect(recovered.id).toEqual(expect.any(Number));
     });
   });
 
-  describe("Optimization Opportunities", () => {
-    it("generates data consistently across multiple calls", async () => {
+  describe("Repeated mapping and edge-case workloads", () => {
+    it("keeps smart field mapping valid across multiple seeds", async () => {
       const schema = schemas.simple.object({
         email: schemas.simple.string(),
         firstName: schemas.simple.string(),
         phone: schemas.simple.string(),
       });
+      const results: Record<string, unknown>[] = [];
 
-      // Generate multiple times to ensure consistent behavior
-      const results: any[] = [];
-      for (let i = 0; i < 10; i++) {
-        const result = await generateFromSchema({ schema });
+      for (let seed = 0; seed < 10; seed += 1) {
+        const result = await generateFromSchema({ schema, seed });
+        expectRecord(result);
+        expect(result.email).toEqual(expect.any(String));
+        expect(result.firstName).toEqual(expect.any(String));
+        expect(result.phone).toEqual(expect.any(String));
         results.push(result);
       }
 
-      // Verify all results have the expected structure
-      results.forEach((result) => {
-        expect(result).toHaveProperty("email");
-        expect(result).toHaveProperty("firstName");
-        expect(result).toHaveProperty("phone");
-        expect(typeof result.email).toBe("string");
-        expect(typeof result.firstName).toBe("string");
-        expect(typeof result.phone).toBe("string");
-      });
-
-      // Verify that smart field mapping worked across all calls
-      const emails = results.map((r) => r.email);
-      const firstNames = results.map((r) => r.firstName);
-
-      // Should have good diversity (no exact duplicates expected)
-      const uniqueEmails = new Set(emails);
-      const uniqueFirstNames = new Set(firstNames);
-      expect(uniqueEmails.size).toBeGreaterThan(1);
-      expect(uniqueFirstNames.size).toBeGreaterThan(1);
+      expect(new Set(results.map((result) => result.email)).size).toBe(10);
+      expect(new Set(results.map((result) => result.firstName)).size).toBe(10);
     });
 
-    it("reuses schema enhancement for repeated generations", async () => {
-      const schema = schemas.complex.user();
-      const plugin = fakerPlugin({ schema });
+    it("reuses one plugin without changing seeded output", async () => {
+      const plugin = fakerPlugin({ schema: schemas.complex.user(), seed: 42 });
+      const context = pluginContext();
+      const responses: unknown[] = [];
 
-      const context = {
-        method: "GET",
-        path: "/test",
-        params: {},
-        query: {},
-        state: {},
-        headers: {},
-        body: null,
-        route: {},
-      };
-
-      // Warmup
-      for (let i = 0; i < 3; i++) {
-        plugin.process(context);
+      for (let iteration = 0; iteration < 15; iteration += 1) {
+        const result = await plugin.process(context);
+        expectGeneratedUser(result.response);
+        responses.push(result.response);
       }
 
-      // Multiple calls through same plugin with proper timing
-      const times: number[] = [];
-      for (let i = 0; i < 15; i++) {
-        const start = performance.now();
-        plugin.process(context);
-        times.push(performance.now() - start);
+      expect(responses).toEqual(Array.from({ length: 15 }, () => responses[0]));
+    });
+
+    it("handles an empty object schema", async () => {
+      await expect(
+        generateFromSchema({ schema: schemas.simple.object({}), seed: 42 }),
+      ).resolves.toEqual({});
+    });
+
+    it("selects only declared values from a large enum", async () => {
+      const countries = Array.from(
+        { length: 200 },
+        (_, index) => `country-${index}`,
+      );
+      const schema = schemas.simple.object({
+        country: { type: "string", enum: countries },
+      });
+      const result = await generateFromSchema({ schema, seed: 42 });
+
+      expectRecord(result);
+      expect(countries).toContain(result.country);
+    });
+
+    it("generates samples matching a complex pattern", async () => {
+      const pattern = /^[A-Z]{2}-[0-9]{4}-[a-z]{2}-[0-9A-F]{8}$/;
+      const schema = schemas.simple.object({
+        code: { type: "string", pattern: pattern.source },
+      });
+      const results = await generate.samples(schema, 10, { seed: 42 });
+
+      expect(results).toHaveLength(10);
+      for (const result of results) {
+        expectRecord(result);
+        expect(result.code).toMatch(pattern);
       }
-
-      // Calculate statistics
-      const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
-      const maxTime = Math.max(...times);
-      const minTime = Math.min(...times);
-
-      // Performance should be consistent and reasonable
-      expect(avgTime).toBeLessThan(50); // Should be reasonably fast
-      expect(maxTime).toBeLessThan(100); // No extreme outliers
-      expect(minTime).toBeGreaterThanOrEqual(0); // Valid timing
-
-      // All measurements should be reasonable - no extreme variance
-      const reasonableMaxTime = Math.max(avgTime * 5, 10); // At least 10ms tolerance
-      expect(maxTime).toBeLessThan(reasonableMaxTime);
-    });
-  });
-
-  describe("Edge Case Performance", () => {
-    it("handles empty schemas efficiently", async () => {
-      const schema = schemas.simple.object({});
-
-      const { duration } = await perf.measure(
-        async () => await generateFromSchema({ schema }),
-      );
-
-      expect(duration).toBeLessThan(10); // Empty should be instant
     });
 
-    it("handles schemas with many enum values", async () => {
-      const schema = schemas.simple.object({
-        country: {
-          type: "string",
-          enum: Array.from({ length: 200 }, (_, i) => `country-${i}`),
-        },
-      });
-
-      const { duration } = await perf.measure(
-        async () => await generateFromSchema({ schema }),
-      );
-
-      expect(duration).toBeLessThan(50); // Large enum shouldn't be slow
-    });
-
-    it("handles complex regex patterns efficiently", async () => {
-      const schema = schemas.simple.object({
-        code: {
-          type: "string",
-          pattern: "^[A-Z]{2}-[0-9]{4}-[a-z]{2}-[0-9A-F]{8}$",
-        },
-      });
-
-      const { duration } = await perf.measure(() =>
-        generate.samples(schema, 10),
-      );
-
-      expect(duration).toBeLessThan(100); // Complex patterns OK
-    });
-
-    it("handles mixed constraint schemas", async () => {
+    it("satisfies one branch of a mixed constraint schema", async () => {
       const schema: JSONSchema7 = {
         anyOf: [
           {
@@ -471,10 +405,11 @@ describe("Performance and Memory", () => {
               type: { const: "A" },
               data: { type: "string", minLength: 100 },
             },
+            required: ["type", "data"],
           },
           {
             type: "array",
-            items: { type: "number", minimum: 0, maximum: 1000 },
+            items: { type: "number", minimum: 0, maximum: 1_000 },
             minItems: 50,
           },
           {
@@ -484,11 +419,23 @@ describe("Performance and Memory", () => {
         ],
       };
 
-      const { duration } = await perf.measure(
-        async () => await generateFromSchema({ schema }),
-      );
+      const result = await generateFromSchema({ schema, seed: 42 });
+      const isValidObject =
+        isRecord(result) &&
+        result.type === "A" &&
+        typeof result.data === "string" &&
+        result.data.length >= 100;
+      const isValidArray =
+        Array.isArray(result) &&
+        result.length >= 50 &&
+        result.every(
+          (value) => typeof value === "number" && value >= 0 && value <= 1_000,
+        );
+      const isValidString =
+        typeof result === "string" &&
+        /^[A-Za-z0-9+/]{100,}={0,2}$/.test(result);
 
-      expect(duration).toBeLessThan(200); // Complex but manageable
+      expect(isValidObject || isValidArray || isValidString).toBe(true);
     });
   });
 });

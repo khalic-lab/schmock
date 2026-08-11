@@ -1,13 +1,21 @@
 {
   "name": "@schmock/openapi",
   "description": "OpenAPI/Swagger spec-driven auto-registration plugin for Schmock",
-  "version": "2.1.5",
+  "version": "2.3.1",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khalic-lab/schmock.git",
+    "directory": "packages/openapi"
+  },
+  "homepage": "https://github.com/khalic-lab/schmock/tree/main/packages/openapi#readme",
+  "bugs": {
+    "url": "https://github.com/khalic-lab/schmock/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "exports": {
     ".": {
@@ -18,10 +26,11 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "bun build:lib && bun build:types",
-    "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts --external @apidevtools/swagger-parser --external @schmock/faker --external ajv --external @schmock/core",
+    "clean": "rm -rf dist && rm -f tsconfig.tsbuildinfo",
+    "build": "bun run clean && bun run build:lib && bun run build:types",
+    "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts --external @apidevtools/swagger-parser --external @schmock/faker --external ajv --external ajv/dist/2020.js --external ajv-formats --external @schmock/core",
     "build:types": "tsc -p tsconfig.json",
-    "test": "vitest",
+    "test": "vitest run",
     "test:watch": "vitest --watch",
     "test:bdd": "vitest run --config vitest.config.bdd.ts",
     "lint": "biome check src/*.ts",
@@ -31,15 +40,16 @@
   "license": "MIT",
   "dependencies": {
     "@apidevtools/swagger-parser": "^12.1.0",
-    "@schmock/faker": "^2.1.5",
-    "ajv": "^8.20.0"
+    "@schmock/faker": "^2.3.1",
+    "@types/json-schema": "^7.0.15",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
   },
   "peerDependencies": {
-    "@schmock/core": "^2.1.5"
+    "@schmock/core": "^2.3.1"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",
-    "@types/json-schema": "^7.0.15",
     "@types/node": "^26.1.0",
     "openapi-types": "^12.1.3",
     "vitest": "^4.1.7"

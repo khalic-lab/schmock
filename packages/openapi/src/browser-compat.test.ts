@@ -44,6 +44,16 @@ describe("browser compatibility fixes", () => {
       expect(staticNodeImports).not.toContain("node:fs");
     });
 
+    // The shape assertions above all pass with a fully INLINED Node crypto
+    // polyfill in the bundle (no literal `node:crypto` survives minification),
+    // so only a byte ceiling actually guards against re-importing one. The
+    // polyfill was ~500KB of the 560KB bundle; anything near that is a
+    // regression, not growth.
+    it("openapi build carries no inlined Node crypto polyfill", () => {
+      const content = readDist("dist/index.js");
+      expect(content.length).toBeLessThan(150_000);
+    });
+
     it("openapi build only references node:fs inside dynamic import()", () => {
       const content = readDist("dist/index.js");
       const nodefsRefs = [...content.matchAll(/["']node:fs["']/g)];
@@ -263,6 +273,8 @@ describe("browser compatibility fixes", () => {
             basePath: "/items",
             itemPath: "/items/:id",
             idParam: "id",
+            idProperty: "id",
+            idKind: "integer",
             operations: ["list"],
           },
         ]),
@@ -421,7 +433,9 @@ describe("browser compatibility fixes", () => {
       });
       expect(created.status).toBe(201);
       expect(created.body).toHaveProperty("name", "Sprocket");
-      const id = (created.body as any).widgetId;
+      // The item schema declares `id`, not the path parameter's `widgetId`,
+      // so the stored identifier property is `id`.
+      const id = (created.body as any).id;
 
       // Read
       const read = await mock.handle("GET", `/widgets/${id}`);

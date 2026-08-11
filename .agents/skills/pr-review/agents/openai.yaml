@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Schmock PR"
+  short_description: "Review Schmock pull requests safely"
+  default_prompt: "Use $pr-review to perform a read-only review of this Schmock pull request."

@@ -46,7 +46,15 @@ renderWithSchmock (a @testing-library/react convenience wrapper) is exported fro
 
 ### D12: BDD coverage floor for framework adapters (2026-04-01)
 
-After initial implementation, the React and Vue feature files were found to lack error status codes, POST with JSON body, and useSchmock-outside-provider error scenarios. These were added before the PR. Established floor: each framework adapter feature file must cover (1) basic GET mock, (2) passthrough on unmatched routes, (3) error status codes flowing through (4xx/5xx), (4) POST with JSON body, (5) context/provider error (hook or composable used without setup). Final counts: React 8 scenarios/25 steps, Vue 7 scenarios/22 steps.
+**Superseded by D30.** The original floor duplicated core routing,
+passthrough, status, and request-body behavior in every adapter. Adapter BDD
+now covers only framework-specific installation, lifecycle, cleanup, context,
+and reconfiguration behavior; shared fetch behavior is owned by core.
+
+Historically, each framework adapter feature duplicated (1) basic GET mocking,
+(2) passthrough, (3) error status propagation, (4) POST JSON handling, and
+(5) context/provider errors. D30 replaces that floor with framework-boundary
+coverage and assigns shared interception behavior to the core feature suite.
 
 ### D13: Agent Teams as execution mechanism (2026-04-01)
 

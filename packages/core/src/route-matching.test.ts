@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { schmock } from "./index";
+import { parseRouteKey } from "./parser";
+import { extractParams } from "./route-matcher";
 
 describe("route matching", () => {
   describe("static routes", () => {
@@ -39,6 +41,26 @@ describe("route matching", () => {
 
       const response = await mock.handle("GET", "/");
       expect(response.body).toBe("root");
+    });
+
+    it("matches a static route whose path holds literal unicode", async () => {
+      const mock = schmock();
+      mock("GET /café", "coffee");
+
+      const literal = await mock.handle("GET", "/café");
+      const encoded = await mock.handle("GET", "/caf%C3%A9");
+
+      expect(literal.body).toBe("coffee");
+      expect(encoded.body).toBe("coffee");
+    });
+
+    it("reports the canonical path from getRoutes", () => {
+      const mock = schmock();
+      mock("GET /café/", "coffee");
+
+      expect(mock.getRoutes()).toEqual([
+        { method: "GET", path: "/caf%C3%A9", hasParams: false },
+      ]);
     });
 
     it("case sensitive path matching", async () => {
@@ -124,6 +146,89 @@ describe("route matching", () => {
       const response = await mock.handle("GET", "/users/123/extra");
 
       expect(response.status).toBe(404);
+    });
+
+    it("matches a parameterized route with a trailing slash", async () => {
+      const mock = schmock();
+      mock("GET /users/:id", ({ params }) => ({ userId: params.id }));
+
+      const response = await mock.handle("GET", "/users/1/");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ userId: "1" });
+    });
+
+    it("delivers captured parameters decoded", async () => {
+      const mock = schmock();
+      mock("GET /items/:id", ({ params }) => ({ id: params.id }));
+
+      const spaced = await mock.handle("GET", "/items/a%20b");
+      const literal = await mock.handle("GET", "/items/a b");
+      const unicode = await mock.handle("GET", "/items/caf%C3%A9");
+
+      expect(spaced.body).toEqual({ id: "a b" });
+      expect(literal.body).toEqual({ id: "a b" });
+      expect(unicode.body).toEqual({ id: "café" });
+    });
+
+    it("keeps an encoded slash inside a single parameter", async () => {
+      const mock = schmock();
+      mock("GET /items/:id", ({ params }) => ({ id: params.id }));
+
+      const response = await mock.handle("GET", "/items/a%2Fb");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ id: "a/b" });
+    });
+
+    it("returns a malformed percent sequence unchanged instead of throwing", async () => {
+      const mock = schmock();
+      mock("GET /items/:id", ({ params }) => ({ id: params.id }));
+
+      const response = await mock.handle("GET", "/items/a%ZZb");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ id: "a%ZZb" });
+    });
+
+    it("keeps a __proto__ parameter as an own property", async () => {
+      const route = parseRouteKey("GET /p/:__proto__");
+      const params = extractParams(
+        {
+          ...route,
+          generator: "x",
+          config: {},
+        },
+        "/p/evil",
+      );
+
+      expect(Object.keys(params)).toEqual(["__proto__"]);
+      expect(Object.hasOwn(params, "__proto__")).toBe(true);
+      expect(Object.getOwnPropertyDescriptor(params, "__proto__")?.value).toBe(
+        "evil",
+      );
+      expect(Object.getPrototypeOf(params)).toBe(Object.prototype);
+      expect(Object.getPrototypeOf({})).toBe(Object.prototype);
+    });
+
+    it("keeps prototype-shadowing parameter names reachable in a generator", async () => {
+      const mock = schmock();
+      let captured: Record<string, string> = {};
+      mock("GET /p/:__proto__/:constructor", ({ params }) => {
+        captured = params;
+        return { ok: true };
+      });
+
+      const response = await mock.handle("GET", "/p/evil/ctor");
+
+      expect(response.status).toBe(200);
+      expect(Object.keys(captured).sort()).toEqual([
+        "__proto__",
+        "constructor",
+      ]);
+      expect(captured.constructor).toBe("ctor");
+      expect(Object.hasOwn(captured, "hasOwnProperty")).toBe(false);
+      expect(typeof captured.hasOwnProperty).toBe("function");
     });
   });
 
@@ -290,10 +395,11 @@ describe("route matching", () => {
       const mock = schmock();
       mock("GET /search/:query", ({ params }) => ({ query: params.query }));
 
-      // Note: This tests the raw parameter, URL decoding would happen at HTTP layer
+      // Matching runs on the encoded path; the capture is decoded before the
+      // generator sees it, so both spellings deliver the same value.
       const response = await mock.handle("GET", "/search/hello%20world");
 
-      expect(response.body).toEqual({ query: "hello%20world" });
+      expect(response.body).toEqual({ query: "hello world" });
     });
 
     it("handles very long parameter values", async () => {

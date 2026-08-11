@@ -26,3 +26,15 @@ Feature: OpenAPI Seed Data
   Scenario: Malformed seed file produces descriptive error
     Given a Petstore spec path
     Then creating a mock with malformed seed file should throw about invalid JSON
+
+  Scenario: Seed count above the item budget is rejected
+    Given a Petstore spec path
+    Then creating a mock with an oversized seed count should throw about a resource limit
+
+  Scenario: Inline seed array above the item budget is rejected
+    Given a Petstore spec path
+    Then creating a mock with an oversized inline seed array should throw about a resource limit
+
+  Scenario: Seed file above the byte budget is rejected
+    Given a Petstore spec path
+    Then creating a mock with an oversized seed file should throw about a resource limit

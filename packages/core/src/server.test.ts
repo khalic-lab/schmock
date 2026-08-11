@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { createServer, Server } from "node:http";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { schmock } from "./index";
 
 describe("Standalone Server", () => {
@@ -71,6 +72,85 @@ describe("Standalone Server", () => {
     expect(res.status).toBe(204);
   });
 
+  it("suppresses explicit bodies for no-content statuses", async () => {
+    mock = schmock();
+    mock("GET /no-content", () => [204, { forbidden: true }]);
+    const info = await mock.listen(0);
+
+    const response = await fetch(`http://127.0.0.1:${info.port}/no-content`);
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe("");
+  });
+
+  it("writes string bodies verbatim under the default JSON content type", async () => {
+    mock = schmock();
+    mock("GET /json-string", () => JSON.stringify({ a: 1 }));
+    const info = await mock.listen(0);
+
+    // A string body is pre-serialized wire bytes: quoting it would
+    // double-encode routes that return JSON.stringify(...) themselves.
+    const response = await fetch(`http://127.0.0.1:${info.port}/json-string`);
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(await response.json()).toEqual({ a: 1 });
+  });
+
+  it("writes bare tuple strings as untyped raw text", async () => {
+    mock = schmock();
+    mock("GET /tuple-string", () => [200, "hello"]);
+    const info = await mock.listen(0);
+
+    const response = await fetch(`http://127.0.0.1:${info.port}/tuple-string`);
+    expect(response.headers.get("content-type")).toBeNull();
+    expect(await response.text()).toBe("hello");
+  });
+
+  it("writes binary response bodies without JSON serialization", async () => {
+    mock = schmock();
+    mock("GET /binary", new Uint8Array([0, 1, 255]));
+    const info = await mock.listen(0);
+
+    const response = await fetch(`http://127.0.0.1:${info.port}/binary`);
+    expect(response.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+      new Uint8Array([0, 1, 255]),
+    );
+  });
+
+  it("writes dynamic and tuple binary responses with binary content type", async () => {
+    mock = schmock();
+    const dynamicBytes = new Uint8Array([1, 2, 3]);
+    const tupleBytes = new Uint8Array([4, 5, 6]);
+    mock("GET /dynamic-binary", () => dynamicBytes.buffer);
+    mock(
+      "GET /tuple-binary",
+      () => [206, new DataView(tupleBytes.buffer)] satisfies [number, unknown],
+    );
+    const info = await mock.listen(0);
+
+    const dynamicResponse = await fetch(
+      `http://127.0.0.1:${info.port}/dynamic-binary`,
+    );
+    expect(dynamicResponse.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(new Uint8Array(await dynamicResponse.arrayBuffer())).toEqual(
+      dynamicBytes,
+    );
+
+    const tupleResponse = await fetch(
+      `http://127.0.0.1:${info.port}/tuple-binary`,
+    );
+    expect(tupleResponse.status).toBe(206);
+    expect(tupleResponse.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(new Uint8Array(await tupleResponse.arrayBuffer())).toEqual(
+      tupleBytes,
+    );
+  });
+
   it("reset stops the server", async () => {
     mock = schmock();
     mock("GET /test", { ok: true });
@@ -81,12 +161,9 @@ describe("Standalone Server", () => {
 
     mock.reset();
 
-    try {
-      await fetch(`http://127.0.0.1:${info.port}/test`);
-      expect.unreachable("Should have thrown");
-    } catch {
-      // Expected: connection refused
-    }
+    await expect(
+      fetch(`http://127.0.0.1:${info.port}/test`),
+    ).rejects.toBeDefined();
   });
 
   it("handles route params in server mode", async () => {
@@ -106,12 +183,75 @@ describe("Standalone Server", () => {
     expect(() => mock.listen(0)).toThrow("Server is already running");
   });
 
+  it("can retry listening after an occupied-port failure", async () => {
+    const occupiedServer = createServer();
+    await new Promise<void>((resolve, reject) => {
+      occupiedServer.once("error", reject);
+      occupiedServer.listen(0, "127.0.0.1", resolve);
+    });
+
+    try {
+      const address = occupiedServer.address();
+      if (address === null || typeof address === "string") {
+        throw new Error("Expected an address with a numeric port");
+      }
+
+      mock = schmock();
+      await expect(mock.listen(address.port)).rejects.toMatchObject({
+        code: "EADDRINUSE",
+      });
+
+      const retry = await mock.listen(0);
+      expect(retry.port).toBeGreaterThan(0);
+    } finally {
+      await new Promise<void>((resolve) =>
+        occupiedServer.close(() => resolve()),
+      );
+    }
+  });
+
   it("close is idempotent", async () => {
     mock = schmock();
     mock("GET /test", { ok: true });
     await mock.listen(0);
     mock.close();
     expect(() => mock.close()).not.toThrow();
+  });
+
+  it("stops accepting connections before force-closing existing ones", async () => {
+    mock = schmock();
+    await mock.listen(0);
+    const closeSpy = vi.spyOn(Server.prototype, "close");
+    const closeAllSpy = vi.spyOn(Server.prototype, "closeAllConnections");
+
+    try {
+      mock.close();
+      expect(closeSpy).toHaveBeenCalledOnce();
+      expect(closeAllSpy).toHaveBeenCalledOnce();
+      expect(closeSpy.mock.invocationCallOrder[0]).toBeLessThan(
+        closeAllSpy.mock.invocationCallOrder[0],
+      );
+    } finally {
+      closeSpy.mockRestore();
+      closeAllSpy.mockRestore();
+    }
+  });
+
+  it("can restart immediately on the same port after close", async () => {
+    mock = schmock();
+    mock("GET /test", { ok: true });
+    const initial = await mock.listen(0);
+    const response = await fetch(`http://127.0.0.1:${initial.port}/test`, {
+      headers: { connection: "keep-alive" },
+    });
+    expect(response.status).toBe(200);
+
+    mock.close();
+    const restarted = await mock.listen(initial.port);
+    expect(restarted.port).toBe(initial.port);
+    expect(
+      await (await fetch(`http://127.0.0.1:${restarted.port}/test`)).json(),
+    ).toEqual({ ok: true });
   });
 
   it("generator that throws synchronously returns 500", async () => {
@@ -155,11 +295,8 @@ describe("Standalone Server", () => {
     mock.close();
 
     // Subsequent request should fail immediately (not hang on keep-alive)
-    try {
-      await fetch(`http://127.0.0.1:${info.port}/test`);
-      expect.unreachable("Should have thrown");
-    } catch {
-      // Expected: connection refused
-    }
+    await expect(
+      fetch(`http://127.0.0.1:${info.port}/test`),
+    ).rejects.toBeDefined();
   });
 });

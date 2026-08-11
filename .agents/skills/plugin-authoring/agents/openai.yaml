@@ -1,0 +1,4 @@
+interface:
+  display_name: "Author Schmock Plugin"
+  short_description: "Create type-safe Schmock pipeline plugins"
+  default_prompt: "Use $plugin-authoring to implement a type-safe Schmock plugin with focused tests."
