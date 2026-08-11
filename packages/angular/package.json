@@ -1,6 +1,6 @@
 {
   "name": "@schmock/angular",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Angular HTTP interceptor adapter for Schmock",
   "type": "module",
   "repository": {
@@ -41,8 +41,8 @@
   "peerDependencies": {
     "@angular/common": ">=15.0.0 <23.0.0",
     "@angular/core": ">=15.0.0 <23.0.0",
-    "@schmock/core": "^2.3.0",
-    "@schmock/openapi": "^2.3.0",
+    "@schmock/core": "^2.3.1",
+    "@schmock/openapi": "^2.3.1",
     "rxjs": "^7.8.2"
   },
   "peerDependenciesMeta": {
@@ -56,7 +56,7 @@
     "@angular/core": "^22.0.5",
     "@angular/platform-browser": "^22.0.5",
     "@angular/platform-browser-dynamic": "^22.0.5",
-    "@schmock/openapi": "^2.3.0",
+    "@schmock/openapi": "^2.3.1",
     "@types/node": "^26.1.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7",
