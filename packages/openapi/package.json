@@ -1,7 +1,7 @@
 {
   "name": "@schmock/openapi",
   "description": "OpenAPI/Swagger spec-driven auto-registration plugin for Schmock",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "type": "module",
   "repository": {
     "type": "git",
@@ -40,13 +40,13 @@
   "license": "MIT",
   "dependencies": {
     "@apidevtools/swagger-parser": "^12.1.0",
-    "@schmock/faker": "^2.3.0",
+    "@schmock/faker": "^2.3.1",
     "@types/json-schema": "^7.0.15",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1"
   },
   "peerDependencies": {
-    "@schmock/core": "^2.3.0"
+    "@schmock/core": "^2.3.1"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",
