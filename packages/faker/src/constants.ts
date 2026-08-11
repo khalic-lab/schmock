@@ -24,9 +24,8 @@ export const LARGE_ARRAY_THRESHOLD = 100; // Array size considered "large"
  * the same set, and 15 sits in that band with 2.5x headroom over the deepest
  * non-Stripe fixture.
  *
- * A breach is reported as `schema_nesting_depth` with `actual` = this value
- * plus one: `walkSchema` stops descending past the ceiling, so `actual` is a
- * floor on the real height, not a measurement of it.
+ * A breach is reported as `schema_nesting_depth` with the longest value path
+ * measured by the iterative graph walk.
  */
 export const MAX_NESTING_DEPTH = 15;
 
@@ -57,10 +56,9 @@ export const JSF_MAX_DEPTH = MAX_NESTING_DEPTH + 5;
 /**
  * Cumulative generation budgets.
  *
- * `MAX_SCHEMA_NODES` bounds the work validation, enhancement and generation do:
- * every visited schema node is copied by `enhanceSchemaWithSmartMapping`, so a
- * schema that expands exponentially through shared sub-schemas costs minutes
- * before json-schema-faker is even reached.
+ * `MAX_SCHEMA_NODES` bounds the number of distinct schema nodes validation,
+ * enhancement and generation can inspect. Shared DAG nodes count once here;
+ * their multiplicity is charged to `MAX_GENERATED_NODES` instead.
  *
  * `MAX_GENERATED_NODES` bounds the RESULT. json-schema-faker runs with
  * `alwaysFakeOptionals`, so every optional property is materialized and the
@@ -74,6 +72,16 @@ export const JSF_MAX_DEPTH = MAX_NESTING_DEPTH + 5;
  */
 export const MAX_SCHEMA_NODES = 50_000;
 export const MAX_GENERATED_NODES = 1_000_000;
+
+/** Maximum number of own properties Schmock will materialize on one object. */
+export const MAX_OBJECT_PROPERTIES = 10_000;
+
+/**
+ * Maximum number of UTF-16 code units Schmock will generate for one string.
+ * 64 KiB admits the repository's largest real API constraints while refusing
+ * lengths large enough for one field to become an accidental bulk payload.
+ */
+export const MAX_STRING_LENGTH = 65_536;
 
 /**
  * Reference date used when generation must be reproducible.

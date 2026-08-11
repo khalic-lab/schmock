@@ -21,6 +21,9 @@ bun install @schmock/cli        # Standalone CLI server
 bun install @schmock/schmock    # Core + non-framework plugins + CLI
 ```
 
+The CLI and the all-in-one package require a Node.js version supported by their
+faker dependency: `^20.19.0 || ^22.13.0 || ^23.5.0 || >=24.0.0`.
+
 ## Core Concepts
 
 ### 1. Create a mock instance
@@ -48,7 +51,23 @@ const mock = schmock({
 Routes are defined by calling the instance directly:
 
 ```typescript docs-run=basics
+function isNamedUser(value: unknown): value is { id: number; name: string } {
+  return typeof value === 'object' && value !== null &&
+    'id' in value && typeof value.id === 'number' &&
+    'name' in value && typeof value.name === 'string'
+}
+
+function isUserInput(value: unknown): value is { name: string } {
+  return typeof value === 'object' && value !== null &&
+    'name' in value && typeof value.name === 'string'
+}
+
 mock('GET /health', { status: 'ok' })
+
+mock('POST /users', ({ body }) => {
+  if (!isUserInput(body)) return [400, { error: 'A name is required' }]
+  return [201, { id: 1, name: body.name }]
+})
 ```
 
 The first argument is a `RouteKey` in the format `METHOD /path`. The second is a **generator** — it can be:
@@ -65,11 +84,32 @@ mock('GET /config', { version: '2.0', env: 'staging' })
 ```typescript docs-run=stateful
 import { schmock } from '@schmock/core'
 
+type User = { id: number; name: string }
+
+function isUser(value: unknown): value is User {
+  return typeof value === 'object' && value !== null &&
+    'id' in value && typeof value.id === 'number' &&
+    'name' in value && typeof value.name === 'string'
+}
+
+function isUserState(
+  state: Record<string, unknown>,
+): state is { users: User[]; counter: number } {
+  return Array.isArray(state.users) && state.users.every(isUser) &&
+    typeof state.counter === 'number'
+}
+
+function isNewUser(value: unknown): value is { name: string } {
+  return typeof value === 'object' && value !== null &&
+    'name' in value && typeof value.name === 'string'
+}
+
 const api = schmock({ state: { users: [], counter: 0 } })
 ```
 
 ```typescript docs-run=stateful
 api('GET /users/:id', ({ params, state }) => {
+  if (!isUserState(state)) return [500, { error: 'Invalid user state' }]
   const user = state.users.find(u => u.id === Number(params.id))
   return user || [404, { error: 'Not found' }]
 })
@@ -79,10 +119,27 @@ api('GET /users/:id', ({ params, state }) => {
 
 ```typescript docs-run=stateful
 api('POST /users', ({ body, state }) => {
-  const user = { id: ++state.counter, ...body }
+  if (!isUserState(state)) return [500, { error: 'Invalid user state' }]
+  if (!isNewUser(body)) return [400, { error: 'A name is required' }]
+  state.counter += 1
+  const user = { id: state.counter, name: body.name }
   state.users.push(user)
   return [201, user, { 'x-created-id': String(user.id) }]
 })
+
+const createdUser = await api.handle('POST', '/users', {
+  body: { name: 'Alice' },
+})
+if (createdUser.status !== 201 || !isUser(createdUser.body) ||
+    createdUser.headers['x-created-id'] !== '1') {
+  throw new Error('User creation did not return a valid user')
+}
+
+const foundUser = await api.handle('GET', '/users/1')
+if (foundUser.status !== 200 || !isUser(foundUser.body) ||
+    foundUser.body.name !== 'Alice') {
+  throw new Error('Created user could not be read back')
+}
 ```
 
 ### 3. Handle requests
@@ -90,6 +147,11 @@ api('POST /users', ({ body, state }) => {
 ```typescript docs-run=basics
 const health = await mock.handle('GET', '/health')
 // → { status: 200, body: { status: 'ok' }, headers: { 'content-type': 'application/json' } }
+if (health.status !== 200 || typeof health.body !== 'object' ||
+    health.body === null || !('status' in health.body) ||
+    health.body.status !== 'ok') {
+  throw new Error('Health route did not return the expected response')
+}
 
 const abortController = new AbortController()
 const created = await mock.handle('POST', '/users', {
@@ -98,6 +160,10 @@ const created = await mock.handle('POST', '/users', {
   query: { notify: 'true' },
   signal: abortController.signal,
 })
+if (created.status !== 201 || !isNamedUser(created.body) ||
+    created.body.name !== 'Alice') {
+  throw new Error('User creation did not return the expected response')
+}
 ```
 
 Ordinary handling errors become response objects with appropriate status codes.
@@ -135,17 +201,43 @@ State is shared across all routes and persists between requests. Calling
 `schmock()` without a state still creates one persistent empty state object:
 
 ```typescript docs-run=state
+type StoredUser = { id: number; name: string }
+
+function isStoredUser(value: unknown): value is StoredUser {
+  return typeof value === 'object' && value !== null &&
+    'id' in value && typeof value.id === 'number' &&
+    'name' in value && typeof value.name === 'string'
+}
+
+function isStoredUserState(
+  state: Record<string, unknown>,
+): state is { users: StoredUser[]; nextId: number } {
+  return Array.isArray(state.users) && state.users.every(isStoredUser) &&
+    typeof state.nextId === 'number'
+}
+
+function isStoredUserInput(value: unknown): value is { name: string } {
+  return typeof value === 'object' && value !== null &&
+    'name' in value && typeof value.name === 'string'
+}
+
 const mock = schmock({ state: { users: [], nextId: 1 } })
 
 mock('POST /users', ({ body, state }) => {
-  const user = { id: state.nextId++, ...body }
+  if (!isStoredUserState(state)) return [500, { error: 'Invalid user state' }]
+  if (!isStoredUserInput(body)) return [400, { error: 'A name is required' }]
+  const user = { id: state.nextId++, name: body.name }
   state.users.push(user)
   return [201, user]
 })
 
-mock('GET /users', ({ state }) => state.users)
+mock('GET /users', ({ state }) => {
+  if (!isStoredUserState(state)) return [500, { error: 'Invalid user state' }]
+  return state.users
+})
 
 mock('DELETE /users/:id', ({ params, state }) => {
+  if (!isStoredUserState(state)) return [500, { error: 'Invalid user state' }]
   const idx = state.users.findIndex(u => u.id === Number(params.id))
   if (idx === -1) return [404, { error: 'Not found' }]
   state.users.splice(idx, 1)
@@ -175,18 +267,28 @@ that ended in a 500 — the recorded `response` carries that status. Route misse
 and canceled requests are not recorded:
 
 ```typescript docs-run=state
-await mock.handle('POST', '/users', { body: { name: 'Alice' } })
-await mock.handle('POST', '/users', { body: { name: 'Bob' } })
+const alice = await mock.handle('POST', '/users', { body: { name: 'Alice' } })
+const bob = await mock.handle('POST', '/users', { body: { name: 'Bob' } })
+if (alice.status !== 201 || !isStoredUser(alice.body) ||
+    bob.status !== 201 || !isStoredUser(bob.body)) {
+  throw new Error('Users were not created successfully')
+}
 
-mock.called()                   // true (any request was made)
-mock.called('POST', '/users')   // true
-mock.callCount('POST', '/users') // 2
+if (!mock.called() || !mock.called('POST', '/users') ||
+    mock.callCount('POST', '/users') !== 2) {
+  throw new Error('Request history did not record both users')
+}
 
 const last = mock.lastRequest('POST', '/users')
 // { method: 'POST', path: '/users', body: { name: 'Bob' }, timestamp: ..., response: { status: 201, body: ... } }
+if (last === undefined || last.response.status !== 201 ||
+    !isStoredUserInput(last.body) || last.body.name !== 'Bob') {
+  throw new Error('The last request was not Bob')
+}
 
 const all = mock.history('POST', '/users')
 // Array of all POST /users request records
+if (all.length !== 2) throw new Error('Expected two POST /users records')
 ```
 
 History reads return detached snapshots. `resetHistory()` prevents pending
@@ -219,8 +321,9 @@ reset clears listeners and suppresses stale events from older requests.
 
 ```typescript docs-run=basics
 const routes = mock.getRoutes()
-// [{ method: 'GET', path: '/users', hasParams: false },
-//  { method: 'GET', path: '/users/:id', hasParams: true }]
+if (!routes.some(route => route.method === 'POST' && route.path === '/users')) {
+  throw new Error('POST /users was not registered')
+}
 ```
 
 ## Fetch Interception
@@ -232,10 +335,17 @@ mock('GET /api/users', [{ id: 1, name: 'Alice' }])
 
 const interception = mock.intercept({ baseUrl: '/api' })
 
-const response = await fetch('/api/users')
-
-// Release the explicit interception lease when its owner is done.
-interception.restore()
+try {
+  const response = await fetch('/api/users')
+  const users: unknown = await response.json()
+  if (!response.ok || !Array.isArray(users) || users.length !== 1 ||
+      !isNamedUser(users[0])) {
+    throw new Error('Intercepted users response was invalid')
+  }
+} finally {
+  // Release the explicit interception lease when its owner is done.
+  interception.restore()
+}
 ```
 
 The interceptor honors `RequestInit` overrides and abort signals, resolves

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { version as packageVersion } from "../package.json";
-import { queryPlugin } from "./index";
+import {
+  type QueryPluginOptions,
+  queryPlugin,
+  type SortingOptions,
+} from "./index";
 
 describe("queryPlugin", () => {
   it("creates a plugin with correct name", () => {
@@ -337,6 +341,36 @@ describe("queryPlugin", () => {
       expect(result.response.every((i: any) => i.domain === "foo.bar")).toBe(
         true,
       );
+    });
+
+    it("treats unstringifiable object field values as non-matches", async () => {
+      const nullPrototypeValue: Record<string, unknown> = Object.create(null);
+      nullPrototypeValue.role = "admin";
+      const hostileValue = {
+        [Symbol.toPrimitive]() {
+          throw new Error("must not escape filtering");
+        },
+      };
+      const plugin = queryPlugin({ filtering: { allowed: ["role"] } });
+
+      const result = await plugin.process(
+        {
+          path: "/test",
+          route: {},
+          method: "GET",
+          params: {},
+          query: { "filter[role]": "admin" },
+          headers: {},
+          state: new Map(),
+        },
+        [
+          { id: 1, role: nullPrototypeValue },
+          { id: 2, role: hostileValue },
+          { id: 3, role: "admin" },
+        ],
+      );
+
+      expect(result.response).toEqual([{ id: 3, role: "admin" }]);
     });
 
     it("ignores the plain field=value form", async () => {
@@ -820,6 +854,27 @@ describe("queryPlugin", () => {
       }
     });
 
+    it("keeps config errors structured when the received value is unprintable", () => {
+      const received: Record<string, unknown> = Object.create(null);
+      const pagination = {};
+      Reflect.set(pagination, "defaultLimit", received);
+
+      expect.hasAssertions();
+      try {
+        queryPlugin({ pagination });
+      } catch (error) {
+        expect(error).toMatchObject({
+          name: "SchmockError",
+          code: "QUERY_CONFIG_INVALID",
+          context: { option: "pagination.defaultLimit", received },
+        });
+        if (!(error instanceof Error)) {
+          throw new Error("Expected a query configuration error");
+        }
+        expect(error.message).toContain("(received <unprintable>)");
+      }
+    });
+
     it("accepts every valid option", () => {
       expect(() =>
         queryPlugin({
@@ -1033,6 +1088,355 @@ describe("queryPlugin", () => {
 
       expect(result.response[0]).toBe(own);
       expect(result.response[1]).toBe(inherited);
+    });
+  });
+
+  describe("configuration snapshots", () => {
+    it("keeps every nested option value fixed after factory creation", async () => {
+      const pagination = {
+        defaultLimit: 1,
+        maxLimit: 2,
+        pageParam: "p",
+        limitParam: "l",
+      };
+      const sorting: SortingOptions = {
+        allowed: ["name"],
+        default: "name",
+        defaultOrder: "asc",
+        sortParam: "sortBy",
+        orderParam: "direction",
+      };
+      const filtering = {
+        allowed: ["role"],
+        filterPrefix: "where",
+      };
+      const plugin = queryPlugin({ pagination, sorting, filtering });
+
+      pagination.defaultLimit = 3;
+      pagination.maxLimit = 3;
+      pagination.pageParam = "page";
+      pagination.limitParam = "limit";
+      sorting.allowed.splice(0, sorting.allowed.length, "id");
+      sorting.default = "id";
+      sorting.defaultOrder = "desc";
+      sorting.sortParam = "sort";
+      sorting.orderParam = "order";
+      filtering.allowed.splice(0, filtering.allowed.length, "group");
+      filtering.filterPrefix = "filter";
+
+      const context: Schmock.PluginContext = {
+        path: "/test",
+        route: {},
+        method: "GET",
+        params: {},
+        query: {
+          p: "1",
+          l: "9",
+          "where[role]": "admin",
+          sortBy: "name",
+          direction: "asc",
+        },
+        headers: {},
+        state: new Map(),
+      };
+      const items = [
+        { id: 1, name: "Zoe", role: "admin" },
+        { id: 2, name: "Alice", role: "admin" },
+        { id: 3, name: "Bob", role: "user" },
+      ];
+
+      const explicitLimit = await plugin.process(context, items);
+      const defaultLimit = await plugin.process(
+        {
+          ...context,
+          query: {
+            p: "1",
+            "where[role]": "admin",
+            sortBy: "name",
+            direction: "asc",
+          },
+        },
+        items,
+      );
+
+      expect(explicitLimit.response).toEqual({
+        data: [
+          { id: 2, name: "Alice", role: "admin" },
+          { id: 1, name: "Zoe", role: "admin" },
+        ],
+        pagination: { page: 1, limit: 2, total: 2, totalPages: 1 },
+      });
+      expect(defaultLimit.response).toEqual({
+        data: [{ id: 2, name: "Alice", role: "admin" }],
+        pagination: { page: 1, limit: 1, total: 2, totalPages: 2 },
+      });
+    });
+
+    it("reads every configured option exactly once before validation", async () => {
+      const reads = new Map<string, number>();
+      const read = <T>(key: string, first: T, later: T): T => {
+        const count = (reads.get(key) ?? 0) + 1;
+        reads.set(key, count);
+        return count === 1 ? first : later;
+      };
+      const pagination = {
+        get defaultLimit() {
+          return read("pagination.defaultLimit", 1, 3);
+        },
+        get maxLimit() {
+          return read("pagination.maxLimit", 1, 3);
+        },
+        get pageParam() {
+          return read("pagination.pageParam", "p", "page");
+        },
+        get limitParam() {
+          return read("pagination.limitParam", "l", "limit");
+        },
+      };
+      const sorting: SortingOptions = {
+        get allowed() {
+          return read("sorting.allowed", ["name"], ["id"]);
+        },
+        get default() {
+          return read("sorting.default", "name", "id");
+        },
+        get defaultOrder(): "asc" | "desc" {
+          return read("sorting.defaultOrder", "asc", "desc");
+        },
+        get sortParam() {
+          return read("sorting.sortParam", "sortBy", "sort");
+        },
+        get orderParam() {
+          return read("sorting.orderParam", "direction", "order");
+        },
+      };
+      const filtering = {
+        get allowed() {
+          return read("filtering.allowed", ["role"], ["group"]);
+        },
+        get filterPrefix() {
+          return read("filtering.filterPrefix", "where", "filter");
+        },
+      };
+      const options: QueryPluginOptions = {
+        get pagination() {
+          return read("pagination", pagination, undefined);
+        },
+        get sorting() {
+          return read("sorting", sorting, undefined);
+        },
+        get filtering() {
+          return read("filtering", filtering, undefined);
+        },
+      };
+      const plugin = queryPlugin(options);
+
+      const result = await plugin.process(
+        {
+          path: "/test",
+          route: {},
+          method: "GET",
+          params: {},
+          query: {
+            p: "1",
+            l: "1",
+            sortBy: "name",
+            direction: "asc",
+            "where[role]": "admin",
+          },
+          headers: {},
+          state: new Map(),
+        },
+        [
+          { id: 1, name: "Zoe", role: "admin" },
+          { id: 2, name: "Alice", role: "admin" },
+          { id: 3, name: "Bob", role: "user" },
+        ],
+      );
+
+      expect(result.response).toEqual({
+        data: [{ id: 2, name: "Alice", role: "admin" }],
+        pagination: { page: 1, limit: 1, total: 2, totalPages: 2 },
+      });
+      expect(Object.fromEntries(reads)).toEqual({
+        pagination: 1,
+        "pagination.defaultLimit": 1,
+        "pagination.maxLimit": 1,
+        "pagination.pageParam": 1,
+        "pagination.limitParam": 1,
+        sorting: 1,
+        "sorting.allowed": 1,
+        "sorting.default": 1,
+        "sorting.defaultOrder": 1,
+        "sorting.sortParam": 1,
+        "sorting.orderParam": 1,
+        filtering: 1,
+        "filtering.allowed": 1,
+        "filtering.filterPrefix": 1,
+      });
+    });
+  });
+
+  describe("structured response preservation", () => {
+    const context: Schmock.PluginContext = {
+      path: "/test",
+      route: {},
+      method: "GET",
+      params: {},
+      query: { page: "2", limit: "1" },
+      headers: {},
+      state: new Map(),
+    };
+
+    it("materializes inherited status and non-enumerable headers", async () => {
+      const response: Record<string, unknown> = Object.create({ status: 206 });
+      const headers = { "x-query-source": "inherited" };
+      Object.defineProperties(response, {
+        body: {
+          enumerable: true,
+          value: [{ id: 1 }, { id: 2 }],
+        },
+        headers: { enumerable: false, value: headers },
+      });
+      const plugin = queryPlugin({ pagination: { defaultLimit: 1 } });
+
+      const result = await plugin.process(context, response);
+
+      expect(result.response).toEqual({
+        status: 206,
+        body: {
+          data: [{ id: 2 }],
+          pagination: { page: 2, limit: 1, total: 2, totalPages: 2 },
+        },
+        headers,
+      });
+      if (typeof result.response !== "object" || result.response === null) {
+        throw new Error("Expected a structured response object");
+      }
+      expect(Object.hasOwn(result.response, "status")).toBe(true);
+      expect(Object.hasOwn(result.response, "headers")).toBe(true);
+    });
+
+    it("does not unwrap an object whose headers are an array", async () => {
+      const malformed = {
+        status: 206,
+        body: [{ id: 1 }, { id: 2 }],
+        headers: ["x-query-source"],
+      };
+      const plugin = queryPlugin({ pagination: { defaultLimit: 1 } });
+
+      const result = await plugin.process(context, malformed);
+
+      expect(result.response).toBe(malformed);
+    });
+  });
+
+  describe("complex sorting", () => {
+    it("keeps opaque complex values stable last without traversing their graphs", async () => {
+      let graphInspections = 0;
+      const shared = new Proxy(
+        { leaf: true },
+        {
+          ownKeys(target) {
+            graphInspections += 1;
+            return Reflect.ownKeys(target);
+          },
+        },
+      );
+      const wideDag: Record<string, unknown> = {};
+      for (let index = 0; index < 100; index += 1) {
+        wideDag[`branch${index}`] = shared;
+      }
+      const nullPrototype: Record<string, unknown> = Object.create(null);
+      nullPrototype.rank = 1;
+      const entries = [
+        { id: "first-complex", score: wideDag },
+        { id: "number-two", score: 2 },
+        { id: "second-complex", score: nullPrototype },
+        { id: "number-one", score: 1 },
+        { id: "third-complex", score: { rank: -1 } },
+      ];
+      const plugin = queryPlugin({ sorting: { allowed: ["score"] } });
+      const context: Schmock.PluginContext = {
+        path: "/test",
+        route: {},
+        method: "GET",
+        params: {},
+        query: { sort: "score", order: "asc" },
+        headers: {},
+        state: new Map(),
+      };
+
+      const ids = (value: unknown): unknown[] => {
+        if (!Array.isArray(value)) {
+          throw new Error("Expected the sorted response to be an array");
+        }
+        return value.map((item) => {
+          if (typeof item !== "object" || item === null || !("id" in item)) {
+            throw new Error("Expected every sorted item to carry an id");
+          }
+          return item.id;
+        });
+      };
+
+      const ascending = await plugin.process(context, entries);
+      expect(ids(ascending.response)).toEqual([
+        "number-one",
+        "number-two",
+        "first-complex",
+        "second-complex",
+        "third-complex",
+      ]);
+
+      const descending = await plugin.process(
+        { ...context, query: { sort: "score", order: "desc" } },
+        entries,
+      );
+      expect(ids(descending.response)).toEqual([
+        "number-two",
+        "number-one",
+        "first-complex",
+        "second-complex",
+        "third-complex",
+      ]);
+      expect(graphInspections).toBe(0);
+    });
+
+    it("does not recurse into a deeply nested sort value", async () => {
+      let deep: Record<string, unknown> = {};
+      for (let depth = 0; depth < 20_000; depth += 1) {
+        deep = { next: deep };
+      }
+      const plugin = queryPlugin({ sorting: { allowed: ["score"] } });
+
+      const result = await plugin.process(
+        {
+          path: "/test",
+          route: {},
+          method: "GET",
+          params: {},
+          query: { sort: "score" },
+          headers: {},
+          state: new Map(),
+        },
+        [
+          { id: "complex", score: deep },
+          { id: "scalar", score: 1 },
+        ],
+      );
+
+      if (!Array.isArray(result.response)) {
+        throw new Error("Expected the sorted response to be an array");
+      }
+      expect(result.response[0]).toMatchObject({ id: "scalar", score: 1 });
+      if (
+        typeof result.response[1] !== "object" ||
+        result.response[1] === null ||
+        !("score" in result.response[1])
+      ) {
+        throw new Error("Expected the complex sort item to remain present");
+      }
+      expect(result.response[1].score).toBe(deep);
     });
   });
 });

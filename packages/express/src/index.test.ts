@@ -10,6 +10,7 @@ import type {
 import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
+import type { ExpressAdapterOptions } from "./index";
 import { toExpress } from "./index";
 
 function createMock(handleFn: (...args: any[]) => any): CallableMockInstance {
@@ -968,6 +969,49 @@ describe("toExpress", () => {
       expect(res.status).not.toHaveBeenCalled();
     });
 
+    it("settles without late work when the response closes prematurely", async () => {
+      const responseEvents = new EventEmitter();
+      const req = createReq();
+      const res = createRes();
+      res.once = responseEvents.once.bind(responseEvents);
+      res.off = responseEvents.off.bind(responseEvents);
+      Object.defineProperty(res, "writableFinished", {
+        configurable: true,
+        value: false,
+      });
+      let announceHookStart = () => {};
+      const hookStarted = new Promise<void>((resolve) => {
+        announceHookStart = resolve;
+      });
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "late", headers: {} }),
+      );
+      const middleware = toExpress(mock, {
+        async beforeRequest() {
+          announceHookStart();
+          await new Promise<void>(() => {});
+        },
+      });
+
+      const pending = middleware(req, res, vi.fn());
+      await hookStarted;
+      responseEvents.emit("close");
+      await expect(
+        Promise.race([
+          pending,
+          new Promise<void>((_, reject) => {
+            setTimeout(
+              () => reject(new Error("premature close timed out")),
+              100,
+            );
+          }),
+        ]),
+      ).resolves.toBeUndefined();
+      expect(mock.handle).not.toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
+      expect(responseEvents.listenerCount("close")).toBe(0);
+    });
+
     it("drops undefined header values", async () => {
       const mock = createMock(() =>
         Promise.resolve({ status: 200, body: "ok", headers: {} }),
@@ -1123,6 +1167,14 @@ describe("toExpress", () => {
         headersSent: boolean;
         writableEnded: boolean;
       };
+    }
+
+    function createLifecycleRes() {
+      const events = new EventEmitter();
+      const res = createOwnableRes();
+      res.once = events.once.bind(events);
+      res.off = events.off.bind(events);
+      return { events, res };
     }
 
     it("does not call the mock when beforeRequest began sending (no abort wiring)", async () => {
@@ -1283,83 +1335,169 @@ describe("toExpress", () => {
       expect(response.text).toBe("partial;done");
     });
 
-    it("does not format or forward when beforeRequest throws after sending", async () => {
-      const mock = createMock(() =>
-        Promise.resolve({ status: 200, body: "ok", headers: {} }),
-      );
-      const res = createOwnableRes();
-      const next = vi.fn() as NextFunction;
-      const errorFormatter = vi.fn(() => ({ formatted: true }));
-
-      await toExpress(mock, {
-        errorFormatter,
-        beforeRequest: (_req, hookRes) => {
-          const owned = hookRes as unknown as { headersSent: boolean };
-          owned.headersSent = true;
-          throw new Error("hook exploded after sending");
-        },
-      })(createReq(), res, next);
-
-      expect(mock.handle).not.toHaveBeenCalled();
-      expect(errorFormatter).not.toHaveBeenCalled();
-      expect(next).not.toHaveBeenCalled();
-      expect(res.end).not.toHaveBeenCalled();
-    });
-
-    it("does not call next when beforeResponse throws after sending", async () => {
-      const mock = createMock(() =>
-        Promise.resolve({ status: 200, body: "ok", headers: {} }),
-      );
-      const res = createOwnableRes();
-      const next = vi.fn() as NextFunction;
-
-      await toExpress(mock, {
-        beforeResponse: (_response, _req, hookRes) => {
-          const owned = hookRes as unknown as { writableEnded: boolean };
-          owned.writableEnded = true;
-          throw new Error("hook exploded after ending");
-        },
-      })(createReq(), res, next);
-
-      expect(next).not.toHaveBeenCalled();
-      expect(res.end).not.toHaveBeenCalled();
-      expect(res.set).not.toHaveBeenCalled();
-    });
-
-    it("does not end a hook's stream when the hook throws mid-write", async () => {
+    it("forwards a late hook rejection after a normally finished response", async () => {
       const realMock = schmock();
       const generator = vi.fn(() => ({ generated: true }));
-      realMock("GET /api/throw-mid-stream", generator);
+      realMock("GET /api/late-hook-error", generator);
 
       const app = express();
-      const errorHandler = vi.fn();
-      const errorFormatter = vi.fn(() => ({ formatted: true }));
+      const hookError = new Error("hook rejected after response finish");
+      let releaseHook = () => {};
+      const hookBarrier = new Promise<void>((resolve) => {
+        releaseHook = resolve;
+      });
+      let observeError = (_error: unknown) => {};
+      const errorObserved = new Promise<unknown>((resolve) => {
+        observeError = resolve;
+      });
       app.use(
         toExpress(realMock, {
-          errorFormatter,
-          beforeRequest: (_req, res) => {
-            res.status(200);
+          async beforeRequest(_req, res) {
+            res.status(202);
             res.setHeader("content-type", "text/plain");
-            res.write("partial;");
-            setTimeout(() => {
-              res.end("done");
-            }, 10);
-            throw new Error("hook exploded after sending");
+            res.end("accepted");
+            await hookBarrier;
+            throw hookError;
           },
         }),
       );
-      app.use(((error, _req, res, _next) => {
-        errorHandler(error);
-        res.status(599).end();
+      app.use(((error, _req, _res, _next) => {
+        observeError(error);
       }) as ErrorRequestHandler);
 
-      const response = await request(app).get("/api/throw-mid-stream");
+      const response = await request(app)
+        .get("/api/late-hook-error")
+        .timeout({ deadline: 2_000 });
+      const boundedError = new Promise<unknown>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("error middleware observation timed out")),
+          2_000,
+        );
+        void errorObserved.then((error) => {
+          clearTimeout(timeout);
+          resolve(error);
+        });
+      });
+      releaseHook();
 
+      expect(response.status).toBe(202);
+      expect(response.text).toBe("accepted");
+      await expect(boundedError).resolves.toBe(hookError);
       expect(generator).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      "beforeRequest",
+      "beforeResponse",
+    ] as const)("immediately forwards a committed %s error without formatting", async (hookName) => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const release = vi.fn();
+      Object.defineProperty(
+        mock,
+        Symbol.for("@schmock/core.request-admission"),
+        {
+          configurable: true,
+          value: () => ({ handle: mock.handle, release }),
+        },
+      );
+      const { events, res } = createLifecycleRes();
+      const next = vi.fn() as NextFunction;
+      const errorFormatter = vi.fn(() => ({ formatted: true }));
+      const error = new Error(`${hookName} exploded after sending`);
+      let announceHookRun = () => {};
+      const hookRan = new Promise<void>((resolve) => {
+        announceHookRun = resolve;
+      });
+      const writeThenThrow = (hookRes: Response): never => {
+        const owned = hookRes as unknown as { headersSent: boolean };
+        owned.headersSent = true;
+        announceHookRun();
+        throw error;
+      };
+      const options: ExpressAdapterOptions = { errorFormatter };
+      if (hookName === "beforeRequest") {
+        options.beforeRequest = (_req, hookRes) => writeThenThrow(hookRes);
+      } else {
+        options.beforeResponse = (_response, _req, hookRes) =>
+          writeThenThrow(hookRes);
+      }
+
+      const pending = toExpress(mock, options)(createReq(), res, next);
+      await hookRan;
+      const forwardedBeforeLifecycleEvent = next.mock.calls.length === 1;
+      await pending;
+
+      expect(forwardedBeforeLifecycleEvent).toBe(true);
+      expect(next).toHaveBeenCalledWith(error);
       expect(errorFormatter).not.toHaveBeenCalled();
-      expect(errorHandler).not.toHaveBeenCalled();
-      expect(response.status).toBe(200);
-      expect(response.text).toBe("partial;done");
+      expect(res.end).not.toHaveBeenCalled();
+      expect(mock.handle).toHaveBeenCalledTimes(
+        hookName === "beforeRequest" ? 0 : 1,
+      );
+      expect(events.listenerCount("finish")).toBe(0);
+      expect(events.listenerCount("close")).toBe(0);
+      expect(release).toHaveBeenCalledOnce();
+    });
+
+    it("ends a committed response without another body when error forwarding is disabled", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const { events, res } = createLifecycleRes();
+      const next = vi.fn() as NextFunction;
+      let announceHookRun = () => {};
+      const hookRan = new Promise<void>((resolve) => {
+        announceHookRun = resolve;
+      });
+
+      const pending = toExpress(mock, {
+        passErrorsToNext: false,
+        beforeRequest: (_req, hookRes) => {
+          const owned = hookRes as unknown as { headersSent: boolean };
+          owned.headersSent = true;
+          announceHookRun();
+          throw new Error("hook exploded after sending");
+        },
+      })(createReq(), res, next);
+      await hookRan;
+      const endedBeforeLifecycleEvent =
+        vi.mocked(res.end).mock.calls.length === 1;
+      await pending;
+
+      expect(endedBeforeLifecycleEvent).toBe(true);
+      expect(mock.handle).not.toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalled();
+      expect(res.end).toHaveBeenCalledOnce();
+      expect(res.end).toHaveBeenCalledWith();
+      expect(events.listenerCount("finish")).toBe(0);
+      expect(events.listenerCount("close")).toBe(0);
+    });
+
+    it("forwards a committed error after beforeResponse ended the response", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const res = createOwnableRes();
+      const next = vi.fn() as NextFunction;
+      const error = new Error("hook exploded after ending");
+
+      await toExpress(mock, {
+        beforeResponse: (_response, _req, hookRes) => {
+          const owned = hookRes as unknown as {
+            headersSent: boolean;
+            writableEnded: boolean;
+          };
+          owned.headersSent = true;
+          owned.writableEnded = true;
+          throw error;
+        },
+      })(createReq(), res, next);
+
+      expect(next).toHaveBeenCalledWith(error);
+      expect(res.end).not.toHaveBeenCalled();
+      expect(res.set).not.toHaveBeenCalled();
     });
   });
 });

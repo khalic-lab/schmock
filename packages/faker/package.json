@@ -28,7 +28,7 @@
   "scripts": {
     "clean": "rm -rf dist && rm -f tsconfig.tsbuildinfo",
     "build": "bun run clean && bun run build:lib && bun run build:types",
-    "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts --external @faker-js/faker --external json-schema-faker --external @schmock/core",
+    "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts --external @faker-js/faker --external @schmock/core",
     "build:types": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest --watch",
@@ -41,7 +41,8 @@
   "dependencies": {
     "@types/json-schema": "^7.0.15",
     "@faker-js/faker": "^10.5.0",
-    "json-schema-faker": "^0.6.2"
+    "json-schema-faker": "^0.6.2",
+    "json-schema-faker-private": "https://registry.npmjs.org/json-schema-faker/-/json-schema-faker-0.6.2.tgz"
   },
   "peerDependencies": {
     "@schmock/core": "^2.3.0"

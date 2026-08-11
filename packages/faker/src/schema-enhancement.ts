@@ -79,179 +79,165 @@ function stripNullableForGeneration(schema: FakerSchema): FakerSchema {
   return schema;
 }
 
-/**
- * @param schema - Schema to enhance
- * @param seen - Nodes on the current descent path. Enhancement recurses through
- *   composition, `additionalProperties` and `patternProperties`, so a cyclic
- *   schema reaching this function directly used to overflow the stack. Cycles
- *   are rejected by `validateSchema` first, but this function is exported and
- *   must not depend on that: a node already being enhanced is handed back
- *   untouched. Removing it on the way out keeps legitimate reuse of one
- *   sub-schema by sibling branches fully enhanced.
- */
+const ROOT_CONTEXT = Symbol("root-schema");
+type EnhancementContext = typeof ROOT_CONTEXT | string;
+
+interface EnhancementState {
+  cache: Map<JSONSchema7, Map<EnhancementContext, FakerSchema>>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Enhance each distinct schema/context pair once and preserve shared edges. */
 export function enhanceSchemaWithSmartMapping(
   schema: JSONSchema7,
-  seen: Set<JSONSchema7> = new Set(),
 ): JSONSchema7 {
-  if (!schema || typeof schema !== "object") {
-    return schema;
-  }
-
-  if (seen.has(schema)) {
-    return schema;
-  }
-  seen.add(schema);
-  try {
-    return enhanceSchemaNode(schema, seen);
-  } finally {
-    seen.delete(schema);
-  }
+  if (!schema || typeof schema !== "object") return schema;
+  return enhanceSchema(schema, { cache: new Map() }, ROOT_CONTEXT);
 }
 
-function enhanceSchemaNode(
+function enhanceSchema(
   schema: JSONSchema7,
-  seen: Set<JSONSchema7>,
-): JSONSchema7 {
-  const enhanced: FakerSchema = stripNullableForGeneration({
-    ...schema,
-  } as FakerSchema);
-
-  // Handle object properties
-  if (enhanced.properties) {
-    enhanced.properties = { ...enhanced.properties };
-
-    for (const [fieldName, fieldSchema] of Object.entries(
-      enhanced.properties,
-    )) {
-      if (isJSONSchema7(fieldSchema)) {
-        enhanced.properties[fieldName] = enhanceFieldSchema(
-          fieldName,
-          fieldSchema,
-          seen,
-        );
-      }
-    }
-  }
-
-  // Recurse into composition keywords
-  for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
-    const branches = enhanced[keyword];
-    if (Array.isArray(branches)) {
-      enhanced[keyword] = branches.map((branch) =>
-        isJSONSchema7(branch)
-          ? enhanceSchemaWithSmartMapping(branch, seen)
-          : branch,
-      );
-    }
-  }
-
-  // Recurse into array items
-  if (enhanced.items) {
-    if (Array.isArray(enhanced.items)) {
-      enhanced.items = enhanced.items.map((item) =>
-        isJSONSchema7(item) ? enhanceSchemaWithSmartMapping(item, seen) : item,
-      );
-    } else if (isJSONSchema7(enhanced.items)) {
-      enhanced.items = enhanceSchemaWithSmartMapping(enhanced.items, seen);
-    }
-  }
-
-  // Recurse into additionalProperties
-  if (isJSONSchema7(enhanced.additionalProperties)) {
-    enhanced.additionalProperties = enhanceSchemaWithSmartMapping(
-      enhanced.additionalProperties,
-      seen,
-    );
-  }
-
-  // Recurse into patternProperties — the normalizer recurses into them, so a
-  // nullable schema there would otherwise keep its union and get ~50% nulls.
-  if (enhanced.patternProperties) {
-    const patterned = { ...enhanced.patternProperties };
-    for (const [pattern, subSchema] of Object.entries(patterned)) {
-      if (isJSONSchema7(subSchema)) {
-        patterned[pattern] = enhanceSchemaWithSmartMapping(subSchema, seen);
-      }
-    }
-    enhanced.patternProperties = patterned;
-  }
-
-  if (needsStringFallback(enhanced)) {
-    enhanced.faker = "lorem.word";
-  }
-
-  return enhanced;
-}
-
-function enhanceFieldSchema(
-  fieldName: string,
-  fieldSchema: JSONSchema7,
-  seen: Set<JSONSchema7>,
+  state: EnhancementState,
+  context: EnhancementContext,
 ): FakerSchema {
-  // A field whose schema is already being enhanced is part of a cycle; hand it
-  // back untouched rather than recursing forever.
-  if (seen.has(fieldSchema)) {
-    return fieldSchema as FakerSchema;
+  let contexts = state.cache.get(schema);
+  if (!contexts) {
+    contexts = new Map();
+    state.cache.set(schema, contexts);
   }
+  const cached = contexts.get(context);
+  if (cached) return cached;
 
-  const enhanced: FakerSchema = stripNullableForGeneration({
-    ...fieldSchema,
-  } as FakerSchema);
+  const enhanced = stripNullableForGeneration({ ...schema } as FakerSchema);
+  contexts.set(context, enhanced);
 
-  // If already has faker extension, validate it and don't override.
-  // User-supplied faker values are always strings; the object form is only
-  // produced internally by this function when fakerArgs are present.
-  if (enhanced.faker) {
+  if (context !== ROOT_CONTEXT && enhanced.faker) {
     if (typeof enhanced.faker === "string") {
       validateFakerMethod(enhanced.faker);
     }
     return enhanced;
   }
 
-  // Recursively enhance nested schemas first
-  const hasComposition = enhanced.allOf || enhanced.anyOf || enhanced.oneOf;
-  if (enhanced.properties || hasComposition || enhanced.items) {
-    // `enhanced` is a fresh copy, so it is tracked through the original node:
-    // marking `fieldSchema` is what stops a cycle from recursing forever.
-    seen.add(fieldSchema);
-    try {
-      const recursed = enhanceSchemaNode(enhanced, seen);
-      Object.assign(enhanced, recursed);
-    } finally {
-      seen.delete(fieldSchema);
+  if (enhanced.properties) {
+    const properties = { ...enhanced.properties };
+    for (const [fieldName, definition] of Object.entries(properties)) {
+      if (isJSONSchema7(definition)) {
+        properties[fieldName] = enhanceSchema(definition, state, fieldName);
+      }
+    }
+    enhanced.properties = properties;
+  }
+
+  for (const keyword of [
+    "definitions",
+    "$defs",
+    "patternProperties",
+  ] as const) {
+    const definitions = Reflect.get(enhanced, keyword);
+    if (!isRecord(definitions)) continue;
+    const copied: Record<string, unknown> = { ...definitions };
+    for (const [name, definition] of Object.entries(copied)) {
+      if (isJSONSchema7(definition)) {
+        copied[name] = enhanceSchema(definition, state, ROOT_CONTEXT);
+      }
+    }
+    Reflect.set(enhanced, keyword, copied);
+  }
+
+  if (enhanced.dependencies) {
+    const dependencies = { ...enhanced.dependencies };
+    for (const [name, dependency] of Object.entries(dependencies)) {
+      if (!Array.isArray(dependency) && isJSONSchema7(dependency)) {
+        dependencies[name] = enhanceSchema(dependency, state, ROOT_CONTEXT);
+      }
+    }
+    enhanced.dependencies = dependencies;
+  }
+
+  const dependentSchemas = Reflect.get(enhanced, "dependentSchemas");
+  if (isRecord(dependentSchemas)) {
+    const copied: Record<string, unknown> = { ...dependentSchemas };
+    for (const [name, definition] of Object.entries(copied)) {
+      if (isJSONSchema7(definition)) {
+        copied[name] = enhanceSchema(definition, state, ROOT_CONTEXT);
+      }
+    }
+    Reflect.set(enhanced, "dependentSchemas", copied);
+  }
+
+  if (Array.isArray(enhanced.items)) {
+    enhanced.items = enhanced.items.map((item) =>
+      isJSONSchema7(item) ? enhanceSchema(item, state, ROOT_CONTEXT) : item,
+    );
+  } else if (isJSONSchema7(enhanced.items)) {
+    enhanced.items = enhanceSchema(enhanced.items, state, ROOT_CONTEXT);
+  }
+
+  for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
+    const branches = enhanced[keyword];
+    if (branches) {
+      enhanced[keyword] = branches.map((branch) =>
+        isJSONSchema7(branch)
+          ? enhanceSchema(branch, state, ROOT_CONTEXT)
+          : branch,
+      );
     }
   }
 
-  // Don't apply field-level faker mapping to composition schemas — the branches define their own types
-  if (hasComposition) {
+  for (const keyword of ["prefixItems", "containsAll"] as const) {
+    const definitions = Reflect.get(enhanced, keyword);
+    if (Array.isArray(definitions)) {
+      Reflect.set(
+        enhanced,
+        keyword,
+        definitions.map((definition) =>
+          isJSONSchema7(definition)
+            ? enhanceSchema(definition, state, ROOT_CONTEXT)
+            : definition,
+        ),
+      );
+    }
+  }
+
+  for (const keyword of [
+    "additionalItems",
+    "contains",
+    "additionalProperties",
+    "propertyNames",
+    "not",
+    "if",
+    "then",
+    "else",
+    "contentSchema",
+  ] as const) {
+    const definition = Reflect.get(enhanced, keyword);
+    if (isJSONSchema7(definition)) {
+      Reflect.set(
+        enhanced,
+        keyword,
+        enhanceSchema(definition, state, ROOT_CONTEXT),
+      );
+    }
+  }
+
+  if (context === ROOT_CONTEXT) {
+    if (needsStringFallback(enhanced)) enhanced.faker = "lorem.word";
     return enhanced;
   }
 
-  // Don't apply smart mapping when const or enum is defined — these have fixed values
-  if (enhanced.const !== undefined || enhanced.enum) {
+  const hasComposition = enhanced.allOf || enhanced.anyOf || enhanced.oneOf;
+  if (hasComposition || enhanced.const !== undefined || enhanced.enum) {
     return enhanced;
   }
 
-  // Apply smart field name mapping via the scoring matcher
-  const match = findBestMapping(fieldName, enhanced);
+  const match = findBestMapping(context, enhanced);
   if (match) {
     const { fakerMethod, format, trueProbability, fakerArgs } = match.mapping;
-    // Use the JSF object form when fakerArgs are present so the options object
-    // is forwarded to the faker method (e.g. number.int({ min, max })).
-    // JSF calls Q(...J) where J is the value, so we must wrap fakerArgs in an
-    // array: { "number.int": [{ min, max }] } → faker.number.int({ min, max }).
-    // Fall back to the plain string form when there are no args.
-    if (fakerArgs) {
-      enhanced.faker = { [fakerMethod]: [fakerArgs] };
-    } else {
-      enhanced.faker = fakerMethod;
-    }
-    // A declared format is a contract: never let a name-based mapping clobber
-    // it. `findBestMapping` already skips schemas that declare a format, so
-    // this is defence in depth for any other route into this branch.
-    if (format && enhanced.format === undefined) {
-      enhanced.format = format;
-    }
+    enhanced.faker = fakerArgs ? { [fakerMethod]: [fakerArgs] } : fakerMethod;
+    if (format && enhanced.format === undefined) enhanced.format = format;
     if (trueProbability !== undefined) {
       enhanced.schmockTrueProbability = trueProbability;
     }

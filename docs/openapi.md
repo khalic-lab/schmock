@@ -419,16 +419,30 @@ root level. A Swagger 2.0 spec that declares `produces` therefore negotiates and
 sets `Content-Type` where it previously did neither.
 
 Each declared representation is scored by the **most specific** `Accept` range
-that matches it — exact type, then `type/*`, then `*/*` — so a `q=0` exclusion
-is never re-admitted by a broader wildcard. `Accept: */*;q=1, application/json;q=0`
+that matches it: exact type, then `type/*`, then `*/*`; within the same range,
+more matching media parameters are more specific. A `q=0` exclusion is therefore
+never re-admitted by a broader range. `Accept: */*;q=1, application/json;q=0`
 against a route declaring JSON and XML answers XML, and answers 406 when JSON is
-all the route declares. Ties are broken by the spec's own declaration order, so
-the client's preferences never reorder what the server offers first.
+all the route declares. A concrete candidate is first assigned to its most
+specific declared content key, so `application/json` wins over an earlier
+`application/*`; only equally specific declarations use spec order.
 
-Matching ignores media-type parameters on both sides, so a `content` key written
-as `"application/json; charset=utf-8"` is satisfied by `Accept: application/json`
-— but the response `Content-Type` still carries the spec's key verbatim,
-parameters included.
+Every parameter except `q` is a media parameter and must match the declared
+representation. The position of `q` does not change that rule:
+`application/json;q=0;profile=b` excludes only profile `b`, just like
+`application/json;profile=b;q=0`. Parameter names are case-insensitive;
+`charset` values are also compared case-insensitively, while values of other
+parameters (for example `profile`) remain case-sensitive. A bare
+`application/json` range still matches parameterized JSON representations.
+
+The selected concrete declaration keeps its raw OpenAPI key on the wire, so a
+key such as `application/json;profile=b` retains its parameters and response
+validation selects that profile's schema. OpenAPI content keys can themselves be
+media ranges: `application/*` with `Accept: application/problem+json` emits the
+concrete `application/problem+json`, never `application/*`. With no `Accept`, a
+wildcard response uses a concrete JSON default (`application/json`). A wildcard
+client range is concretized too: `*/*` with `Accept: image/*` emits `image/png`,
+retaining media parameters from both sides.
 
 ## Request Validation
 
@@ -478,8 +492,13 @@ overriding root level); an operation that declares none accepts anything.
 ## Response Validation
 
 With `validateResponses: true`, the final OpenAPI response is validated against
-the schema selected by its actual status code and negotiated media type. A
-mismatch becomes a structured 500 response with code `RESPONSE_VALIDATION_ERROR`.
+the schema selected by its actual status code and negotiated media type. An
+explicit response `Content-Type` keeps all of its parameters when selecting the
+declared content entry, so profile-specific schemas do not collapse onto the
+first parameter-free media type. The same generated header selects the body
+schema before `Accept` or the default on both static and CRUD routes, preventing
+the body and its media label from diverging. A mismatch becomes a structured
+500 response with code `RESPONSE_VALIDATION_ERROR`.
 Response definitions are resolved in OpenAPI order: exact status, status-class
 wildcard such as `2XX`, then `default`. Schema-less statuses are still honored;
 for example, an operation declaring only `201` returns 201, and a declared `204`
@@ -759,11 +778,13 @@ mock.pipe(await openapi({
 ```
 
 The seed covers **response headers** as well as bodies. The contract is *same
-seed + same request ordinal within a mock instance → same value*: two mocks
-built from the same spec with `fakerSeed: 42` answer their first request with
-identical `format: uuid` and `format: date-time` headers, while a second request
-to either still gets a fresh value — a constant `X-Request-Id` would not be an
-id at all.
+seed + same request sequence within a mock instance → same values*. One ordinal
+is reserved when a header-producing request starts, before asynchronous body
+generation, and is shared by that response's generated headers. Completion
+order therefore cannot change IDs. CRUD and static routes from one OpenAPI
+installation share the sequence, while separately built mocks restart it and
+replay the same request sequence. A constant `X-Request-Id` would not be an id
+at all.
 
 > **A seeded `date-time` header runs on a fixed clock.** Under `fakerSeed`, a
 > header like `X-Served-At` no longer tracks wall time; it is derived from the

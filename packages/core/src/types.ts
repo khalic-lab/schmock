@@ -1,6 +1,8 @@
 /// <reference path="../schmock.d.ts" />
 
 // Re-export ambient types for consumers
+export type Schema = Schmock.Schema;
+export type SchemaDefinition = Schmock.SchemaDefinition;
 export type HttpMethod = Schmock.HttpMethod;
 export type RouteKey = Schmock.RouteKey;
 export type ResponseBody = Schmock.ResponseBody;

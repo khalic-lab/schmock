@@ -318,10 +318,13 @@ export function toExpress(
   return async (req: Request, res: Response, next: NextFunction) => {
     const abortController = new AbortController();
     const abortRequest = () => abortController.abort();
+    const abortPrematureResponse = () => {
+      if (!res.writableFinished) abortController.abort();
+    };
     const observesRequestAbort = typeof req.once === "function";
     const observesResponseClose = typeof res.once === "function";
     if (observesRequestAbort) req.once("aborted", abortRequest);
-    if (observesResponseClose) res.once("close", abortRequest);
+    if (observesResponseClose) res.once("close", abortPrematureResponse);
     // Admission acquisition and method sniffing run INSIDE the try: a mock
     // with a malformed request-admission hook, or a request without a usable
     // `method`, would otherwise reject the returned promise (unhandled in
@@ -374,12 +377,9 @@ export function toExpress(
       // rather than running the mock against a response that is already on the
       // wire. `next()` is deliberately NOT called: handing a live response to
       // the rest of the stack is a second bug. This is an explicit check, not
-      // a backstop on the abort wiring: `res.once('close', ...)` is registered
-      // only when `res.once` is a function, so response doubles and any
-      // non-EventEmitter response get no absorption at all, and even a real
-      // response only absorbs a FULLY sent one, as a nextTick-vs-microtask
-      // race. The `finally` below still releases admission and unregisters the
-      // abort listeners.
+      // a backstop on the abort wiring: a normal response close does not abort
+      // pending hook work, while a premature close does. The `finally` below
+      // still releases admission and unregisters the abort listeners.
       if (res.headersSent || res.writableEnded) return;
 
       // Handle request with Schmock
@@ -443,16 +443,18 @@ export function toExpress(
       schmockToExpressResponse(schmockResponse, requestData.method, res);
     } catch (error) {
       if (abortController.signal.aborted) return;
-      // Same ownership rule as the two in-band exits above: a hook that sent —
-      // or began sending — the response still owns it after it throws. Without
-      // this, `errorFormatter` runs against a committed socket and its
-      // last-resort fallback ends the owner's stream on its behalf (truncating
-      // a partially written body), or `next(error)` hands a live response to
-      // the rest of the stack. Nothing the middleware itself sends reaches
-      // here with an unwritten body: `schmockToExpressResponse` and
-      // `sendFormattedError` both guard internally, so suppressing the error
-      // path for an already-committed response loses no recoverable handling.
-      if (res.headersSent || res.writableEnded) return;
+      if (res.headersSent) {
+        // A formatter or adapter error body cannot safely replace bytes that
+        // are already on the wire. Express's error chain owns that response
+        // when enabled; otherwise end an open response without another body.
+        if (passErrorsToNext) {
+          next(error);
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+        return;
+      }
+      if (res.writableEnded) return;
       // Handle errors based on configuration
       if (errorFormatter) {
         // Fires for any Error from the handler/pipeline, not just
@@ -481,7 +483,7 @@ export function toExpress(
       }
     } finally {
       if (observesRequestAbort) req.off("aborted", abortRequest);
-      if (observesResponseClose) res.off("close", abortRequest);
+      if (observesResponseClose) res.off("close", abortPrematureResponse);
       admission?.release();
     }
   };

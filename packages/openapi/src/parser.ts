@@ -240,6 +240,7 @@ async function loadDocument(
     source,
     refDiagnostics,
   );
+  markDereferencedDiscriminatorValues(api, parser.$refs.values());
 
   // Defence in depth for refs reached through a nested document: only
   // reachable once external resolution is on, and skipping the walk otherwise
@@ -253,8 +254,8 @@ async function loadDocument(
 }
 
 /**
- * Pair each `oneOf` branch with the `discriminator.mapping` entry that names it,
- * and record the answer index-aligned on the discriminator object.
+ * Resolve each `oneOf` reference to its explicit discriminator mapping key or
+ * implicit component name, then record the answers index-aligned.
  *
  * Why a marker rather than resolving in the normalizer: dereference replaces
  * every `$ref` branch with the component object, at which point NOTHING on the
@@ -274,21 +275,40 @@ async function loadDocument(
 const DISCRIMINATOR_VALUES_MARKER = "x-schmock-discriminator-values";
 
 /**
- * The mapping key naming `ref`, or `null` when no entry does.
+ * The mapping keys naming `ref`, in declaration order.
  *
  * Both spellings OAS allows are accepted: a full pointer
  * (`#/components/schemas/Dog`) and the bare component name (`Dog`).
  */
-function mappingKeyForRef(
+function mappingKeysForRef(
   mapping: Record<string, unknown>,
   ref: string,
-): string | null {
-  const bareName = ref.slice(ref.lastIndexOf("/") + 1);
+): string[] {
+  const keys: string[] = [];
+  const bareName = schemaNameForRef(ref);
   for (const [key, value] of Object.entries(mapping)) {
     if (typeof value !== "string") continue;
-    if (value === ref || value === bareName) return key;
+    if (value === ref || (bareName !== null && value === bareName)) {
+      keys.push(key);
+    }
   }
-  return null;
+  return keys;
+}
+
+function schemaNameForRef(ref: string): string | null {
+  const hash = ref.indexOf("#");
+  if (hash === -1) return null;
+  const pointer = ref.slice(hash + 1);
+  if (!pointer.startsWith("/")) return null;
+  const encoded = pointer.slice(pointer.lastIndexOf("/") + 1);
+  if (!encoded) return null;
+  try {
+    return decodeURIComponent(encoded)
+      .replaceAll("~1", "/")
+      .replaceAll("~0", "~");
+  } catch {
+    return null;
+  }
 }
 
 function markDiscriminatorValues(root: unknown): void {
@@ -308,13 +328,232 @@ function markDiscriminatorValues(root: unknown): void {
     if (!isRecord(node)) continue;
 
     const disc = node.discriminator;
-    if (isRecord(disc) && isRecord(disc.mapping) && Array.isArray(node.oneOf)) {
-      const mapping = disc.mapping;
+    if (isRecord(disc) && Array.isArray(node.oneOf)) {
+      const mapping = isRecord(disc.mapping) ? disc.mapping : {};
       const values = node.oneOf.map((branch) =>
-        isRecord(branch) && typeof branch.$ref === "string"
-          ? mappingKeyForRef(mapping, branch.$ref)
-          : null,
+        discriminatorValuesForBranch(mapping, branch),
       );
+      if (values.some((value) => value !== null)) {
+        disc[DISCRIMINATOR_VALUES_MARKER] = values;
+      }
+    }
+
+    for (const child of Object.values(node)) stack.push(child);
+  }
+}
+
+function discriminatorValuesForBranch(
+  mapping: Record<string, unknown>,
+  branch: unknown,
+): string[] | null {
+  if (!isRecord(branch) || typeof branch.$ref !== "string") return null;
+  const explicit = mappingKeysForRef(mapping, branch.$ref);
+  if (explicit.length > 0) return explicit;
+  const implicit = schemaNameForRef(branch.$ref);
+  return implicit ? [implicit] : null;
+}
+
+interface SchemaIdentity {
+  documentUri: string;
+  pointer: string;
+  name?: string;
+}
+
+function canonicalDocumentUri(uri: string): string {
+  const normalized = uri.replaceAll("\\", "/");
+  try {
+    if (/^[A-Za-z]:\//.test(normalized)) {
+      return new URL(`file:///${normalized}`).href;
+    }
+    if (normalized.startsWith("/")) {
+      return new URL(`file://${normalized}`).href;
+    }
+    return new URL(normalized).href;
+  } catch {
+    return normalized;
+  }
+}
+
+function escapePointerSegment(value: string): string {
+  return value.replaceAll("~", "~0").replaceAll("/", "~1");
+}
+
+function identityRef(identity: SchemaIdentity): string {
+  return `${identity.documentUri}#${identity.pointer}`;
+}
+
+function addSchemaIdentity(
+  identities: WeakMap<object, SchemaIdentity[]>,
+  schema: unknown,
+  identity: SchemaIdentity,
+): void {
+  if (!isRecord(schema)) return;
+  const existing = identities.get(schema);
+  if (existing) {
+    if (
+      !existing.some(
+        (candidate) => identityRef(candidate) === identityRef(identity),
+      )
+    ) {
+      existing.push(identity);
+    }
+  } else {
+    identities.set(schema, [identity]);
+  }
+}
+
+function addSchemaContainer(
+  identities: WeakMap<object, SchemaIdentity[]>,
+  container: unknown,
+  documentUri: string,
+  pointer: string,
+): void {
+  if (!isRecord(container)) return;
+  for (const [name, schema] of Object.entries(container)) {
+    addSchemaIdentity(identities, schema, {
+      documentUri,
+      pointer: `${pointer}/${escapePointerSegment(name)}`,
+      name,
+    });
+  }
+}
+
+function collectNamedSchemas(
+  identities: WeakMap<object, SchemaIdentity[]>,
+  uri: string,
+  document: unknown,
+): void {
+  if (!isRecord(document)) return;
+  const documentUri = canonicalDocumentUri(uri);
+  addSchemaIdentity(identities, document, { documentUri, pointer: "" });
+  if (isRecord(document.components)) {
+    addSchemaContainer(
+      identities,
+      document.components.schemas,
+      documentUri,
+      "/components/schemas",
+    );
+  }
+  addSchemaContainer(
+    identities,
+    document.definitions,
+    documentUri,
+    "/definitions",
+  );
+  addSchemaContainer(identities, document.$defs, documentUri, "/$defs");
+
+  if (!("openapi" in document) && !("swagger" in document)) {
+    addSchemaContainer(identities, document, documentUri, "");
+  }
+}
+
+function isBareMappingTarget(target: string): boolean {
+  return !/[#/:\\]/.test(target) && !target.startsWith(".");
+}
+
+function mappingTargetRef(target: string, documentUri: string): string | null {
+  const hash = target.indexOf("#");
+  const path = hash === -1 ? target : target.slice(0, hash);
+  const rawPointer = hash === -1 ? "" : target.slice(hash + 1);
+  let pointer = rawPointer;
+  try {
+    pointer = decodeURIComponent(rawPointer);
+  } catch {
+    // Keep the literal fragment: malformed encoding cannot match a real pointer.
+  }
+
+  try {
+    const resolvedDocument = path
+      ? new URL(path, documentUri).href
+      : documentUri;
+    return `${resolvedDocument}#${pointer}`;
+  } catch {
+    return null;
+  }
+}
+
+function mappingTargetsBranch(
+  target: unknown,
+  ownerIdentities: SchemaIdentity[],
+  branchIdentities: SchemaIdentity[],
+): boolean {
+  if (typeof target !== "string") return false;
+  const ownerDocuments = new Set(
+    ownerIdentities.map((identity) => identity.documentUri),
+  );
+  if (isBareMappingTarget(target)) {
+    return branchIdentities.some(
+      (identity) =>
+        identity.name === target && ownerDocuments.has(identity.documentUri),
+    );
+  }
+
+  const targets = new Set<string>();
+  for (const documentUri of ownerDocuments) {
+    const resolved = mappingTargetRef(target, documentUri);
+    if (resolved) targets.add(resolved);
+  }
+  return branchIdentities.some((identity) =>
+    targets.has(identityRef(identity)),
+  );
+}
+
+function valuesForDereferencedBranch(
+  mapping: Record<string, unknown>,
+  owner: Record<string, unknown>,
+  branch: unknown,
+  identities: WeakMap<object, SchemaIdentity[]>,
+): string[] | null {
+  if (!isRecord(branch)) return null;
+  const branchIdentities = identities.get(branch) ?? [];
+  if (branchIdentities.length === 0) return null;
+  const ownerIdentities = identities.get(owner) ?? [];
+
+  const explicit = Object.entries(mapping)
+    .filter(([, target]) =>
+      mappingTargetsBranch(target, ownerIdentities, branchIdentities),
+    )
+    .map(([key]) => key);
+  if (explicit.length > 0) return explicit;
+  const implicit = branchIdentities.find((identity) => identity.name)?.name;
+  return implicit ? [implicit] : null;
+}
+
+/** Fill markers on discriminator schemas that originated in external documents. */
+function markDereferencedDiscriminatorValues(
+  root: unknown,
+  resolvedValues: unknown,
+): void {
+  const identities = new WeakMap<object, SchemaIdentity[]>();
+  if (isRecord(resolvedValues)) {
+    for (const [uri, document] of Object.entries(resolvedValues)) {
+      collectNamedSchemas(identities, uri, document);
+    }
+  }
+
+  const seen = new WeakSet<object>();
+  const stack: unknown[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (typeof node !== "object" || node === null || seen.has(node)) continue;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const child of node) stack.push(child);
+      continue;
+    }
+    if (!isRecord(node)) continue;
+
+    const disc = node.discriminator;
+    if (isRecord(disc) && Array.isArray(node.oneOf)) {
+      const existingRaw = disc[DISCRIMINATOR_VALUES_MARKER];
+      const existing = Array.isArray(existingRaw) ? existingRaw : [];
+      const mapping = isRecord(disc.mapping) ? disc.mapping : {};
+      const values = node.oneOf.map((branch, index) => {
+        const marked = existing[index];
+        return Array.isArray(marked) && marked.length > 0
+          ? marked
+          : valuesForDereferencedBranch(mapping, node, branch, identities);
+      });
       if (values.some((value) => value !== null)) {
         disc[DISCRIMINATOR_VALUES_MARKER] = values;
       }

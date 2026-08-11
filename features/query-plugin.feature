@@ -75,3 +75,23 @@ Feature: Query Plugin
       | limit | 1e2   | 1    | 10    |
       | limit | 3abc  | 1    | 10    |
       | limit | -1    | 1    | 10    |
+
+  Scenario: Query configuration is snapshotted when the plugin is created
+    Given I create a query plugin from mutable options and then change them
+    When I request using the original query controls
+    Then I should receive 1 items
+    And the pagination total should be 2
+    And the first paginated item name should be "Alice"
+
+  Scenario: Structured response metadata is materialized during body replacement
+    Given I create a mock returning 5 items with inherited structured response metadata
+    When I request page 2 with limit 2
+    Then the response status should be 206
+    And response header "x-query-source" should be "inherited"
+    And I should receive 2 items
+    And the pagination total should be 5
+
+  Scenario: Complex sort values remain stable in a last bucket
+    Given I create a mock with scalar and opaque complex sort values
+    When I request with sort "score" order "asc"
+    Then the sorted item ids should be "4,1,3,2"

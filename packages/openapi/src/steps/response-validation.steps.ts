@@ -91,6 +91,136 @@ const mediaSpecificSpec = {
   },
 };
 
+const explicitProfileSpec = {
+  openapi: "3.0.3",
+  info: { title: "Explicit profile", version: "1.0.0" },
+  paths: {
+    "/explicit-profile": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            headers: {
+              "Content-Type": {
+                schema: {
+                  type: "string",
+                  enum: ["application/json;profile=b"],
+                },
+              },
+            },
+            content: {
+              "application/json;profile=a": {
+                schema: {
+                  type: "object",
+                  properties: { profile: { type: "string", const: "a" } },
+                  required: ["profile"],
+                },
+              },
+              "application/json;profile=b": {
+                schema: {
+                  type: "object",
+                  properties: { profile: { type: "string", const: "b" } },
+                  required: ["profile"],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+const generatedProfileContent = {
+  "application/json;profile=a": {
+    schema: {
+      type: "object",
+      properties: { profile: { type: "string", const: "a" } },
+      required: ["profile"],
+    },
+  },
+  "application/json;profile=b": {
+    schema: {
+      type: "object",
+      properties: { profile: { type: "string", const: "b" } },
+      required: ["profile"],
+    },
+  },
+};
+
+const generatedProfileHeader = {
+  "Content-Type": {
+    schema: {
+      type: "string",
+      enum: ["application/json;profile=b"],
+    },
+  },
+};
+
+const generatedProfileSpec = {
+  openapi: "3.0.3",
+  info: { title: "Generated response profiles", version: "1.0.0" },
+  paths: {
+    "/generated-profile": {
+      get: {
+        responses: {
+          "200": {
+            description: "Static profile",
+            headers: generatedProfileHeader,
+            content: generatedProfileContent,
+          },
+        },
+      },
+    },
+    "/profile-items": {
+      get: {
+        responses: {
+          "200": {
+            description: "List",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: { itemId: { type: "integer" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        responses: {
+          "201": {
+            description: "Created profile",
+            headers: generatedProfileHeader,
+            content: generatedProfileContent,
+          },
+        },
+      },
+    },
+    "/profile-items/{itemId}": {
+      get: {
+        responses: {
+          "200": {
+            description: "Item",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { itemId: { type: "integer" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 const wildcardResponseSpec = {
   openapi: "3.0.3",
   info: { title: "Test", version: "1.0.0" },
@@ -386,6 +516,107 @@ describeFeature(feature, ({ Scenario }) => {
           const value = response.body[field];
           expect(typeof value).toBe("string");
           expect(value).not.toBe("");
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Explicit response Content-Type parameters select the matching schema",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a validating mock with explicit profile response content type",
+        async () => {
+          mock = schmock();
+          mock.pipe(
+            await openapi({
+              spec: explicitProfileSpec,
+              validateResponses: true,
+            }),
+          );
+        },
+      );
+
+      When(
+        "I request explicit response profile {string}",
+        async (_, profile) => {
+          response = await mock.handle("GET", "/explicit-profile", {
+            headers: { accept: `application/json;profile=${String(profile)}` },
+          });
+        },
+      );
+
+      Then("the response status is 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And("the explicit profile response marker is {string}", (_, profile) => {
+        expect(response.body).toMatchObject({ profile: String(profile) });
+      });
+
+      And(
+        "the explicit response content type is {string}",
+        (_, contentType) => {
+          const header = Object.entries(response.headers).find(
+            ([name]) => name.toLowerCase() === "content-type",
+          )?.[1];
+          expect(header).toBe(String(contentType));
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Generated Content-Type selects static and CRUD response schemas",
+    ({ Given, When, Then, And }) => {
+      let profileResponses: Schmock.Response[];
+
+      Given(
+        "a validating mock with profile-labelled static and CRUD responses",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: generatedProfileSpec,
+              validateResponses: true,
+            }),
+          );
+        },
+      );
+
+      When(
+        "I request both profile-labelled responses without Accept",
+        async () => {
+          profileResponses = await Promise.all([
+            mock.handle("GET", "/generated-profile"),
+            mock.handle("POST", "/profile-items", { body: {} }),
+          ]);
+        },
+      );
+
+      Then("both profile-labelled responses succeed", () => {
+        expect(profileResponses.map(({ status }) => status)).toEqual([
+          200, 201,
+        ]);
+      });
+
+      And("both profile-labelled bodies use profile {string}", (_, profile) => {
+        for (const profileResponse of profileResponses) {
+          expect(profileResponse.body).toMatchObject({
+            profile: String(profile),
+          });
+        }
+      });
+
+      And(
+        "both profile-labelled responses declare {string}",
+        (_, contentType) => {
+          for (const profileResponse of profileResponses) {
+            const header = Object.entries(profileResponse.headers).find(
+              ([name]) => name.toLowerCase() === "content-type",
+            )?.[1];
+            expect(header).toBe(String(contentType));
+          }
         },
       );
     },

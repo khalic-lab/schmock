@@ -6,7 +6,7 @@ import type {
   CrudResource,
   CrudRouteDescriptor,
 } from "./crud-detector.js";
-import type { CrudGenerationHooks } from "./generators.js";
+import type { CrudGenerationHooks, GenerationHooks } from "./generators.js";
 import {
   createCreateGenerator,
   createDeleteGenerator,
@@ -19,7 +19,6 @@ import {
 } from "./generators.js";
 import { OWNER_KEY } from "./owner.js";
 import type { ParsedPath } from "./parser.js";
-import type { OnSchemaCallback } from "./plugin.js";
 import {
   findRepresentativeResponse,
   findSuccessResponse,
@@ -56,12 +55,6 @@ function buildRouteConfig(
   };
 }
 
-/** Plugin-level generation settings threaded down to every CRUD generator. */
-export interface CrudRouteHooks {
-  fakerSeed?: number;
-  onSchema?: OnSchemaCallback;
-}
-
 /**
  * Re-derive the success status at registration time so schema overrides
  * applied before detection are reflected in the status selection.
@@ -85,7 +78,7 @@ export function registerCrudRoutes(
   resource: CrudResource,
   seedItems: unknown[] | undefined,
   ownerToken: string,
-  hooks: CrudRouteHooks = {},
+  hooks: GenerationHooks = {},
 ): void {
   const ensureSeeded = createSeeder(resource, seedItems);
 
@@ -115,8 +108,7 @@ export function registerNonCrudRoutes(
   instance: Schmock.CallableMockInstance,
   nonCrudPaths: ParsedPath[],
   ownerToken: string,
-  fakerSeed?: number,
-  onSchema?: OnSchemaCallback,
+  hooks: GenerationHooks = {},
 ): void {
   for (const parsedPath of nonCrudPaths) {
     const routeKey = toRouteKey(parsedPath.method, parsedPath.path);
@@ -128,11 +120,7 @@ export function registerNonCrudRoutes(
     if (declaredResponse) {
       config["openapi:preflightResponseStatus"] = declaredResponse[0];
     }
-    instance(
-      routeKey,
-      createStaticGenerator(parsedPath, fakerSeed, onSchema),
-      config,
-    );
+    instance(routeKey, createStaticGenerator(parsedPath, hooks), config);
   }
 }
 

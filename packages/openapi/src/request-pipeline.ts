@@ -5,7 +5,11 @@ import type { ValidateFunction } from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import type { JSONSchema7 } from "json-schema";
-import { negotiateContentType } from "./content-negotiation.js";
+import {
+  matchDeclaredContentType,
+  negotiateContentType,
+  negotiateContentTypeMatch,
+} from "./content-negotiation.js";
 import { asSchemaGenerationError } from "./generators.js";
 import type {
   ParsedResponseContent,
@@ -483,30 +487,30 @@ export function getResponseStatus(response: unknown): number {
   return getResponseParts(response).status;
 }
 
-function findDeclaredMediaType(
-  entry: ParsedResponseEntry,
-  mediaType: string,
-): string | undefined {
-  const normalized = normalizeMediaType(mediaType);
-  return entry.contentTypes?.find(
-    (candidate) => normalizeMediaType(candidate) === normalized,
-  );
+interface SelectedResponseMediaType {
+  mediaType: string;
+  declared?: string;
 }
 
 function selectResponseMediaType(
   context: Schmock.PluginContext,
   entry: ParsedResponseEntry,
   headers: Record<string, string>,
-): string | undefined {
+): SelectedResponseMediaType | undefined {
+  const available = entry.contentTypes ?? [];
   const explicit = getHeader(headers, "content-type");
-  if (explicit) return normalizeMediaType(explicit);
-
-  const accept = getHeader(context.headers, "accept");
-  if (accept && entry.contentTypes && entry.contentTypes.length > 0) {
-    return negotiateContentType(accept, entry.contentTypes) ?? undefined;
+  if (explicit) {
+    return {
+      mediaType: explicit,
+      declared: matchDeclaredContentType(explicit, available) ?? undefined,
+    };
   }
 
-  return entry.contentTypes?.[0];
+  const accept = getHeader(context.headers, "accept");
+  const match = negotiateContentTypeMatch(accept ?? "", available);
+  return match
+    ? { mediaType: match.contentType, declared: match.declared }
+    : undefined;
 }
 
 interface AppliedResponseContentType {
@@ -529,7 +533,7 @@ export function applyResponseContentType(
   const accept = getHeader(context.headers, "accept");
   const explicitContentType = getHeader(parts.headers, "content-type");
   const availableContentTypes = explicitContentType
-    ? [normalizeMediaType(explicitContentType)]
+    ? [explicitContentType]
     : (entry.contentTypes ?? []);
   if (
     accept &&
@@ -550,12 +554,12 @@ export function applyResponseContentType(
     };
   }
 
-  const mediaType = selectResponseMediaType(context, entry, parts.headers);
-  if (!mediaType || getHeader(parts.headers, "content-type")) {
+  const selected = selectResponseMediaType(context, entry, parts.headers);
+  if (!selected || getHeader(parts.headers, "content-type")) {
     return { response, rejected: false };
   }
 
-  const headers = { ...parts.headers, "content-type": mediaType };
+  const headers = { ...parts.headers, "content-type": selected.mediaType };
   if (parts.kind === "object") {
     return {
       response: { status: parts.status, body: parts.body, headers },
@@ -589,7 +593,12 @@ export function validateResponse(
     ]);
   }
 
-  const mediaType = selectResponseMediaType(context, entry, parts.headers);
+  const selectedMediaType = selectResponseMediaType(
+    context,
+    entry,
+    parts.headers,
+  );
+  const mediaType = selectedMediaType?.mediaType;
   let schema = entry.schema;
 
   if (entry.content && entry.content.size > 0) {
@@ -603,10 +612,10 @@ export function validateResponse(
       ]);
     }
 
-    const declaredMediaType = findDeclaredMediaType(entry, mediaType);
-    const mediaEntry: ParsedResponseContent | undefined = declaredMediaType
-      ? entry.content.get(declaredMediaType)
-      : undefined;
+    const mediaEntry: ParsedResponseContent | undefined =
+      selectedMediaType.declared
+        ? entry.content.get(selectedMediaType.declared)
+        : undefined;
     if (!mediaEntry) {
       return responseValidationError(context, parts.status, mediaType, [
         {
@@ -751,10 +760,9 @@ function selectResponseSchema(
 ): JSONSchema7 | undefined {
   const mediaType = selectResponseMediaType(context, entry, {});
   if (entry.content && entry.content.size > 0) {
-    const declared = mediaType
-      ? findDeclaredMediaType(entry, mediaType)
+    return mediaType?.declared
+      ? entry.content.get(mediaType.declared)?.schema
       : undefined;
-    return declared ? entry.content.get(declared)?.schema : undefined;
   }
 
   return entry.schema;
@@ -771,11 +779,8 @@ function selectResponseExample(
 ): SelectedResponseExample {
   if (entry.content && entry.content.size > 0) {
     const mediaType = selectResponseMediaType(context, entry, {});
-    const declared = mediaType
-      ? findDeclaredMediaType(entry, mediaType)
-      : undefined;
-    const examples = declared
-      ? entry.content.get(declared)?.examples
+    const examples = mediaType?.declared
+      ? entry.content.get(mediaType.declared)?.examples
       : undefined;
     return examples?.has(name)
       ? { found: true, value: examples.get(name) }

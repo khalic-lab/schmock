@@ -52,3 +52,34 @@ Feature: Content Negotiation
     When I read a missing negotiated item requesting problem JSON
     Then the negotiated missing response status is 404
     And the negotiated missing content type is "application/problem+json"
+
+  Scenario Outline: Media parameters and quality select the matching representation
+    Given a mock with profile-specific JSON responses
+    When I request profile-specific content with Accept header "<accept>"
+    Then the negotiated profile marker is "<profile>"
+    And the negotiated content type is "<contentType>"
+
+    Examples:
+      | accept                                                                  | profile | contentType                |
+      | application/json;profile=b                                              | b       | application/json;profile=b |
+      | application/json;profile=b;q=0, application/json;q=0.8                  | a       | application/json;profile=a |
+      | application/json;q=0;profile=b, application/json;q=0.8                  | a       | application/json;profile=a |
+
+  Scenario: A declared media range produces a concrete Content-Type
+    Given a mock with an application wildcard response
+    When I request wildcard content as "application/problem+json"
+    Then the response status is 200
+    And the wildcard response marker is present
+    And the negotiated content type is "application/problem+json"
+
+  Scenario: An exact content key beats an earlier wildcard key
+    Given a validating mock with a wildcard response before exact JSON
+    When I request exact JSON from overlapping content keys
+    Then the response status is 200
+    And the overlapping response marker is "exact"
+
+  Scenario: A full wildcard declaration concretizes a wildcard Accept
+    Given a mock with a full wildcard response
+    When I request the image range with profile "preview"
+    Then the response status is 200
+    And the negotiated content type is "image/png;profile=preview"

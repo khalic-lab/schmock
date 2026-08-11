@@ -194,6 +194,126 @@ const dualMediaSpec = {
   },
 };
 
+const profileMediaSpec = {
+  openapi: "3.0.3",
+  info: { title: "Profile media", version: "1.0.0" },
+  paths: {
+    "/profiles": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json;profile=a": {
+                schema: {
+                  type: "object",
+                  properties: { profile: { type: "string", const: "a" } },
+                  required: ["profile"],
+                },
+              },
+              "application/json;profile=b": {
+                schema: {
+                  type: "object",
+                  properties: { profile: { type: "string", const: "b" } },
+                  required: ["profile"],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+const wildcardMediaSpec = {
+  openapi: "3.0.3",
+  info: { title: "Wildcard media", version: "1.0.0" },
+  paths: {
+    "/wildcard": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/*": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    wildcard: { type: "boolean", const: true },
+                  },
+                  required: ["wildcard"],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+const overlappingMediaSpec = {
+  openapi: "3.0.3",
+  info: { title: "Overlapping media", version: "1.0.0" },
+  paths: {
+    "/overlapping": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/*": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    source: { type: "string", const: "wildcard" },
+                  },
+                  required: ["source"],
+                },
+              },
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    source: { type: "string", const: "exact" },
+                  },
+                  required: ["source"],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+const fullWildcardMediaSpec = {
+  openapi: "3.0.3",
+  info: { title: "Full wildcard media", version: "1.0.0" },
+  paths: {
+    "/full-wildcard": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "*/*": {
+                schema: {
+                  type: "object",
+                  properties: { wildcard: { type: "boolean", const: true } },
+                  required: ["wildcard"],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 const requestMediaTypeSpec = {
   openapi: "3.0.3",
   info: { title: "Request media types", version: "1.0.0" },
@@ -258,7 +378,7 @@ const requestMediaTypeSpec = {
   },
 };
 
-describeFeature(feature, ({ Scenario }) => {
+describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
 
@@ -492,6 +612,139 @@ describeFeature(feature, ({ Scenario }) => {
 
       And(
         "the negotiated missing content type is {string}",
+        (_, contentType: string) => {
+          expect(response.headers["content-type"]).toBe(contentType);
+        },
+      );
+    },
+  );
+
+  ScenarioOutline(
+    "Media parameters and quality select the matching representation",
+    ({ Given, When, Then, And }, variables) => {
+      Given("a mock with profile-specific JSON responses", async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(await openapi({ spec: profileMediaSpec }));
+      });
+
+      When(
+        "I request profile-specific content with Accept header {string}",
+        async () => {
+          response = await mock.handle("GET", "/profiles", {
+            headers: { accept: variables.accept },
+          });
+        },
+      );
+
+      Then("the negotiated profile marker is {string}", () => {
+        expect(response.body).toMatchObject({ profile: variables.profile });
+      });
+
+      And("the negotiated content type is {string}", () => {
+        expect(response.headers["content-type"]).toBe(variables.contentType);
+      });
+    },
+  );
+
+  Scenario(
+    "A declared media range produces a concrete Content-Type",
+    ({ Given, When, Then, And }) => {
+      Given("a mock with an application wildcard response", async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(
+          await openapi({
+            spec: wildcardMediaSpec,
+            validateResponses: true,
+          }),
+        );
+      });
+
+      When(
+        "I request wildcard content as {string}",
+        async (_, accept: string) => {
+          response = await mock.handle("GET", "/wildcard", {
+            headers: { accept },
+          });
+        },
+      );
+
+      Then("the response status is 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And("the wildcard response marker is present", () => {
+        expect(response.body).toMatchObject({ wildcard: true });
+      });
+
+      And(
+        "the negotiated content type is {string}",
+        (_, contentType: string) => {
+          expect(response.headers["content-type"]).toBe(contentType);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "An exact content key beats an earlier wildcard key",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a validating mock with a wildcard response before exact JSON",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: overlappingMediaSpec,
+              validateResponses: true,
+            }),
+          );
+        },
+      );
+
+      When("I request exact JSON from overlapping content keys", async () => {
+        response = await mock.handle("GET", "/overlapping", {
+          headers: { accept: "application/json" },
+        });
+      });
+
+      Then("the response status is 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And("the overlapping response marker is {string}", (_, marker) => {
+        expect(response.body).toMatchObject({ source: String(marker) });
+      });
+    },
+  );
+
+  Scenario(
+    "A full wildcard declaration concretizes a wildcard Accept",
+    ({ Given, When, Then, And }) => {
+      Given("a mock with a full wildcard response", async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(
+          await openapi({
+            spec: fullWildcardMediaSpec,
+            validateResponses: true,
+          }),
+        );
+      });
+
+      When(
+        "I request the image range with profile {string}",
+        async (_, profile) => {
+          response = await mock.handle("GET", "/full-wildcard", {
+            headers: { accept: `image/*;profile=${String(profile)}` },
+          });
+        },
+      );
+
+      Then("the response status is 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And(
+        "the negotiated content type is {string}",
         (_, contentType: string) => {
           expect(response.headers["content-type"]).toBe(contentType);
         },

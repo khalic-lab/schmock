@@ -3,6 +3,7 @@
 import { awaitWithAbort, throwIfAborted } from "./abort.js";
 import { isBinaryBody } from "./binary.js";
 import {
+  canonicalizePath,
   getResponseException,
   isRouteNotFound,
   toHttpMethod,
@@ -271,14 +272,17 @@ function parseBaseUrl(baseUrl: string): {
   if (baseUrl.includes("://")) {
     try {
       const parsed = new URL(baseUrl);
-      const rawPath = parsed.pathname;
-      const path = rawPath === "/" ? "" : rawPath.replace(/\/$/, "");
+      const canonicalPath = canonicalizePath(parsed.pathname);
+      const path =
+        canonicalPath === "/" ? "" : canonicalPath.replace(/\/$/, "");
       return { origin: parsed.origin, path };
     } catch {
       // Fall through to path-only handling
     }
   }
-  return { origin: null, path: baseUrl.replace(/\/$/, "") };
+  const canonicalPath = canonicalizePath(baseUrl);
+  const path = canonicalPath === "/" ? "" : canonicalPath.replace(/\/$/, "");
+  return { origin: null, path };
 }
 
 function extractQuery(url: URL): Record<string, string> {
@@ -462,7 +466,7 @@ export function createFetchInterceptor(
         beforeResponse,
         errorFormatter,
       } = currentOptions;
-      const path = url.pathname;
+      const path = canonicalizePath(url.pathname);
 
       // BaseUrl filter — non-matching requests go straight to real fetch.
       // Two modes:

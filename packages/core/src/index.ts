@@ -171,6 +171,8 @@ export type {
   RouteConfig,
   RouteInfo,
   RouteKey,
+  Schema,
+  SchemaDefinition,
   SchemaGenerationContext,
   SeedConfig,
   SeedSource,

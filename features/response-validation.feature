@@ -26,6 +26,20 @@ Feature: OpenAPI Response Validation
     Then the response status is 200
     And the generated response has a non-empty "error" field
 
+  Scenario: Explicit response Content-Type parameters select the matching schema
+    Given a validating mock with explicit profile response content type
+    When I request explicit response profile "b"
+    Then the response status is 200
+    And the explicit profile response marker is "b"
+    And the explicit response content type is "application/json;profile=b"
+
+  Scenario: Generated Content-Type selects static and CRUD response schemas
+    Given a validating mock with profile-labelled static and CRUD responses
+    When I request both profile-labelled responses without Accept
+    Then both profile-labelled responses succeed
+    And both profile-labelled bodies use profile "b"
+    And both profile-labelled responses declare "application/json;profile=b"
+
   Scenario: Response validation supports status class wildcards
     Given a mock with a validated 2XX response
     When I request status 201 covered by the wildcard

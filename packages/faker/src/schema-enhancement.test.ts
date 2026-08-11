@@ -86,6 +86,40 @@ describe("enhanceSchemaWithSmartMapping", () => {
     expect(allOf[1].properties.phone.faker).toBeDefined();
   });
 
+  it("does not expand a compact shared allOf DAG exponentially", () => {
+    let allOfReads = 0;
+    let schema: JSONSchema7 = { type: "string" };
+    for (let depth = 0; depth < 25; depth += 1) {
+      const child = schema;
+      const parent: JSONSchema7 = {};
+      Object.defineProperty(parent, "allOf", {
+        enumerable: true,
+        get() {
+          allOfReads += 1;
+          if (allOfReads > 100) {
+            throw new Error("Shared schema was expanded by path");
+          }
+          return [child, child];
+        },
+      });
+      schema = parent;
+    }
+
+    let enhanced = enhanceSchemaWithSmartMapping(schema);
+
+    expect(allOfReads).toBe(25);
+    for (let depth = 0; depth < 25; depth += 1) {
+      const branches = enhanced.allOf;
+      expect(branches).toHaveLength(2);
+      expect(branches?.[0]).toBe(branches?.[1]);
+      const child = branches?.[0];
+      if (!child || typeof child === "boolean") {
+        throw new Error("Expected an enhanced allOf schema");
+      }
+      enhanced = child;
+    }
+  });
+
   it("enhancement recurses into anyOf branches", () => {
     const schema: JSONSchema7 = {
       anyOf: [

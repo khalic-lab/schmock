@@ -2,9 +2,11 @@ import { SchemaGenerationError, schmock } from "@schmock/core";
 import { describe, expect, it } from "vitest";
 import { openapi } from "./plugin";
 import {
+  applyResponseContentType,
   createBodyValidatorContext,
   processContentNegotiation,
   processPreferHeader,
+  validateResponse,
 } from "./request-pipeline";
 
 function makeContext(
@@ -217,7 +219,101 @@ describe("OpenAPI request pipeline regressions", () => {
     const result = await processPreferHeader(context, { original: true });
     expect(result.response).toEqual([201, { made: "yes" }]);
   });
+
+  it("preserves explicit Content-Type parameters during Accept checks", () => {
+    const responses = profileResponses();
+    const context = makeContext(
+      { "openapi:responses": responses },
+      { accept: "application/json;profile=b" },
+    );
+    const response = [
+      200,
+      { profile: "b" },
+      { "content-type": "application/json;profile=b" },
+    ] satisfies [number, unknown, Record<string, string>];
+
+    expect(applyResponseContentType(context, response)).toEqual({
+      response,
+      rejected: false,
+    });
+  });
+
+  it("validates an explicit parameterized Content-Type against its profile schema", () => {
+    const context = makeContext(
+      { "openapi:responses": profileResponses() },
+      {},
+    );
+    const response = [
+      200,
+      { profile: "b" },
+      { "content-type": "application/json;profile=b" },
+    ] satisfies [number, unknown, Record<string, string>];
+
+    expect(
+      validateResponse(context, response, createBodyValidatorContext()),
+    ).toBeUndefined();
+  });
+
+  it("validates against an exact key before an earlier wildcard declaration", () => {
+    const schema = (source: string): Schmock.JSONSchema7 => ({
+      type: "object",
+      properties: { source: { type: "string", const: source } },
+      required: ["source"],
+    });
+    const responses = new Map([
+      [
+        200,
+        {
+          description: "OK",
+          contentTypes: ["application/*", "application/json"],
+          content: new Map([
+            ["application/*", { schema: schema("wildcard") }],
+            ["application/json", { schema: schema("exact") }],
+          ]),
+        },
+      ],
+    ]);
+    const context = makeContext(
+      { "openapi:responses": responses },
+      { accept: "application/json" },
+    );
+
+    expect(
+      validateResponse(
+        context,
+        [200, { source: "exact" }],
+        createBodyValidatorContext(),
+      ),
+    ).toBeUndefined();
+  });
 });
+
+function profileResponses(): Map<
+  number,
+  import("./parser").ParsedResponseEntry
+> {
+  const schema = (profile: string): Schmock.JSONSchema7 => ({
+    type: "object",
+    properties: { profile: { type: "string", const: profile } },
+    required: ["profile"],
+  });
+  return new Map([
+    [
+      200,
+      {
+        description: "OK",
+        contentTypes: [
+          "application/json;profile=a",
+          "application/json;profile=b",
+        ],
+        content: new Map([
+          ["application/json;profile=a", { schema: schema("a") }],
+          ["application/json;profile=b", { schema: schema("b") }],
+        ]),
+      },
+    ],
+  ]);
+}
 
 /** Build an /items collection whose POST declares the given request media types. */
 function specWithRequestContent(

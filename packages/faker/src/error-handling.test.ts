@@ -595,7 +595,7 @@ describe("Schema Error Handling", () => {
       }
     });
 
-    it("rejects a schema whose node count explodes through shared sub-schemas", async () => {
+    it("counts shared sub-schemas once while rejecting their expanded output", async () => {
       let level: JSONSchema7 = { type: "string" };
       for (let i = 0; i < 9; i++) {
         const child = level;
@@ -605,16 +605,17 @@ describe("Schema Error Handling", () => {
         };
       }
 
-      const started = Date.now();
       try {
         await generateFromSchema({ schema: level });
         expect.fail("Should have thrown");
       } catch (error: any) {
         expect(error.code).toBe("RESOURCE_LIMIT_ERROR");
-        expect(error.context.resource).toBe("schema_nodes");
+        expect(error.context.resource).toBe("generated_nodes");
+        expect(error.context.actual).toBe(2_441_406);
       }
-      // Fails fast instead of spending minutes in enhancement + generation.
-      expect(Date.now() - started).toBeLessThan(1000);
+
+      if (!level.properties) throw new Error("Expected shared properties");
+      expect(level.properties.a).toBe(level.properties.b);
     });
 
     it("still generates a large but legal schema", async () => {

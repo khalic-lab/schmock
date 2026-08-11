@@ -795,6 +795,31 @@ describe("generators", () => {
             },
           },
         },
+        "/ready": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                headers: {
+                  "X-Request-Id": {
+                    schema: { type: "string", format: "uuid" },
+                  },
+                  "X-Served-At": {
+                    schema: { type: "string", format: "date-time" },
+                  },
+                },
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: { ready: { type: "boolean" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     };
 
@@ -843,6 +868,22 @@ describe("generators", () => {
       );
     });
 
+    it("shares the seeded header ordinal across routes in one installation", async () => {
+      async function requestIds(seed: number): Promise<string[]> {
+        const mock = schmock({ state: {} });
+        mock.pipe(await openapi({ spec: healthSpec, fakerSeed: seed }));
+        const health = await mock.handle("GET", "/health");
+        const ready = await mock.handle("GET", "/ready");
+        return [health.headers["X-Request-Id"], ready.headers["X-Request-Id"]];
+      }
+
+      const firstMock = await requestIds(42);
+      const secondMock = await requestIds(42);
+
+      expect(firstMock[0]).not.toBe(firstMock[1]);
+      expect(secondMock).toEqual(firstMock);
+    });
+
     it("keeps a seeded uuid header valid under validateResponses", async () => {
       const mock = schmock({ state: {} });
       mock.pipe(
@@ -863,14 +904,12 @@ describe("generators", () => {
       const one = buildResponse({
         status: 200,
         body: {},
-        headerDefs,
-        headerSeed: createHeaderSeed(42),
+        headers: generateHeaderValues(headerDefs, createHeaderSeed(42)),
       });
       const two = buildResponse({
         status: 200,
         body: {},
-        headerDefs,
-        headerSeed: createHeaderSeed(42),
+        headers: generateHeaderValues(headerDefs, createHeaderSeed(42)),
       });
       expect(one).toEqual(two);
     });
@@ -1276,12 +1315,7 @@ describe("generators", () => {
       const result = buildResponse({
         status: undefined,
         body: ["a", "b"],
-        headerDefs: {
-          "X-Total": {
-            schema: { type: "string", default: "2" },
-            description: "Total",
-          },
-        },
+        headers: { "X-Total": "2" },
       });
 
       expect(result).toEqual([200, ["a", "b"], { "X-Total": "2" }]);
@@ -1295,18 +1329,13 @@ describe("generators", () => {
       const result = buildResponse({
         status: 204,
         body: { a: 1 },
-        headerDefs: {
-          "X-Cache": {
-            schema: { type: "string", enum: ["HIT"] },
-            description: "Cache",
-          },
-        },
+        headers: { "X-Cache": "HIT" },
       });
 
       expect(result).toEqual([204, undefined, { "X-Cache": "HIT" }]);
     });
 
-    it("returns a 2-tuple with no headers slot when headerDefs is undefined", () => {
+    it("returns a 2-tuple with no headers slot when headers are undefined", () => {
       const result = buildResponse({ status: 201, body: { id: 1 } });
       expect(result).toEqual([201, { id: 1 }]);
       expect((result as unknown[]).length).toBe(2);
@@ -1316,10 +1345,10 @@ describe("generators", () => {
       const result = buildResponse({
         status: 200,
         body: { a: 1 },
-        headerDefs: {
+        headers: generateHeaderValues({
           "X-Object": { schema: { type: "object" }, description: "Unusable" },
           "X-NoSchema": { description: "No schema" },
-        },
+        }),
       });
 
       expect(result).toEqual([200, { a: 1 }]);

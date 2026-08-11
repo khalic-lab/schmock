@@ -10,11 +10,11 @@ Feature: Fetch Interceptor
     Then the fetch response status should be 200
     And the fetch response body should be the mocked users
 
-  Scenario: A literal unicode route is matched by both URL spellings
-    Given a Schmock instance with route "GET /café/:name" returning the captured name
+  Scenario: A lowercase percent-encoded route matches a literal Unicode URL
+    Given a Schmock route using lowercase percent escapes for café
     And fetch is intercepted with passthrough enabled
-    When I fetch the literal unicode URL and the percent-encoded URL
-    Then both fetch responses should be 200 with the decoded captured name
+    When I fetch the equivalent literal Unicode URL
+    Then the Unicode fetch response should be 200 with the decoded captured name
     And the original fetch should not have been called
 
   Scenario: Passthrough for unmatched routes
@@ -40,6 +40,20 @@ Feature: Fetch Interceptor
     And fetch is intercepted with baseUrl "/api"
     When I fetch "/other/endpoint"
     Then the original fetch should have been called
+
+  Scenario: A Unicode path-form baseUrl matches an equivalent encoded path
+    Given a Schmock instance with route "GET /café/users" returning users
+    And fetch is intercepted with Unicode path-form baseUrl "/café"
+    When I fetch the lowercase percent-encoded Unicode path
+    Then the Unicode baseUrl response body should be the mocked users
+    And the original fetch should not have been called
+
+  Scenario: A Unicode origin-form baseUrl matches an equivalent literal path
+    Given a Schmock instance with route "GET /café/users" returning users
+    And fetch is intercepted with origin-form baseUrl "https://api.example.com/caf%c3%a9"
+    When I fetch the literal Unicode URL on the configured origin
+    Then the Unicode baseUrl response body should be the mocked users
+    And the original fetch should not have been called
 
   Scenario: Origin-form baseUrl intercepts matching origin only
     Given a Schmock instance with route "GET /api/users" returning users

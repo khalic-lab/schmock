@@ -53,6 +53,7 @@ declare namespace Schmock {
       | "if"
       | "then"
       | "else"
+      | "$defs"
       | "definitions"
       | "dependencies"
     > {
@@ -77,6 +78,7 @@ declare namespace Schmock {
     if?: SchemaDefinition;
     then?: SchemaDefinition;
     else?: SchemaDefinition;
+    $defs?: Record<string, SchemaDefinition>;
     definitions?: Record<string, SchemaDefinition>;
     dependencies?: Record<string, SchemaDefinition | string[]>;
   }

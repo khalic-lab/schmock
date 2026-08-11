@@ -1,9 +1,30 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
+import type * as PublicSchmock from "@schmock/core";
+import type { Schema, SchemaDefinition } from "@schmock/core";
 import { expect } from "vitest";
 import { schmock } from "../index";
 import type { CallableMockInstance } from "../types";
 
 const feature = await loadFeature("../../features/basic-usage.feature");
+
+// Compile this step file as a public consumer so both export styles and both
+// recursive schema-definition keywords remain covered by typecheck:bdd.
+const recursiveSchemaDefinition: SchemaDefinition = {
+  type: "object",
+  definitions: {
+    branch: {
+      $defs: {
+        leaf: { type: "string", faker: "person.fullName" },
+      },
+    },
+  },
+};
+const namedSchema: Schema = {
+  $defs: { recursive: recursiveSchemaDefinition },
+};
+const namespaceSchema: PublicSchmock.Schema = namedSchema;
+const namespaceDefinition: PublicSchmock.SchemaDefinition = namespaceSchema;
+void namespaceDefinition;
 
 describeFeature(feature, ({ Scenario }) => {
   let mock: CallableMockInstance;
@@ -93,6 +114,39 @@ describeFeature(feature, ({ Scenario }) => {
 
       And("the content-type should be {string}", (_, contentType: string) => {
         expect(response.headers?.["content-type"]).toBe(contentType);
+      });
+    },
+  );
+
+  Scenario(
+    "Malformed response envelope with array headers stays a plain body",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a mock returning an object with array response headers",
+        () => {
+          mock = schmock();
+          mock("GET /malformed-envelope", {
+            status: 202,
+            body: { semantic: true },
+            headers: [],
+          });
+        },
+      );
+
+      When('I request "GET /malformed-envelope"', async () => {
+        response = await mock.handle("GET", "/malformed-envelope");
+      });
+
+      Then("the status should be 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And("I should receive the malformed response envelope unchanged", () => {
+        expect(response.body).toEqual({
+          status: 202,
+          body: { semantic: true },
+          headers: [],
+        });
       });
     },
   );

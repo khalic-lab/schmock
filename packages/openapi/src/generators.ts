@@ -6,7 +6,10 @@ import {
 } from "@schmock/core";
 import { generateFromSchema } from "@schmock/faker";
 import type { JSONSchema7 } from "json-schema";
-import { negotiateContentType } from "./content-negotiation.js";
+import {
+  matchDeclaredContentType,
+  negotiateContentTypeMatch,
+} from "./content-negotiation.js";
 import type { CrudResource, IdKind } from "./crud-detector.js";
 import { MAX_SEED_GENERATED_NODES } from "./limits.js";
 import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
@@ -148,18 +151,19 @@ function findArrayInProperties(
 }
 
 /**
- * Per-generator ordinal source for seeded header values.
+ * Per-installation ordinal source for seeded header values.
  *
- * Created once per generator factory, so the determinism contract is "same seed
- * + same request ordinal within a mock instance → same value": two mocks built
- * from the same spec with the same `fakerSeed` answer their first request
- * identically, while a second request to one of them still gets a fresh id.
+ * Created once when an OpenAPI plugin is installed and shared by all route
+ * generators from that installation. The determinism contract is "same seed +
+ * same request sequence within a mock instance → same value": two mocks built
+ * from the same spec and seed replay the sequence, while different routes in
+ * one mock still receive distinct values.
  * A process-global counter would break the first half; a constant would make
  * `X-Request-Id` useless as an id.
  */
 export interface HeaderSeed {
   readonly seed: number;
-  /** Ordinal of the next generated header value, starting at 0. */
+  /** Ordinal reserved by the next header-producing request, starting at 0. */
   next(): number;
 }
 
@@ -253,9 +257,12 @@ export function generateHeaderValues(
   if (!headerDefs) return {};
 
   const headers: Record<string, string> = {};
+  const reservation = headerSeed
+    ? { seed: headerSeed.seed, ordinal: headerSeed.next() }
+    : undefined;
 
   for (const [name, def] of Object.entries(headerDefs)) {
-    const value = generateSingleHeaderValue(def.schema, headerSeed);
+    const value = generateSingleHeaderValue(def.schema, reservation);
     if (value !== undefined) {
       headers[name] = value;
     }
@@ -266,7 +273,7 @@ export function generateHeaderValues(
 
 function generateSingleHeaderValue(
   schema: JSONSchema7 | undefined,
-  headerSeed?: HeaderSeed,
+  reservation?: { seed: number; ordinal: number },
 ): string | undefined {
   if (!schema || typeof schema === "boolean") return undefined;
 
@@ -284,13 +291,13 @@ function generateSingleHeaderValue(
   // "seeded" and "timestamp" cannot both hold, and the seeded body path already
   // makes the same trade.
   if (schema.format === "uuid") {
-    return headerSeed
-      ? seededHeaderUuid(headerSeed.seed, headerSeed.next())
+    return reservation
+      ? seededHeaderUuid(reservation.seed, reservation.ordinal)
       : randomUuid();
   }
   if (schema.format === "date-time") {
-    return headerSeed
-      ? seededHeaderTimestamp(headerSeed.seed, headerSeed.next())
+    return reservation
+      ? seededHeaderTimestamp(reservation.seed, reservation.ordinal)
       : new Date().toISOString();
   }
 
@@ -319,10 +326,8 @@ export interface ResponseBuild {
   /** Declared status; undefined means "plain body, let core default to 200". */
   status?: number;
   body: unknown;
-  /** Declared response headers for THIS status, if any. */
-  headerDefs?: Record<string, Schmock.ResponseHeaderDef>;
-  /** Ordinal source making uuid/date-time header values reproducible. */
-  headerSeed?: HeaderSeed;
+  /** Response headers reserved before asynchronous body generation. */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -334,7 +339,7 @@ export interface ResponseBuild {
  * tuple. 204-body suppression lives here and nowhere else.
  */
 export function buildResponse(build: ResponseBuild): Schmock.ResponseResult {
-  const headers = generateHeaderValues(build.headerDefs, build.headerSeed);
+  const headers = build.headers ?? {};
   const hasHeaders = Object.keys(headers).length > 0;
 
   if (build.status === undefined) {
@@ -484,19 +489,20 @@ function mintId(
   return shapeId(next, resource.idKind);
 }
 
-/**
- * Per-route generation context handed to the CRUD generators.
- *
- * Optional everywhere so unit tests can keep calling the factories with two
- * arguments.
- */
-export interface CrudGenerationHooks {
+/** Plugin-installation generation settings shared by every registered route. */
+export interface GenerationHooks {
+  fakerSeed?: number;
+  onSchema?: OnSchemaCallback;
+  /** Shared response-header ordinal source for this plugin installation. */
+  headerSeed?: HeaderSeed;
+}
+
+/** Per-route generation context handed to the CRUD generators. */
+export interface CrudGenerationHooks extends GenerationHooks {
   /** Concrete declared method, e.g. "POST". */
   method: string;
   /** Spec path this generator was registered on, e.g. "/pets/:petId". */
   path: string;
-  fakerSeed?: number;
-  onSchema?: OnSchemaCallback;
 }
 
 /**
@@ -523,44 +529,60 @@ function applyOnSchema(
 }
 
 /**
- * Pick the response schema matching the request's `Accept` header.
+ * Pick the response schema matching the generated response label or `Accept`.
  *
  * One rule for both the static and the CRUD path: when the operation declares
  * media types with schemas, negotiate among them (falling back to the first
  * declared type when the request states no preference); otherwise use the
  * JSON-ish default the parser already resolved.
  */
-function selectSchemaForAccept(
+function selectGeneratedSchema(
   source: {
     contentTypes?: string[];
     byMediaType?: Map<string, JSONSchema7>;
     fallback?: JSONSchema7;
   },
-  headers: Record<string, string>,
+  requestHeaders: Record<string, string>,
+  responseHeaders: Record<string, string> = {},
 ): JSONSchema7 | undefined {
   const types = source.contentTypes;
   if (types?.length && source.byMediaType && source.byMediaType.size > 0) {
-    const accept = Object.entries(headers).find(
-      ([name]) => name.toLowerCase() === "accept",
-    )?.[1];
-    const mediaType = accept ? negotiateContentType(accept, types) : types[0];
-    return mediaType ? source.byMediaType.get(mediaType) : undefined;
+    const explicit = getHeader(responseHeaders, "content-type");
+    if (explicit) {
+      const declared = matchDeclaredContentType(explicit, types);
+      return declared ? source.byMediaType.get(declared) : undefined;
+    }
+    const accept = getHeader(requestHeaders, "accept");
+    const match = negotiateContentTypeMatch(accept ?? "", types);
+    return match ? source.byMediaType.get(match.declared) : undefined;
   }
   return source.fallback;
 }
 
-/** `selectSchemaForAccept` over a CRUD operation's success contract. */
+function getHeader(
+  headers: Record<string, string>,
+  target: string,
+): string | undefined {
+  const normalizedTarget = target.toLowerCase();
+  return Object.entries(headers).find(
+    ([name]) => name.toLowerCase() === normalizedTarget,
+  )?.[1];
+}
+
+/** `selectGeneratedSchema` over a CRUD operation's success contract. */
 function metaSchema(
   meta: Schmock.CrudOperationMeta | undefined,
-  headers: Record<string, string>,
+  requestHeaders: Record<string, string>,
+  responseHeaders?: Record<string, string>,
 ): JSONSchema7 | undefined {
-  return selectSchemaForAccept(
+  return selectGeneratedSchema(
     {
       contentTypes: meta?.responseContentTypes,
       byMediaType: meta?.responseSchemasByMediaType,
       fallback: meta?.responseSchema,
     },
-    headers,
+    requestHeaders,
+    responseHeaders,
   );
 }
 
@@ -604,7 +626,7 @@ export function createListGenerator(
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
   const responseStatus = meta?.responseStatus;
-  const headerSeed = createHeaderSeed(hooks?.fakerSeed);
+  const headerSeed = hooks?.headerSeed;
   // The wrapper shape depends on the negotiated media type, so it can only be
   // resolved per request. Memoized per schema object: without `onSchema` the
   // keys are the route's declared media-type schemas, a bounded set. A hook
@@ -613,16 +635,16 @@ export function createListGenerator(
   const wrapperMemo = new WeakMap<object, ArrayPropertyInfo>();
 
   return async (ctx: Schmock.RequestContext) => {
+    const headers = generateHeaderValues(headerDefs, headerSeed);
     const key = collectionStateKey(resource.basePath, ctx.params);
     const collection = readCollection(ctx.state, key);
     const items = [...collection];
 
-    const schema = metaSchema(meta, ctx.headers);
+    const schema = metaSchema(meta, ctx.headers, headers);
     const flat = buildResponse({
       status: responseStatus,
       body: items,
-      headerDefs,
-      headerSeed,
+      headers,
     });
     if (!schema) return flat;
 
@@ -643,8 +665,7 @@ export function createListGenerator(
       return buildResponse({
         status: responseStatus,
         body: skeleton,
-        headerDefs,
-        headerSeed,
+        headers,
       });
     }
 
@@ -731,13 +752,14 @@ export function createCreateGenerator(
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
   const responseStatus = meta?.responseStatus ?? 201;
-  const headerSeed = createHeaderSeed(hooks?.fakerSeed);
+  const headerSeed = hooks?.headerSeed;
 
   return async (ctx: Schmock.RequestContext) => {
+    const headers = generateHeaderValues(headerDefs, headerSeed);
     const key = collectionStateKey(resource.basePath, ctx.params);
     const counterKey = counterStateKey(resource.basePath, ctx.params);
 
-    const responseSchema = metaSchema(meta, ctx.headers);
+    const responseSchema = metaSchema(meta, ctx.headers, headers);
     // Only trust an envelope when a resolved item schema exists to store;
     // without one (incomplete specs) keep treating the response schema as the
     // item so nothing regresses.
@@ -787,8 +809,7 @@ export function createCreateGenerator(
     return buildResponse({
       status: responseStatus,
       body,
-      headerDefs,
-      headerSeed,
+      headers,
     });
   };
 }
@@ -834,9 +855,10 @@ export function createReadGenerator(
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
   const responseStatus = meta?.responseStatus;
-  const headerSeed = createHeaderSeed(hooks?.fakerSeed);
+  const headerSeed = hooks?.headerSeed;
 
   return async (ctx: Schmock.RequestContext) => {
+    const headers = generateHeaderValues(headerDefs, headerSeed);
     const key = collectionStateKey(resource.basePath, ctx.params);
     const collection = readCollection(ctx.state, key);
     const idValue = ctx.params[resource.idParam];
@@ -849,8 +871,7 @@ export function createReadGenerator(
     return buildResponse({
       status: responseStatus,
       body: item,
-      headerDefs,
-      headerSeed,
+      headers,
     });
   };
 }
@@ -862,9 +883,10 @@ export function createUpdateGenerator(
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
   const responseStatus = meta?.responseStatus;
-  const headerSeed = createHeaderSeed(hooks?.fakerSeed);
+  const headerSeed = hooks?.headerSeed;
 
   return async (ctx: Schmock.RequestContext) => {
+    const headers = generateHeaderValues(headerDefs, headerSeed);
     const key = collectionStateKey(resource.basePath, ctx.params);
     const collection = readCollection(ctx.state, key);
     const idValue = ctx.params[resource.idParam];
@@ -897,8 +919,7 @@ export function createUpdateGenerator(
     return buildResponse({
       status: responseStatus,
       body: updated,
-      headerDefs,
-      headerSeed,
+      headers,
     });
   };
 }
@@ -910,9 +931,10 @@ export function createDeleteGenerator(
 ): Schmock.GeneratorFunction {
   const headerDefs = meta?.responseHeaders;
   const responseStatus = meta?.responseStatus ?? 204;
-  const headerSeed = createHeaderSeed(hooks?.fakerSeed);
+  const headerSeed = hooks?.headerSeed;
 
   return async (ctx: Schmock.RequestContext) => {
+    const headers = generateHeaderValues(headerDefs, headerSeed);
     const key = collectionStateKey(resource.basePath, ctx.params);
     const collection = readCollection(ctx.state, key);
     const idValue = ctx.params[resource.idParam];
@@ -932,35 +954,36 @@ export function createDeleteGenerator(
     return buildResponse({
       status: responseStatus,
       body: deleted,
-      headerDefs,
-      headerSeed,
+      headers,
     });
   };
 }
 
 export function createStaticGenerator(
   parsedPath: ParsedPath,
-  seed?: number,
-  onSchema?: OnSchemaCallback,
+  hooks: GenerationHooks = {},
 ): Schmock.GeneratorFunction {
   // Not `findSuccessResponse`: an operation declaring only error statuses must
   // answer one of them rather than an undeclared 200. The headers captured
   // below therefore come from that same entry — a 404-only operation emits the
   // 404 entry's declared headers at status 404.
   const declaredResponse = findRepresentativeResponse(parsedPath.responses);
-  const headerSeed = createHeaderSeed(seed);
-
   return async (ctx: Schmock.RequestContext) => {
     // Only reachable for a spec that declares no responses at all.
     if (!declaredResponse) return buildResponse({ status: 200, body: {} });
 
     const [responseStatus, responseEntry] = declaredResponse;
     const headerDefs = responseEntry.headers;
-    const responseSchema = selectResponseSchema(responseEntry, ctx.headers);
+    const headers = generateHeaderValues(headerDefs, hooks.headerSeed);
+    const responseSchema = selectResponseSchema(
+      responseEntry,
+      ctx.headers,
+      headers,
+    );
     if (responseSchema) {
       let schema = responseSchema;
-      if (onSchema) {
-        const patched = onSchema(schema, {
+      if (hooks.onSchema) {
+        const patched = hooks.onSchema(schema, {
           method: parsedPath.method,
           path: parsedPath.path,
           params: ctx.params,
@@ -970,12 +993,14 @@ export function createStaticGenerator(
         if (patched) schema = patched;
       }
       try {
-        const body = await generateFromSchema({ schema, seed });
+        const body = await generateFromSchema({
+          schema,
+          seed: hooks.fakerSeed,
+        });
         return buildResponse({
           status: responseStatus,
           body,
-          headerDefs,
-          headerSeed,
+          headers,
         });
       } catch (error) {
         // Deliberately a throw, not a laundered `[status, {}]`: core renders it
@@ -992,15 +1017,15 @@ export function createStaticGenerator(
     return buildResponse({
       status: responseStatus,
       body: {},
-      headerDefs,
-      headerSeed,
+      headers,
     });
   };
 }
 
 function selectResponseSchema(
   entry: ParsedResponseEntry,
-  headers: Record<string, string>,
+  requestHeaders: Record<string, string>,
+  responseHeaders: Record<string, string>,
 ): JSONSchema7 | undefined {
   let byMediaType: Map<string, JSONSchema7> | undefined;
   if (entry.content && entry.content.size > 0) {
@@ -1009,13 +1034,14 @@ function selectResponseSchema(
       if (content.schema) byMediaType.set(mediaType, content.schema);
     }
   }
-  return selectSchemaForAccept(
+  return selectGeneratedSchema(
     {
       contentTypes: entry.contentTypes,
       byMediaType,
       fallback: entry.schema,
     },
-    headers,
+    requestHeaders,
+    responseHeaders,
   );
 }
 

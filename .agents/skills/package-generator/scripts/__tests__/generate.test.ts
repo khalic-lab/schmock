@@ -220,6 +220,10 @@ describe("package generator", () => {
     expect(result.output).toContain("package.json: build, typecheck");
     expect(result.output).toContain("publish.sh: PACKAGES dependency order");
     expect(result.output).toContain("check-deps.sh: PACKAGES");
+    expect(result.output).toContain(
+      "scripts/smoke-tests/fixtures/<package>: add the smoke fixture required by workspace manifest discovery",
+    );
+    expect(result.output).not.toContain("run-all.sh: ALL_PACKAGES");
   });
 
   it.each([

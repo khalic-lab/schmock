@@ -51,11 +51,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * as `toString` or `constructor` are never mistaken for query params or fields.
  */
 function ownValue<T>(source: Record<string, T>, key: string): T | undefined {
-  return Object.hasOwn(source, key) ? source[key] : undefined;
+  try {
+    return Object.hasOwn(source, key) ? source[key] : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function describeReceived(value: unknown): string {
-  return typeof value === "string" ? JSON.stringify(value) : String(value);
+  try {
+    return typeof value === "string" ? JSON.stringify(value) : String(value);
+  } catch {
+    return "<unprintable>";
+  }
 }
 
 function configError(message: string, option: string, received: unknown) {
@@ -133,9 +141,53 @@ function validateOptions(options: QueryPluginOptions): void {
   }
 }
 
+function snapshotOptions(options: QueryPluginOptions): QueryPluginOptions {
+  const { pagination, sorting, filtering } = options;
+  let paginationSnapshot: PaginationOptions | undefined;
+  let sortingSnapshot: SortingOptions | undefined;
+  let filteringSnapshot: FilteringOptions | undefined;
+
+  if (pagination) {
+    const { defaultLimit, maxLimit, pageParam, limitParam } = pagination;
+    paginationSnapshot = { defaultLimit, maxLimit, pageParam, limitParam };
+  }
+
+  if (sorting) {
+    const {
+      allowed,
+      default: defaultField,
+      defaultOrder,
+      sortParam,
+      orderParam,
+    } = sorting;
+    sortingSnapshot = {
+      allowed: Array.isArray(allowed) ? [...allowed] : allowed,
+      default: defaultField,
+      defaultOrder,
+      sortParam,
+      orderParam,
+    };
+  }
+
+  if (filtering) {
+    const { allowed, filterPrefix } = filtering;
+    filteringSnapshot = {
+      allowed: Array.isArray(allowed) ? [...allowed] : allowed,
+      filterPrefix,
+    };
+  }
+
+  return {
+    pagination: paginationSnapshot,
+    sorting: sortingSnapshot,
+    filtering: filteringSnapshot,
+  };
+}
+
 function isStringRecord(value: unknown): value is Record<string, string> {
   return (
     isRecord(value) &&
+    !Array.isArray(value) &&
     Object.values(value).every((entry) => typeof entry === "string")
   );
 }
@@ -166,12 +218,17 @@ function replaceResponseBody(response: unknown, body: unknown): unknown {
       ? [response[0], body, response[2]]
       : [response[0], body];
   }
-  if (isStructuredResponse(response)) return { ...response, body };
+  if (isStructuredResponse(response)) {
+    return response.headers === undefined
+      ? { status: response.status, body }
+      : { status: response.status, body, headers: response.headers };
+  }
   return body;
 }
 
 export function queryPlugin(options: QueryPluginOptions = {}): Schmock.Plugin {
-  validateOptions(options);
+  const configuredOptions = snapshotOptions(options);
+  validateOptions(configuredOptions);
 
   return {
     name: "query",
@@ -190,18 +247,22 @@ export function queryPlugin(options: QueryPluginOptions = {}): Schmock.Plugin {
       const query = context.query || {};
 
       // Apply filtering
-      if (options.filtering) {
-        items = applyFiltering(items, query, options.filtering);
+      if (configuredOptions.filtering) {
+        items = applyFiltering(items, query, configuredOptions.filtering);
       }
 
       // Apply sorting
-      if (options.sorting) {
-        items = applySorting(items, query, options.sorting);
+      if (configuredOptions.sorting) {
+        items = applySorting(items, query, configuredOptions.sorting);
       }
 
       // Apply pagination
-      if (options.pagination) {
-        const result = applyPagination(items, query, options.pagination);
+      if (configuredOptions.pagination) {
+        const result = applyPagination(
+          items,
+          query,
+          configuredOptions.pagination,
+        );
         return { context, response: replaceResponseBody(response, result) };
       }
 
@@ -230,8 +291,12 @@ function applyFiltering(
         if (!isRecord(item)) return false;
         const itemValue = ownValue(item, field);
         if (itemValue === undefined) return false;
-        // Intentional string coercion: query params are inherently strings
-        return String(itemValue) === value;
+        try {
+          // Intentional string coercion: query params are inherently strings
+          return String(itemValue) === value;
+        } catch {
+          return false;
+        }
       });
     }
   }
@@ -239,47 +304,98 @@ function applyFiltering(
   return result;
 }
 
-/**
- * Buckets values by type so comparisons never mix incompatible rules.
- * Finite numbers < non-finite numbers < strings < booleans < everything else.
- */
-function typeRank(value: unknown): number {
-  if (typeof value === "number") return Number.isFinite(value) ? 0 : 1;
-  if (typeof value === "string") return 2;
-  if (typeof value === "boolean") return 3;
-  return 4;
-}
-
-/**
- * Total order over mixed value types. Comparing within a single bucket keeps
- * the comparator transitive, so the result never depends on input order.
- */
-function compareValues(a: unknown, b: unknown): number {
-  const rankA = typeRank(a);
-  const rankB = typeRank(b);
-  if (rankA !== rankB) return rankA - rankB;
-
-  // Equal ranks mean equal runtime types, so each branch narrows rather than
-  // asserts. Non-finite numbers share rank 1 and have no ordering among
-  // themselves.
-  if (typeof a === "number" && typeof b === "number") {
-    return Number.isFinite(a) ? a - b : 0;
-  }
-  if (typeof a === "string" && typeof b === "string") {
-    // Locale collation can rank distinct strings equal; fall back to code
-    // unit order so the result stays deterministic across engines
-    const collated = a.localeCompare(b);
-    return collated !== 0 ? collated : compareStrings(a, b);
-  }
-  if (typeof a === "boolean" && typeof b === "boolean") {
-    return Number(a) - Number(b);
-  }
-  return compareStrings(String(a), String(b));
-}
-
 function compareStrings(a: string, b: string): number {
   if (a < b) return -1;
   return a > b ? 1 : 0;
+}
+
+// Complex values are opaque: inspecting them can recurse, invoke traps, or
+// expand shared DAGs. They compare equal in a stable bucket after all scalars.
+type SortKey =
+  | { kind: "number"; value: number }
+  | { kind: "non-finite-number"; value: number }
+  | { kind: "string"; value: string }
+  | { kind: "boolean"; value: boolean }
+  | { kind: "bigint"; value: bigint }
+  | { kind: "null" }
+  | { kind: "unsupported" }
+  | { kind: "missing" };
+
+function createSortKey(value: unknown): SortKey {
+  if (value === undefined) return { kind: "missing" };
+  if (value === null) return { kind: "null" };
+  if (typeof value === "number") {
+    return Number.isFinite(value)
+      ? { kind: "number", value }
+      : { kind: "non-finite-number", value };
+  }
+  if (typeof value === "string") return { kind: "string", value };
+  if (typeof value === "boolean") return { kind: "boolean", value };
+  if (typeof value === "bigint") return { kind: "bigint", value };
+  return { kind: "unsupported" };
+}
+
+function sortRank(key: SortKey): number {
+  switch (key.kind) {
+    case "number":
+      return 0;
+    case "non-finite-number":
+      return 1;
+    case "string":
+      return 2;
+    case "boolean":
+      return 3;
+    case "bigint":
+      return 4;
+    case "null":
+      return 5;
+    case "unsupported":
+      return 6;
+    case "missing":
+      return 7;
+  }
+}
+
+function nonFiniteRank(value: number): number {
+  if (value === Number.NEGATIVE_INFINITY) return 0;
+  if (value === Number.POSITIVE_INFINITY) return 1;
+  return 2;
+}
+
+function compareSortKeys(
+  a: SortKey,
+  b: SortKey,
+  order: "asc" | "desc",
+): number {
+  if (a.kind === "missing" || b.kind === "missing") {
+    if (a.kind === b.kind) return 0;
+    return a.kind === "missing" ? 1 : -1;
+  }
+  if (a.kind === "unsupported" || b.kind === "unsupported") {
+    if (a.kind === b.kind) return 0;
+    return a.kind === "unsupported" ? 1 : -1;
+  }
+
+  const rankComparison = sortRank(a) - sortRank(b);
+  let comparison = rankComparison;
+  if (rankComparison === 0) {
+    if (a.kind === "number" && b.kind === "number") {
+      comparison = a.value < b.value ? -1 : a.value > b.value ? 1 : 0;
+    } else if (
+      a.kind === "non-finite-number" &&
+      b.kind === "non-finite-number"
+    ) {
+      comparison = nonFiniteRank(a.value) - nonFiniteRank(b.value);
+    } else if (a.kind === "string" && b.kind === "string") {
+      comparison = compareStrings(a.value, b.value);
+    } else if (a.kind === "boolean" && b.kind === "boolean") {
+      comparison = Number(a.value) - Number(b.value);
+    } else if (a.kind === "bigint" && b.kind === "bigint") {
+      comparison = a.value < b.value ? -1 : a.value > b.value ? 1 : 0;
+    }
+  }
+
+  return order === "desc" ? -comparison : comparison;
 }
 
 function applySorting(
@@ -298,20 +414,15 @@ function applySorting(
   // Only sort by allowed fields
   if (!options.allowed.includes(sortField)) return items;
 
-  return items.sort((a, b) => {
-    if (!isRecord(a) || !isRecord(b)) return 0;
-    const aVal = ownValue(a, sortField);
-    const bVal = ownValue(b, sortField);
-
-    // Missing values always sort last, in either direction
-    if (aVal === bVal) return 0;
-    if (aVal === undefined) return 1;
-    if (bVal === undefined) return -1;
-
-    const comparison = compareValues(aVal, bVal);
-
-    return sortOrder === "desc" ? -comparison : comparison;
-  });
+  return items
+    .map((item) => ({
+      item,
+      key: createSortKey(
+        isRecord(item) ? ownValue(item, sortField) : undefined,
+      ),
+    }))
+    .sort((a, b) => compareSortKeys(a.key, b.key, sortOrder))
+    .map(({ item }) => item);
 }
 
 export interface PaginatedResult {

@@ -19,30 +19,29 @@
  * How a group is built
  * --------------------
  * All fences sharing a group id are concatenated in document order into one
- * module, which is written to a temporary `.ts` file inside this directory and
- * imported (vitest resolves `@schmock/core` & co. to `packages/*\/src` via
- * tests/integration/vitest.config.ts). One rule applies to the concatenated
- * source: if it contains no top-level `import`, a single
+ * module, which is written to a temporary `.ts` file inside this directory,
+ * strict-typechecked with the repository tsconfig, and imported (vitest and
+ * TypeScript resolve `@schmock/core` & co. to `packages/*\/src`). One rule
+ * applies to the concatenated source: if it contains no top-level `import`, a
+ * single
  * `import { schmock } from "@schmock/core"` preamble is prepended. Nothing else
  * is injected. That is why a group's FIRST fence must be the one that creates
  * the mock instance the later fences use.
  *
  * What this does and does not prove
  * ---------------------------------
- * - It proves the snippets still execute: renamed methods, changed signatures,
- *   and construction-time throws all fail here.
- * - It does NOT typecheck: esbuild strips annotations without checking them.
- * - It does NOT inspect response status codes. `mock.handle()` resolves with a
- *   500/404 response object rather than throwing, so a snippet whose generator
- *   blows up inside the pipeline still passes. Groups are therefore built as
- *   coherent sessions (see the untagged fences: a snippet that depends on state
- *   an earlier tagged fence never creates is deliberately left out).
+ * - It proves the snippets strict-typecheck and execute: renamed methods,
+ *   changed signatures, unsafe access to unknown request data, and runtime
+ *   assertion failures all fail here.
+ * - Tagged examples that handle requests assert their status/body outcomes so
+ *   a resolved 404/500 response cannot masquerade as successful execution.
  *
  * EXPECTED_GROUPS below pins the tags this file expects to find. If a doc edit
  * drops or renames a tag, the pin fails loudly — otherwise losing the tags
  * would leave this suite green with nothing to run.
  */
 import {
+  existsSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -51,10 +50,12 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import ts from "typescript";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const DOC_LABEL = "docs/getting-started.md";
-const DOC_PATH = resolve(__dirname, "../..", DOC_LABEL);
+const ROOT_DIR = resolve(__dirname, "../..");
+const DOC_PATH = resolve(ROOT_DIR, DOC_LABEL);
 
 /** Tag -> number of fences expected to carry it. */
 const EXPECTED_GROUPS: Record<string, number> = {
@@ -89,8 +90,8 @@ function parseFences(markdown: string): Fence[] {
       const match = /^```(\S+)[ \t]*(.*)$/.exec(line);
       if (match) {
         open = {
-          lang: match[1] as string,
-          info: (match[2] as string).trim(),
+          lang: match[1],
+          info: match[2].trim(),
           startLine: lineNumber,
         };
         buffer = [];
@@ -129,7 +130,8 @@ const untagged = fences.filter(
 
 const groups = new Map<string, Fence[]>();
 for (const fence of tagged) {
-  const group = fence.group as string;
+  const group = fence.group;
+  if (group === undefined) continue;
   const existing = groups.get(group);
   if (existing) existing.push(fence);
   else groups.set(group, [fence]);
@@ -147,25 +149,97 @@ function buildSource(members: Fence[]): string {
 }
 
 const WORKDIR_PREFIX = ".docs-snippets-";
+const OWNED_WORKDIR_PREFIX = `${WORKDIR_PREFIX}${process.pid}-`;
 
-let workdir: string;
-
-beforeAll(() => {
-  // Generated modules live inside this directory so vitest's `@schmock/*`
-  // aliases resolve; a crashed earlier run can leave one behind, so sweep first.
-  for (const entry of readdirSync(__dirname)) {
-    if (entry.startsWith(WORKDIR_PREFIX)) {
-      rmSync(join(__dirname, entry), { recursive: true, force: true });
-    }
+function processIsRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "EPERM"
+    );
   }
-  workdir = mkdtempSync(join(__dirname, WORKDIR_PREFIX));
-});
+}
 
-afterAll(() => {
-  if (workdir) rmSync(workdir, { recursive: true, force: true });
-});
+function cleanupStaleWorkdirs(): void {
+  for (const entry of readdirSync(__dirname)) {
+    if (!entry.startsWith(WORKDIR_PREFIX)) continue;
+    const owner = /^\.docs-snippets-(\d+)-/.exec(entry);
+    if (owner && processIsRunning(Number(owner[1]))) continue;
+    rmSync(join(__dirname, entry), { recursive: true, force: true });
+  }
+}
+
+beforeAll(cleanupStaleWorkdirs);
+
+const diagnosticHost: ts.FormatDiagnosticsHost = {
+  getCanonicalFileName: (fileName) => fileName,
+  getCurrentDirectory: () => ROOT_DIR,
+  getNewLine: () => "\n",
+};
+
+const configPath = resolve(ROOT_DIR, "tsconfig.json");
+const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+if (configFile.error) {
+  throw new Error(ts.formatDiagnostic(configFile.error, diagnosticHost));
+}
+const parsedConfig = ts.parseJsonConfigFileContent(
+  configFile.config,
+  ts.sys,
+  ROOT_DIR,
+  {
+    composite: false,
+    declaration: false,
+    emitDeclarationOnly: false,
+    incremental: false,
+    noEmit: true,
+  },
+  configPath,
+);
+if (parsedConfig.errors.length > 0) {
+  throw new Error(
+    ts.formatDiagnosticsWithColorAndContext(
+      parsedConfig.errors,
+      diagnosticHost,
+    ),
+  );
+}
+const compilerOptions: ts.CompilerOptions = {
+  ...parsedConfig.options,
+  typeRoots: [
+    resolve(ROOT_DIR, "node_modules/@types"),
+    resolve(ROOT_DIR, "packages/core/node_modules/@types"),
+  ],
+};
+
+function typecheck(file: string): void {
+  const program = ts.createProgram({
+    rootNames: [file],
+    options: compilerOptions,
+  });
+  const diagnostics = ts.getPreEmitDiagnostics(program);
+  if (diagnostics.length > 0) {
+    throw new Error(
+      ts.formatDiagnosticsWithColorAndContext(diagnostics, diagnosticHost),
+    );
+  }
+}
 
 describe("executable documentation", () => {
+  it("removes stale generated modules on startup", () => {
+    const staleWorkdir = mkdtempSync(join(__dirname, WORKDIR_PREFIX));
+    try {
+      cleanupStaleWorkdirs();
+      expect(existsSync(staleWorkdir)).toBe(false);
+    } finally {
+      rmSync(staleWorkdir, { recursive: true, force: true });
+    }
+  });
+
   it(`${DOC_LABEL} still carries the expected docs-run tags`, () => {
     const found: Record<string, number> = {};
     for (const [group, members] of groups) found[group] = members.length;
@@ -192,9 +266,11 @@ describe("executable documentation", () => {
       .join(", ");
     it(`runs ${DOC_LABEL} [docs-run=${group}] (lines ${ranges})`, async () => {
       const source = buildSource(members);
+      const workdir = mkdtempSync(join(__dirname, OWNED_WORKDIR_PREFIX));
       const file = join(workdir, `${group}.snippet.ts`);
-      writeFileSync(file, source);
       try {
+        writeFileSync(file, source);
+        typecheck(file);
         await expect(import(pathToFileURL(file).href)).resolves.toBeDefined();
       } catch (error) {
         throw new Error(
@@ -202,6 +278,8 @@ describe("executable documentation", () => {
             `${ranges}:\n\n${source}\n`,
           { cause: error },
         );
+      } finally {
+        rmSync(workdir, { recursive: true, force: true });
       }
     });
   }

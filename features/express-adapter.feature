@@ -104,3 +104,10 @@ Feature: Express Adapter
       { "error": "request hook exploded", "code": "INTERNAL_ERROR" }
       """
     And the Express error middleware should not have handled the request
+
+  Scenario: A committed hook failure settles through Express error middleware
+    Given I create an Express middleware whose beforeRequest writes before failing
+    When a request is made to "GET /partial-failure"
+    Then the committed Express response should complete with status 207 and body "partial"
+    And the Express error middleware should observe "request hook exploded after write"
+    And the Express error formatter should not have handled the error
