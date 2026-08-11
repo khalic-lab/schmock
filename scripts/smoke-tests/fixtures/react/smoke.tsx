@@ -1,9 +1,12 @@
 import { JSDOM } from "jsdom";
 
-// Set up DOM globals before importing React
-const dom = new JSDOM("<!DOCTYPE html><html><body><div id='root'></div></body></html>", {
-  url: "http://localhost",
-});
+// Set up DOM globals before importing React, which snapshots DOM availability.
+const dom = new JSDOM(
+  "<!DOCTYPE html><html><body><div id='root'></div></body></html>",
+  {
+    url: "http://localhost",
+  },
+);
 Object.assign(globalThis, {
   window: dom.window,
   document: dom.window.document,
@@ -11,14 +14,17 @@ Object.assign(globalThis, {
   HTMLElement: dom.window.HTMLElement,
 });
 
-import React, { useEffect, useState } from "react";
-import { createRoot } from "react-dom/client";
-import { schmock } from "@schmock/core";
-import { SchmockProvider, useSchmock } from "@schmock/react";
+const React = await import("react");
+const { useEffect, useState } = React;
+const { createRoot } = await import("react-dom/client");
+const { schmock } = await import("@schmock/core");
+const { SchmockProvider, useSchmock } = await import("@schmock/react");
 
 // 1. Verify exports exist
-if (typeof SchmockProvider !== "function") throw new Error("SchmockProvider not a function");
-if (typeof useSchmock !== "function") throw new Error("useSchmock not a function");
+if (typeof SchmockProvider !== "function")
+  throw new Error("SchmockProvider not a function");
+if (typeof useSchmock !== "function")
+  throw new Error("useSchmock not a function");
 
 // 2. Test intercept lifecycle via Provider
 const mock = schmock();
@@ -47,7 +53,8 @@ function App() {
   );
 }
 
-const container = document.getElementById("root")!;
+const container = document.getElementById("root");
+if (!container) throw new Error("Root container not found");
 const root = createRoot(container);
 
 root.render(
@@ -62,14 +69,17 @@ if (!appEl) throw new Error("App not rendered");
 
 // Check useSchmock works
 const hasMock = document.getElementById("has-mock");
-if (hasMock?.textContent !== "yes") throw new Error("useSchmock failed: " + hasMock?.textContent);
+if (hasMock?.textContent !== "yes")
+  throw new Error(`useSchmock failed: ${hasMock?.textContent}`);
 
 // Check fetch was intercepted
 const count = document.getElementById("count");
-if (count?.textContent !== "1") throw new Error("Fetch not intercepted, count: " + count?.textContent);
+if (count?.textContent !== "1")
+  throw new Error(`Fetch not intercepted, count: ${count?.textContent}`);
 
 const userSpan = document.querySelector(".user");
-if (userSpan?.textContent !== "Alice") throw new Error("User not rendered: " + userSpan?.textContent);
+if (userSpan?.textContent !== "Alice")
+  throw new Error(`User not rendered: ${userSpan?.textContent}`);
 
 // Check spy API
 if (!mock.called("GET", "/api/users")) throw new Error("spy: should be called");
@@ -77,5 +87,6 @@ if (!mock.called("GET", "/api/users")) throw new Error("spy: should be called");
 // Unmount should restore fetch
 root.unmount();
 await new Promise((r) => setTimeout(r, 50));
+if (globalThis.fetch !== savedFetch) throw new Error("fetch was not restored");
 
 console.log("@schmock/react: all checks passed");

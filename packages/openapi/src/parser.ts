@@ -119,6 +119,29 @@ const NON_METHOD_PATH_ITEM_KEYS = new Set([
   "trace",
 ]);
 
+type SchemaDirection = "request" | "response";
+type SchemaNormalizer = (
+  schema: Record<string, unknown>,
+  direction: SchemaDirection,
+) => JSONSchema7;
+
+function createSchemaNormalizer(): SchemaNormalizer {
+  // Dereferenced component refs share identity. Reusing their normalized form
+  // avoids cloning large schema graphs once per operation and media type.
+  const requestSchemas = new WeakMap<object, JSONSchema7>();
+  const responseSchemas = new WeakMap<object, JSONSchema7>();
+
+  return (schema, direction) => {
+    const schemas = direction === "request" ? requestSchemas : responseSchemas;
+    const cached = schemas.get(schema);
+    if (cached) return cached;
+
+    const normalized = normalizeSchema(schema, direction);
+    schemas.set(schema, normalized);
+    return normalized;
+  };
+}
+
 function isExtensionKey(key: string): boolean {
   return key.startsWith("x-");
 }
@@ -662,6 +685,7 @@ export async function parseSpec(
 ): Promise<ParsedSpec> {
   const api = await loadDocument(source, options);
   const warnings: string[] = [];
+  const normalizeParsedSchema = createSchemaNormalizer();
 
   const isSwagger2 = "swagger" in api && typeof api.swagger === "string";
   const title = api.info?.title ?? "Untitled";
@@ -705,6 +729,7 @@ export async function parseSpec(
     const pathLevelParams = extractParameters(
       Array.isArray(pathItem.parameters) ? pathItem.parameters : undefined,
       isSwagger2,
+      normalizeParsedSchema,
       warnings,
       `path ${pathTemplate}`,
     );
@@ -735,6 +760,7 @@ export async function parseSpec(
       const operationParams = extractParameters(
         Array.isArray(operation.parameters) ? operation.parameters : undefined,
         isSwagger2,
+        normalizeParsedSchema,
         warnings,
         label,
       );
@@ -757,17 +783,24 @@ export async function parseSpec(
         const rawRequestBody = isRecord(operation.requestBody)
           ? operation.requestBody
           : undefined;
-        requestBody = extractOpenApi3RequestBody(rawRequestBody);
+        requestBody = extractOpenApi3RequestBody(
+          rawRequestBody,
+          normalizeParsedSchema,
+        );
         requestBodyRequired = rawRequestBody
           ? getBoolean(rawRequestBody.required, false)
           : false;
-        requestContent = extractOpenApi3RequestContent(rawRequestBody);
+        requestContent = extractOpenApi3RequestContent(
+          rawRequestBody,
+          normalizeParsedSchema,
+        );
       }
 
       // Extract responses
       const responses = extractResponses(
         isRecord(operation.responses) ? operation.responses : undefined,
         isSwagger2,
+        normalizeParsedSchema,
         getStringArray(operation.produces) ?? rootProduces,
         warnings,
         label,
@@ -788,7 +821,7 @@ export async function parseSpec(
       // Extract OAS3 callbacks
       const callbacks =
         !isSwagger2 && isRecord(operation.callbacks)
-          ? extractCallbacks(operation.callbacks)
+          ? extractCallbacks(operation.callbacks, normalizeParsedSchema)
           : undefined;
 
       // Filter out body parameters from the final parameter list (Swagger 2.0)
@@ -837,6 +870,7 @@ function isNotBodyParam(param: InternalParameter): param is ParsedParameter {
 function extractParameters(
   params: unknown[] | undefined,
   isSwagger2: boolean,
+  normalizeParsedSchema: SchemaNormalizer,
   warnings?: string[],
   label?: string,
 ): InternalParameter[] {
@@ -858,11 +892,11 @@ function extractParameters(
         // Swagger 2.0: schema is inline on the parameter (type, format, etc.)
         if (location === "body") {
           schema = isRecord(p.schema)
-            ? normalizeSchema(p.schema, "request")
+            ? normalizeParsedSchema(p.schema, "request")
             : undefined;
         } else {
           schema = p.type
-            ? normalizeSchema(
+            ? normalizeParsedSchema(
                 { type: p.type, format: p.format, enum: p.enum },
                 "request",
               )
@@ -871,7 +905,7 @@ function extractParameters(
       } else {
         // OpenAPI 3.x: schema is nested
         schema = isRecord(p.schema)
-          ? normalizeSchema(p.schema, "request")
+          ? normalizeParsedSchema(p.schema, "request")
           : undefined;
       }
 
@@ -918,6 +952,7 @@ function extractSwagger2RequestBody(
 
 function extractOpenApi3RequestBody(
   requestBody: Record<string, unknown> | undefined,
+  normalizeParsedSchema: SchemaNormalizer,
 ): JSONSchema7 | undefined {
   if (!requestBody) return undefined;
 
@@ -932,7 +967,7 @@ function extractOpenApi3RequestBody(
   const schema = isRecord(jsonEntry.schema) ? jsonEntry.schema : undefined;
   if (!schema) return undefined;
 
-  return normalizeSchema(schema, "request");
+  return normalizeParsedSchema(schema, "request");
 }
 
 /**
@@ -940,12 +975,13 @@ function extractOpenApi3RequestBody(
  *
  * Distinct from {@link extractOpenApi3RequestBody}, which collapses the whole
  * `content` map to one JSON-ish schema — the reason a JSON+XML operation used
- * to validate an XML body against the JSON contract. Each media type gets its
- * own `normalizeSchema` call, so the resulting schemas are distinct objects and
- * each compiles once in the pipeline's validator cache.
+ * to validate an XML body against the JSON contract. Distinct source schemas
+ * remain distinct; repeated refs share one normalized identity per direction
+ * and compile once in the pipeline's validator cache.
  */
 function extractOpenApi3RequestContent(
   requestBody: Record<string, unknown> | undefined,
+  normalizeParsedSchema: SchemaNormalizer,
 ): Map<string, JSONSchema7 | undefined> | undefined {
   const content = isRecord(requestBody?.content)
     ? requestBody.content
@@ -956,7 +992,7 @@ function extractOpenApi3RequestContent(
   for (const [mediaType, entry] of Object.entries(content)) {
     const schema =
       isRecord(entry) && isRecord(entry.schema)
-        ? normalizeSchema(entry.schema, "request")
+        ? normalizeParsedSchema(entry.schema, "request")
         : undefined;
     result.set(normalizeMediaType(mediaType), schema);
   }
@@ -985,6 +1021,7 @@ function buildSwagger2RequestContent(
 function extractResponses(
   responses: Record<string, unknown> | undefined,
   isSwagger2: boolean,
+  normalizeParsedSchema: SchemaNormalizer,
   produces?: string[],
   warnings?: string[],
   label?: string,
@@ -1018,7 +1055,7 @@ function extractResponses(
 
     if (isSwagger2) {
       if (isRecord(response.schema)) {
-        schema = normalizeSchema(response.schema, "response");
+        schema = normalizeParsedSchema(response.schema, "response");
       }
       // Swagger 2.0 single example
       if (response.examples !== undefined && isRecord(response.examples)) {
@@ -1038,10 +1075,13 @@ function extractResponses(
       const content = isRecord(response.content) ? response.content : undefined;
       if (content) {
         contentTypes = Object.keys(content);
-        responseContent = extractResponseContent(content);
+        responseContent = extractResponseContent(
+          content,
+          normalizeParsedSchema,
+        );
         const jsonEntry = findJsonContent(content);
         if (jsonEntry && isRecord(jsonEntry.schema)) {
-          schema = normalizeSchema(jsonEntry.schema, "response");
+          schema = normalizeParsedSchema(jsonEntry.schema, "response");
         }
         // OAS3 named examples
         if (jsonEntry) {
@@ -1050,7 +1090,11 @@ function extractResponses(
       }
     }
 
-    const headers = extractResponseHeaders(response, isSwagger2);
+    const headers = extractResponseHeaders(
+      response,
+      isSwagger2,
+      normalizeParsedSchema,
+    );
     result.set(code, {
       schema,
       description,
@@ -1066,6 +1110,7 @@ function extractResponses(
 
 function extractResponseContent(
   content: Record<string, unknown>,
+  normalizeParsedSchema: SchemaNormalizer,
 ): Map<string, ParsedResponseContent> | undefined {
   const result = new Map<string, ParsedResponseContent>();
 
@@ -1073,7 +1118,7 @@ function extractResponseContent(
     if (!isRecord(entryRaw)) continue;
 
     const schema = isRecord(entryRaw.schema)
-      ? normalizeSchema(entryRaw.schema, "response")
+      ? normalizeParsedSchema(entryRaw.schema, "response")
       : undefined;
     const examples = extractExamples(entryRaw);
     result.set(mediaType, { schema, examples });
@@ -1107,6 +1152,7 @@ function extractExamples(
 function extractResponseHeaders(
   response: Record<string, unknown>,
   isSwagger2: boolean,
+  normalizeParsedSchema: SchemaNormalizer,
 ): Record<string, Schmock.ResponseHeaderDef> | undefined {
   const rawHeaders = isRecord(response.headers) ? response.headers : undefined;
   if (!rawHeaders) return undefined;
@@ -1123,7 +1169,7 @@ function extractResponseHeaders(
     if (isSwagger2) {
       // Swagger 2.0: type/format/enum are inline on the header
       if (headerRaw.type) {
-        headerSchema = normalizeSchema(
+        headerSchema = normalizeParsedSchema(
           {
             type: headerRaw.type,
             format: headerRaw.format,
@@ -1135,7 +1181,7 @@ function extractResponseHeaders(
     } else {
       // OpenAPI 3.x: schema is nested
       if (isRecord(headerRaw.schema)) {
-        headerSchema = normalizeSchema(headerRaw.schema, "response");
+        headerSchema = normalizeParsedSchema(headerRaw.schema, "response");
       }
     }
 
@@ -1302,6 +1348,7 @@ function extractSecurityRequirements(
  */
 function extractCallbacks(
   callbacks: Record<string, unknown>,
+  normalizeParsedSchema: SchemaNormalizer,
 ): ParsedCallback[] | undefined {
   const result: ParsedCallback[] = [];
 
@@ -1320,7 +1367,10 @@ function extractCallbacks(
 
         let reqBody: JSONSchema7 | undefined;
         if (isRecord(operation.requestBody)) {
-          reqBody = extractOpenApi3RequestBody(operation.requestBody);
+          reqBody = extractOpenApi3RequestBody(
+            operation.requestBody,
+            normalizeParsedSchema,
+          );
         }
 
         result.push({
