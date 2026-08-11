@@ -221,49 +221,6 @@ export const validators = {
   },
 };
 
-// Performance Testing Utilities
-export const performance = {
-  measure: async <T>(
-    fn: () => T | Promise<T>,
-  ): Promise<{ result: T; duration: number }> => {
-    const start = Date.now();
-    const result = await fn();
-    const duration = Date.now() - start;
-    return { result, duration };
-  },
-
-  measureMemory: (fn: () => void): number => {
-    if (globalThis.gc) {
-      globalThis.gc();
-    }
-    const before = process.memoryUsage().heapUsed;
-    fn();
-    const after = process.memoryUsage().heapUsed;
-    return after - before;
-  },
-
-  benchmark: async (
-    _name: string,
-    fn: () => unknown | Promise<unknown>,
-    iterations = 100,
-  ): Promise<{ mean: number; min: number; max: number }> => {
-    const times: number[] = [];
-
-    for (let i = 0; i < iterations; i++) {
-      const start = Date.now();
-      await fn();
-      const duration = Date.now() - start;
-      times.push(duration);
-    }
-
-    return {
-      mean: times.reduce((a, b) => a + b, 0) / times.length,
-      min: Math.min(...times),
-      max: Math.max(...times),
-    };
-  },
-};
-
 // Test Data Generators
 export const generate = {
   samples: async (
