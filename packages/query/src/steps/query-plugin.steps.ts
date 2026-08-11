@@ -1,7 +1,11 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
 import { expect } from "vitest";
-import { queryPlugin } from "../index";
+import {
+  type QueryPluginOptions,
+  queryPlugin,
+  type SortingOptions,
+} from "../index";
 
 const feature = await loadFeature("../../features/query-plugin.feature");
 
@@ -418,6 +422,185 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
         expect(requirePaginatedBody(response).pagination.limit).toBe(
           Number(variables.limit),
         );
+      });
+    },
+  );
+
+  Scenario(
+    "Query configuration is snapshotted when the plugin is created",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a query plugin from mutable options and then change them",
+        () => {
+          const pagination = {
+            defaultLimit: 1,
+            maxLimit: 1,
+            pageParam: "p",
+            limitParam: "l",
+          };
+          const sorting: SortingOptions = {
+            allowed: ["name"],
+            default: "name",
+            defaultOrder: "asc",
+            sortParam: "sortBy",
+            orderParam: "direction",
+          };
+          const filtering = {
+            allowed: ["role"],
+            filterPrefix: "where",
+          };
+          const options: QueryPluginOptions = {
+            pagination,
+            sorting,
+            filtering,
+          };
+
+          mock = schmock();
+          mock("GET /mutable-options", [
+            { id: 1, name: "Zoe", role: "admin" },
+            { id: 2, name: "Alice", role: "admin" },
+            { id: 3, name: "Bob", role: "user" },
+          ]).pipe(queryPlugin(options));
+
+          pagination.defaultLimit = 3;
+          pagination.maxLimit = 3;
+          pagination.pageParam = "page";
+          pagination.limitParam = "limit";
+          sorting.allowed.splice(0, sorting.allowed.length, "id");
+          sorting.default = "id";
+          sorting.defaultOrder = "desc";
+          sorting.sortParam = "sort";
+          sorting.orderParam = "order";
+          filtering.allowed.splice(0, filtering.allowed.length, "group");
+          filtering.filterPrefix = "filter";
+        },
+      );
+
+      When("I request using the original query controls", async () => {
+        response = await mock.handle("GET", "/mutable-options", {
+          query: {
+            p: "1",
+            l: "1",
+            "where[role]": "admin",
+            sortBy: "name",
+            direction: "asc",
+          },
+        });
+      });
+
+      Then("I should receive {int} items", (_, count: number) => {
+        expect(requirePaginatedBody(response).data).toHaveLength(count);
+      });
+
+      And("the pagination total should be {int}", (_, total: number) => {
+        expect(requirePaginatedBody(response).pagination.total).toBe(total);
+      });
+
+      And(
+        "the first paginated item name should be {string}",
+        (_, name: string) => {
+          expect(requirePaginatedBody(response).data.at(0)?.name).toBe(name);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Structured response metadata is materialized during body replacement",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a mock returning 5 items with inherited structured response metadata",
+        () => {
+          mock = schmock();
+          mock("GET /inherited-metadata", () => {
+            const structuredResponse: Record<string, unknown> = Object.create({
+              status: 206,
+            });
+            Object.defineProperties(structuredResponse, {
+              body: {
+                enumerable: true,
+                value: generateItems(5),
+              },
+              headers: {
+                enumerable: false,
+                value: { "x-query-source": "inherited" },
+              },
+            });
+            return structuredResponse;
+          }).pipe(
+            queryPlugin({
+              pagination: { defaultLimit: 10, maxLimit: 100 },
+            }),
+          );
+        },
+      );
+
+      When("I request page 2 with limit 2", async () => {
+        response = await mock.handle("GET", "/inherited-metadata", {
+          query: { page: "2", limit: "2" },
+        });
+      });
+
+      Then("the response status should be 206", () => {
+        expect(response.status).toBe(206);
+      });
+
+      And(
+        "response header {string} should be {string}",
+        (_, header: string, value: string) => {
+          expect(response.headers[header]).toBe(value);
+        },
+      );
+
+      And("I should receive 2 items", () => {
+        expect(requirePaginatedBody(response).data).toHaveLength(2);
+      });
+
+      And("the pagination total should be 5", () => {
+        expect(requirePaginatedBody(response).pagination.total).toBe(5);
+      });
+    },
+  );
+
+  Scenario(
+    "Complex sort values remain stable in a last bucket",
+    ({ Given, When, Then }) => {
+      Given(
+        "I create a mock with scalar and opaque complex sort values",
+        () => {
+          const nullPrototypeScore: Record<string, unknown> =
+            Object.create(null);
+          nullPrototypeScore.rank = 1;
+
+          mock = schmock();
+          mock("GET /complex-sort", [
+            { id: 3, score: { rank: 3 } },
+            { id: 1, score: 2 },
+            { id: 2, score: nullPrototypeScore },
+            { id: 4, score: 1 },
+          ]).pipe(
+            queryPlugin({
+              sorting: { allowed: ["score"] },
+            }),
+          );
+        },
+      );
+
+      When(
+        "I request with sort {string} order {string}",
+        async (_, sort: string, order: string) => {
+          response = await mock.handle("GET", "/complex-sort", {
+            query: { sort, order },
+          });
+        },
+      );
+
+      Then("the sorted item ids should be {string}", (_, ids: string) => {
+        const actual = requireRecordArray(
+          response.body,
+          "complex sorted response body",
+        ).map((item) => item.id);
+        expect(actual.join(",")).toBe(ids);
       });
     },
   );

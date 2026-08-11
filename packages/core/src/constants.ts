@@ -110,9 +110,9 @@ const ENCODED_REPLACEMENT_CHARACTER = "%EF%BF%BD";
  * A path reaches core either as `url.pathname` (already encoded by the URL
  * parser) or as whatever string a `handle()` caller typed, so route paths and
  * request paths must be encoded the same way before they can be compared.
- * Encoding is idempotent: an existing valid `%XX` triplet is copied verbatim
- * rather than re-encoded, so applying this at route-parse time and again at
- * request time is safe.
+ * Encoding is idempotent: an existing valid `%XX` triplet is normalized to
+ * uppercase rather than re-encoded, so applying this at route-parse time and
+ * again at request time is safe.
  *
  * This deliberately never throws and never resolves `.`/`..` — an unreachable
  * spelling is preferable to silently rewriting the caller's path.
@@ -124,7 +124,7 @@ export function canonicalizePath(path: string): string {
       path[index] === "%" &&
       PERCENT_TRIPLET.test(path.slice(index, index + 3))
     ) {
-      result += path.slice(index, index + 3);
+      result += path.slice(index, index + 3).toUpperCase();
       index += 3;
       continue;
     }

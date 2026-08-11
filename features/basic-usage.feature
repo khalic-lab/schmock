@@ -30,6 +30,12 @@ Feature: Basic Usage
       """
     And the content-type should be "application/json"
 
+  Scenario: Malformed response envelope with array headers stays a plain body
+    Given I create a mock returning an object with array response headers
+    When I request "GET /malformed-envelope"
+    Then the status should be 200
+    And I should receive the malformed response envelope unchanged
+
   Scenario: Empty mock instance
     Given I create an empty mock with no routes
     When I request "GET /anything"

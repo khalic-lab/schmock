@@ -52,6 +52,12 @@ Feature: OpenAPI Response Compliance
     And the response has header "X-Request-ID"
     And the response has header "X-Rate-Limit"
 
+  Scenario: Seeded response header ordinals span CRUD and static routes reproducibly
+    Given two mocks with the same seed and CRUD and static header routes
+    When I request the wrapped CRUD list then the static route from each mock
+    Then each mock uses seeded response header ordinals zero then one
+    And both mocks return the same seeded request ID sequence
+
   Scenario: Manual override forces wrapping on a flat-array spec
     Given a mock with the Petstore spec and listWrapProperty "items" override
     When I list all pets

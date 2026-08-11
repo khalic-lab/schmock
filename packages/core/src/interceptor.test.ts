@@ -155,6 +155,61 @@ describe("mock.intercept()", () => {
     handle.restore();
   });
 
+  it.each([
+    ["path-form literal Unicode", "/café", "http://localhost/caf%c3%a9/users"],
+    [
+      "path-form lowercase escapes",
+      "/caf%c3%a9",
+      "http://localhost/café/users",
+    ],
+    [
+      "origin-form literal Unicode",
+      "https://api.example.com/café",
+      "https://api.example.com/caf%c3%a9/users",
+    ],
+    [
+      "origin-form lowercase escapes",
+      "https://api.example.com/caf%c3%a9",
+      "https://api.example.com/café/users",
+    ],
+  ])("canonicalizes a %s baseUrl before segment matching", async (_, baseUrl, url) => {
+    mock("GET /café/users", { mocked: true });
+    const savedFetch = globalThis.fetch;
+    const handle = mock.intercept({ baseUrl });
+
+    try {
+      const response = await fetch(url);
+      expect(savedFetch).not.toHaveBeenCalled();
+      expect(await response.json()).toEqual({ mocked: true });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it.each([
+    "GET /café/:name",
+    "GET /caf%C3%A9/:name",
+    "GET /caf%c3%a9/:name",
+  ] satisfies Schmock.RouteKey[])("matches literal and percent-encoded requests for route %s", async (route) => {
+    mock(route, ({ params }) => ({ name: params.name }));
+    const savedFetch = globalThis.fetch;
+    const handle = mock.intercept();
+
+    try {
+      const responses = await Promise.all([
+        fetch("http://localhost/café/Ana Lía"),
+        fetch("http://localhost/caf%C3%A9/Ana%20L%C3%ADa"),
+        fetch("http://localhost/caf%c3%a9/Ana%20L%c3%ada"),
+      ]);
+      expect(savedFetch).not.toHaveBeenCalled();
+      for (const response of responses) {
+        expect(await response.json()).toEqual({ name: "Ana Lía" });
+      }
+    } finally {
+      handle.restore();
+    }
+  });
+
   it("does not give relative inputs a synthetic origin for baseUrl matching", async () => {
     mock("GET /api/users", [{ id: 1 }]);
     const savedFetch = globalThis.fetch;

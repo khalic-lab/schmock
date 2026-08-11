@@ -127,6 +127,10 @@ describe("canonicalizePath", () => {
     expect(canonicalizePath(input)).toBe(expected);
   });
 
+  it("normalizes valid percent escapes to uppercase", () => {
+    expect(canonicalizePath("/caf%c3%a9/%2f")).toBe("/caf%C3%A9/%2F");
+  });
+
   it("agrees with the URL parser on reachable paths", () => {
     for (const [input] of cases) {
       expect(canonicalizePath(input)).toBe(

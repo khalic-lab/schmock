@@ -1,12 +1,15 @@
 import { schmock } from "@schmock/core";
 import { describe, expect, it } from "vitest";
-import { negotiateContentType } from "./content-negotiation";
+import {
+  negotiateContentType,
+  negotiateContentTypeMatch,
+} from "./content-negotiation";
 import { openapi } from "./plugin";
 
 // A `content` key may legally carry media-type parameters — the OAS 3.0
 // Response Object example itself uses `text/plain; charset=utf-8`. Negotiation
-// must compare the parameter-free form while still RETURNING the raw spec key,
-// because the parsed `content` map and `contentTypes` are both keyed raw.
+// must retain the raw spec key because the parsed `content` map and
+// `contentTypes` are both keyed raw.
 describe("negotiateContentType with a parameterized available type", () => {
   const available = ["application/json; charset=utf-8"];
 
@@ -43,6 +46,88 @@ describe("negotiateContentType with a parameterized available type", () => {
         "application/json",
       ]),
     ).toBe("application/json");
+  });
+});
+
+describe("parameter-specific Accept negotiation", () => {
+  const available = [
+    "application/json;profile=a",
+    "application/json;profile=b",
+  ];
+
+  it("selects the representation whose media parameters match", () => {
+    expect(negotiateContentType("application/json;profile=b", available)).toBe(
+      "application/json;profile=b",
+    );
+  });
+
+  it("applies a parameter-specific q=0 only to matching representations", () => {
+    expect(
+      negotiateContentType(
+        "application/json;profile=b;q=0, application/json;q=0.8",
+        available,
+      ),
+    ).toBe("application/json;profile=a");
+  });
+
+  it("recognizes q before a media parameter", () => {
+    expect(
+      negotiateContentType(
+        "application/json;q=0;profile=b, application/json;q=0.8",
+        available,
+      ),
+    ).toBe("application/json;profile=a");
+  });
+
+  it("compares charset values case-insensitively", () => {
+    expect(
+      negotiateContentType("application/json;charset=utf-8", [
+        "application/json;charset=UTF-8",
+      ]),
+    ).toBe("application/json;charset=UTF-8");
+  });
+
+  it("keeps non-charset parameter values case-sensitive", () => {
+    expect(
+      negotiateContentType("application/json;profile=B", available),
+    ).toBeNull();
+  });
+});
+
+describe("declared response media ranges", () => {
+  it("canonicalizes a concrete candidate to the most-specific declaration", () => {
+    expect(
+      negotiateContentTypeMatch("application/json", [
+        "application/*",
+        "application/json",
+      ]),
+    ).toEqual({
+      declared: "application/json",
+      contentType: "application/json",
+    });
+  });
+
+  it("uses the concrete accepted subtype for an application wildcard", () => {
+    expect(
+      negotiateContentType("application/problem+json", ["application/*"]),
+    ).toBe("application/problem+json");
+  });
+
+  it("uses the concrete accepted type for a full wildcard", () => {
+    expect(negotiateContentType("text/plain", ["*/*"])).toBe("text/plain");
+  });
+
+  it("uses a concrete JSON default when no Accept header is sent", () => {
+    expect(negotiateContentType("", ["application/*"])).toBe(
+      "application/json",
+    );
+    expect(negotiateContentType("", ["*/*"])).toBe("application/json");
+  });
+
+  it("concretizes a wildcard Accept and preserves its parameters", () => {
+    expect(negotiateContentType("image/*;profile=preview", ["*/*"])).toBe(
+      "image/png;profile=preview",
+    );
   });
 });
 

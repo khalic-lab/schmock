@@ -4,8 +4,9 @@ import {
   type GenerateOptions,
   generate,
   type JsonSchema,
-} from "json-schema-faker";
+} from "json-schema-faker-private";
 import { DETERMINISTIC_REF_DATE, JSF_MAX_DEPTH } from "./constants.js";
+import { assertOutputWithinLimits } from "./output-limits.js";
 
 // Re-exported here because this module owns the seeded-generation contract the
 // constant serves; `constants.ts` is its home.
@@ -13,6 +14,82 @@ export { DETERMINISTIC_REF_DATE };
 
 const MAX_GENERATION_SEED = 2_147_483_647;
 type JsfObjectSchema = Exclude<JsonSchema, boolean>;
+
+/**
+ * Keywords Schmock deliberately hands to json-schema-faker. Unknown keywords
+ * are annotations in JSON Schema, but JSF also treats them as hooks into its
+ * module-global `define()` registry. Removing them at this boundary keeps a
+ * consumer registration from changing Schmock output without mutating that
+ * consumer's registry.
+ */
+const JSF_SCHEMA_KEYWORDS = new Set([
+  "$schema",
+  "$id",
+  "$ref",
+  "$defs",
+  "$anchor",
+  "$dynamicRef",
+  "$dynamicAnchor",
+  "$vocabulary",
+  "$comment",
+  "definitions",
+  "type",
+  "enum",
+  "const",
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "autoIncrement",
+  "initialOffset",
+  "minLength",
+  "maxLength",
+  "pattern",
+  "format",
+  "contentEncoding",
+  "contentMediaType",
+  "contentSchema",
+  "items",
+  "prefixItems",
+  "additionalItems",
+  "contains",
+  "containsAll",
+  "minItems",
+  "maxItems",
+  "uniqueItems",
+  "minContains",
+  "maxContains",
+  "properties",
+  "required",
+  "additionalProperties",
+  "patternProperties",
+  "minProperties",
+  "maxProperties",
+  "propertyNames",
+  "dependencies",
+  "dependentRequired",
+  "dependentSchemas",
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "not",
+  "if",
+  "then",
+  "else",
+  "default",
+  "examples",
+  "description",
+  "title",
+  "readOnly",
+  "writeOnly",
+  "deprecated",
+  "faker",
+  "chance",
+  "jsonPath",
+  "template",
+  "example",
+]);
 
 /**
  * Create isolated faker instance to avoid race conditions.
@@ -98,6 +175,96 @@ export function cloneOwned(value: unknown): unknown {
   return cloneOwnedValue(value, new Set());
 }
 
+function cloneSnapshotValue(
+  value: unknown,
+  clones: Map<object, unknown>,
+): unknown {
+  if (value === null || typeof value !== "object") return value;
+
+  const existing = clones.get(value);
+  if (existing !== undefined) return existing;
+
+  if (value instanceof Date) {
+    const copy = new Date(value.getTime());
+    clones.set(value, copy);
+    return copy;
+  }
+  if (value instanceof RegExp) {
+    const copy = new RegExp(value.source, value.flags);
+    copy.lastIndex = value.lastIndex;
+    clones.set(value, copy);
+    return copy;
+  }
+  if (value instanceof Map) {
+    const copy = new Map<unknown, unknown>();
+    clones.set(value, copy);
+    for (const [key, entry] of value) {
+      copy.set(
+        cloneSnapshotValue(key, clones),
+        cloneSnapshotValue(entry, clones),
+      );
+    }
+    return copy;
+  }
+  if (value instanceof Set) {
+    const copy = new Set<unknown>();
+    clones.set(value, copy);
+    for (const entry of value) copy.add(cloneSnapshotValue(entry, clones));
+    return copy;
+  }
+  if (value instanceof ArrayBuffer) {
+    const copy = value.slice(0);
+    clones.set(value, copy);
+    return copy;
+  }
+  if (ArrayBuffer.isView(value)) {
+    const copy = structuredClone(value);
+    clones.set(value, copy);
+    return copy;
+  }
+  if (value instanceof URL) {
+    const copy = new URL(value.href);
+    clones.set(value, copy);
+    return copy;
+  }
+
+  if (Array.isArray(value)) {
+    const copy: unknown[] = new Array(value.length);
+    clones.set(value, copy);
+    for (let index = 0; index < value.length; index += 1) {
+      if (Object.hasOwn(value, index)) {
+        copy[index] = cloneSnapshotValue(value[index], clones);
+      }
+    }
+    return copy;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    // Opaque Faker arguments (including callback-support objects) retain their
+    // identity rather than being corrupted by a lossy generic clone.
+    return value;
+  }
+
+  const copy: Record<string, unknown> = Object.create(prototype);
+  clones.set(value, copy);
+  for (const [key, entry] of Object.entries(value)) {
+    Object.defineProperty(copy, key, {
+      value: cloneSnapshotValue(entry, clones),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  return copy;
+}
+
+/** Clone related option graphs together while retaining aliases and callbacks. */
+export function snapshotGraphs(values: readonly unknown[]): unknown[] {
+  const clones = new Map<object, unknown>();
+  return values.map((value) => cloneSnapshotValue(value, clones));
+}
+
 export function resolveGenerationSeed(seed?: number): number {
   return seed ?? Math.floor(Math.random() * MAX_GENERATION_SEED);
 }
@@ -115,19 +282,35 @@ export function createSeededRandom(seed: number): () => number {
 
 function normalizeDefinitionForJsf(
   definition: JSONSchema7Definition,
+  normalizedSchemas: Map<JSONSchema7, JsfObjectSchema>,
 ): JsonSchema {
   return typeof definition === "boolean"
     ? definition
-    : normalizeSchemaForJsf(definition);
+    : normalizeSchemaNodeForJsf(definition, normalizedSchemas);
+}
+
+function normalizeUnknownDefinitionForJsf(
+  definition: unknown,
+  normalizedSchemas: Map<JSONSchema7, JsfObjectSchema>,
+): JsonSchema | undefined {
+  if (typeof definition === "boolean") return definition;
+  return isSchemaObject(definition)
+    ? normalizeSchemaNodeForJsf(definition, normalizedSchemas)
+    : undefined;
+}
+
+function isSchemaObject(value: unknown): value is JSONSchema7 {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizeDefinitionMap(
   definitions: Record<string, JSONSchema7Definition>,
+  normalizedSchemas: Map<JSONSchema7, JsfObjectSchema>,
 ): Record<string, JsonSchema> {
   return Object.fromEntries(
     Object.entries(definitions).map(([key, definition]) => [
       key,
-      normalizeDefinitionForJsf(definition),
+      normalizeDefinitionForJsf(definition, normalizedSchemas),
     ]),
   );
 }
@@ -137,50 +320,95 @@ function normalizeDefinitionMap(
  * keyword. Convert Draft 7 tuple `items` recursively at the library boundary.
  */
 export function normalizeSchemaForJsf(schema: JSONSchema7): JsfObjectSchema {
+  return normalizeSchemaNodeForJsf(schema, new Map());
+}
+
+function normalizeSchemaNodeForJsf(
+  schema: JSONSchema7,
+  normalizedSchemas: Map<JSONSchema7, JsfObjectSchema>,
+): JsfObjectSchema {
+  const existing = normalizedSchemas.get(schema);
+  if (existing) return existing;
+
   const normalized: JsfObjectSchema = {};
+  normalizedSchemas.set(schema, normalized);
   for (const [key, value] of Object.entries(schema)) {
-    normalized[key] = value;
+    if (JSF_SCHEMA_KEYWORDS.has(key)) {
+      normalized[key] = value;
+    }
   }
 
   if (schema.properties) {
-    normalized.properties = normalizeDefinitionMap(schema.properties);
+    normalized.properties = normalizeDefinitionMap(
+      schema.properties,
+      normalizedSchemas,
+    );
   }
 
   if (schema.definitions) {
-    normalized.definitions = normalizeDefinitionMap(schema.definitions);
+    normalized.definitions = normalizeDefinitionMap(
+      schema.definitions,
+      normalizedSchemas,
+    );
   }
 
   if (schema.$defs) {
-    normalized.$defs = normalizeDefinitionMap(schema.$defs);
+    normalized.$defs = normalizeDefinitionMap(schema.$defs, normalizedSchemas);
   }
 
   if (schema.patternProperties) {
     normalized.patternProperties = normalizeDefinitionMap(
       schema.patternProperties,
+      normalizedSchemas,
     );
   }
 
   if (Array.isArray(schema.items)) {
-    normalized.prefixItems = schema.items.map(normalizeDefinitionForJsf);
+    normalized.prefixItems = schema.items.map((definition) =>
+      normalizeDefinitionForJsf(definition, normalizedSchemas),
+    );
     normalized.items =
       schema.additionalItems === undefined
         ? true
-        : normalizeDefinitionForJsf(schema.additionalItems);
+        : normalizeDefinitionForJsf(schema.additionalItems, normalizedSchemas);
     delete normalized.additionalItems;
   } else if (schema.items !== undefined) {
-    normalized.items = normalizeDefinitionForJsf(schema.items);
+    normalized.items = normalizeDefinitionForJsf(
+      schema.items,
+      normalizedSchemas,
+    );
+    if (schema.additionalItems !== undefined) {
+      normalized.additionalItems = normalizeDefinitionForJsf(
+        schema.additionalItems,
+        normalizedSchemas,
+      );
+    }
+  }
+
+  const prefixItems = Reflect.get(schema, "prefixItems");
+  if (!Array.isArray(schema.items) && Array.isArray(prefixItems)) {
+    normalized.prefixItems = prefixItems.flatMap((definition) => {
+      const normalizedDefinition = normalizeUnknownDefinitionForJsf(
+        definition,
+        normalizedSchemas,
+      );
+      return normalizedDefinition === undefined ? [] : [normalizedDefinition];
+    });
   }
 
   for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
     const definitions = schema[keyword];
     if (definitions) {
-      normalized[keyword] = definitions.map(normalizeDefinitionForJsf);
+      normalized[keyword] = definitions.map((definition) =>
+        normalizeDefinitionForJsf(definition, normalizedSchemas),
+      );
     }
   }
 
   if (schema.additionalProperties !== undefined) {
     normalized.additionalProperties = normalizeDefinitionForJsf(
       schema.additionalProperties,
+      normalizedSchemas,
     );
   }
 
@@ -194,7 +422,10 @@ export function normalizeSchemaForJsf(schema: JSONSchema7): JsfObjectSchema {
   ] as const) {
     const definition = schema[keyword];
     if (definition !== undefined) {
-      normalized[keyword] = normalizeDefinitionForJsf(definition);
+      normalized[keyword] = normalizeDefinitionForJsf(
+        definition,
+        normalizedSchemas,
+      );
     }
   }
 
@@ -204,9 +435,45 @@ export function normalizeSchemaForJsf(schema: JSONSchema7): JsfObjectSchema {
         key,
         Array.isArray(dependency)
           ? [...dependency]
-          : normalizeDefinitionForJsf(dependency),
+          : normalizeDefinitionForJsf(dependency, normalizedSchemas),
       ]),
     );
+  }
+
+  const contentSchema = normalizeUnknownDefinitionForJsf(
+    Reflect.get(schema, "contentSchema"),
+    normalizedSchemas,
+  );
+  if (contentSchema !== undefined) normalized.contentSchema = contentSchema;
+
+  const dependentSchemas = Reflect.get(schema, "dependentSchemas");
+  if (
+    dependentSchemas !== null &&
+    typeof dependentSchemas === "object" &&
+    !Array.isArray(dependentSchemas)
+  ) {
+    normalized.dependentSchemas = Object.fromEntries(
+      Object.entries(dependentSchemas).flatMap(([key, definition]) => {
+        const normalizedDefinition = normalizeUnknownDefinitionForJsf(
+          definition,
+          normalizedSchemas,
+        );
+        return normalizedDefinition === undefined
+          ? []
+          : [[key, normalizedDefinition]];
+      }),
+    );
+  }
+
+  const containsAll = Reflect.get(schema, "containsAll");
+  if (Array.isArray(containsAll)) {
+    normalized.containsAll = containsAll.flatMap((definition) => {
+      const normalizedDefinition = normalizeUnknownDefinitionForJsf(
+        definition,
+        normalizedSchemas,
+      );
+      return normalizedDefinition === undefined ? [] : [normalizedDefinition];
+    });
   }
 
   return normalized;
@@ -226,10 +493,10 @@ export async function generateWithJsf(
     // json-schema-faker defaults to 5, which silently drops required
     // properties below that depth. `JSF_MAX_DEPTH` is derived from
     // `MAX_NESTING_DEPTH` (constants.ts) and is itself the only bound on how
-    // deep a generated body can get: `validateSchema`'s schema-node and
-    // generated-node budgets bound the schema-side walk and the estimated
-    // output of the schema as written, but they never resolve `$ref`, so a
-    // `$defs` subtree that references itself is bounded by this option alone.
+    // deep a generated body can get. Validation resolves indexed schema refs
+    // and rejects cycles, while this remains defense in depth for JSF's
+    // separate internal depth counter and references it resolves by other
+    // mechanisms.
     maxDepth: JSF_MAX_DEPTH,
     optionalsProbability: 1.0,
     alwaysFakeOptionals: true,
@@ -245,5 +512,7 @@ export async function generateWithJsf(
   // Cloned on the way out so nothing generated stays aliased to the schema, to
   // json-schema-faker's internals, or to a sibling item built from the same
   // sub-schema.
-  return cloneOwned(await generate(normalizeSchemaForJsf(schema), options));
+  const generated = await generate(normalizeSchemaForJsf(schema), options);
+  assertOutputWithinLimits(generated);
+  return cloneOwned(generated);
 }

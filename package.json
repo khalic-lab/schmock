@@ -42,7 +42,8 @@
     "check:typescript-5-6": "node scripts/check-typescript-5-6.mjs",
     "check:build-reproducibility": "node scripts/check-build-reproducibility.mjs",
     "check:manifests": "node scripts/check-manifests.mjs",
-    "check:publish": "bun run check:manifests && bun run check:build-reproducibility && bun run test:pack"
+    "test:registry-scripts": "node --test scripts/check-manifests.test.mjs scripts/smoke-tests/registry-verification.test.mjs",
+    "check:publish": "bun run check:manifests && bun run test:registry-scripts && bun run check:build-reproducibility && bun run test:pack"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",

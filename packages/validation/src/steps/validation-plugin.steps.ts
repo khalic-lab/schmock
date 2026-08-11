@@ -1,7 +1,7 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
 import { expect } from "vitest";
-import { validationPlugin } from "../index";
+import { type ValidationPluginOptions, validationPlugin } from "../index";
 
 const feature = await loadFeature("../../features/validation-plugin.feature");
 
@@ -197,6 +197,130 @@ describeFeature(feature, ({ Scenario }) => {
       And("the validated generator should not have executed", () => {
         expect(validatedGeneratorExecutions).toBe(0);
       });
+    },
+  );
+
+  Scenario(
+    "A replaced validation rejection is response validated",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a validator after a plugin that replaces its request rejection",
+        () => {
+          const replacementPlugin: Schmock.Plugin = {
+            name: "replace-rejection",
+            process(context, incomingResponse) {
+              if (
+                isRecord(incomingResponse) &&
+                incomingResponse.status === 400
+              ) {
+                return {
+                  context,
+                  response: {
+                    status: 400,
+                    body: { code: "REPLACED_REQUEST_REJECTION" },
+                  },
+                };
+              }
+              return { context, response: incomingResponse };
+            },
+          };
+
+          mock = schmock();
+          mock("POST /replaced-rejection", { created: true })
+            .pipe(replacementPlugin)
+            .pipe(
+              validationPlugin({
+                request: {
+                  body: {
+                    type: "object",
+                    properties: { name: { type: "string" } },
+                    required: ["name"],
+                  },
+                },
+                response: {
+                  body: {
+                    type: "object",
+                    properties: { created: { const: true } },
+                    required: ["created"],
+                  },
+                },
+              }),
+            );
+        },
+      );
+
+      When("I send an invalid POST whose rejection is replaced", async () => {
+        response = await mock.handle("POST", "/replaced-rejection", {
+          body: {},
+        });
+      });
+
+      Then("the status should be {int}", (_, status: number) => {
+        expect(response.status).toBe(status);
+      });
+
+      And(
+        "the response body should have error code {string}",
+        (_, code: string) => {
+          expect(responseBodyRecord(response).code).toBe(code);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Another plugin's request rejection is still response validated",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a response validator after a plugin that rejects the request",
+        () => {
+          const rejectingPlugin: Schmock.Plugin = {
+            name: "rejecting-plugin",
+            beforeRequest(context) {
+              return {
+                context,
+                response: {
+                  status: 403,
+                  body: { code: "REJECTED_BY_OTHER_PLUGIN" },
+                },
+              };
+            },
+            process(context, incomingResponse) {
+              return { context, response: incomingResponse };
+            },
+          };
+
+          mock = schmock();
+          mock("GET /other-rejection", { accepted: true })
+            .pipe(rejectingPlugin)
+            .pipe(
+              validationPlugin({
+                response: {
+                  body: {
+                    type: "object",
+                    properties: { accepted: { const: true } },
+                    required: ["accepted"],
+                  },
+                },
+              }),
+            );
+        },
+      );
+
+      When("I request the endpoint rejected by the other plugin", async () => {
+        response = await mock.handle("GET", "/other-rejection");
+      });
+
+      Then("the status should be {int}", (_, status: number) => {
+        expect(response.status).toBe(status);
+      });
+
+      And(
+        "the response body should have error code {string}",
+        (_, code: string) => {
+          expect(responseBodyRecord(response).code).toBe(code);
+        },
+      );
     },
   );
 
@@ -556,6 +680,273 @@ describeFeature(feature, ({ Scenario }) => {
       expect(response.status).toBe(status);
     });
   });
+
+  Scenario(
+    "Validation configuration is snapshotted when the plugin is created",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a validator from mutable options and then change them",
+        () => {
+          const request = {
+            bodyRequired: true,
+            body: {
+              type: "object" as const,
+              properties: { name: { type: "string" as const } },
+              required: ["name"],
+            },
+          };
+          const options: ValidationPluginOptions = {
+            request,
+            requestErrorStatus: 422,
+            responseErrorStatus: 502,
+          };
+
+          mock = schmock();
+          mock("POST /mutable-validation", () => [201, { created: true }]).pipe(
+            validationPlugin(options),
+          );
+
+          request.bodyRequired = false;
+          request.body.required.splice(0, request.body.required.length, "id");
+          options.requestErrorStatus = 409;
+          options.responseErrorStatus = 503;
+        },
+      );
+
+      When("I send the POST without a body", async () => {
+        response = await mock.handle("POST", "/mutable-validation");
+      });
+
+      Then("the status should be {int}", (_, status: number) => {
+        expect(response.status).toBe(status);
+      });
+
+      And(
+        "the response body should have error code {string}",
+        (_, code: string) => {
+          expect(responseBodyRecord(response).code).toBe(code);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Invalid custom error statuses fail during plugin creation",
+    ({ When, Then }) => {
+      let creationError: unknown;
+
+      When(
+        "I create a validator with request error status {int}",
+        (_, status: number) => {
+          try {
+            validationPlugin({ requestErrorStatus: status });
+          } catch (error) {
+            creationError = error;
+          }
+        },
+      );
+
+      Then(
+        "validator creation should fail for {string}",
+        (_, option: string) => {
+          expect(creationError).toMatchObject({
+            code: "VALIDATION_CONFIG_INVALID",
+            context: { option },
+          });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Null custom error statuses fail during plugin creation",
+    ({ When, Then }) => {
+      let creationError: unknown;
+
+      When("I create a validator with a null response error status", () => {
+        const options: ValidationPluginOptions = {};
+        Reflect.set(options, "responseErrorStatus", null);
+        try {
+          validationPlugin(options);
+        } catch (error) {
+          creationError = error;
+        }
+      });
+
+      Then(
+        "validator creation should fail for {string}",
+        (_, option: string) => {
+          expect(creationError).toMatchObject({
+            code: "VALIDATION_CONFIG_INVALID",
+            context: { option, received: null },
+          });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A response schema can reference a request schema by id",
+    ({ Given, When, Then }) => {
+      Given(
+        "I create a validator whose response references its request schema",
+        () => {
+          const schemaId = "https://example.test/schemas/referenced-user.json";
+          mock = schmock();
+          mock("POST /referenced-user", ({ body }) => [201, body]).pipe(
+            validationPlugin({
+              request: {
+                body: {
+                  $id: schemaId,
+                  type: "object",
+                  properties: { name: { type: "string" } },
+                  required: ["name"],
+                },
+              },
+              response: { body: { $ref: schemaId } },
+            }),
+          );
+        },
+      );
+
+      When("I send a valid referenced-schema request", async () => {
+        response = await mock.handle("POST", "/referenced-user", {
+          body: { name: "Ada" },
+        });
+      });
+
+      Then("the status should be {int}", (_, status: number) => {
+        expect(response.status).toBe(status);
+      });
+    },
+  );
+
+  Scenario(
+    "A response schema can reference a nested request schema id",
+    ({ Given, When, Then }) => {
+      Given(
+        "I create a validator whose response references a nested request schema",
+        () => {
+          const nestedId =
+            "https://example.test/schemas/nested-referenced-user.json";
+          mock = schmock();
+          mock("POST /nested-referenced-user", ({ body }) => [201, body]).pipe(
+            validationPlugin({
+              request: {
+                body: {
+                  definitions: {
+                    user: {
+                      $id: `${nestedId}#`,
+                      type: "object",
+                      properties: { name: { type: "string" } },
+                      required: ["name"],
+                    },
+                  },
+                  $ref: "#/definitions/user",
+                },
+              },
+              response: { body: { $ref: nestedId } },
+            }),
+          );
+        },
+      );
+
+      When("I send a valid nested-schema request", async () => {
+        response = await mock.handle("POST", "/nested-referenced-user", {
+          body: { name: "Ada" },
+        });
+      });
+
+      Then("the status should be {int}", (_, status: number) => {
+        expect(response.status).toBe(status);
+      });
+    },
+  );
+
+  Scenario(
+    "Equivalent request and response schema ids remain independent",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create request and response validators with equivalent schema ids",
+        () => {
+          const schemaId = "https://example.test/schemas/reused-id.json";
+          mock = schmock();
+          mock("POST /reused-id", ({ body }) => [201, body]).pipe(
+            validationPlugin({
+              request: {
+                body: {
+                  $id: `${schemaId}#`,
+                  type: "object",
+                  properties: { id: { type: "number" } },
+                  required: ["id"],
+                },
+              },
+              response: {
+                body: {
+                  $id: schemaId,
+                  type: "object",
+                  properties: {
+                    id: { type: "number" },
+                    name: { type: "string" },
+                  },
+                  required: ["id", "name"],
+                },
+              },
+            }),
+          );
+        },
+      );
+
+      When(
+        "I return a response that only satisfies the request schema",
+        async () => {
+          response = await mock.handle("POST", "/reused-id", {
+            body: { id: 1 },
+          });
+        },
+      );
+
+      Then("the status should be {int}", (_, status: number) => {
+        expect(response.status).toBe(status);
+      });
+
+      And(
+        "the response body should have error code {string}",
+        (_, code: string) => {
+          expect(responseBodyRecord(response).code).toBe(code);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Faker schema markers do not become validation constraints",
+    ({ Given, When, Then }) => {
+      Given(
+        "I create a response validator from a shared schema with a faker marker",
+        () => {
+          const schema: Schmock.Schema = {
+            type: "integer",
+            minimum: 1,
+            maximum: 2,
+            faker: { "number.int": [{ min: 1, max: 2 }] },
+          };
+          mock = schmock();
+          mock("GET /faker-marked", 2).pipe(
+            validationPlugin({ response: { body: schema } }),
+          );
+        },
+      );
+
+      When("I request the faker-marked endpoint", async () => {
+        response = await mock.handle("GET", "/faker-marked");
+      });
+
+      Then("the status should be {int}", (_, status: number) => {
+        expect(response.status).toBe(status);
+      });
+    },
+  );
 
   const givenEmailFormatMock = () => {
     mock = schmock();

@@ -335,6 +335,125 @@ describeFeature(feature, ({ Scenario }) => {
   );
 
   Scenario(
+    "Seeded response header ordinals span CRUD and static routes reproducibly",
+    ({ Given, When, Then, And }) => {
+      const requestIds: string[][] = [];
+      const mocks: Schmock.CallableMockInstance[] = [];
+      const headerSpec = {
+        openapi: "3.0.3",
+        info: { title: "Seeded headers", version: "1.0.0" },
+        paths: {
+          "/items": {
+            get: {
+              responses: {
+                "200": {
+                  description: "List",
+                  headers: {
+                    "X-Request-ID": {
+                      schema: { type: "string", format: "uuid" },
+                    },
+                  },
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        properties: {
+                          data: {
+                            type: "array",
+                            items: {
+                              type: "object",
+                              properties: { itemId: { type: "integer" } },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "/items/{itemId}": {
+            get: {
+              responses: {
+                "200": {
+                  description: "Item",
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        properties: { itemId: { type: "integer" } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "/health": {
+            get: {
+              responses: {
+                "200": {
+                  description: "OK",
+                  headers: {
+                    "X-Request-ID": {
+                      schema: { type: "string", format: "uuid" },
+                    },
+                  },
+                  content: {
+                    "application/json": { schema: { type: "object" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+
+      Given(
+        "two mocks with the same seed and CRUD and static header routes",
+        async () => {
+          for (let index = 0; index < 2; index++) {
+            const seededMock = schmock({ state: {} });
+            seededMock.pipe(await openapi({ spec: headerSpec, fakerSeed: 42 }));
+            mocks.push(seededMock);
+          }
+        },
+      );
+
+      When(
+        "I request the wrapped CRUD list then the static route from each mock",
+        async () => {
+          for (const seededMock of mocks) {
+            const first = await seededMock.handle("GET", "/items");
+            const second = await seededMock.handle("GET", "/health");
+            requestIds.push([
+              first.headers["X-Request-ID"],
+              second.headers["X-Request-ID"],
+            ]);
+          }
+        },
+      );
+
+      Then(
+        "each mock uses seeded response header ordinals zero then one",
+        () => {
+          for (const ids of requestIds) {
+            expect(ids).toEqual([
+              "00000000-0000-4000-9000-000042000000",
+              "00000000-0000-4000-9000-000042000001",
+            ]);
+          }
+        },
+      );
+
+      And("both mocks return the same seeded request ID sequence", () => {
+        expect(requestIds[1]).toEqual(requestIds[0]);
+      });
+    },
+  );
+
+  Scenario(
     "Manual override forces wrapping on a flat-array spec",
     ({ Given, When, Then, And }) => {
       Given(

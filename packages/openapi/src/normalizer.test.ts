@@ -346,7 +346,7 @@ describe("normalizeSchema", () => {
   });
 
   describe("discriminator", () => {
-    it("adds required and enum constraints for discriminator", () => {
+    it("requires inline discriminator properties without inventing enum values", () => {
       const result = normalizeSchema(
         {
           discriminator: {
@@ -383,6 +383,7 @@ describe("normalizeSchema", () => {
       // Each branch should have petType as required
       for (const branch of branches) {
         expect(branch.required).toContain("petType");
+        expect(branch).not.toHaveProperty("properties.petType.enum");
       }
     });
   });

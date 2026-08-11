@@ -617,7 +617,22 @@ describe("discriminator mapping", () => {
   /** `oneOf` $refs Cat first, but the mapping declares dog first. */
   function specWithMapping(
     mapping: Record<string, string> | undefined,
+    options: {
+      includeInlineBranch?: boolean;
+      leadingBooleanBranch?: boolean;
+      useAllOfBranches?: boolean;
+    } = {},
   ): Record<string, unknown> {
+    const animalSchema = (sound: "meow" | "bark") => {
+      const schema = {
+        type: "object",
+        properties: {
+          petType: { type: "string" },
+          [sound]: { type: "boolean" },
+        },
+      };
+      return options.useAllOfBranches ? { allOf: [schema] } : schema;
+    };
     return {
       openapi: "3.0.3",
       info: { title: "Pets", version: "1.0.0" },
@@ -641,28 +656,28 @@ describe("discriminator mapping", () => {
         schemas: {
           Pet: {
             oneOf: [
+              ...(options.leadingBooleanBranch ? [false] : []),
               { $ref: "#/components/schemas/Cat" },
               { $ref: "#/components/schemas/Dog" },
+              ...(options.includeInlineBranch
+                ? [
+                    {
+                      type: "object",
+                      properties: {
+                        petType: { type: "string" },
+                        scales: { type: "boolean" },
+                      },
+                    },
+                  ]
+                : []),
             ],
             discriminator: {
               propertyName: "petType",
               ...(mapping ? { mapping } : {}),
             },
           },
-          Cat: {
-            type: "object",
-            properties: {
-              petType: { type: "string" },
-              meow: { type: "boolean" },
-            },
-          },
-          Dog: {
-            type: "object",
-            properties: {
-              petType: { type: "string" },
-              bark: { type: "boolean" },
-            },
-          },
+          Cat: animalSchema("meow"),
+          Dog: animalSchema("bark"),
         },
       },
     };
@@ -680,7 +695,7 @@ describe("discriminator mapping", () => {
         Record<string, unknown>
       >;
       return {
-        marker: "meow" in props ? "cat" : "dog",
+        marker: "meow" in props ? "cat" : "bark" in props ? "dog" : "inline",
         petType: props.petType?.enum,
       };
     });
@@ -711,13 +726,122 @@ describe("discriminator mapping", () => {
     ]);
   });
 
-  it("leaves branches enum-free when no mapping is declared", async () => {
+  it("uses implicit component names when no mapping is declared", async () => {
     const enums = await branchEnums(specWithMapping(undefined));
 
     expect(enums).toEqual([
-      { marker: "cat", petType: undefined },
-      { marker: "dog", petType: undefined },
+      { marker: "cat", petType: ["Cat"] },
+      { marker: "dog", petType: ["Dog"] },
     ]);
+  });
+
+  it("uses explicit keys for mapped refs and implicit names for unmapped refs", async () => {
+    const enums = await branchEnums(
+      specWithMapping({ canine: "#/components/schemas/Dog" }),
+    );
+
+    expect(enums).toEqual([
+      { marker: "cat", petType: ["Cat"] },
+      { marker: "dog", petType: ["canine"] },
+    ]);
+  });
+
+  it("leaves inline branches without a derivable name unconstrained", async () => {
+    const enums = await branchEnums(
+      specWithMapping(
+        {
+          dog: "#/components/schemas/Dog",
+          cat: "#/components/schemas/Cat",
+          reptile: "#/components/schemas/Reptile",
+        },
+        { includeInlineBranch: true },
+      ),
+    );
+
+    expect(enums).toEqual([
+      { marker: "cat", petType: ["cat"] },
+      { marker: "dog", petType: ["dog"] },
+      { marker: "inline", petType: undefined },
+    ]);
+  });
+
+  it("keeps every mapping key that targets the same branch", async () => {
+    const enums = await branchEnums(
+      specWithMapping({
+        dog: "#/components/schemas/Dog",
+        canine: "#/components/schemas/Dog",
+        cat: "#/components/schemas/Cat",
+      }),
+    );
+
+    expect(enums).toEqual([
+      { marker: "cat", petType: ["cat"] },
+      { marker: "dog", petType: ["dog", "canine"] },
+    ]);
+  });
+
+  it("adds discriminator constraints to allOf branches", async () => {
+    const parsed = await parseSpec(
+      specWithMapping(undefined, { useAllOfBranches: true }),
+    );
+    const branches = parsed.paths[0]?.responses.get(200)?.schema?.oneOf ?? [];
+
+    expect(branches[0]).toMatchObject({
+      required: ["petType"],
+      properties: { petType: { enum: ["Cat"] } },
+    });
+    expect(branches[1]).toMatchObject({
+      required: ["petType"],
+      properties: { petType: { enum: ["Dog"] } },
+    });
+  });
+
+  it("preserves boolean oneOf branches without shifting discriminator values", async () => {
+    const parsed = await parseSpec(
+      specWithMapping(undefined, { leadingBooleanBranch: true }),
+    );
+    const branches = parsed.paths[0]?.responses.get(200)?.schema?.oneOf ?? [];
+
+    expect(branches[0]).toBe(false);
+    expect(branches[1]).toMatchObject({
+      properties: { petType: { enum: ["Cat"] } },
+    });
+    expect(branches[2]).toMatchObject({
+      properties: { petType: { enum: ["Dog"] } },
+    });
+  });
+
+  it("recovers named discriminator refs from external documents only", async () => {
+    const parsed = await parseSpec(`${externalDir}/discriminator-spec.json`, {
+      refs: { external: true },
+    });
+    const branches = parsed.paths[0]?.responses.get(200)?.schema?.oneOf ?? [];
+
+    expect(branches[0]).toMatchObject({
+      properties: { petType: { enum: ["Cat"] } },
+    });
+    expect(branches[1]).toMatchObject({
+      properties: { petType: { enum: ["Dog"] } },
+    });
+    expect(branches[2]).not.toHaveProperty("properties.petType.enum");
+    expect(JSON.stringify(branches[2])).not.toContain("anonymous-cat.json");
+  });
+
+  it("distinguishes equal schema names from different external documents", async () => {
+    const parsed = await parseSpec(`${externalDir}/discriminator-spec.json`, {
+      refs: { external: true },
+    });
+    const path = parsed.paths.find(
+      (candidate) => candidate.path === "/colliding-cats",
+    );
+    const branches = path?.responses.get(200)?.schema?.oneOf ?? [];
+
+    expect(branches[0]).toMatchObject({
+      properties: { petType: { enum: ["house"] } },
+    });
+    expect(branches[1]).toMatchObject({
+      properties: { petType: { enum: ["wild"] } },
+    });
   });
 
   it("keeps the marker out of the normalized schema", async () => {

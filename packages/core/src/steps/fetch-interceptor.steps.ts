@@ -67,42 +67,100 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   );
 
   Scenario(
-    "A literal unicode route is matched by both URL spellings",
+    "A lowercase percent-encoded route matches a literal Unicode URL",
     ({ Given, When, Then, And }) => {
-      let unicodeResponses: Response[] = [];
-
-      Given(
-        'a Schmock instance with route "GET /café/:name" returning the captured name',
-        () => {
-          setup();
-          unicodeResponses = [];
-          mock("GET /café/:name", ({ params }) => ({ name: params.name }));
-        },
-      );
+      Given("a Schmock route using lowercase percent escapes for café", () => {
+        setup();
+        mock("GET /caf%c3%a9/:name", ({ params }) => ({
+          name: params.name,
+        }));
+      });
 
       And("fetch is intercepted with passthrough enabled", () => {
         handle = mock.intercept({ passthrough: true });
       });
 
-      When(
-        "I fetch the literal unicode URL and the percent-encoded URL",
+      When("I fetch the equivalent literal Unicode URL", async () => {
+        fetchResponse = await fetch("http://localhost/café/Ana Lía");
+      });
+
+      Then(
+        "the Unicode fetch response should be 200 with the decoded captured name",
         async () => {
-          unicodeResponses = [
-            await fetch("http://localhost/café/Ana Lía"),
-            await fetch("http://localhost/caf%C3%A9/Ana%20L%C3%ADa"),
-          ];
+          expect(fetchResponse?.status).toBe(200);
+          expect(await fetchResponse?.json()).toEqual({ name: "Ana Lía" });
+        },
+      );
+
+      And("the original fetch should not have been called", () => {
+        expect(savedFetch).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  Scenario(
+    "A Unicode path-form baseUrl matches an equivalent encoded path",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a Schmock instance with route "GET /café/users" returning users',
+        () => {
+          setup();
+          mock("GET /café/users", [{ id: 1 }]);
+        },
+      );
+
+      And('fetch is intercepted with Unicode path-form baseUrl "/café"', () => {
+        handle = mock.intercept({ baseUrl: "/café" });
+      });
+
+      When("I fetch the lowercase percent-encoded Unicode path", async () => {
+        fetchResponse = await fetch("http://localhost/caf%c3%a9/users");
+      });
+
+      Then(
+        "the Unicode baseUrl response body should be the mocked users",
+        async () => {
+          expect(await fetchResponse?.json()).toEqual([{ id: 1 }]);
+        },
+      );
+
+      And("the original fetch should not have been called", () => {
+        expect(savedFetch).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  Scenario(
+    "A Unicode origin-form baseUrl matches an equivalent literal path",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a Schmock instance with route "GET /café/users" returning users',
+        () => {
+          setup();
+          mock("GET /café/users", [{ id: 1 }]);
+        },
+      );
+
+      And(
+        'fetch is intercepted with origin-form baseUrl "https://api.example.com/caf%c3%a9"',
+        () => {
+          handle = mock.intercept({
+            baseUrl: "https://api.example.com/caf%c3%a9",
+          });
+        },
+      );
+
+      When(
+        "I fetch the literal Unicode URL on the configured origin",
+        async () => {
+          fetchResponse = await fetch("https://api.example.com/café/users");
         },
       );
 
       Then(
-        "both fetch responses should be 200 with the decoded captured name",
+        "the Unicode baseUrl response body should be the mocked users",
         async () => {
-          expect(unicodeResponses.map((each) => each.status)).toEqual([
-            200, 200,
-          ]);
-          for (const each of unicodeResponses) {
-            expect(await each.json()).toEqual({ name: "Ana Lía" });
-          }
+          expect(await fetchResponse?.json()).toEqual([{ id: 1 }]);
         },
       );
 

@@ -10,7 +10,7 @@ import {
   registerCrudRoutes,
   registerNonCrudRoutes,
 } from "./crud-registration.js";
-import { PENDING_MUTATIONS_KEY } from "./generators.js";
+import { createHeaderSeed, PENDING_MUTATIONS_KEY } from "./generators.js";
 import { createOwnerToken, isOwnedRoute } from "./owner.js";
 import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
 import { convertPathTemplate, parseSpec } from "./parser.js";
@@ -115,6 +115,14 @@ export async function openapi(
     version: packageVersion,
 
     install(instance: Schmock.CallableMockInstance) {
+      // Installation-local, not module- or openapi()-scoped: every route in one
+      // mock shares an ordinal while separately installed mocks replay it.
+      const headerSeed = createHeaderSeed(options.fakerSeed);
+      const generationHooks = {
+        fakerSeed: options.fakerSeed,
+        onSchema: options.onSchema,
+        headerSeed,
+      };
       if (options.debug) {
         console.log(
           `[@schmock/openapi] Detected ${resources.length} CRUD resources, ${nonCrudPaths.length} static routes`,
@@ -137,7 +145,7 @@ export async function openapi(
           resource,
           seedData.get(resource.name),
           ownerToken,
-          { fakerSeed: options.fakerSeed, onSchema: options.onSchema },
+          generationHooks,
         );
       }
 
@@ -146,8 +154,7 @@ export async function openapi(
         instance,
         nonCrudPaths,
         ownerToken,
-        options.fakerSeed,
-        options.onSchema,
+        generationHooks,
       );
     },
 

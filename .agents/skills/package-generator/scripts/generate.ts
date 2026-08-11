@@ -31,7 +31,7 @@ const TOPOLOGY_FOLLOW_UPS = [
   ".agents/skills/devops/scripts/publish.sh: PACKAGES dependency order",
   ".agents/skills/dependency-management/scripts/check-deps.sh: PACKAGES",
   ".agents/skills/devops/SKILL.md: workspace count and release order",
-  "scripts/smoke-tests/run-all.sh: ALL_PACKAGES when smoke coverage applies",
+  "scripts/smoke-tests/fixtures/<package>: add the smoke fixture required by workspace manifest discovery",
   "AGENTS.md and README.md: maintained package inventories",
   "packages/schmock: dependencies, externals, and exports only when the aggregate should include the new package",
 ] as const;

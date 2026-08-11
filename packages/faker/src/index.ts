@@ -6,13 +6,20 @@ import {
 } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { version as packageVersion } from "../package.json";
-import { MAX_ARRAY_SIZE, NULLABLE_NULL_PROBABILITY } from "./constants.js";
+import {
+  MAX_ARRAY_SIZE,
+  MAX_OBJECT_PROPERTIES,
+  MAX_STRING_LENGTH,
+  NULLABLE_NULL_PROBABILITY,
+} from "./constants.js";
 import {
   createSeededRandom,
   DETERMINISTIC_REF_DATE,
   generateWithJsf,
   resolveGenerationSeed,
+  snapshotGraphs,
 } from "./jsf-config.js";
+import { assertOutputWithinLimits } from "./output-limits.js";
 import { applyOverrides, determineArrayCount } from "./overrides.js";
 import { enhanceSchemaWithSmartMapping } from "./schema-enhancement.js";
 import { hasType, isJSONSchema7, validateSchema } from "./validation.js";
@@ -21,13 +28,36 @@ export type SchemaGenerationContext = Schmock.SchemaGenerationContext;
 
 export type FakerPluginOptions = Schmock.FakerPluginOptions;
 
+export { MAX_OBJECT_PROPERTIES, MAX_STRING_LENGTH };
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
+  const [schemaSnapshot, overridesSnapshot] = snapshotGraphs([
+    options.schema,
+    options.overrides,
+  ]);
+  if (!isJSONSchema7(schemaSnapshot)) {
+    throw new SchemaValidationError(
+      "$",
+      "Schema must be a valid JSON Schema object",
+    );
+  }
+  if (overridesSnapshot !== undefined && !isRecord(overridesSnapshot)) {
+    throw new SchemaValidationError(
+      "$.overrides",
+      "Overrides must be an object mapping paths to values",
+    );
+  }
+  const schema = schemaSnapshot;
+  const overrides = overridesSnapshot;
+  const count = options.count;
+  const seed = options.seed;
+
   // Validate schema immediately when plugin is created (fail-fast)
-  validateSchema(options.schema);
+  validateSchema(schema, "$", count);
 
   return {
     name: "faker",
@@ -41,13 +71,13 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
 
       try {
         const generatedResponse = await generateFromSchema({
-          schema: options.schema,
-          count: options.count,
-          overrides: options.overrides,
+          schema,
+          count,
+          overrides,
           params: context.params,
           state: context.routeState,
           query: context.query,
-          seed: options.seed,
+          seed,
         });
 
         return {
@@ -67,7 +97,7 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
         throw new SchemaGenerationError(
           context.path,
           error instanceof Error ? error : new Error(String(error)),
-          options.schema,
+          schema,
         );
       }
     },
@@ -79,7 +109,7 @@ export async function generateFromSchema(
 ): Promise<unknown> {
   const { schema, count, overrides, params, state, query, seed } = options;
 
-  validateSchema(schema);
+  validateSchema(schema, "$", count);
 
   const generationSeed = resolveGenerationSeed(seed);
   const random = createSeededRandom(generationSeed);
@@ -113,12 +143,15 @@ export async function generateFromSchema(
   generated = postProcessGenerated(generated, enhancedSchema, random);
 
   if (Array.isArray(generated)) {
-    return generated.map((item) =>
+    const result = generated.map((item) =>
       applyOverrides(item, overrides, params, state, query),
     );
+    assertOutputWithinLimits(result);
+    return result;
   }
 
   generated = applyOverrides(generated, overrides, params, state, query);
+  assertOutputWithinLimits(generated);
   return generated;
 }
 

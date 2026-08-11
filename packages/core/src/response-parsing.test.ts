@@ -91,6 +91,44 @@ describe("response parsing", () => {
     });
   });
 
+  describe("object response envelope formats", () => {
+    it("treats an array with response-shaped properties as domain data", async () => {
+      const mock = schmock();
+      const domainArray = Object.assign([{ id: 1 }], {
+        status: 202,
+        body: { semantic: true },
+        headers: { "x-envelope": "yes" },
+      });
+      mock("GET /domain-array", domainArray);
+
+      const response = await mock.handle("GET", "/domain-array");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([{ id: 1 }]);
+      expect(response.headers["x-envelope"]).toBeUndefined();
+    });
+
+    it.each([
+      { headers: [] },
+      { headers: ["x-trace"] },
+    ])("treats array headers %p as a plain response body", async ({
+      headers,
+    }) => {
+      const mock = schmock();
+      const malformedEnvelope = {
+        status: 202,
+        body: { semantic: true },
+        headers,
+      };
+      mock("GET /malformed-envelope", malformedEnvelope);
+
+      const response = await mock.handle("GET", "/malformed-envelope");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual(malformedEnvelope);
+    });
+  });
+
   describe("various response types", () => {
     it("handles string responses", async () => {
       const mock = schmock();

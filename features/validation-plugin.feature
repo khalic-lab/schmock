@@ -29,6 +29,18 @@ Feature: Validation Plugin
     And the response body should have error code "REQUEST_VALIDATION_ERROR"
     And the validated generator should not have executed
 
+  Scenario: A replaced validation rejection is response validated
+    Given I create a validator after a plugin that replaces its request rejection
+    When I send an invalid POST whose rejection is replaced
+    Then the status should be 500
+    And the response body should have error code "RESPONSE_VALIDATION_ERROR"
+
+  Scenario: Another plugin's request rejection is still response validated
+    Given I create a response validator after a plugin that rejects the request
+    When I request the endpoint rejected by the other plugin
+    Then the status should be 500
+    And the response body should have error code "RESPONSE_VALIDATION_ERROR"
+
   Scenario: Invalid response body returns 500
     Given I create a mock with response validation that expects a number id
     When I request the endpoint
@@ -83,6 +95,41 @@ Feature: Validation Plugin
     Given I create a validated mock with custom error status 422
     When I send an invalid request body
     Then the status should be 422
+
+  Scenario: Validation configuration is snapshotted when the plugin is created
+    Given I create a validator from mutable options and then change them
+    When I send the POST without a body
+    Then the status should be 422
+    And the response body should have error code "REQUEST_VALIDATION_ERROR"
+
+  Scenario: Invalid custom error statuses fail during plugin creation
+    When I create a validator with request error status 199
+    Then validator creation should fail for "requestErrorStatus"
+
+  Scenario: Null custom error statuses fail during plugin creation
+    When I create a validator with a null response error status
+    Then validator creation should fail for "responseErrorStatus"
+
+  Scenario: A response schema can reference a request schema by id
+    Given I create a validator whose response references its request schema
+    When I send a valid referenced-schema request
+    Then the status should be 201
+
+  Scenario: A response schema can reference a nested request schema id
+    Given I create a validator whose response references a nested request schema
+    When I send a valid nested-schema request
+    Then the status should be 201
+
+  Scenario: Equivalent request and response schema ids remain independent
+    Given I create request and response validators with equivalent schema ids
+    When I return a response that only satisfies the request schema
+    Then the status should be 500
+    And the response body should have error code "RESPONSE_VALIDATION_ERROR"
+
+  Scenario: Faker schema markers do not become validation constraints
+    Given I create a response validator from a shared schema with a faker marker
+    When I request the faker-marked endpoint
+    Then the status should be 200
 
   Scenario: Email format validation rejects malformed strings
     Given I create a mock validating email format on the email field

@@ -2,8 +2,8 @@ import type { JSONSchema7 } from "json-schema";
 import { isRecord, toJsonSchema } from "./utils.js";
 
 /**
- * Where the parser records "which `mapping` key named the branch at index i",
- * resolved before dereference erased the branches' `$ref` strings. Written in
+ * Where the parser records the explicit mapping key or implicit component name
+ * for the branch at index i, before dereference erases its `$ref`. Written in
  * parser.ts; read here; dropped with the whole `discriminator` object below.
  */
 const DISCRIMINATOR_VALUES_MARKER = "x-schmock-discriminator-values";
@@ -106,45 +106,43 @@ function normalizeNode(
     const disc = node.discriminator;
     const propName = disc.propertyName;
     if (typeof propName === "string" && Array.isArray(node.oneOf)) {
-      const mappingRaw = disc.mapping ?? {};
-      const mapping = isRecord(mappingRaw) ? mappingRaw : {};
-      // Mapping keys ARE the discriminator values ("dog", "cat"). Their values
-      // are `$ref` strings, which dereference has already replaced with the
-      // component objects — so the pairing is resolved BEFORE dereference, in
-      // parser.ts, and handed over index-aligned on this marker.
+      // Explicit mapping keys or implicit `$ref` component names are resolved
+      // BEFORE dereference in parser.ts and handed over index-aligned here.
       const resolvedRaw = disc[DISCRIMINATOR_VALUES_MARKER];
       const resolved = Array.isArray(resolvedRaw) ? resolvedRaw : undefined;
-      // Positional fallback for branches the marker could not resolve: inline
-      // (ref-free) branches, and specs taking the parser's no-ref fast path.
-      const discriminatorValues = Object.keys(mapping);
 
-      node.oneOf = node.oneOf
-        .filter((branch): branch is Record<string, unknown> => isRecord(branch))
-        .map((branch, index) => {
-          const normalized = normalizeNode(branch, direction, stack, memo);
-          // Ensure discriminator property is required
-          if (isRecord(normalized)) {
-            const required = Array.isArray(normalized.required)
-              ? [...normalized.required]
-              : [];
-            if (!required.includes(propName)) {
-              required.push(propName);
-            }
-            normalized.required = required;
-
-            // Add enum constraint for the discriminator value
-            const marked = resolved?.[index];
-            const mappingValue =
-              typeof marked === "string" ? marked : discriminatorValues[index];
-            if (mappingValue && isRecord(normalized.properties)) {
-              const props = normalized.properties;
-              const existingRaw = props[propName] ?? {};
-              const existing = isRecord(existingRaw) ? existingRaw : {};
-              props[propName] = { ...existing, enum: [mappingValue] };
-            }
+      node.oneOf = node.oneOf.map((branch, index) => {
+        if (!isRecord(branch)) return branch;
+        const normalized = normalizeNode(branch, direction, stack, memo);
+        // Ensure discriminator property is required
+        if (isRecord(normalized)) {
+          const required = Array.isArray(normalized.required)
+            ? [...normalized.required]
+            : [];
+          if (!required.includes(propName)) {
+            required.push(propName);
           }
-          return normalized;
-        });
+          normalized.required = required;
+
+          // Add enum constraint for the discriminator value
+          const marked = resolved?.[index];
+          const mappingValues = Array.isArray(marked)
+            ? marked.filter(
+                (value): value is string => typeof value === "string",
+              )
+            : [];
+          if (mappingValues.length > 0) {
+            const props = isRecord(normalized.properties)
+              ? normalized.properties
+              : {};
+            const existingRaw = props[propName] ?? {};
+            const existing = isRecord(existingRaw) ? existingRaw : {};
+            props[propName] = { ...existing, enum: mappingValues };
+            normalized.properties = props;
+          }
+        }
+        return normalized;
+      });
     }
     delete node.discriminator;
   }

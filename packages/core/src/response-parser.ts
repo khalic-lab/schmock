@@ -51,6 +51,7 @@ function isResponseObject(value: unknown): value is {
   return (
     typeof value === "object" &&
     value !== null &&
+    !Array.isArray(value) &&
     "status" in value &&
     typeof value.status === "number" &&
     "body" in value &&
@@ -64,6 +65,7 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return (
     typeof value === "object" &&
     value !== null &&
+    !Array.isArray(value) &&
     Object.values(value).every((entry) => typeof entry === "string")
   );
 }

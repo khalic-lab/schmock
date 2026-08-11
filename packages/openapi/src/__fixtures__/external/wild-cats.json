@@ -1,0 +1,9 @@
+{
+  "Cat": {
+    "type": "object",
+    "properties": {
+      "petType": { "type": "string" },
+      "feral": { "type": "boolean" }
+    }
+  }
+}

@@ -87,11 +87,10 @@ toExpress(mock, {
 
 ### Hook-owned responses
 
-A hook that sends — or begins sending — the response owns it. Once
-`res.headersSent` or `res.writableEnded` is true, the middleware stops: it does
-not call the mock, does not run `errorFormatter`, and does not fall through to
-`next()`. Handing a live response to the rest of the stack would let another
-handler write to a socket that is already committed.
+A hook that sends — or begins sending — the response and returns normally owns
+it. Once `res.headersSent` or `res.writableEnded` is true, the middleware stops:
+it does not call the mock, does not run `errorFormatter`, and does not fall
+through to `next()`.
 
 ```typescript
 toExpress(mock, {
@@ -104,11 +103,13 @@ toExpress(mock, {
 })
 ```
 
-A hook that owns the response is responsible for ending it — the middleware
-will not end it on the hook's behalf. This holds even when the hook then
-throws: an error raised after the response was sent (or after writing began)
-is dropped rather than formatted or forwarded, so a partially written body is
-never truncated by the middleware's own error handling.
+A hook that returns normally while owning the response is responsible for
+ending it; the middleware will not end it on the hook's behalf. A throw changes
+the ownership rule. If the response is already committed, the middleware never
+runs `errorFormatter` or writes another body. With `passErrorsToNext: true`, it
+immediately forwards the original error to Express error middleware. With
+`passErrorsToNext: false`, it immediately ends the response without appending a
+body if the response is still open.
 
 ### `errorFormatter`
 
@@ -123,8 +124,8 @@ toExpress(mock, {
 ```
 
 The formatter receives core-marked internal exceptions and errors thrown by
-adapter hooks or request handling. It does not reinterpret an ordinary
-user-defined 500 route response.
+adapter hooks or request handling before the Express response is committed. It
+does not reinterpret an ordinary user-defined 500 route response.
 
 Exception provenance is captured before `beforeResponse` runs, so a hook that
 clones the response with `{ ...response }` does not suppress the formatter.

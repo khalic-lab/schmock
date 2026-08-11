@@ -38,6 +38,9 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   let httpResponse: HttpResponse | undefined;
   let fallbackCalls = 0;
   let errorHandlerCalls = 0;
+  let errorFormatterCalls = 0;
+  let errorHandlerMessage: string | undefined;
+  let requestDeadlineMs: number | undefined;
 
   function mount(
     mock: CallableMockInstance,
@@ -46,6 +49,9 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
     const expressApp = express();
     fallbackCalls = 0;
     errorHandlerCalls = 0;
+    errorFormatterCalls = 0;
+    errorHandlerMessage = undefined;
+    requestDeadlineMs = undefined;
     httpResponse = undefined;
 
     expressApp.use(express.json());
@@ -59,9 +65,14 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
 
     const errorMiddleware: ErrorRequestHandler = (error, _req, res, _next) => {
       errorHandlerCalls += 1;
+      errorHandlerMessage = errorMessage(error);
+      if (res.headersSent) {
+        res.end();
+        return;
+      }
       res.status(598).json({
         source: "express-error-handler",
-        message: errorMessage(error),
+        message: errorHandlerMessage,
       });
     };
     expressApp.use(errorMiddleware);
@@ -97,6 +108,9 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
 
     if (header) {
       pendingRequest.set(header.name, header.value);
+    }
+    if (requestDeadlineMs !== undefined) {
+      pendingRequest.timeout({ deadline: requestDeadlineMs });
     }
 
     httpResponse = await pendingRequest;
@@ -603,6 +617,59 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
         "the Express error middleware should not have handled the request",
         () => {
           expect(errorHandlerCalls).toBe(0);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A committed hook failure settles through Express error middleware",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Express middleware whose beforeRequest writes before failing",
+        () => {
+          const mock = schmock();
+          mock("GET /partial-failure", { generated: true });
+          mount(mock, {
+            errorFormatter: () => {
+              errorFormatterCalls += 1;
+              return { formatted: true };
+            },
+            beforeRequest: (_req, res) => {
+              res.status(207);
+              res.setHeader("content-type", "text/plain");
+              res.write("partial");
+              throw new Error("request hook exploded after write");
+            },
+          });
+          requestDeadlineMs = 2_000;
+        },
+      );
+
+      When("a request is made to {string}", async (_, requestSpec: string) => {
+        await makeRequest(requestSpec);
+      });
+
+      Then(
+        "the committed Express response should complete with status {int} and body {string}",
+        (_, status: number, body: string) => {
+          expect(currentResponse().status).toBe(status);
+          expect(currentResponse().text).toBe(body);
+        },
+      );
+
+      And(
+        "the Express error middleware should observe {string}",
+        (_, message: string) => {
+          expect(errorHandlerCalls).toBe(1);
+          expect(errorHandlerMessage).toBe(message);
+        },
+      );
+
+      And(
+        "the Express error formatter should not have handled the error",
+        () => {
+          expect(errorFormatterCalls).toBe(0);
         },
       );
     },

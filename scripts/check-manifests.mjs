@@ -25,8 +25,11 @@ const HOMEPAGE_ROOT = "https://github.com/khalic-lab/schmock";
 const BUGS_URL = "https://github.com/khalic-lab/schmock/issues";
 const EXPECTED_FILES = ["dist"];
 
-/** Packages that run on Node and therefore declare a Node floor. */
-const NODE_ENGINE_PACKAGES = new Set(["@schmock/cli"]);
+/** Node-only packages and their effective transitive runtime floors. */
+const NODE_ENGINES = new Map([
+  ["@schmock/cli", "^20.19.0 || ^22.13.0 || ^23.5.0 || >=24.0.0"],
+  ["@schmock/schmock", "^20.19.0 || ^22.13.0 || ^23.5.0 || >=24.0.0"],
+]);
 
 const failures = [];
 
@@ -121,9 +124,10 @@ function checkPackage(directory) {
     fail(scope, `bugs.url must be ${BUGS_URL}`);
   }
 
-  if (NODE_ENGINE_PACKAGES.has(scope)) {
-    if (typeof manifest.engines?.node !== "string") {
-      fail(scope, "missing engines.node");
+  const expectedNodeEngine = NODE_ENGINES.get(scope);
+  if (expectedNodeEngine !== undefined) {
+    if (manifest.engines?.node !== expectedNodeEngine) {
+      fail(scope, `engines.node must be ${expectedNodeEngine}`);
     }
   } else if (manifest.engines?.node !== undefined) {
     fail(scope, "engines.node is only declared on Node-only packages");
