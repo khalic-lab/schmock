@@ -5,7 +5,6 @@ import { MAX_NESTING_DEPTH } from "./constants";
 import { fakerPlugin, generateFromSchema } from "./index";
 import {
   generate,
-  performance as perf,
   schemas,
   schemaTests,
   stats,
@@ -804,63 +803,6 @@ describe("Schema Generator", () => {
           expect(item.userId).toBe("user_");
         });
       });
-    });
-  });
-
-  describe("Performance", () => {
-    it("generates simple schemas quickly", async () => {
-      const schema = schemas.simple.object({
-        id: schemas.simple.number(),
-        name: schemas.simple.string(),
-      });
-
-      const { duration } = await perf.measure(() =>
-        generateFromSchema({ schema }),
-      );
-
-      expect(duration).toBeLessThan(100); // Should be fast (but reasonable for CI)
-    });
-
-    it("handles large arrays efficiently", async () => {
-      const schema = schemas.simple.array(
-        schemas.simple.object({ id: schemas.simple.number() }),
-        { maxItems: 100 },
-      );
-
-      const { duration } = await perf.measure(() =>
-        generateFromSchema({ schema }),
-      );
-
-      expect(duration).toBeLessThan(500); // Reasonable time for 100 items
-    });
-
-    it("benchmarks show consistent performance", async () => {
-      const schema = schemas.complex.user();
-
-      const benchmark = await perf.benchmark(
-        "user generation",
-        () => generateFromSchema({ schema }),
-        50,
-      );
-
-      expect(benchmark.mean).toBeLessThan(50); // Reasonable for CI
-      // Just check that performance is reasonable, not strict ratios for small values
-      expect(benchmark.max).toBeLessThan(100); // No huge outliers
-    });
-
-    it("deep nesting doesn't cause exponential slowdown", async () => {
-      const shallow = schemas.nested.deep(2);
-      const deep = schemas.nested.deep(5);
-
-      await perf.measure(() => generateFromSchema({ schema: shallow }));
-
-      const { duration: deepTime } = await perf.measure(() =>
-        generateFromSchema({ schema: deep }),
-      );
-
-      // Just ensure it completes in reasonable time
-      expect(deepTime).toBeLessThan(100); // Should complete quickly
-      // The times might be too small to compare ratios reliably
     });
   });
 

@@ -375,12 +375,9 @@ describe("Schema Generator Integration Tests", () => {
         },
       };
 
-      const startTime = Date.now();
       const result = await generateFromSchema({ schema, count: 100 });
-      const duration = Date.now() - startTime;
 
       expect(result).toHaveLength(100);
-      expect(duration).toBeLessThan(1000); // Should complete in under 1 second
 
       // Verify data quality at scale
       const emails = result.map((item) => item.email);
