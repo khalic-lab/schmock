@@ -1,6 +1,6 @@
 {
   "name": "@schmock/schmock",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "description": "All-in-one Schmock package — installs core, faker, validation, query, openapi, and CLI",
   "type": "module",
   "repository": {
@@ -41,12 +41,12 @@
     "@types/node": "^26.1.0"
   },
   "dependencies": {
-    "@schmock/core": "^2.3.1",
-    "@schmock/faker": "^2.3.1",
-    "@schmock/validation": "^2.3.1",
-    "@schmock/query": "^2.3.1",
-    "@schmock/openapi": "^2.3.1",
-    "@schmock/cli": "^2.3.1"
+    "@schmock/core": "^2.4.0",
+    "@schmock/faker": "^2.4.0",
+    "@schmock/validation": "^2.4.0",
+    "@schmock/query": "^2.4.0",
+    "@schmock/openapi": "^2.4.0",
+    "@schmock/cli": "^2.4.0"
   },
   "keywords": [
     "mock",
