@@ -1,4 +1,3 @@
-import SwaggerParser from "@apidevtools/swagger-parser";
 import type * as Schmock from "@schmock/core";
 import { SchmockError, toHttpMethod } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
@@ -8,9 +7,11 @@ import {
   buildRefParserOptions,
   checkRef,
   collectUnresolvedRefs,
+  type RefParserOptions,
   type RefPolicy,
   resolveRefPolicy,
 } from "./ref-policy.js";
+import { createResolver, type SpecResolver } from "./resolver.js";
 import {
   parseResponseStatusKey,
   type ResponseStatusKey,
@@ -216,18 +217,14 @@ async function loadDocument(
   const refDiagnostics = new Map<string, string>();
   const refOptions = buildRefParserOptions(options.refs, refDiagnostics);
   const strict = options.strict === true;
-  const derefOptions = {
-    ...refOptions,
-    validate: { schema: strict, spec: strict },
-  };
-  const parser = new SwaggerParser();
+  const resolver = createResolver();
 
   let raw: OpenAPI.Document;
   let baseUrl: string | undefined;
   if (typeof source === "string") {
     // Read the root document only — `parse` resolves nothing, which is what
     // lets the policy rule on its refs before any of them are followed.
-    raw = await parser.parse(source, refOptions);
+    raw = await resolver.parse(source, refOptions);
     baseUrl = source;
   } else if (isOpenApiDocument(source)) {
     raw = structuredClone(source);
@@ -254,16 +251,16 @@ async function loadDocument(
   // still a `$ref` string and can be paired with its `mapping` entry.
   markDiscriminatorValues(raw);
 
-  const api = await dereferenceDocument(
-    parser,
+  const api = await dereferenceDocument({
+    resolver,
     baseUrl,
     raw,
-    derefOptions,
+    refOptions,
     strict,
     source,
-    refDiagnostics,
-  );
-  markDereferencedDiscriminatorValues(api, parser.$refs.values());
+    diagnostics: refDiagnostics,
+  });
+  markDereferencedDiscriminatorValues(api, resolver.documents());
 
   // Defence in depth for refs reached through a nested document: only
   // reachable once external resolution is on, and skipping the walk otherwise
@@ -586,15 +583,25 @@ function markDereferencedDiscriminatorValues(
   }
 }
 
-async function dereferenceDocument(
-  parser: SwaggerParser,
-  baseUrl: string | undefined,
-  raw: OpenAPI.Document,
-  derefOptions: SwaggerParser.Options,
-  strict: boolean,
-  source: string | object,
-  diagnostics: Map<string, string>,
-): Promise<OpenAPI.Document> {
+interface DereferenceDocumentArgs {
+  resolver: SpecResolver;
+  baseUrl: string | undefined;
+  raw: OpenAPI.Document;
+  refOptions: RefParserOptions;
+  strict: boolean;
+  source: string | object;
+  diagnostics: Map<string, string>;
+}
+
+async function dereferenceDocument({
+  resolver,
+  baseUrl,
+  raw,
+  refOptions,
+  strict,
+  source,
+  diagnostics,
+}: DereferenceDocumentArgs): Promise<OpenAPI.Document> {
   // Ref-free object sources keep their fast path: no resolver, no clone, no
   // validator. `browser-compat.test.ts` pins it.
   const hasRefs =
@@ -602,15 +609,22 @@ async function dereferenceDocument(
   if (!hasRefs && !strict) return raw;
 
   try {
-    // `validate()` dereferences first and only then runs the validators, which
-    // are disabled unless strict. The 3-argument form is what retains the
-    // source URI.
-    const validated =
-      baseUrl !== undefined
-        ? await parser.validate(baseUrl, raw, derefOptions)
-        : await parser.validate(raw, derefOptions);
-    return validated as OpenAPI.Document;
+    return await resolver.dereference({
+      document: raw,
+      baseUrl,
+      options: refOptions,
+      strict,
+    });
   } catch (rawError) {
+    // A browser build refusing a Node-only option is answering the caller's
+    // question, not reporting a bad spec. Wrapping it as a validation failure
+    // would bury the one sentence that says what to do instead.
+    if (
+      rawError instanceof SchmockError &&
+      rawError.code === "OPENAPI_NODE_ONLY"
+    ) {
+      throw rawError;
+    }
     // BOTH branches, not just the SchmockError one: `strict` is off by default,
     // so the non-strict rethrow is the path a real consumer hits.
     const error = enrichResolverError(rawError, diagnostics);

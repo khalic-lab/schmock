@@ -25,6 +25,17 @@ const HOMEPAGE_ROOT = "https://github.com/khalic-lab/schmock";
 const BUGS_URL = "https://github.com/khalic-lab/schmock/issues";
 const EXPECTED_FILES = ["dist"];
 
+/**
+ * Packages allowed to ship something besides `dist`, and what.
+ *
+ * `@schmock/openapi/browser` is an explicit way to reach the browser build for
+ * a bundler that ignores export conditions. TypeScript's legacy
+ * `moduleResolution: "node"` predates `exports` and resolves a subpath by
+ * looking for a directory, so the subpath needs a real `browser/` directory to
+ * point at or `attw` reports it unresolvable. Nothing imports it at runtime.
+ */
+const EXTRA_FILES = new Map([["@schmock/openapi", ["browser"]]]);
+
 /** Node-only packages and their effective transitive runtime floors. */
 const NODE_ENGINES = new Map([
   ["@schmock/cli", "^20.19.0 || ^22.13.0 || ^23.5.0 || >=24.0.0"],
@@ -86,14 +97,18 @@ function checkPackage(directory) {
   }
 
   const files = manifest.files;
+  const expectedFiles = [
+    ...EXPECTED_FILES,
+    ...(EXTRA_FILES.get(manifest.name) ?? []),
+  ];
   if (
     !Array.isArray(files) ||
-    files.length !== EXPECTED_FILES.length ||
-    files.some((entry, index) => entry !== EXPECTED_FILES[index])
+    files.length !== expectedFiles.length ||
+    files.some((entry, index) => entry !== expectedFiles[index])
   ) {
     fail(
       scope,
-      `files must be ${JSON.stringify(EXPECTED_FILES)}, found ${JSON.stringify(files)}`,
+      `files must be ${JSON.stringify(expectedFiles)}, found ${JSON.stringify(files)}`,
     );
   }
 

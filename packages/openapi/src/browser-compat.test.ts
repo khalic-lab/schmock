@@ -54,6 +54,33 @@ describe("browser compatibility fixes", () => {
       expect(content.length).toBeLessThan(150_000);
     });
 
+    // The Node entry may legitimately reach `node:fs`; the browser entry is the
+    // one a bundler picks for an app, and it must be free of Node entirely.
+    // `scripts/build.ts` swaps `resolver.ts` and `seed-file.ts` out to achieve
+    // that, and these pin the result: without them a plugin that silently
+    // stopped matching would ship the Node bundle under the browser name.
+    it("browser build carries no Node-only dependency", () => {
+      const content = readDist("dist/index.browser.js");
+      // Deliberately absolute rather than "only inside import()", which is all
+      // the Node entry can promise: the browser entry reaches no filesystem and
+      // starts no server, so any occurrence at all is a regression.
+      expect(content).not.toContain("@apidevtools");
+      expect(content).not.toContain("node:");
+      expect(content).not.toContain("createRequire");
+      // The shim esbuild and bun emit for an unresolvable CJS `require`. It is
+      // inert until called and then throws `Dynamic require of "util" is not
+      // supported`, which is how this reached a browser in the first place.
+      expect(content).not.toContain("require(");
+    });
+
+    it("browser build stays a browser bundle, not an inlined Node polyfill", () => {
+      // Same reasoning as the ceiling on the Node entry above: the shape
+      // assertions all pass with a polyfill inlined, so only a byte ceiling
+      // catches one.
+      const content = readDist("dist/index.browser.js");
+      expect(content.length).toBeLessThan(150_000);
+    });
+
     it("openapi build only references node:fs inside dynamic import()", () => {
       const content = readDist("dist/index.js");
       const nodefsRefs = [...content.matchAll(/["']node:fs["']/g)];

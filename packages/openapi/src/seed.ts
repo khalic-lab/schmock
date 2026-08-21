@@ -1,11 +1,8 @@
 import { ResourceLimitError } from "@schmock/core";
 import type { CrudResource } from "./crud-detector.js";
 import { generateSeedItems } from "./generators.js";
-import {
-  MAX_SEED_FILE_BYTES,
-  MAX_SEED_ITEMS_PER_RESOURCE,
-  MAX_SEED_ITEMS_TOTAL,
-} from "./limits.js";
+import { MAX_SEED_ITEMS_PER_RESOURCE, MAX_SEED_ITEMS_TOTAL } from "./limits.js";
+import { readSeedFile } from "./seed-file.js";
 
 export type SeedSource = unknown[] | string | { count: number };
 
@@ -62,20 +59,9 @@ export async function loadSeed(
       admit(resourceName, source.length);
       result.set(resourceName, [...source]);
     } else if (typeof source === "string") {
-      // File path. `node:fs` is imported dynamically ON PURPOSE — a top-level
-      // import would make this module unusable in a browser bundle.
-      const { readFileSync, statSync } = await import("node:fs");
-      // Measured with statSync *before* the read: a read-then-measure check
-      // does not prevent the allocation it exists to bound.
-      const { size } = statSync(source);
-      if (size > MAX_SEED_FILE_BYTES) {
-        throw new ResourceLimitError(
-          `seed file "${source}"`,
-          MAX_SEED_FILE_BYTES,
-          size,
-        );
-      }
-      const content = readFileSync(source, "utf-8");
+      // File path. The read lives in its own module so the browser build can
+      // swap it for one that refuses rather than reaching for `node:fs`.
+      const content = await readSeedFile(source);
       let parsed: unknown;
       try {
         parsed = JSON.parse(content);

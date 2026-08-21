@@ -1,0 +1,6 @@
+{
+  "name": "@schmock/openapi-browser-compat",
+  "private": true,
+  "main": "../dist/index.browser.js",
+  "types": "../dist/index.d.ts"
+}

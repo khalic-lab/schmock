@@ -23,7 +23,7 @@ await mock.handle('GET', '/pets')
 await mock.handle('POST', '/pets', { body: { name: 'Rex' } })
 ```
 
-The spec can be a file path (YAML or JSON) or an inline object:
+The spec can be a file path (YAML or JSON) or an inline object. **In a browser, only the inline object works** — see [Running in a browser](#running-in-a-browser).
 
 ```typescript
 mock.pipe(await openapi({
@@ -114,6 +114,40 @@ Relative refs resolve against **the spec file's own directory**. A spec passed
 as an inline object has no directory to resolve against, so a relative external
 `$ref` inside one still resolves against the process working directory — pass a
 file path when a spec is split across files.
+
+External refs are Node-only: resolving them is swagger-parser's job, and it is
+not in the browser build.
+
+### Running in a browser
+
+`@schmock/openapi` ships a second build for browsers, and your bundler picks it
+automatically through the `browser` export condition — esbuild, Vite, webpack,
+Rollup and the Angular application builder all honour it. Import
+`@schmock/openapi/browser` explicitly if yours does not.
+
+Pass the spec as an **object**. Everything that resolves `$ref`s pointing inside
+that object works exactly as it does under Node, down to shared components and
+circular references, which `deref-parity.test.ts` pins against the Node
+implementation.
+
+Four things need Node and throw a `SchmockError` with code `OPENAPI_NODE_ONLY`
+rather than degrading quietly:
+
+| Not available in a browser | Instead |
+|---|---|
+| `spec` as a file path or URL | Import or `fetch` the spec and pass the parsed object |
+| `strict: true` | Validate the spec in your build or test step |
+| `refs: { external: true }` | Bundle a spec whose `$ref`s all point inside itself |
+| `seed` as a file path | Pass an inline array, or `{ count: n }` |
+
+The reason is `@apidevtools/swagger-parser`, which does the file reading,
+external `$ref` resolution and meta-schema validation. It is CommonJS and calls
+`require("util")`, and its `json-schema-ref-parser` dependency calls
+`require("path")` while declaring only `fs` in its `browser` field. Nothing a
+bundler can be configured to do reaches inside a dependency's `require`, so the
+browser build leaves it out entirely rather than shipping a bundle that fails to
+resolve — or, worse, one that compiles and then throws `Dynamic require of
+"util" is not supported` on first use.
 
 ### Server URLs and `basePath`
 
