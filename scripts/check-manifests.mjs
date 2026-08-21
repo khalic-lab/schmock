@@ -8,6 +8,8 @@
  * invariants that only show up in a published tarball:
  *
  *   - every package ships `files: ["dist"]` (no `src`, no tests, no fixtures)
+ *   - every package pins `publishConfig` at the public registry, so a machine
+ *     whose `~/.npmrc` names a private one cannot redirect a release
  *   - every package carries a LICENSE copy identical to the root one, so the
  *     `license: "MIT"` declaration ships with the terms it names
  *   - every package carries the metadata npm surfaces on the package page
@@ -24,6 +26,7 @@ const REPOSITORY_URL = "git+https://github.com/khalic-lab/schmock.git";
 const HOMEPAGE_ROOT = "https://github.com/khalic-lab/schmock";
 const BUGS_URL = "https://github.com/khalic-lab/schmock/issues";
 const EXPECTED_FILES = ["dist"];
+const PUBLIC_REGISTRY = "https://registry.npmjs.org/";
 
 /**
  * Packages allowed to ship something besides `dist`, and what.
@@ -109,6 +112,24 @@ function checkPackage(directory) {
     fail(
       scope,
       `files must be ${JSON.stringify(expectedFiles)}, found ${JSON.stringify(files)}`,
+    );
+  }
+
+  // A machine-level `~/.npmrc` can set `registry=` to a corporate mirror, and
+  // npm honours it for `publish` and for the `npm view` call the release script
+  // uses to decide what is already out. `publishConfig` is the durable answer:
+  // it lives in the manifest, so it holds wherever the publish is run from.
+  const publishConfig = manifest.publishConfig;
+  if (publishConfig?.registry !== PUBLIC_REGISTRY) {
+    fail(
+      scope,
+      `publishConfig.registry must be "${PUBLIC_REGISTRY}", found ${JSON.stringify(publishConfig?.registry)}`,
+    );
+  }
+  if (publishConfig?.access !== "public") {
+    fail(
+      scope,
+      `publishConfig.access must be "public", found ${JSON.stringify(publishConfig?.access)}`,
     );
   }
 
