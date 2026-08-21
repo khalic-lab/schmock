@@ -1,7 +1,7 @@
 {
   "name": "@schmock/faker",
   "description": "Faker-powered automatic data generation for Schmock",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -49,7 +49,7 @@
     "json-schema-faker-private": "https://registry.npmjs.org/json-schema-faker/-/json-schema-faker-0.6.2.tgz"
   },
   "peerDependencies": {
-    "@schmock/core": "^2.3.1"
+    "@schmock/core": "^2.4.0"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",

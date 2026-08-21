@@ -1,6 +1,6 @@
 {
   "name": "@schmock/react",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "description": "React adapter for Schmock — Provider, hooks, and test utilities",
   "type": "module",
   "repository": {
@@ -47,7 +47,7 @@
   "license": "MIT",
   "dependencies": {},
   "peerDependencies": {
-    "@schmock/core": "^2.3.1",
+    "@schmock/core": "^2.4.0",
     "react": "^18.0.0 || ^19.0.0",
     "@testing-library/react": "^16.0.0"
   },
