@@ -111,13 +111,19 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "[exports-bun 1/1] Import every candidate entry point with Bun and exercise the CLI"
   echo "[types 1/1] Compile every declaration-bearing entry in isolation"
   echo "[types-ts56 1/1] Compile the Core declaration entry with TypeScript 5.6"
-  echo "[browser 1/1] Bundle the validation candidate for a browser target"
+  echo "[browser 1/2] Bundle the validation candidate for a browser target"
+  echo "[browser 2/2] Bundle the OpenAPI candidate with esbuild for a browser target"
   exit 0
 fi
 
 PUBLINT_BIN="$ROOT_DIR/node_modules/.bin/publint"
 ATTW_BIN="$ROOT_DIR/node_modules/.bin/attw"
-if [[ ! -x "$PUBLINT_BIN" || ! -x "$ATTW_BIN" ]]; then
+# esbuild, not `bun build`, for the OpenAPI browser stage: bun's browser target
+# accepts an unresolvable CommonJS `require` and rewrites it into a shim that
+# throws only when called, so it reports success for a bundle that cannot boot.
+# esbuild is what Angular's application builder and Vite actually run.
+ESBUILD_BIN="$ROOT_DIR/packages/openapi/node_modules/.bin/esbuild"
+if [[ ! -x "$PUBLINT_BIN" || ! -x "$ATTW_BIN" || ! -x "$ESBUILD_BIN" ]]; then
   echo "Install repository dependencies before checking release candidates" >&2
   exit 1
 fi
@@ -175,12 +181,18 @@ for ((index = 0; index < TOTAL; index += 1)); do
   # an allowlist rather than a denylist on purpose: sources, tests, BDD steps,
   # spec fixtures and test-only helpers must stay out whatever they are named,
   # so a newly emitted or renamed test artefact cannot slip past.
+  #
+  # `browser/` is named file by file for the same reason. It holds no code —
+  # only a stub manifest pointing back into `dist/`, so that
+  # `@schmock/openapi/browser` resolves under TypeScript's pre-`exports`
+  # `moduleResolution: "node"` — and listing the directory alone would let
+  # anything else inside it travel too.
   declare -a FORBIDDEN_ENTRIES=()
   while IFS= read -r entry; do
     [[ -n "$entry" ]] && FORBIDDEN_ENTRIES+=("$entry")
   done < <(
     tar -tf "$tarball" \
-      | grep -vE '^package/(package\.json|README\.md|LICENSE|dist/)' \
+      | grep -vE '^package/(package\.json|README\.md|LICENSE|dist/|browser/(package\.json|README\.md)$)' \
       || true
   )
 
@@ -274,6 +286,8 @@ bun -e '
 cp "$ROOT_DIR/scripts/release-candidate-consumer.js" "$FIXTURE_DIR/consumer.mjs"
 cp "$ROOT_DIR/scripts/release-candidate-types.js" "$FIXTURE_DIR/types-consumer.mjs"
 cp "$ROOT_DIR/scripts/release-candidate-browser.js" "$FIXTURE_DIR/browser-consumer.mjs"
+cp "$ROOT_DIR/scripts/release-candidate-browser-openapi.js" \
+  "$FIXTURE_DIR/browser-openapi-consumer.mjs"
 
 echo "[install 1/1] Installing all $TOTAL local tarballs in an isolated consumer"
 (
@@ -305,7 +319,7 @@ echo "[types-ts56 1/1] Compiling the Core declaration entry with TypeScript 5.6"
   node "$ROOT_DIR/scripts/check-typescript-5-6.mjs"
 )
 
-echo "[browser 1/1] Bundling the validation candidate for a browser target"
+echo "[browser 1/2] Bundling the validation candidate for a browser target"
 (
   cd "$FIXTURE_DIR"
   bun build \
@@ -335,5 +349,30 @@ node -e '
     throw new Error(`Browser bundle contains Node-only imports: ${failures.join(", ")}`);
   }
 ' "$FIXTURE_DIR/browser-dist"
+
+# The stage that would have caught the swagger-parser regression. `node:*` is
+# externalised so a surviving one is reported by the scan above rather than as a
+# resolve error; a BARE built-in — `path`, `util`, `fs` — has no such excuse,
+# arrives only through a dependency's CommonJS `require`, and fails the bundle.
+echo "[browser 2/2] Bundling the OpenAPI candidate with esbuild for a browser target"
+(
+  cd "$FIXTURE_DIR"
+  "$ESBUILD_BIN" \
+    ./browser-openapi-consumer.mjs \
+    --bundle \
+    --platform=browser \
+    --format=esm \
+    --external:node:* \
+    --outfile=./browser-openapi-dist/bundle.js
+)
+
+# Resolving is not running. The reported app compiled once `path` and `fs` were
+# marked external and then died on its first line, so the bundle is executed
+# too: `require` is undefined in an ES module, which makes a dynamic-require
+# shim throw here exactly as it did in the browser.
+(
+  cd "$FIXTURE_DIR"
+  node ./browser-openapi-dist/bundle.js
+)
 
 echo "Release-candidate verification passed for all $TOTAL packages"
