@@ -172,43 +172,49 @@ describe("mock.intercept()", () => {
       "https://api.example.com/caf%c3%a9",
       "https://api.example.com/café/users",
     ],
-  ])("canonicalizes a %s baseUrl before segment matching", async (_, baseUrl, url) => {
-    mock("GET /café/users", { mocked: true });
-    const savedFetch = globalThis.fetch;
-    const handle = mock.intercept({ baseUrl });
+  ])(
+    "canonicalizes a %s baseUrl before segment matching",
+    async (_, baseUrl, url) => {
+      mock("GET /café/users", { mocked: true });
+      const savedFetch = globalThis.fetch;
+      const handle = mock.intercept({ baseUrl });
 
-    try {
-      const response = await fetch(url);
-      expect(savedFetch).not.toHaveBeenCalled();
-      expect(await response.json()).toEqual({ mocked: true });
-    } finally {
-      handle.restore();
-    }
-  });
+      try {
+        const response = await fetch(url);
+        expect(savedFetch).not.toHaveBeenCalled();
+        expect(await response.json()).toEqual({ mocked: true });
+      } finally {
+        handle.restore();
+      }
+    },
+  );
 
   it.each([
     "GET /café/:name",
     "GET /caf%C3%A9/:name",
     "GET /caf%c3%a9/:name",
-  ] satisfies Schmock.RouteKey[])("matches literal and percent-encoded requests for route %s", async (route) => {
-    mock(route, ({ params }) => ({ name: params.name }));
-    const savedFetch = globalThis.fetch;
-    const handle = mock.intercept();
+  ] satisfies Schmock.RouteKey[])(
+    "matches literal and percent-encoded requests for route %s",
+    async (route) => {
+      mock(route, ({ params }) => ({ name: params.name }));
+      const savedFetch = globalThis.fetch;
+      const handle = mock.intercept();
 
-    try {
-      const responses = await Promise.all([
-        fetch("http://localhost/café/Ana Lía"),
-        fetch("http://localhost/caf%C3%A9/Ana%20L%C3%ADa"),
-        fetch("http://localhost/caf%c3%a9/Ana%20L%c3%ada"),
-      ]);
-      expect(savedFetch).not.toHaveBeenCalled();
-      for (const response of responses) {
-        expect(await response.json()).toEqual({ name: "Ana Lía" });
+      try {
+        const responses = await Promise.all([
+          fetch("http://localhost/café/Ana Lía"),
+          fetch("http://localhost/caf%C3%A9/Ana%20L%C3%ADa"),
+          fetch("http://localhost/caf%c3%a9/Ana%20L%c3%ada"),
+        ]);
+        expect(savedFetch).not.toHaveBeenCalled();
+        for (const response of responses) {
+          expect(await response.json()).toEqual({ name: "Ana Lía" });
+        }
+      } finally {
+        handle.restore();
       }
-    } finally {
-      handle.restore();
-    }
-  });
+    },
+  );
 
   it("does not give relative inputs a synthetic origin for baseUrl matching", async () => {
     mock("GET /api/users", [{ id: 1 }]);
@@ -562,28 +568,31 @@ describe("mock.intercept()", () => {
     ["?page=2", "/app/page.html", "page=2"],
     ["#details", "/app/page.html", ""],
     ["/root", "/root", ""],
-  ])("resolves relative reference %s using browser URL semantics", async (reference, expectedPath, expectedQuery) => {
-    vi.stubGlobal("document", {
-      baseURI: "https://app.example.test/app/page.html",
-    });
-    const baselineFetch = vi.fn().mockResolvedValue(new Response("backend"));
-    globalThis.fetch = baselineFetch;
-    const handle = mock.intercept({ baseUrl: "https://api.example.test" });
+  ])(
+    "resolves relative reference %s using browser URL semantics",
+    async (reference, expectedPath, expectedQuery) => {
+      vi.stubGlobal("document", {
+        baseURI: "https://app.example.test/app/page.html",
+      });
+      const baselineFetch = vi.fn().mockResolvedValue(new Response("backend"));
+      globalThis.fetch = baselineFetch;
+      const handle = mock.intercept({ baseUrl: "https://api.example.test" });
 
-    try {
-      await fetch(reference);
-      const [input] = baselineFetch.mock.calls[0];
-      if (!(input instanceof Request)) {
-        throw new Error("Expected passthrough to receive a Request");
+      try {
+        await fetch(reference);
+        const [input] = baselineFetch.mock.calls[0];
+        if (!(input instanceof Request)) {
+          throw new Error("Expected passthrough to receive a Request");
+        }
+        const url = new URL(input.url);
+        expect(url.pathname).toBe(expectedPath);
+        expect(url.searchParams.toString()).toBe(expectedQuery);
+      } finally {
+        handle.restore();
+        vi.unstubAllGlobals();
       }
-      const url = new URL(input.url);
-      expect(url.pathname).toBe(expectedPath);
-      expect(url.searchParams.toString()).toBe(expectedQuery);
-    } finally {
-      handle.restore();
-      vi.unstubAllGlobals();
-    }
-  });
+    },
+  );
 
   it("rejects malformed absolute URLs instead of treating them as paths", async () => {
     const handle = mock.intercept();

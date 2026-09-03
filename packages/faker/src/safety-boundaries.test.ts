@@ -90,23 +90,22 @@ describe("Faker safety boundaries", () => {
       );
     });
 
-    it.each([
-      "const",
-      "default",
-      "enum",
-    ] as const)("rejects an oversized %s string before generation", (keyword) => {
-      const oversized = "x".repeat(MAX_STRING_LENGTH + 1);
-      const schema: JSONSchema7 = { type: "string" };
-      Reflect.set(
-        schema,
-        keyword,
-        keyword === "enum" ? [oversized] : oversized,
-      );
+    it.each(["const", "default", "enum"] as const)(
+      "rejects an oversized %s string before generation",
+      (keyword) => {
+        const oversized = "x".repeat(MAX_STRING_LENGTH + 1);
+        const schema: JSONSchema7 = { type: "string" };
+        Reflect.set(
+          schema,
+          keyword,
+          keyword === "enum" ? [oversized] : oversized,
+        );
 
-      const error = captureFailure(() => fakerPlugin({ schema }));
+        const error = captureFailure(() => fakerPlugin({ schema }));
 
-      expectResource(error, "string_length", oversized.length);
-    });
+        expectResource(error, "string_length", oversized.length);
+      },
+    );
 
     it("rejects allocation-bearing object-form faker length arguments", () => {
       const schema: Schmock.Schema = {
@@ -426,25 +425,25 @@ describe("Faker safety boundaries", () => {
       expect(String(error)).toMatch(/duplicate.*identifier/i);
     });
 
-    it.each([
-      "$anchor",
-      "$dynamicAnchor",
-    ] as const)("rejects duplicate canonical %s values", (keyword) => {
-      const first: JSONSchema7 = { type: "string" };
-      const second: JSONSchema7 = { type: "integer" };
-      Reflect.set(first, keyword, "shared");
-      Reflect.set(second, keyword, "shared");
-      const schema: JSONSchema7 = {
-        $id: "https://example.test/root.json",
-        type: "object",
-        $defs: { first, second },
-      };
+    it.each(["$anchor", "$dynamicAnchor"] as const)(
+      "rejects duplicate canonical %s values",
+      (keyword) => {
+        const first: JSONSchema7 = { type: "string" };
+        const second: JSONSchema7 = { type: "integer" };
+        Reflect.set(first, keyword, "shared");
+        Reflect.set(second, keyword, "shared");
+        const schema: JSONSchema7 = {
+          $id: "https://example.test/root.json",
+          type: "object",
+          $defs: { first, second },
+        };
 
-      const error = captureFailure(() => fakerPlugin({ schema }));
+        const error = captureFailure(() => fakerPlugin({ schema }));
 
-      expect(error).toBeInstanceOf(SchemaValidationError);
-      expect(String(error)).toMatch(/duplicate.*identifier/i);
-    });
+        expect(error).toBeInstanceOf(SchemaValidationError);
+        expect(String(error)).toMatch(/duplicate.*identifier/i);
+      },
+    );
 
     it("charges absolute references to embedded resources at every output site", () => {
       const properties = Object.fromEntries(
@@ -673,23 +672,20 @@ describe("Faker safety boundaries", () => {
         resource: "array_size",
         actual: MAX_ARRAY_SIZE + 1,
       },
-    ])("rejects the allocation count for $method", ({
-      method,
-      args,
-      schemaType,
-      resource,
-      actual,
-    }) => {
-      const schema: Schmock.Schema = {
-        type: schemaType,
-        faker: { [method]: args },
-      };
-      if (schemaType === "array") schema.items = { type: "string" };
+    ])(
+      "rejects the allocation count for $method",
+      ({ method, args, schemaType, resource, actual }) => {
+        const schema: Schmock.Schema = {
+          type: schemaType,
+          faker: { [method]: args },
+        };
+        if (schemaType === "array") schema.items = { type: "string" };
 
-      const error = captureFailure(() => fakerPlugin({ schema }));
+        const error = captureFailure(() => fakerPlugin({ schema }));
 
-      expectResource(error, resource, actual);
-    });
+        expectResource(error, resource, actual);
+      },
+    );
 
     it("does not treat scalar string method options as allocation counts", () => {
       const schema: Schmock.Schema = {

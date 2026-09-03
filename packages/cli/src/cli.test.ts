@@ -177,46 +177,36 @@ describe("parseCliArgs", () => {
 
   // Core reads a negative maxHistorySize as "unbounded", so these must never
   // reach it.
-  it.each([
-    "-1",
-    "1.5",
-    "foo",
-    "",
-  ])("throws on --admin-history-limit %j", (value) => {
-    expect(() =>
-      parseCliArgs([
-        "--spec",
-        "x.yaml",
-        "--admin",
-        "--admin-history-limit",
-        value,
-      ]),
-    ).toThrow(/admin-history-limit/);
-  });
+  it.each(["-1", "1.5", "foo", ""])(
+    "throws on --admin-history-limit %j",
+    (value) => {
+      expect(() =>
+        parseCliArgs([
+          "--spec",
+          "x.yaml",
+          "--admin",
+          "--admin-history-limit",
+          value,
+        ]),
+      ).toThrow(/admin-history-limit/);
+    },
+  );
 });
 
 describe("isLoopbackHost", () => {
-  it.each([
-    "127.0.0.1",
-    "127.1.2.3",
-    "localhost",
-    "::1",
-    "[::1]",
-    "LOCALHOST",
-  ])("treats %s as loopback", (host) => {
-    expect(isLoopbackHost(host)).toBe(true);
-  });
+  it.each(["127.0.0.1", "127.1.2.3", "localhost", "::1", "[::1]", "LOCALHOST"])(
+    "treats %s as loopback",
+    (host) => {
+      expect(isLoopbackHost(host)).toBe(true);
+    },
+  );
 
-  it.each([
-    "0.0.0.0",
-    "::",
-    "",
-    "192.168.1.10",
-    "example.test",
-    "1270.0.0.1",
-  ])("treats %s as reachable off-box", (host) => {
-    expect(isLoopbackHost(host)).toBe(false);
-  });
+  it.each(["0.0.0.0", "::", "", "192.168.1.10", "example.test", "1270.0.0.1"])(
+    "treats %s as reachable off-box",
+    (host) => {
+      expect(isLoopbackHost(host)).toBe(false);
+    },
+  );
 });
 
 describe("admin authentication", () => {
@@ -274,23 +264,22 @@ describe("admin authentication", () => {
 
   // A raw timingSafeEqual throws on unequal buffer lengths, which would surface
   // as a 500 rather than a 401.
-  it.each([
-    "",
-    "short",
-    "a-much-longer-token-than-the-real-one",
-  ])("rejects the wrong token %j with 401", async (token) => {
-    server = await createCliServer({
-      spec: PETSTORE_SPEC,
-      port: 0,
-      admin: true,
-      adminToken: "pinned-token",
-    });
-    const response = await fetch(
-      `http://127.0.0.1:${server.port}/schmock-admin/state`,
-      { headers: { "x-schmock-admin-token": token } },
-    );
-    expect(response.status).toBe(401);
-  });
+  it.each(["", "short", "a-much-longer-token-than-the-real-one"])(
+    "rejects the wrong token %j with 401",
+    async (token) => {
+      server = await createCliServer({
+        spec: PETSTORE_SPEC,
+        port: 0,
+        admin: true,
+        adminToken: "pinned-token",
+      });
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/schmock-admin/state`,
+        { headers: { "x-schmock-admin-token": token } },
+      );
+      expect(response.status).toBe(401);
+    },
+  );
 
   // Token stability across a reload is now covered end-to-end by
   // features/watch-mode.feature ("The admin token survives a reload"): the
@@ -805,18 +794,14 @@ describe("post-listen server errors", () => {
 });
 
 describe("parseCliArgs validation", () => {
-  it.each([
-    ["abc"],
-    [""],
-    ["1.5"],
-    ["  "],
-    ["Infinity"],
-    ["1e400"],
-  ])("rejects --seed-random %j", (value) => {
-    expect(() =>
-      parseCliArgs(["--spec", "x.yaml", "--seed-random", value]),
-    ).toThrow(/--seed-random/);
-  });
+  it.each([["abc"], [""], ["1.5"], ["  "], ["Infinity"], ["1e400"]])(
+    "rejects --seed-random %j",
+    (value) => {
+      expect(() =>
+        parseCliArgs(["--spec", "x.yaml", "--seed-random", value]),
+      ).toThrow(/--seed-random/);
+    },
+  );
 
   it.each([
     ["42", 42],

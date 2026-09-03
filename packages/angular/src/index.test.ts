@@ -966,9 +966,10 @@ describe("Angular Adapter", () => {
       });
 
       if (typeof Blob === "function") {
-        expect(error?.error).toBeInstanceOf(Blob);
-        expect((error?.error as Blob).type).toBe("application/json");
-        expect(await (error?.error as Blob).text()).toBe('{"formatted":true}');
+        const blob = error?.error as Blob;
+        expect(blob).toBeInstanceOf(Blob);
+        expect(blob.type).toBe("application/json");
+        expect(await blob.text()).toBe('{"formatted":true}');
       } else {
         expect(error?.error).toBeInstanceOf(ArrayBuffer);
       }
@@ -997,9 +998,10 @@ describe("Angular Adapter", () => {
       );
 
       if (typeof Blob === "function") {
-        expect(response?.body).toBeInstanceOf(Blob);
-        expect((response?.body as Blob).type).toBe("application/json");
-        expect(await (response?.body as Blob).text()).toBe('{"ok":true}');
+        const blob = response?.body as Blob;
+        expect(blob).toBeInstanceOf(Blob);
+        expect(blob.type).toBe("application/json");
+        expect(await blob.text()).toBe('{"ok":true}');
       } else {
         expect(response?.body).toBeInstanceOf(ArrayBuffer);
       }
@@ -1060,8 +1062,9 @@ describe("Angular Adapter", () => {
         "arraybuffer",
       );
 
-      expect(response?.body).toBeInstanceOf(ArrayBuffer);
-      expect((response?.body as ArrayBuffer).byteLength).toBe(0);
+      const buffer = response?.body as ArrayBuffer;
+      expect(buffer).toBeInstanceOf(ArrayBuffer);
+      expect(buffer.byteLength).toBe(0);
     });
 
     it("yields an empty Blob labelled from content-type for a null body under responseType blob", async () => {
@@ -1075,12 +1078,14 @@ describe("Angular Adapter", () => {
       );
 
       if (typeof Blob === "function") {
-        expect(response?.body).toBeInstanceOf(Blob);
-        expect((response?.body as Blob).size).toBe(0);
-        expect((response?.body as Blob).type).toBe("application/json");
+        const blob = response?.body as Blob;
+        expect(blob).toBeInstanceOf(Blob);
+        expect(blob.size).toBe(0);
+        expect(blob.type).toBe("application/json");
       } else {
-        expect(response?.body).toBeInstanceOf(ArrayBuffer);
-        expect((response?.body as ArrayBuffer).byteLength).toBe(0);
+        const buffer = response?.body as ArrayBuffer;
+        expect(buffer).toBeInstanceOf(ArrayBuffer);
+        expect(buffer.byteLength).toBe(0);
       }
     });
 
@@ -1128,8 +1133,9 @@ describe("Angular Adapter", () => {
       );
 
       expect(error?.status).toBe(304);
-      expect(error?.error).toBeInstanceOf(ArrayBuffer);
-      expect((error?.error as ArrayBuffer).byteLength).toBe(0);
+      const buffer = error?.error as ArrayBuffer;
+      expect(buffer).toBeInstanceOf(ArrayBuffer);
+      expect(buffer.byteLength).toBe(0);
     });
   });
 

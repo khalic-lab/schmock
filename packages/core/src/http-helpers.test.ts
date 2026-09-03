@@ -68,22 +68,19 @@ describe("collectBody", () => {
       expect(request.destroyed).toBe(false);
     });
 
-    it.each([
-      "6bytes",
-      "+6",
-      "6.0",
-      "1e1",
-      "",
-    ])("does not trust an invalid decimal Content-Length of %j", async (contentLength) => {
-      const body = Buffer.from("12345");
-      await expect(
-        collectBody(
-          bodyStream(body),
-          { "content-length": contentLength },
-          body.length,
-        ),
-      ).resolves.toBe("12345");
-    });
+    it.each(["6bytes", "+6", "6.0", "1e1", ""])(
+      "does not trust an invalid decimal Content-Length of %j",
+      async (contentLength) => {
+        const body = Buffer.from("12345");
+        await expect(
+          collectBody(
+            bodyStream(body),
+            { "content-length": contentLength },
+            body.length,
+          ),
+        ).resolves.toBe("12345");
+      },
+    );
 
     it("enforces observed bytes when Content-Length understates the body", async () => {
       const body = Buffer.from("123456");
@@ -118,18 +115,18 @@ describe("collectBody", () => {
   });
 
   describe("stream termination", () => {
-    it.each([
-      "aborted",
-      "close",
-    ])("rejects when the request emits %s before end", async (event) => {
-      const request = new BodyEmitter();
-      const pending = collectBody(request, {});
+    it.each(["aborted", "close"])(
+      "rejects when the request emits %s before end",
+      async (event) => {
+        const request = new BodyEmitter();
+        const pending = collectBody(request, {});
 
-      request.emit(event);
-      request.emit("end");
+        request.emit(event);
+        request.emit("end");
 
-      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
-    });
+        await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      },
+    );
   });
 
   describe("JSON media types", () => {
@@ -165,20 +162,19 @@ describe("collectBody", () => {
       ).resolves.toEqual({ title: "invalid" });
     });
 
-    it.each([
-      "text/json",
-      "application/notjson",
-      "application/json-seq",
-    ])("does not parse the non-JSON media type %s", async (contentType) => {
-      const body = Buffer.from('{"raw":true}');
-      await expect(
-        collectBody(
-          bodyStream(body),
-          { "content-type": contentType },
-          body.length,
-        ),
-      ).resolves.toBe('{"raw":true}');
-    });
+    it.each(["text/json", "application/notjson", "application/json-seq"])(
+      "does not parse the non-JSON media type %s",
+      async (contentType) => {
+        const body = Buffer.from('{"raw":true}');
+        await expect(
+          collectBody(
+            bodyStream(body),
+            { "content-type": contentType },
+            body.length,
+          ),
+        ).resolves.toBe('{"raw":true}');
+      },
+    );
 
     it("rejects malformed non-empty JSON with a structured error", async () => {
       const body = Buffer.from('{"broken":');

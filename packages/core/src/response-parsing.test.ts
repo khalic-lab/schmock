@@ -108,25 +108,23 @@ describe("response parsing", () => {
       expect(response.headers["x-envelope"]).toBeUndefined();
     });
 
-    it.each([
-      { headers: [] },
-      { headers: ["x-trace"] },
-    ])("treats array headers %p as a plain response body", async ({
-      headers,
-    }) => {
-      const mock = schmock();
-      const malformedEnvelope = {
-        status: 202,
-        body: { semantic: true },
-        headers,
-      };
-      mock("GET /malformed-envelope", malformedEnvelope);
+    it.each([{ headers: [] }, { headers: ["x-trace"] }])(
+      "treats array headers %p as a plain response body",
+      async ({ headers }) => {
+        const mock = schmock();
+        const malformedEnvelope = {
+          status: 202,
+          body: { semantic: true },
+          headers,
+        };
+        mock("GET /malformed-envelope", malformedEnvelope);
 
-      const response = await mock.handle("GET", "/malformed-envelope");
+        const response = await mock.handle("GET", "/malformed-envelope");
 
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual(malformedEnvelope);
-    });
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual(malformedEnvelope);
+      },
+    );
   });
 
   describe("various response types", () => {
@@ -392,18 +390,21 @@ describe("response parsing", () => {
       ["not-obj", "Invalid response: headers must be a string record"],
       [42, "Invalid response: headers must be a string record"],
       [{ n: 5 }, "Invalid response: header values must be strings"],
-    ])("reports malformed tuple headers %p as an invalid response", async (headers, message) => {
-      const mock = schmock();
-      mock("GET /malformed", () => [200, "body", headers] as any);
+    ])(
+      "reports malformed tuple headers %p as an invalid response",
+      async (headers, message) => {
+        const mock = schmock();
+        mock("GET /malformed", () => [200, "body", headers] as any);
 
-      const response = await mock.handle("GET", "/malformed");
+        const response = await mock.handle("GET", "/malformed");
 
-      expect(response.status).toBe(500);
-      expect(response.body).toMatchObject({
-        code: "INVALID_RESPONSE",
-        error: message,
-      });
-    });
+        expect(response.status).toBe(500);
+        expect(response.body).toMatchObject({
+          code: "INVALID_RESPONSE",
+          error: message,
+        });
+      },
+    );
   });
 
   describe("edge cases", () => {

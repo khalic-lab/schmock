@@ -166,25 +166,26 @@ describe("toExpress", () => {
     expect([...sentBody]).toEqual([1, 2, 3]);
   });
 
-  it.each(
-    arrayBufferViewCases(),
-  )("converts %s bodies to Buffer for Express 4 compatibility", async (_name, body) => {
-    const mock = createMock(() =>
-      Promise.resolve({ status: 200, body, headers: {} }),
-    );
-    const res = createRes();
+  it.each(arrayBufferViewCases())(
+    "converts %s bodies to Buffer for Express 4 compatibility",
+    async (_name, body) => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body, headers: {} }),
+      );
+      const res = createRes();
 
-    await toExpress(mock)(createReq(), res, vi.fn());
+      await toExpress(mock)(createReq(), res, vi.fn());
 
-    const sentBody = endedBody(res);
-    expect(res.set).toHaveBeenCalledWith(
-      "content-type",
-      "application/octet-stream",
-    );
-    expect([...sentBody]).toEqual([
-      ...new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
-    ]);
-  });
+      const sentBody = endedBody(res);
+      expect(res.set).toHaveBeenCalledWith(
+        "content-type",
+        "application/octet-stream",
+      );
+      expect([...sentBody]).toEqual([
+        ...new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
+      ]);
+    },
+  );
 
   it("handles empty body with res.end", async () => {
     const mock = createMock(() =>
@@ -1386,60 +1387,60 @@ describe("toExpress", () => {
       expect(generator).not.toHaveBeenCalled();
     });
 
-    it.each([
-      "beforeRequest",
-      "beforeResponse",
-    ] as const)("immediately forwards a committed %s error without formatting", async (hookName) => {
-      const mock = createMock(() =>
-        Promise.resolve({ status: 200, body: "ok", headers: {} }),
-      );
-      const release = vi.fn();
-      Object.defineProperty(
-        mock,
-        Symbol.for("@schmock/core.request-admission"),
-        {
-          configurable: true,
-          value: () => ({ handle: mock.handle, release }),
-        },
-      );
-      const { events, res } = createLifecycleRes();
-      const next = vi.fn() as NextFunction;
-      const errorFormatter = vi.fn(() => ({ formatted: true }));
-      const error = new Error(`${hookName} exploded after sending`);
-      let announceHookRun = () => {};
-      const hookRan = new Promise<void>((resolve) => {
-        announceHookRun = resolve;
-      });
-      const writeThenThrow = (hookRes: Response): never => {
-        const owned = hookRes as unknown as { headersSent: boolean };
-        owned.headersSent = true;
-        announceHookRun();
-        throw error;
-      };
-      const options: ExpressAdapterOptions = { errorFormatter };
-      if (hookName === "beforeRequest") {
-        options.beforeRequest = (_req, hookRes) => writeThenThrow(hookRes);
-      } else {
-        options.beforeResponse = (_response, _req, hookRes) =>
-          writeThenThrow(hookRes);
-      }
+    it.each(["beforeRequest", "beforeResponse"] as const)(
+      "immediately forwards a committed %s error without formatting",
+      async (hookName) => {
+        const mock = createMock(() =>
+          Promise.resolve({ status: 200, body: "ok", headers: {} }),
+        );
+        const release = vi.fn();
+        Object.defineProperty(
+          mock,
+          Symbol.for("@schmock/core.request-admission"),
+          {
+            configurable: true,
+            value: () => ({ handle: mock.handle, release }),
+          },
+        );
+        const { events, res } = createLifecycleRes();
+        const next = vi.fn() as NextFunction;
+        const errorFormatter = vi.fn(() => ({ formatted: true }));
+        const error = new Error(`${hookName} exploded after sending`);
+        let announceHookRun = () => {};
+        const hookRan = new Promise<void>((resolve) => {
+          announceHookRun = resolve;
+        });
+        const writeThenThrow = (hookRes: Response): never => {
+          const owned = hookRes as unknown as { headersSent: boolean };
+          owned.headersSent = true;
+          announceHookRun();
+          throw error;
+        };
+        const options: ExpressAdapterOptions = { errorFormatter };
+        if (hookName === "beforeRequest") {
+          options.beforeRequest = (_req, hookRes) => writeThenThrow(hookRes);
+        } else {
+          options.beforeResponse = (_response, _req, hookRes) =>
+            writeThenThrow(hookRes);
+        }
 
-      const pending = toExpress(mock, options)(createReq(), res, next);
-      await hookRan;
-      const forwardedBeforeLifecycleEvent = next.mock.calls.length === 1;
-      await pending;
+        const pending = toExpress(mock, options)(createReq(), res, next);
+        await hookRan;
+        const forwardedBeforeLifecycleEvent = next.mock.calls.length === 1;
+        await pending;
 
-      expect(forwardedBeforeLifecycleEvent).toBe(true);
-      expect(next).toHaveBeenCalledWith(error);
-      expect(errorFormatter).not.toHaveBeenCalled();
-      expect(res.end).not.toHaveBeenCalled();
-      expect(mock.handle).toHaveBeenCalledTimes(
-        hookName === "beforeRequest" ? 0 : 1,
-      );
-      expect(events.listenerCount("finish")).toBe(0);
-      expect(events.listenerCount("close")).toBe(0);
-      expect(release).toHaveBeenCalledOnce();
-    });
+        expect(forwardedBeforeLifecycleEvent).toBe(true);
+        expect(next).toHaveBeenCalledWith(error);
+        expect(errorFormatter).not.toHaveBeenCalled();
+        expect(res.end).not.toHaveBeenCalled();
+        expect(mock.handle).toHaveBeenCalledTimes(
+          hookName === "beforeRequest" ? 0 : 1,
+        );
+        expect(events.listenerCount("finish")).toBe(0);
+        expect(events.listenerCount("close")).toBe(0);
+        expect(release).toHaveBeenCalledOnce();
+      },
+    );
 
     it("ends a committed response without another body when error forwarding is disabled", async () => {
       const mock = createMock(() =>

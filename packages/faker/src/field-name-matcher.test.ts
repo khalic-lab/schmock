@@ -371,31 +371,32 @@ describe("GENERATABLE_FORMATS matches what json-schema-faker generates", () => {
    * the empty string; `uri-template` and `regex` used to be listed and behaved
    * exactly like that, suppressing a good name-based value for nothing.
    */
-  it.each([
-    ...GENERATABLE_FORMATS,
-  ])("generates a recognizable value for format %s", async (format) => {
-    const schema = {
-      type: "object",
-      properties: { zqx: { type: "string", format } },
-      required: ["zqx"],
-    } as JSONSchema7;
+  it.each([...GENERATABLE_FORMATS])(
+    "generates a recognizable value for format %s",
+    async (format) => {
+      const schema = {
+        type: "object",
+        properties: { zqx: { type: "string", format } },
+        required: ["zqx"],
+      } as JSONSchema7;
 
-    const values: string[] = [];
-    for (const seed of [1, 2, 3, 7]) {
-      const generated = await generateWithJsf(schema, seed);
-      const value = Reflect.get(generated as object, "zqx");
-      expect(typeof value).toBe("string");
-      values.push(value as string);
-    }
+      const values: string[] = [];
+      for (const seed of [1, 2, 3, 7]) {
+        const generated = await generateWithJsf(schema, seed);
+        const value = Reflect.get(generated as object, "zqx");
+        expect(typeof value).toBe("string");
+        values.push(value as string);
+      }
 
-    // A random-alphanumeric fallback is [A-Za-z0-9]* and never empty-plus-
-    // structured: every real format generator emits either a separator
-    // (-:/.@) or, for `duration`, a leading "P".
-    for (const value of values) {
-      expect(value).not.toBe("");
-      expect(value).toMatch(/[-:/.@]|^P/);
-    }
-  });
+      // A random-alphanumeric fallback is [A-Za-z0-9]* and never empty-plus-
+      // structured: every real format generator emits either a separator
+      // (-:/.@) or, for `duration`, a leading "P".
+      for (const value of values) {
+        expect(value).not.toBe("");
+        expect(value).toMatch(/[-:/.@]|^P/);
+      }
+    },
+  );
 
   it("defers to no format json-schema-faker cannot generate", async () => {
     // uri-template and regex are standard Draft 7 formats absent from

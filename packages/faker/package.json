@@ -46,7 +46,7 @@
     "@types/json-schema": "^7.0.15",
     "@faker-js/faker": "^10.5.0",
     "json-schema-faker": "^0.6.2",
-    "json-schema-faker-private": "https://registry.npmjs.org/json-schema-faker/-/json-schema-faker-0.6.2.tgz"
+    "json-schema-faker-private": "https://registry.npmjs.org/json-schema-faker/-/json-schema-faker-0.6.3.tgz"
   },
   "peerDependencies": {
     "@schmock/core": "^2.4.0"

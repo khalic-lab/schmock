@@ -40,49 +40,48 @@ afterEach(() => {
 
 describe("response normalization", () => {
   describe("status and body semantics", () => {
-    it.each([
-      200, 201, 299, 300, 599,
-    ])("accepts transport-safe status %i", (status) => {
-      expect(
-        normalizeResponse(createResponse({ ok: true }, { status }), "GET")
-          .status,
-      ).toBe(status);
-    });
+    it.each([200, 201, 299, 300, 599])(
+      "accepts transport-safe status %i",
+      (status) => {
+        expect(
+          normalizeResponse(createResponse({ ok: true }, { status }), "GET")
+            .status,
+        ).toBe(status);
+      },
+    );
 
-    it.each([
-      199,
-      600,
-      200.5,
-      Number.NaN,
-      Number.POSITIVE_INFINITY,
-    ])("rejects invalid status %s with a structured error", (status) => {
-      const error = captureInvalidResponse(() =>
-        normalizeResponse(createResponse("body", { status }), "GET"),
-      );
+    it.each([199, 600, 200.5, Number.NaN, Number.POSITIVE_INFINITY])(
+      "rejects invalid status %s with a structured error",
+      (status) => {
+        const error = captureInvalidResponse(() =>
+          normalizeResponse(createResponse("body", { status }), "GET"),
+        );
 
-      expect(error.code).toBe("INVALID_RESPONSE");
-      expect(error.name).toBe("InvalidResponseError");
-      expect(error.context).toMatchObject({
-        reason: expect.any(String),
-        status,
-      });
-    });
+        expect(error.code).toBe("INVALID_RESPONSE");
+        expect(error.name).toBe("InvalidResponseError");
+        expect(error.context).toMatchObject({
+          reason: expect.any(String),
+          status,
+        });
+      },
+    );
 
     it.each([
       ["HEAD", 200],
       ["GET", 204],
       ["GET", 205],
       ["GET", 304],
-    ] satisfies Array<
-      [Schmock.HttpMethod, number]
-    >)("suppresses a body for %s responses with status %i", (method, status) => {
-      const normalized = normalizeResponse(
-        createResponse({ forbidden: true }, { status }),
-        method,
-      );
+    ] satisfies Array<[Schmock.HttpMethod, number]>)(
+      "suppresses a body for %s responses with status %i",
+      (method, status) => {
+        const normalized = normalizeResponse(
+          createResponse({ forbidden: true }, { status }),
+          method,
+        );
 
-      expect(normalized.body).toBeUndefined();
-    });
+        expect(normalized.body).toBeUndefined();
+      },
+    );
 
     it("suppresses prohibited bodies before validating them", () => {
       const cyclic: Record<string, unknown> = {};
@@ -103,24 +102,25 @@ describe("response normalization", () => {
       );
     });
 
-    it.each([
-      204, 205,
-    ])("removes framing headers from body-forbidden status %i", (status) => {
-      const normalized = normalizeResponse(
-        createResponse("ignored", {
-          status,
-          headers: {
-            "Content-Length": "7",
-            Trailer: "x-checksum",
-            "Transfer-Encoding": "chunked",
-            "X-Kept": "yes",
-          },
-        }),
-        "GET",
-      );
+    it.each([204, 205])(
+      "removes framing headers from body-forbidden status %i",
+      (status) => {
+        const normalized = normalizeResponse(
+          createResponse("ignored", {
+            status,
+            headers: {
+              "Content-Length": "7",
+              Trailer: "x-checksum",
+              "Transfer-Encoding": "chunked",
+              "X-Kept": "yes",
+            },
+          }),
+          "GET",
+        );
 
-      expect(normalized.headers).toEqual({ "X-Kept": "yes" });
-    });
+        expect(normalized.headers).toEqual({ "X-Kept": "yes" });
+      },
+    );
 
     it("removes stale framing headers from an absent ordinary body", () => {
       const normalized = normalizeResponse(
@@ -222,25 +222,25 @@ describe("response normalization", () => {
     it.each([
       { method: "HEAD", status: 200 },
       { method: "GET", status: 304 },
-    ])("strips hop-by-hop but keeps Content-Length on $method $status", ({
-      method,
-      status,
-    }) => {
-      const normalized = normalizeResponse(
-        createResponse("representation", {
-          status,
-          headers: {
-            "Content-Length": "14",
-            Connection: "close",
-            "Keep-Alive": "timeout=5",
-            Upgrade: "websocket",
-          },
-        }),
-        method,
-      );
+    ])(
+      "strips hop-by-hop but keeps Content-Length on $method $status",
+      ({ method, status }) => {
+        const normalized = normalizeResponse(
+          createResponse("representation", {
+            status,
+            headers: {
+              "Content-Length": "14",
+              Connection: "close",
+              "Keep-Alive": "timeout=5",
+              Upgrade: "websocket",
+            },
+          }),
+          method,
+        );
 
-      expect(normalized.headers).toEqual({ "Content-Length": "14" });
-    });
+        expect(normalized.headers).toEqual({ "Content-Length": "14" });
+      },
+    );
   });
 
   describe("headers", () => {
@@ -311,34 +311,35 @@ describe("response normalization", () => {
     it.each([
       ["Content-Type", "content-type"],
       ["X-Test", "x-TEST"],
-    ])("rejects case-insensitive duplicate headers %s and %s", (first, second) => {
-      const error = captureInvalidResponse(() =>
-        normalizeResponse(
-          createResponse("body", {
-            headers: { [first]: "first", [second]: "second" },
-          }),
-          "GET",
-        ),
-      );
+    ])(
+      "rejects case-insensitive duplicate headers %s and %s",
+      (first, second) => {
+        const error = captureInvalidResponse(() =>
+          normalizeResponse(
+            createResponse("body", {
+              headers: { [first]: "first", [second]: "second" },
+            }),
+            "GET",
+          ),
+        );
 
-      expect(error.context).toMatchObject({ headerName: second });
-    });
+        expect(error.context).toMatchObject({ headerName: second });
+      },
+    );
 
-    it.each([
-      "\u0001",
-      "\u000b",
-      "\u001f",
-      "\u007f",
-    ])("rejects transport-invalid header control %j", (control) => {
-      captureInvalidResponse(() =>
-        normalizeResponse(
-          createResponse("body", {
-            headers: { "x-invalid": `before${control}after` },
-          }),
-          "GET",
-        ),
-      );
-    });
+    it.each(["\u0001", "\u000b", "\u001f", "\u007f"])(
+      "rejects transport-invalid header control %j",
+      (control) => {
+        captureInvalidResponse(() =>
+          normalizeResponse(
+            createResponse("body", {
+              headers: { "x-invalid": `before${control}after` },
+            }),
+            "GET",
+          ),
+        );
+      },
+    );
 
     it("allows an internal horizontal tab in a header value", () => {
       expect(
@@ -478,15 +479,16 @@ describe("response normalization", () => {
       ["promise", Promise.resolve("value")],
       ["stream", new ReadableStream()],
       ["map", new Map([["key", "value"]])],
-    ] satisfies Array<
-      [string, unknown]
-    >)("rejects an incompatible top-level %s body", (_label, body) => {
-      const error = captureInvalidResponse(() =>
-        normalizeResponse(createResponse(body), "GET"),
-      );
+    ] satisfies Array<[string, unknown]>)(
+      "rejects an incompatible top-level %s body",
+      (_label, body) => {
+        const error = captureInvalidResponse(() =>
+          normalizeResponse(createResponse(body), "GET"),
+        );
 
-      expect(error.code).toBe("INVALID_RESPONSE");
-    });
+        expect(error.code).toBe("INVALID_RESPONSE");
+      },
+    );
 
     it.each([
       ["function", { value: () => "hidden" }],
@@ -495,13 +497,14 @@ describe("response normalization", () => {
       ["undefined", { value: undefined }],
       ["non-finite number", { value: Number.NEGATIVE_INFINITY }],
       ["binary", { value: new Uint8Array([1]) }],
-    ] satisfies Array<
-      [string, unknown]
-    >)("rejects a nested %s instead of silently changing it", (_label, body) => {
-      captureInvalidResponse(() =>
-        normalizeResponse(createResponse(body), "GET"),
-      );
-    });
+    ] satisfies Array<[string, unknown]>)(
+      "rejects a nested %s instead of silently changing it",
+      (_label, body) => {
+        captureInvalidResponse(() =>
+          normalizeResponse(createResponse(body), "GET"),
+        );
+      },
+    );
 
     it("rejects circular bodies with a structured error", () => {
       const body: Record<string, unknown> = { value: "kept" };
@@ -530,16 +533,17 @@ describe("response body serialization", () => {
       expect(serializeResponseBody(createResponse(undefined))).toBeUndefined();
     });
 
-    it.each([
-      204, 205, 304,
-    ])("returns undefined for status %i before validating its body", (status) => {
-      const body: Record<string, unknown> = {};
-      body.self = body;
+    it.each([204, 205, 304])(
+      "returns undefined for status %i before validating its body",
+      (status) => {
+        const body: Record<string, unknown> = {};
+        body.self = body;
 
-      expect(
-        serializeResponseBody(createResponse(body, { status })),
-      ).toBeUndefined();
-    });
+        expect(
+          serializeResponseBody(createResponse(body, { status })),
+        ).toBeUndefined();
+      },
+    );
 
     it("emits copied binary bytes without JSON serialization", () => {
       const source = new Uint8Array([0, 1, 255]);
@@ -577,14 +581,17 @@ describe("response body serialization", () => {
         "structured JSON suffix",
         { "Content-Type": "Application/Problem+JSON; charset=utf-8" },
       ],
-    ])("emits string bodies verbatim under %s instead of double-encoding", (_label, headers) => {
-      // A string body is pre-serialized wire bytes: quoting it would
-      // double-encode routes that return JSON.stringify(...) themselves.
-      const preSerialized = JSON.stringify({ a: 1 });
-      expect(serializedText(createResponse(preSerialized, { headers }))).toBe(
-        preSerialized,
-      );
-    });
+    ])(
+      "emits string bodies verbatim under %s instead of double-encoding",
+      (_label, headers) => {
+        // A string body is pre-serialized wire bytes: quoting it would
+        // double-encode routes that return JSON.stringify(...) themselves.
+        const preSerialized = JSON.stringify({ a: 1 });
+        expect(serializedText(createResponse(preSerialized, { headers }))).toBe(
+          preSerialized,
+        );
+      },
+    );
 
     it("emits UTF-8 JSON bytes for non-string values", () => {
       expect(
