@@ -61,8 +61,8 @@ function isRefObject(value: unknown): value is RefObject {
     typeof value === "object" &&
     value !== null &&
     "$ref" in value &&
-    typeof (value as { $ref: unknown }).$ref === "string" &&
-    (value as { $ref: string }).$ref.length > 0
+    typeof value.$ref === "string" &&
+    value.$ref.length > 0
   );
 }
 
@@ -292,7 +292,10 @@ export function dereferenceInternal<T>(document: T): T {
 
     const pointer = resolvePointer(document, refPath);
     const directCircular = pointer.circular;
-    let circular = directCircular || parents.has(pointer.value as object);
+    const pointerValue = isWalkable(pointer.value) ? pointer.value : undefined;
+    let circular =
+      directCircular ||
+      (pointerValue !== undefined && parents.has(pointerValue));
 
     let value = isExtendedRef(ref)
       ? mergeExtendedRef(ref, pointer.value)
@@ -361,5 +364,6 @@ export function dereferenceInternal<T>(document: T): T {
     return result;
   }
 
-  return crawl(document, "#", "#").value as T;
+  crawl(document, "#", "#");
+  return document;
 }

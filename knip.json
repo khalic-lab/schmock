@@ -14,7 +14,8 @@
       "ignoreDependencies": [
         "@angular/common",
         "@angular/compiler",
-        "rxjs"
+        "rxjs",
+        "jsdom"
       ]
     },
     "packages/core": {

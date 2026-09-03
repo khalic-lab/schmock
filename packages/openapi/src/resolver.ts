@@ -68,22 +68,21 @@ export function createResolver(): SpecResolver {
   const parser = new SwaggerParser();
 
   return {
-    parse: (source, options) =>
-      parser.parse(source, options as SwaggerParser.Options),
+    parse: (source, options) => parser.parse(source, { ...options }),
 
     dereference: async ({ document, baseUrl, options, strict }) => {
       // `validate()` dereferences first and only then runs the validators,
       // which are disabled unless strict. The 3-argument form is what retains
       // the source URI.
-      const derefOptions = {
+      const derefOptions: SwaggerParser.Options = {
         ...options,
         validate: { schema: strict, spec: strict },
-      } as SwaggerParser.Options;
+      };
       const validated =
         baseUrl !== undefined
-          ? await parser.validate(baseUrl, document as never, derefOptions)
-          : await parser.validate(document as never, derefOptions);
-      return validated as OpenAPI.Document;
+          ? await parser.validate(baseUrl, document, derefOptions)
+          : await parser.validate(document, derefOptions);
+      return validated;
     },
 
     documents: () => parser.$refs.values(),
