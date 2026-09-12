@@ -38,6 +38,12 @@ bun .agents/skills/devops/scripts/bump.ts check-lockfile
 CI is defined in `.github/workflows/ci.yml` for pushes and pull requests to
 `develop` and `main`.
 
+`bun run publish` (`scripts/publish.sh`) is the local entry point: with no
+arguments it runs steps 1, 4 and 5 below — preflight, the full quality gate, and
+the dry-run — then prints the exact `--execute` command without running it. It
+forwards any arguments to this script unchanged, so the steps below are also
+reachable as `bun run publish -- <args>`.
+
 ## Guarded workflow
 
 1. Run a local-only release preflight:

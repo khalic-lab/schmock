@@ -374,4 +374,28 @@ verifies clean/repeated build equality and stale-artifact removal, packs all
 11 workspaces, runs Node and Bun consumers, compiles 12 strict standalone
 declaration entries, compiles packed Core declarations with TypeScript 5.6,
 checks React root/testing context identity, exercises the CLI and browser
-bundle, and runs `publint` plus `attw`.
+bundle, runs the release-script tests, and runs `publint` plus `attw`.
+
+## Releasing
+
+One command runs every release check without touching npm, the remote, or
+GitHub:
+
+```bash
+bun run publish
+```
+
+It runs the release preflight (11 synchronized manifests, `bun.lock` parity, a
+clean worktree on canonical `main`), then `lint`, `test:all`, `build` and
+`check:publish`, then prints the release plan and the exact execute command:
+
+```bash
+bun run publish -- all --execute --confirm all@vX.Y.Z:<40-char-commit>
+```
+
+The confirmation token names the version and the release commit so that the
+person releasing affirms both; nothing derives it for you. Any arguments are
+passed through to `.agents/skills/devops/scripts/publish.sh`, which owns the
+guarantees: it skips a package only when npm reports the same package contents
+already published, and it pushes `main` and creates one unified `vX.Y.Z`
+release after all 11 packages are published.

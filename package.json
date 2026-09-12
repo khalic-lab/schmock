@@ -43,7 +43,9 @@
     "check:build-reproducibility": "node scripts/check-build-reproducibility.mjs",
     "check:manifests": "node scripts/check-manifests.mjs",
     "test:registry-scripts": "node --test scripts/check-manifests.test.mjs scripts/smoke-tests/registry-verification.test.mjs",
-    "check:publish": "bun run check:manifests && bun run test:registry-scripts && bun run check:build-reproducibility && bun run test:pack"
+    "publish": "bash scripts/publish.sh",
+    "check:publish": "bun run check:manifests && bun run test:registry-scripts && bun run test:release-scripts && bun run check:build-reproducibility && bun run test:pack",
+    "test:release-scripts": "node --test scripts/publish.test.mjs"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",

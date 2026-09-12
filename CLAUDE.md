@@ -52,6 +52,7 @@ bun install && bun run setup   # Initial setup (installs deps + git hooks)
 bun test:all                   # Full suite: typecheck + unit + BDD
 bun test:bdd                   # BDD tests only
 bun lint                       # Lint check
+bun run publish                # Release: run every check, print the execute command
 ```
 
 **Claude must use quiet variants:** `bun test:quiet`, `bun lint:quiet`, `bun build:quiet`
