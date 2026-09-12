@@ -1,0 +1,418 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.269",
+  "startedAt": "2026-09-12T12:39:15.139Z",
+  "durationSeconds": 1001,
+  "costUsd": 1.3422394,
+  "partial": false,
+  "suite": {
+    "root": "/usr/local/src/khalic-lab/schmock/.claude/skills/pr-review",
+    "ablation": "with-without",
+    "modelOverride": "haiku",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "pr-review",
+        "path": "/usr/local/src/khalic-lab/schmock/.claude/skills/pr-review"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "dep-bump-formatter-churn",
+      "dir": "evals/dep-bump-formatter-churn",
+      "source": "case_yaml",
+      "promptMarkdown": "The most recent commit in this repository is a dependency bump.\n\nReview it. Report anything that needs human attention before it ships,\nnaming the specific file and what is wrong with it. If nothing does, say so.\n",
+      "runsPerCase": 3,
+      "timeoutSeconds": 900,
+      "maxTurns": 60,
+      "graders": [
+        {
+          "name": "finds-the-hidden-behaviour-change",
+          "type": "llm",
+          "weight": 3,
+          "graderMarkdown": "The response must identify that src/deref.ts changed behaviour in the\nreviewed commit, beyond reindentation.\n\nAward full credit only if the response conveys BOTH:\n  1. That `dereference` now returns the input `document` rather than the\n     value produced by `walk(...)`.\n  2. Why that matters — the two differ when the root document is itself a\n     $ref, because `walk` mutates nested nodes in place but produces a NEW\n     object for a root-level ref. Accept any phrasing of this: \"a\n     root-level $ref comes back unresolved\", \"only diverges when the whole\n     document is a $ref\", \"the walked result is discarded\", etc.\n\nAward partial credit if it flags src/deref.ts as a real (non-formatting)\nchange but does not explain the root-ref divergence.\n\nAward NO credit if it reports the commit as formatting-only, or names a\ndifferent file as the behavioural change.\n\nJudge meaning, not wording. The reviewer may describe the same finding in\nmany valid ways; do not require any particular phrase, term, or structure.\n",
+          "config": {
+            "criteria": "The response must identify that src/deref.ts changed behaviour in the\nreviewed commit, beyond reindentation.\n\nAward full credit only if the response conveys BOTH:\n  1. That `dereference` now returns the input `document` rather than the\n     value produced by `walk(...)`.\n  2. Why that matters — the two differ when the root document is itself a\n     $ref, because `walk` mutates nested nodes in place but produces a NEW\n     object for a root-level ref. Accept any phrasing of this: \"a\n     root-level $ref comes back unresolved\", \"only diverges when the whole\n     document is a $ref\", \"the walked result is discarded\", etc.\n\nAward partial credit if it flags src/deref.ts as a real (non-formatting)\nchange but does not explain the root-ref divergence.\n\nAward NO credit if it reports the commit as formatting-only, or names a\ndifferent file as the behavioural change.\n\nJudge meaning, not wording. The reviewer may describe the same finding in\nmany valid ways; do not require any particular phrase, term, or structure.\n",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "no-false-positives-on-reflow",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "Decide whether the response treats these four files as clean:\nsrc/normalize.ts, src/router.ts, src/validate.ts, src/cache.ts.\nThey changed by reindentation only.\n\nPASS if the response does ANY of the following:\n  - describes them as reflow, reindentation, or formatting-only\n  - lists them as verified, unchanged, or reproducing exactly\n  - does not mention them at all\n  - mentions them only as context while attributing the defect elsewhere\n\nFAIL only if the response asserts that one of those four files contains a\nbug, a behavioural change, or a logic error.\n\nObservations about OTHER things — src/deref.ts, tools/format.sh, missing\ntests, the commit message — are irrelevant here and never cause a FAIL.\nA response that correctly blames src/deref.ts and says nothing about these\nfour files is a PASS.\n",
+          "config": {
+            "criteria": "Decide whether the response treats these four files as clean:\nsrc/normalize.ts, src/router.ts, src/validate.ts, src/cache.ts.\nThey changed by reindentation only.\n\nPASS if the response does ANY of the following:\n  - describes them as reflow, reindentation, or formatting-only\n  - lists them as verified, unchanged, or reproducing exactly\n  - does not mention them at all\n  - mentions them only as context while attributing the defect elsewhere\n\nFAIL only if the response asserts that one of those four files contains a\nbug, a behavioural change, or a logic error.\n\nObservations about OTHER things — src/deref.ts, tools/format.sh, missing\ntests, the commit message — are irrelevant here and never cause a FAIL.\nA response that correctly blames src/deref.ts and says nothing about these\nfour files is a PASS.\n",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "names-the-offending-file",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": "last_message",
+            "pattern": "deref",
+            "flags": "",
+            "match": "contains"
+          }
+        },
+        {
+          "name": "consulted-the-review-skill",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "arm": "with-only"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 9,
+            "costUsd": 0.2506237500000001,
+            "judgeCostUsd": 0.0036839999999999998,
+            "durationSeconds": 190,
+            "startedAt": "2026-09-12T12:39:15.148Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-uwhR0x/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": true,
+                "weight": 3,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "## Review Complete: **BLOCKER FOUND**\n\n**[Blocker] src/deref.ts**\n\nThis commit contains a **substantive code change hidden in the formatter diff**. The logic in this file was modified beyond just indentation:\n\n- **Old logic:** `return walk(document, \"#\").value as T;`\n- **New logic:** `walk(document, \"#\"); return document;`\n\nThis changes what the function returns. Instead of returning the `value` property from the walk result (cast as T), it now discards that and returns the document directly.\n\n**Why this matters:** The file has a comment stating it's a \"deliberate re-implementation of upstream resolver's behaviour\" with parity tests asserting results are \"indistinguishable.\" This logic change risks breaking that parity contract and should never slip into a \"formatter-only\" commit.\n\n**Action required:** This commit cannot ship. The change to `deref.ts` needs to be either:\n1. Reviewed and justified with its own commit message explaining the behavior change, OR\n2. Reverted if it was accidental\n\nAll other files (cache.ts, normalize.ts, parity.test.ts, router.ts, validate.ts) are formatter changes only."
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "## Review Complete: **BLOCKER FOUND**\n\n**[Blocker] src/deref.ts**\n\nThis commit contains a **substantive code change hidden in the formatter diff**. The logic in this file was modified beyond just indentation:\n\n- **Old logic:** `return walk(document, \"#\").value as T;`\n- **New logic:** `walk(document, \"#\"); return document;`\n\nThis changes what the function returns. Instead of returning the `value` property from the walk result (cast as T), it now discards that and returns the document directly.\n\n**Why this matters:** The file has a comment stating it's a \"deliberate re-implementation of upstream resolver's behaviour\" with parity tests asserting results are \"indistinguishable.\" This logic change risks breaking that parity contract and should never slip into a \"formatter-only\" commit.\n\n**Action required:** This commit cannot ship. The change to `deref.ts` needs to be either:\n1. Reviewed and justified with its own commit message explaining the behavior change, OR\n2. Reverted if it was accidental\n\nAll other files (cache.ts, normalize.ts, parity.test.ts, router.ts, validate.ts) are formatter changes only."
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "consulted-the-review-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 2x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 25,
+            "costUsd": 0.1884877,
+            "judgeCostUsd": 0.0046380000000000015,
+            "durationSeconds": 174,
+            "startedAt": "2026-09-12T12:42:25.369Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-W9hr3x/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": true,
+                "weight": 3,
+                "explanation": "judge votes: FAIL PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  true,
+                  true
+                ],
+                "evidence": "**BLOCKER: src/deref.ts:50-52**\n\nThe `dereference` function's return statement was refactored from `return walk(document, \"#\").value as T;` to `walk(document, \"#\"); return document;`. This changes how the function returns its result—from extracting the resolved value to returning the mutated document directly. While the tests may pass (they use `structuredClone` to pass fresh copies), this is a **semantic change unrelated to formatter upgrade** that needs explicit review:\n\n- The type assertion `as T` on the extracted value was removed\n- The function now returns the document object itself instead of the resolved value\n- This wasn't mentioned in the commit message (\"upgrade formatter to 2.0\")\n\n**What needs human attention:** Review whether this behavioral change was intentional and whether it maintains the original API contract. All other files (cache.ts, normalize.ts, parity.test.ts, router.ts, validate.ts) are pure formatting changes (indentation 4→2 spaces)."
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "**BLOCKER: src/deref.ts:50-52**\n\nThe `dereference` function's return statement was refactored from `return walk(document, \"#\").value as T;` to `walk(document, \"#\"); return document;`. This changes how the function returns its result—from extracting the resolved value to returning the mutated document directly. While the tests may pass (they use `structuredClone` to pass fresh copies), this is a **semantic change unrelated to formatter upgrade** that needs explicit review:\n\n- The type assertion `as T` on the extracted value was removed\n- The function now returns the document object itself instead of the resolved value\n- This wasn't mentioned in the commit message (\"upgrade formatter to 2.0\")\n\n**What needs human attention:** Review whether this behavioral change was intentional and whether it maintains the original API contract. All other files (cache.ts, normalize.ts, parity.test.ts, router.ts, validate.ts) are pure formatting changes (indentation 4→2 spaces)."
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "consulted-the-review-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 31,
+            "costUsd": 0.183982,
+            "judgeCostUsd": 0.004919999999999999,
+            "durationSeconds": 108,
+            "startedAt": "2026-09-12T12:45:18.874Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-KbzQBF/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": true,
+                "weight": 3,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "## Review Report: Dependency Bump (ed4a7e3)\n\n**Result: ISSUES FOUND** — Two files contain semantic changes beyond formatting that need human review before shipping.\n\n### Files Needing Attention\n\n**[Blocker] src/deref.ts** — Lines 56-57\n\nThe return statement has been refactored semantically:\n- **Old:** `return walk(document, \"#\").value as T;`\n- **New:** `walk(document, \"#\"); return document;`\n\n**Issue:** These are not equivalent. The `walk()` function reassigns `result.value` when it encounters a `$ref` at the current level (line 38: `result.value = walk(target, node.$ref).value`). The old code returns this potentially-dereferenced value, but the new code always returns the original document reference. \n\nWhile the parity tests pass (they test nested refs and don't cover the case where the root document *itself* is a $ref), this change could silently break behavior in edge cases. **Verify this is intentional**, or restore the original return logic.\n\n---\n\n**[Blocker] tools/format.sh** — Lines 1-5\n\nThe formatter moved from v1 (no-op `cat`) to v2 (active Perl-based transformation), not just a formatter bump applied to existing code:\n```bash\n# OLD: cat\n# NEW: perl -pe 's{^((?:    )+)}{\"  \" x (length($1) / 4)}e'\n```\n\n**Issue:** This is an implementation change to the formatter itself, not just its output applied to this repo. Verify:\n1. Does the Perl regex correctly convert 4→2 space indents? (Test: verify it doesn't drop or corrupt indentation on mixed-indent files)\n2. Is this Perl version portable across your build environments?\n\n---\n\n### Other Files (Formatter-Only)\n✓ src/cache.ts, src/normalize.ts, src/router.ts, src/validate.ts, src/parity.test.ts — All pure indentation changes."
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "## Review Report: Dependency Bump (ed4a7e3)\n\n**Result: ISSUES FOUND** — Two files contain semantic changes beyond formatting that need human review before shipping.\n\n### Files Needing Attention\n\n**[Blocker] src/deref.ts** — Lines 56-57\n\nThe return statement has been refactored semantically:\n- **Old:** `return walk(document, \"#\").value as T;`\n- **New:** `walk(document, \"#\"); return document;`\n\n**Issue:** These are not equivalent. The `walk()` function reassigns `result.value` when it encounters a `$ref` at the current level (line 38: `result.value = walk(target, node.$ref).value`). The old code returns this potentially-dereferenced value, but the new code always returns the original document reference. \n\nWhile the parity tests pass (they test nested refs and don't cover the case where the root document *itself* is a $ref), this change could silently break behavior in edge cases. **Verify this is intentional**, or restore the original return logic.\n\n---\n\n**[Blocker] tools/format.sh** — Lines 1-5\n\nThe formatter moved from v1 (no-op `cat`) to v2 (active Perl-based transformation), not just a formatter bump applied to existing code:\n```bash\n# OLD: cat\n# NEW: perl -pe 's{^((?:    )+)}{\"  \" x (length($1) / 4)}e'\n```\n\n**Issue:** This is an implementation change to the formatter itself, not just its output applied to this repo. Verify:\n1. Does the Perl regex correctly convert 4→2 space indents? (Test: verify it doesn't drop or corrupt indentation on mixed-indent files)\n2. Is this Perl version portable across your build environments?\n\n---\n\n### Other Files (Formatter-Only)\n✓ src/cache.ts, src/normalize.ts, src/router.ts, src/validate.ts, src/parity.test.ts — All pure indentation changes."
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "consulted-the-review-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 5,
+            "costUsd": 0.25918995,
+            "judgeCostUsd": 0.0035759999999999993,
+            "durationSeconds": 158,
+            "startedAt": "2026-09-12T12:47:06.406Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-vvSLJv/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": true,
+                "weight": 3,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "## Issue Found\n\nThe commit has a **critical correctness bug** in **`src/deref.ts`** at line 56.\n\n**The problem:** The dereference function was modified to return `document` instead of `walk(document, \"#\").value`. This breaks the function when the document root itself is a `$ref`.\n\n**Why it's broken:** The `walk()` function behaves differently depending on whether the root node is a reference:\n- When root is **not** a `$ref`: it modifies the object in place, so returning either works\n- When root **is** a `$ref`: it doesn't modify the root; it puts the resolved value in `result.value`. The new code ignores this and returns the unresolved root instead\n\n**Why tests don't catch it:** The test file `parity.test.ts` has no test cases with a `$ref` at the document root—they're all nested inside objects.\n\n**Recommendation:** Revert the logic change in `src/deref.ts` line 56 back to `return walk(document, \"#\").value as T;` while keeping the indentation reformatting."
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "## Issue Found\n\nThe commit has a **critical correctness bug** in **`src/deref.ts`** at line 56.\n\n**The problem:** The dereference function was modified to return `document` instead of `walk(document, \"#\").value`. This breaks the function when the document root itself is a `$ref`.\n\n**Why it's broken:** The `walk()` function behaves differently depending on whether the root node is a reference:\n- When root is **not** a `$ref`: it modifies the object in place, so returning either works\n- When root **is** a `$ref`: it doesn't modify the root; it puts the resolved value in `result.value`. The new code ignores this and returns the unresolved root instead\n\n**Why tests don't catch it:** The test file `parity.test.ts` has no test cases with a `$ref` at the document root—they're all nested inside objects.\n\n**Recommendation:** Revert the logic change in `src/deref.ts` line 56 back to `return walk(document, \"#\").value as T;` while keeping the indentation reformatting."
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 6,
+            "costUsd": 0.3396926,
+            "judgeCostUsd": 0.0037859999999999977,
+            "durationSeconds": 310,
+            "startedAt": "2026-09-12T12:49:43.985Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-JtoVLW/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": true,
+                "weight": 3,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "**⚠\ufe0f Critical Issue Found**\n\n**File**: `src/deref.ts`, **Line 56**\n\n**The Problem:**\nThe return statement was changed from `walk(document, \"#\").value` to just `document`. This breaks root-level `$ref` resolution.\n\n**What's wrong:**\n- When the entire document is a `$ref` (e.g., `{ \"$ref\": \"#/definitions/User\" }`), the function should return the dereferenced value\n- The current code ignores the `walk()` result and returns the original unresolved document\n- The `walk()` function returns a `Resolved` object with a `value` property containing the dereferenced result, but that result is being discarded\n\n**Impact:**\nThis is a functional regression that violates the contract documented in the function's JSDoc comment (line 2: \"Resolve every internal $ref in a document\"). Root-level references will no longer be resolved.\n\n**Fix needed:**\nChange line 56-57 from:\n```typescript\nwalk(document, \"#\");\nreturn document;\n```\n\nTo:\n```typescript\nreturn walk(document, \"#\").value as T;\n```\n\nThis ensures that when the root itself is a `$ref`, the dereferenced value is returned instead of the original document."
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "**⚠\ufe0f Critical Issue Found**\n\n**File**: `src/deref.ts`, **Line 56**\n\n**The Problem:**\nThe return statement was changed from `walk(document, \"#\").value` to just `document`. This breaks root-level `$ref` resolution.\n\n**What's wrong:**\n- When the entire document is a `$ref` (e.g., `{ \"$ref\": \"#/definitions/User\" }`), the function should return the dereferenced value\n- The current code ignores the `walk()` result and returns the original unresolved document\n- The `walk()` function returns a `Resolved` object with a `value` property containing the dereferenced result, but that result is being discarded\n\n**Impact:**\nThis is a functional regression that violates the contract documented in the function's JSDoc comment (line 2: \"Resolve every internal $ref in a document\"). Root-level references will no longer be resolved.\n\n**Fix needed:**\nChange line 56-57 from:\n```typescript\nwalk(document, \"#\");\nreturn document;\n```\n\nTo:\n```typescript\nreturn walk(document, \"#\").value as T;\n```\n\nThis ensures that when the root itself is a `$ref`, the dereferenced value is returned instead of the original document."
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 0.4,
+            "passed": false,
+            "turns": 27,
+            "costUsd": 0.1202634,
+            "judgeCostUsd": 0.0033660000000000044,
+            "durationSeconds": 62,
+            "startedAt": "2026-09-12T12:54:53.898Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-AcWWVa/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": false,
+                "weight": 3,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "Perfect. The commit looks clean. Here's what I found:\n\n✅ **No issues detected.** \n\nThe formatter upgrade is complete and consistent:\n\n1. **All source files use 2-space indentation uniformly** — I verified cache.ts, deref.ts, normalize.ts, parity.test.ts, router.ts, and validate.ts. Every level of nesting uses exactly 2 spaces.\n\n2. **The format.sh script correctly implements the conversion** — The Perl regex `s{^((?:    )+)}{\"  \" x (length($1) / 4)}e` properly converts 4-space indents to 2-space indents (4 spaces → 2 spaces, 8 spaces → 4 spaces, etc.). I tested it to verify.\n\n3. **No inconsistent indentation** — No files were left partially converted, no mixed spaces/tabs, no stray 4-space blocks.\n\nThe commit is ready to ship."
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "Perfect. The commit looks clean. Here's what I found:\n\n✅ **No issues detected.** \n\nThe formatter upgrade is complete and consistent:\n\n1. **All source files use 2-space indentation uniformly** — I verified cache.ts, deref.ts, normalize.ts, parity.test.ts, router.ts, and validate.ts. Every level of nesting uses exactly 2 spaces.\n\n2. **The format.sh script correctly implements the conversion** — The Perl regex `s{^((?:    )+)}{\"  \" x (length($1) / 4)}e` properly converts 4-space indents to 2-space indents (4 spaces → 2 spaces, 8 spaces → 4 spaces, etc.). I tested it to verify.\n\n3. **No inconsistent indentation** — No files were left partially converted, no mixed spaces/tabs, no stray 4-space blocks.\n\nThe commit is ready to ship."
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 1,
+        "passRate": 1,
+        "scoreWithout": 0.7999999999999999,
+        "passRateWithout": 0.6666666666666666,
+        "delta": 0.20000000000000007
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 1,
+    "overallScore": 1,
+    "overallPassRate": 1,
+    "meanDelta": 0.20000000000000007
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.269",
+  "startedAt": "2026-09-12T12:11:59.619Z",
+  "durationSeconds": 114,
+  "costUsd": 0.582645,
+  "partial": false,
+  "suite": {
+    "root": "/usr/local/src/khalic-lab/schmock/.claude/skills/pr-review",
+    "ablation": "none",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "pr-review",
+        "path": "/usr/local/src/khalic-lab/schmock/.claude/skills/pr-review"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "dep-bump-formatter-churn",
+      "dir": "evals/dep-bump-formatter-churn",
+      "source": "case_yaml",
+      "promptMarkdown": "The most recent commit in this repository is a dependency bump.\n\nReview it. Report anything that needs human attention before it ships,\nnaming the specific file and what is wrong with it. If nothing does, say so.\n",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 30,
+      "graders": [
+        {
+          "name": "finds-the-hidden-behaviour-change",
+          "type": "llm",
+          "weight": 3,
+          "graderMarkdown": "The response must identify that src/deref.ts changed behaviour in the\nreviewed commit, beyond reindentation.\n\nAward full credit only if the response conveys BOTH:\n  1. That `dereference` now returns the input `document` rather than the\n     value produced by `walk(...)`.\n  2. Why that matters — the two differ when the root document is itself a\n     $ref, because `walk` mutates nested nodes in place but produces a NEW\n     object for a root-level ref. Accept any phrasing of this: \"a\n     root-level $ref comes back unresolved\", \"only diverges when the whole\n     document is a $ref\", \"the walked result is discarded\", etc.\n\nAward partial credit if it flags src/deref.ts as a real (non-formatting)\nchange but does not explain the root-ref divergence.\n\nAward NO credit if it reports the commit as formatting-only, or names a\ndifferent file as the behavioural change.\n\nJudge meaning, not wording. The reviewer may describe the same finding in\nmany valid ways; do not require any particular phrase, term, or structure.\n",
+          "config": {
+            "criteria": "The response must identify that src/deref.ts changed behaviour in the\nreviewed commit, beyond reindentation.\n\nAward full credit only if the response conveys BOTH:\n  1. That `dereference` now returns the input `document` rather than the\n     value produced by `walk(...)`.\n  2. Why that matters — the two differ when the root document is itself a\n     $ref, because `walk` mutates nested nodes in place but produces a NEW\n     object for a root-level ref. Accept any phrasing of this: \"a\n     root-level $ref comes back unresolved\", \"only diverges when the whole\n     document is a $ref\", \"the walked result is discarded\", etc.\n\nAward partial credit if it flags src/deref.ts as a real (non-formatting)\nchange but does not explain the root-ref divergence.\n\nAward NO credit if it reports the commit as formatting-only, or names a\ndifferent file as the behavioural change.\n\nJudge meaning, not wording. The reviewer may describe the same finding in\nmany valid ways; do not require any particular phrase, term, or structure.\n",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "no-false-positives-on-reflow",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "src/normalize.ts, src/router.ts, src/validate.ts and src/cache.ts changed\nby reindentation ONLY. The response must not claim any of them contains a\nbehavioural, logical, or semantic change.\n\nNaming them as reflow, listing them as verified-clean, or not mentioning\nthem at all are all acceptable and score full credit.\n\nScore zero if the response attributes a real defect or behaviour change to\nany of those four files.\n",
+          "config": {
+            "criteria": "src/normalize.ts, src/router.ts, src/validate.ts and src/cache.ts changed\nby reindentation ONLY. The response must not claim any of them contains a\nbehavioural, logical, or semantic change.\n\nNaming them as reflow, listing them as verified-clean, or not mentioning\nthem at all are all acceptable and score full credit.\n\nScore zero if the response attributes a real defect or behaviour change to\nany of those four files.\n",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "names-the-offending-file",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": "last_message",
+            "pattern": "deref",
+            "flags": "",
+            "match": "contains"
+          }
+        },
+        {
+          "name": "consulted-the-review-skill",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "arm": "with-only"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0.6666666666666666,
+            "passed": false,
+            "turns": 14,
+            "costUsd": 0.582645,
+            "judgeCostUsd": 0.0062580000000000005,
+            "durationSeconds": 114,
+            "startedAt": "2026-09-12T12:11:59.626Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-YQBFyR/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": true,
+                "weight": 3,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "Git CLI isn't available in this sandbox (the `xcrun` shim can't write its cache), so I reconstructed the diff by decompressing the objects in `.git/objects` directly.\n\n## One blocker: `src/deref.ts` contains a logic change disguised as formatting\n\nThe commit claims to be a mechanical reindent (4 → 2 spaces). I verified that claim by running the new `tools/format.sh` over the parent commit's sources and byte-comparing against what was committed. Four of the five files — `cache.ts`, `normalize.ts`, `router.ts`, `validate.ts` — reproduce **exactly**. `src/deref.ts` does not. It has exactly one hand edit, at the tail of `dereference()`:\n\n```diff\n-    return walk(document, \"#\").value as T;\n+  walk(document, \"#\");\n+  return document;\n```\n\nIt's indented to match the new 2-space style, so it reads as part of the churn.\n\n**Why it's wrong:** `walk()` resolves nested `$ref`s by mutating in place (`node[key] = resolved.value`), but when the node *itself* is a `$ref` it only reports the resolved target through its `Resolved.value` return — it never mutates the node. Discarding that return value means a document whose **root** is a `$ref` comes back unresolved. I ran both versions under Node to confirm rather than just reading it:\n\n```\nroot-level $ref:\n  old: {\"type\":\"object\",\"title\":\"User\"}\n  new: {\"$ref\":\"#/definitions/User\",\"definitions\":{...}}    ← unresolved\nnested $ref:\n  old == new (both resolve correctly)\n```\n\nThis is a nasty one to catch in the wild: nested refs — the common case — still work, so the bug only surfaces on root-level `$ref` documents. And because `document` is already typed `T`, dropping the `as T` cast still type-checks, so `tsc` stays silent.\n\n**Fix:** restore `return walk(document, \"#\").value as T;`.\n\n## Two supporting notes\n\n- **No test suite exists.** `src/deref.ts:4-7` states that `parity.test.ts` runs documents through this resolver and the upstream one and \"a divergence fails the build.\" There is no `parity.test.ts` — no test files at all in the repo. The guard the file relies on to catch precisely this class of divergence isn't there, which is how the edit reached `main` unnoticed.\n- **`tools/format.sh` is safe here, but is a latent hazard.** The v2 one-liner rewrites leading 4-space runs on *every* line, including lines inside multi-line template literals, which would silently alter string contents. I checked — all four template literals in this repo are single-line, so nothing was damaged this time. Worth knowing before the formatter runs over a larger codebase.\n\nRecommendation: don't ship as-is. Either revert the `deref.ts` hunk and re-land it as its own commit with a rationale, or fix it — but a commit labeled `chore(deps)` shouldn't carry a behavioral change either way."
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "Git CLI isn't available in this sandbox (the `xcrun` shim can't write its cache), so I reconstructed the diff by decompressing the objects in `.git/objects` directly.\n\n## One blocker: `src/deref.ts` contains a logic change disguised as formatting\n\nThe commit claims to be a mechanical reindent (4 → 2 spaces). I verified that claim by running the new `tools/format.sh` over the parent commit's sources and byte-comparing against what was committed. Four of the five files — `cache.ts`, `normalize.ts`, `router.ts`, `validate.ts` — reproduce **exactly**. `src/deref.ts` does not. It has exactly one hand edit, at the tail of `dereference()`:\n\n```diff\n-    return walk(document, \"#\").value as T;\n+  walk(document, \"#\");\n+  return document;\n```\n\nIt's indented to match the new 2-space style, so it reads as part of the churn.\n\n**Why it's wrong:** `walk()` resolves nested `$ref`s by mutating in place (`node[key] = resolved.value`), but when the node *itself* is a `$ref` it only reports the resolved target through its `Resolved.value` return — it never mutates the node. Discarding that return value means a document whose **root** is a `$ref` comes back unresolved. I ran both versions under Node to confirm rather than just reading it:\n\n```\nroot-level $ref:\n  old: {\"type\":\"object\",\"title\":\"User\"}\n  new: {\"$ref\":\"#/definitions/User\",\"definitions\":{...}}    ← unresolved\nnested $ref:\n  old == new (both resolve correctly)\n```\n\nThis is a nasty one to catch in the wild: nested refs — the common case — still work, so the bug only surfaces on root-level `$ref` documents. And because `document` is already typed `T`, dropping the `as T` cast still type-checks, so `tsc` stays silent.\n\n**Fix:** restore `return walk(document, \"#\").value as T;`.\n\n## Two supporting notes\n\n- **No test suite exists.** `src/deref.ts:4-7` states that `parity.test.ts` runs documents through this resolver and the upstream one and \"a divergence fails the build.\" There is no `parity.test.ts` — no test files at all in the repo. The guard the file relies on to catch precisely this class of divergence isn't there, which is how the edit reached `main` unnoticed.\n- **`tools/format.sh` is safe here, but is a latent hazard.** The v2 one-liner rewrites leading 4-space runs on *every* line, including lines inside multi-line template literals, which would silently alter string contents. I checked — all four template literals in this repo are single-line, so nothing was damaged this time. Worth knowing before the formatter runs over a larger codebase.\n\nRecommendation: don't ship as-is. Either revert the `deref.ts` hunk and re-land it as its own commit with a rationale, or fix it — but a commit labeled `chore(deps)` shouldn't carry a behavioral change either way."
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "consulted-the-review-skill",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0.6666666666666666,
+        "passRate": 0
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 0,
+    "overallScore": 0.6666666666666666,
+    "overallPassRate": 0
+  }
+}

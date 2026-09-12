@@ -1,0 +1,105 @@
+schema_version: "1.0"
+name: dep-bump-formatter-churn
+description: >
+  A dependency bump reflows every source file, and one behaviour-changing edit
+  rides along inside the churn. Measures whether the reviewer separates reflow
+  from real edits mechanically instead of reading the diff by eye.
+tags: [review, dependencies, regression]
+
+context:
+  # Path relative to this case directory — the runner opens it as a file,
+  # it is not inline bash. Runs only under --scaffold.
+  scaffold_script: scaffold.sh
+execution:
+  prompt: |
+    The most recent commit in this repository is a dependency bump.
+
+    Review it. Report anything that needs human attention before it ships,
+    naming the specific file and what is wrong with it. If nothing does, say so.
+  max_turns: 60
+  timeout_seconds: 900
+  allowed_tools: [Bash, Read, Glob, Grep, Skill]
+runs: 3
+
+expected_outcome: >
+  The reviewer separates reflow from real edits mechanically, reports that
+  src/deref.ts changed behaviour (dereference now returns the original document
+  instead of the walked result, so a document that is itself a $ref comes back
+  unresolved), and does not present the other four reflowed files as suspicious.
+
+graders:
+  - type: llm
+    name: finds-the-hidden-behaviour-change
+    weight: 3
+    criteria: |
+      The response must identify that src/deref.ts changed behaviour in the
+      reviewed commit, beyond reindentation.
+
+      This grader is PASS/FAIL. There is no partial credit — do not award
+      any. Award PASS only if the response conveys BOTH:
+        1. That `dereference` now returns the input `document` rather than the
+           value produced by `walk(...)`.
+        2. That the two differ ONLY when the root of the document is itself a
+           $ref, because `walk` mutates nested nodes in place — so nested and
+           chained $refs still resolve correctly after the change. Accept any
+           phrasing that carries that narrow scope: "a root-level $ref comes
+           back unresolved", "only diverges when the whole document is a
+           $ref", "nested refs are unaffected", etc.
+
+      Award FAIL if the response:
+        - reports the commit as formatting-only, or names a different file as
+          the behavioural change; or
+        - flags src/deref.ts but never addresses the scope of the divergence;
+          or
+        - OVERSTATES the breakage — claims `dereference` is now a no-op, that
+          all $ref resolution is broken, or that the function returns the
+          document unchanged in general. Those claims are FALSE: in-place
+          mutation means nested refs still resolve, which is precisely why the
+          bug survives a green test suite. A response that gets the file right
+          and the mechanism wrong has NOT found this bug.
+
+      Note that "the walked result is discarded" is a restatement of (1), not
+      a demonstration of (2), and does not on its own earn a PASS.
+
+      Judge meaning, not wording. The reviewer may describe the same finding in
+      many valid ways; do not require any particular phrase, term, or structure.
+
+  - type: llm
+    name: no-false-positives-on-reflow
+    weight: 1
+    criteria: |
+      Decide whether the response treats these four files as clean:
+      src/normalize.ts, src/router.ts, src/validate.ts, src/cache.ts.
+      They changed by reindentation only.
+
+      PASS if the response does ANY of the following:
+        - describes them as reflow, reindentation, or formatting-only
+        - lists them as verified, unchanged, or reproducing exactly
+        - does not mention them at all
+        - mentions them only as context while attributing the defect elsewhere
+
+      FAIL only if the response asserts that one of those four files contains a
+      bug, a behavioural change, or a logic error.
+
+      Observations about OTHER things — src/deref.ts, tools/format.sh, missing
+      tests, the commit message — are irrelevant here and never cause a FAIL.
+      A response that correctly blames src/deref.ts and says nothing about these
+      four files is a PASS.
+
+  - type: regex
+    name: names-the-offending-file
+    weight: 1
+    target: last_message
+    pattern: deref
+    match: contains
+    # A cheap floor, not the real discriminator: it only checks the right file
+    # is named at all. Whether the finding is CORRECT is judged by
+    # finds-the-hidden-behaviour-change above.
+
+  - type: tool_used
+    name: consulted-the-review-skill
+    weight: 1
+    tool: Skill
+    arm: with-only
+    # Plugin-fired indicator under --ablation with-without: did the pr-review
+    # skill actually load? Excluded from the baseline arm's score.

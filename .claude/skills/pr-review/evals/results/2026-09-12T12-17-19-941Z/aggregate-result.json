@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.269",
+  "startedAt": "2026-09-12T12:17:19.941Z",
+  "durationSeconds": 207,
+  "costUsd": 1.0853785,
+  "partial": false,
+  "suite": {
+    "root": "/usr/local/src/khalic-lab/schmock/.claude/skills/pr-review",
+    "ablation": "with-without",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "pr-review",
+        "path": "/usr/local/src/khalic-lab/schmock/.claude/skills/pr-review"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "dep-bump-formatter-churn",
+      "dir": "evals/dep-bump-formatter-churn",
+      "source": "case_yaml",
+      "promptMarkdown": "The most recent commit in this repository is a dependency bump.\n\nReview it. Report anything that needs human attention before it ships,\nnaming the specific file and what is wrong with it. If nothing does, say so.\n",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 30,
+      "graders": [
+        {
+          "name": "finds-the-hidden-behaviour-change",
+          "type": "llm",
+          "weight": 3,
+          "graderMarkdown": "The response must identify that src/deref.ts changed behaviour in the\nreviewed commit, beyond reindentation.\n\nAward full credit only if the response conveys BOTH:\n  1. That `dereference` now returns the input `document` rather than the\n     value produced by `walk(...)`.\n  2. Why that matters — the two differ when the root document is itself a\n     $ref, because `walk` mutates nested nodes in place but produces a NEW\n     object for a root-level ref. Accept any phrasing of this: \"a\n     root-level $ref comes back unresolved\", \"only diverges when the whole\n     document is a $ref\", \"the walked result is discarded\", etc.\n\nAward partial credit if it flags src/deref.ts as a real (non-formatting)\nchange but does not explain the root-ref divergence.\n\nAward NO credit if it reports the commit as formatting-only, or names a\ndifferent file as the behavioural change.\n\nJudge meaning, not wording. The reviewer may describe the same finding in\nmany valid ways; do not require any particular phrase, term, or structure.\n",
+          "config": {
+            "criteria": "The response must identify that src/deref.ts changed behaviour in the\nreviewed commit, beyond reindentation.\n\nAward full credit only if the response conveys BOTH:\n  1. That `dereference` now returns the input `document` rather than the\n     value produced by `walk(...)`.\n  2. Why that matters — the two differ when the root document is itself a\n     $ref, because `walk` mutates nested nodes in place but produces a NEW\n     object for a root-level ref. Accept any phrasing of this: \"a\n     root-level $ref comes back unresolved\", \"only diverges when the whole\n     document is a $ref\", \"the walked result is discarded\", etc.\n\nAward partial credit if it flags src/deref.ts as a real (non-formatting)\nchange but does not explain the root-ref divergence.\n\nAward NO credit if it reports the commit as formatting-only, or names a\ndifferent file as the behavioural change.\n\nJudge meaning, not wording. The reviewer may describe the same finding in\nmany valid ways; do not require any particular phrase, term, or structure.\n",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "no-false-positives-on-reflow",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "Decide whether the response treats these four files as clean:\nsrc/normalize.ts, src/router.ts, src/validate.ts, src/cache.ts.\nThey changed by reindentation only.\n\nPASS if the response does ANY of the following:\n  - describes them as reflow, reindentation, or formatting-only\n  - lists them as verified, unchanged, or reproducing exactly\n  - does not mention them at all\n  - mentions them only as context while attributing the defect elsewhere\n\nFAIL only if the response asserts that one of those four files contains a\nbug, a behavioural change, or a logic error.\n\nObservations about OTHER things — src/deref.ts, tools/format.sh, missing\ntests, the commit message — are irrelevant here and never cause a FAIL.\nA response that correctly blames src/deref.ts and says nothing about these\nfour files is a PASS.\n",
+          "config": {
+            "criteria": "Decide whether the response treats these four files as clean:\nsrc/normalize.ts, src/router.ts, src/validate.ts, src/cache.ts.\nThey changed by reindentation only.\n\nPASS if the response does ANY of the following:\n  - describes them as reflow, reindentation, or formatting-only\n  - lists them as verified, unchanged, or reproducing exactly\n  - does not mention them at all\n  - mentions them only as context while attributing the defect elsewhere\n\nFAIL only if the response asserts that one of those four files contains a\nbug, a behavioural change, or a logic error.\n\nObservations about OTHER things — src/deref.ts, tools/format.sh, missing\ntests, the commit message — are irrelevant here and never cause a FAIL.\nA response that correctly blames src/deref.ts and says nothing about these\nfour files is a PASS.\n",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "names-the-offending-file",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": "last_message",
+            "pattern": "deref",
+            "flags": "",
+            "match": "contains"
+          }
+        },
+        {
+          "name": "consulted-the-review-skill",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "arm": "with-only"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 19,
+            "costUsd": 0.5712624999999999,
+            "judgeCostUsd": 0.006942,
+            "durationSeconds": 111,
+            "startedAt": "2026-09-12T12:17:19.950Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-Ub3kAM/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": true,
+                "weight": 3,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "## One thing needs human attention before this ships\n\n**`src/deref.ts` line 56 contains a logic change that is not a formatting change**, hidden inside an otherwise mechanical 7-file reindent.\n\n```diff\n- return walk(document, \"#\").value as T;\n+ walk(document, \"#\");\n+ return document;\n```\n\n### Why this is not formatter output\n\nI replayed the new `tools/format.sh` (v2) over each pre-bump file and compared byte-for-byte against what was committed. Five of the six source files — `cache.ts`, `normalize.ts`, `parity.test.ts`, `router.ts`, `validate.ts` — are *exactly* formatter output. `deref.ts` is the only file that deviates, and it deviates only at line 56. This was a hand edit, not the tool.\n\n### What it breaks\n\n`walk()` resolves nested refs by mutating children in place, so for most documents `result.value` and `document` are the same object and the two forms agree. They diverge in one case: **when the root of the document is itself a `$ref`.** There, `walk` computes the resolved target into `result.value` and never mutates `document`, so returning `document` hands back the unresolved node.\n\nLive repro against both versions:\n\n| input root | before | after (HEAD) |\n|---|---|---|\n| `{$ref: \"#/definitions/User\", ...}` | `{\"type\":\"object\"}` | `{\"$ref\":\"#/definitions/User\",...}` ❌ |\n| nested `$ref` | resolved | resolved ✅ |\n\n`dereference` is an exported entry point, so this is a public API behavior change — a root-level `$ref` document now comes back with the `$ref` still in it.\n\n### The guard rail does not catch it\n\n`src/deref.ts` opens by stating it is \"a deliberate re-implementation of the upstream resolver's behaviour, not an improvement on it,\" and that `parity.test.ts` makes \"a divergence fails the build.\"\n\nThat promise doesn't hold here. All three documents in the `parity.test.ts` corpus have a plain-object root; none is a root-level `$ref`. I ran the suite against both versions — **it reports zero failures on both.** The build goes green and the regression ships silently.\n\n### Suggested resolution\n\nAsk the author what this line was for. The likely motivation is cosmetic — dropping the unchecked `as T` cast — in which case it doesn't belong in a dependency bump at all and should be reverted here and raised separately. If the new behavior is actually intended, it's a breaking change to a resolver that is explicitly documented as behavior-locked to upstream, so it needs its own commit and a version bump rather than riding along in a reindent.\n\nEither way, `parity.test.ts` should gain a root-level `$ref` case; that gap is real independent of how this line is resolved.\n\nThe other six files, including the `tools/format.sh` v1→v2 change itself, are clean.\n\n---\n\n<sub>Note on method: `/usr/bin/git` is unusable in this sandbox (the `xcrun` shim can't write its cache to `/var/folders/.../T`, which is denied). I read the commit and tree objects directly out of `.git/objects` with Node's zlib instead, so the diff and the test runs above are against the real committed trees — nothing here is inferred.</sub>"
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "## One thing needs human attention before this ships\n\n**`src/deref.ts` line 56 contains a logic change that is not a formatting change**, hidden inside an otherwise mechanical 7-file reindent.\n\n```diff\n- return walk(document, \"#\").value as T;\n+ walk(document, \"#\");\n+ return document;\n```\n\n### Why this is not formatter output\n\nI replayed the new `tools/format.sh` (v2) over each pre-bump file and compared byte-for-byte against what was committed. Five of the six source files — `cache.ts`, `normalize.ts`, `parity.test.ts`, `router.ts`, `validate.ts` — are *exactly* formatter output. `deref.ts` is the only file that deviates, and it deviates only at line 56. This was a hand edit, not the tool.\n\n### What it breaks\n\n`walk()` resolves nested refs by mutating children in place, so for most documents `result.value` and `document` are the same object and the two forms agree. They diverge in one case: **when the root of the document is itself a `$ref`.** There, `walk` computes the resolved target into `result.value` and never mutates `document`, so returning `document` hands back the unresolved node.\n\nLive repro against both versions:\n\n| input root | before | after (HEAD) |\n|---|---|---|\n| `{$ref: \"#/definitions/User\", ...}` | `{\"type\":\"object\"}` | `{\"$ref\":\"#/definitions/User\",...}` ❌ |\n| nested `$ref` | resolved | resolved ✅ |\n\n`dereference` is an exported entry point, so this is a public API behavior change — a root-level `$ref` document now comes back with the `$ref` still in it.\n\n### The guard rail does not catch it\n\n`src/deref.ts` opens by stating it is \"a deliberate re-implementation of the upstream resolver's behaviour, not an improvement on it,\" and that `parity.test.ts` makes \"a divergence fails the build.\"\n\nThat promise doesn't hold here. All three documents in the `parity.test.ts` corpus have a plain-object root; none is a root-level `$ref`. I ran the suite against both versions — **it reports zero failures on both.** The build goes green and the regression ships silently.\n\n### Suggested resolution\n\nAsk the author what this line was for. The likely motivation is cosmetic — dropping the unchecked `as T` cast — in which case it doesn't belong in a dependency bump at all and should be reverted here and raised separately. If the new behavior is actually intended, it's a breaking change to a resolver that is explicitly documented as behavior-locked to upstream, so it needs its own commit and a version bump rather than riding along in a reindent.\n\nEither way, `parity.test.ts` should gain a root-level `$ref` case; that gap is real independent of how this line is resolved.\n\nThe other six files, including the `tools/format.sh` v1→v2 change itself, are clean.\n\n---\n\n<sub>Note on method: `/usr/bin/git` is unusable in this sandbox (the `xcrun` shim can't write its cache to `/var/folders/.../T`, which is denied). I read the commit and tree objects directly out of `.git/objects` with Node's zlib instead, so the diff and the test runs above are against the real committed trees — nothing here is inferred.</sub>"
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "consulted-the-review-skill",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 18,
+            "costUsd": 0.514116,
+            "judgeCostUsd": 0.006360000000000001,
+            "durationSeconds": 96,
+            "startedAt": "2026-09-12T12:19:11.279Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-UE4ua0/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": true,
+                "weight": 3,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "One thing needs human attention before this ships.\n\n## `src/deref.ts` — a behavioral change disguised as reformatting\n\nThe commit is titled a formatter bump, and 6 of the 7 files are byte-for-byte reproducible by piping `HEAD~1` through the new `tools/format.sh`. `src/deref.ts` is not. It carries a 3-line logic change that has nothing to do with indentation:\n\n```diff\n-    return walk(document, \"#\").value as T;\n+  walk(document, \"#\");\n+  return document;\n```\n\n**What breaks:** `walk()` resolves nested `$ref`s by mutating children in place, but the *root* node can only be replaced by returning `result.value`. Returning `document` instead discards that, so a document that is itself a `$ref` now comes back unresolved. Verified by running both versions:\n\n| input | `HEAD~1` | `HEAD` |\n|---|---|---|\n| `{$ref: \"#/definitions/User\", definitions: {User: {type: \"object\"}}}` | `{\"type\":\"object\"}` | `{\"$ref\":\"#/definitions/User\",\"definitions\":{...}}` |\n\nNested and chained `$ref`s are unaffected, which is why this is easy to miss.\n\n**Why CI won't catch it:** `src/parity.test.ts` has three cases — nested, chained, and no-refs. None puts a `$ref` at the document root. I ran the suite against the new implementation: all three pass, green build. The file's own header comment claims the parity test is the safety net (*\"a divergence fails the build\"*), but the corpus has a hole exactly where this change lands, so the stated guarantee doesn't hold here.\n\nThis is the part that needs a human: decide whether the change was intentional. If it was, it belongs in its own commit with a parity case for root-level `$ref` added. If it wasn't — e.g. a bad rebase or an editor artifact during the reformat — it should be reverted. Either way the corpus should gain that case.\n\n## The rest is clean\n\n- `tools/format.sh` — the legitimate bump (v1 `cat` → v2 perl reindent). The regex only touches leading runs of 4 spaces, so JSDoc continuation lines (single-space `*`) are correctly left alone, and every template literal in the repo is single-line, so nothing gets mangled. Worth knowing it's a regex, not a parser: it would reindent inside a multi-line template literal if one is ever added. Minor, not a blocker.\n- `src/cache.ts`, `src/normalize.ts`, `src/parity.test.ts`, `src/router.ts`, `src/validate.ts` — pure formatter output, reproduced exactly.\n\nA note on reviewing this class of commit: `git show HEAD -w` collapsed 176/174 lines of churn down to the 5 lines that actually matter, and re-running the formatter over the parent confirmed which files were untouched beyond it."
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "One thing needs human attention before this ships.\n\n## `src/deref.ts` — a behavioral change disguised as reformatting\n\nThe commit is titled a formatter bump, and 6 of the 7 files are byte-for-byte reproducible by piping `HEAD~1` through the new `tools/format.sh`. `src/deref.ts` is not. It carries a 3-line logic change that has nothing to do with indentation:\n\n```diff\n-    return walk(document, \"#\").value as T;\n+  walk(document, \"#\");\n+  return document;\n```\n\n**What breaks:** `walk()` resolves nested `$ref`s by mutating children in place, but the *root* node can only be replaced by returning `result.value`. Returning `document` instead discards that, so a document that is itself a `$ref` now comes back unresolved. Verified by running both versions:\n\n| input | `HEAD~1` | `HEAD` |\n|---|---|---|\n| `{$ref: \"#/definitions/User\", definitions: {User: {type: \"object\"}}}` | `{\"type\":\"object\"}` | `{\"$ref\":\"#/definitions/User\",\"definitions\":{...}}` |\n\nNested and chained `$ref`s are unaffected, which is why this is easy to miss.\n\n**Why CI won't catch it:** `src/parity.test.ts` has three cases — nested, chained, and no-refs. None puts a `$ref` at the document root. I ran the suite against the new implementation: all three pass, green build. The file's own header comment claims the parity test is the safety net (*\"a divergence fails the build\"*), but the corpus has a hole exactly where this change lands, so the stated guarantee doesn't hold here.\n\nThis is the part that needs a human: decide whether the change was intentional. If it was, it belongs in its own commit with a parity case for root-level `$ref` added. If it wasn't — e.g. a bad rebase or an editor artifact during the reformat — it should be reverted. Either way the corpus should gain that case.\n\n## The rest is clean\n\n- `tools/format.sh` — the legitimate bump (v1 `cat` → v2 perl reindent). The regex only touches leading runs of 4 spaces, so JSDoc continuation lines (single-space `*`) are correctly left alone, and every template literal in the repo is single-line, so nothing gets mangled. Worth knowing it's a regex, not a parser: it would reindent inside a multi-line template literal if one is ever added. Minor, not a blocker.\n- `src/cache.ts`, `src/normalize.ts`, `src/parity.test.ts`, `src/router.ts`, `src/validate.ts` — pure formatter output, reproduced exactly.\n\nA note on reviewing this class of commit: `git show HEAD -w` collapsed 176/174 lines of churn down to the 5 lines that actually matter, and re-running the formatter over the parent confirmed which files were untouched beyond it."
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 1,
+        "passRate": 1,
+        "scoreWithout": 1,
+        "passRateWithout": 1,
+        "delta": 0
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 1,
+    "overallScore": 1,
+    "overallPassRate": 1,
+    "meanDelta": 0
+  }
+}

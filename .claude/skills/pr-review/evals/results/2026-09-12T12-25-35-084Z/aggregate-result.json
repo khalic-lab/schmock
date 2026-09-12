@@ -1,0 +1,418 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.269",
+  "startedAt": "2026-09-12T12:25:35.084Z",
+  "durationSeconds": 784,
+  "costUsd": 1.1207995,
+  "partial": false,
+  "suite": {
+    "root": "/usr/local/src/khalic-lab/schmock/.claude/skills/pr-review",
+    "ablation": "with-without",
+    "modelOverride": "haiku",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "pr-review",
+        "path": "/usr/local/src/khalic-lab/schmock/.claude/skills/pr-review"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "dep-bump-formatter-churn",
+      "dir": "evals/dep-bump-formatter-churn",
+      "source": "case_yaml",
+      "promptMarkdown": "The most recent commit in this repository is a dependency bump.\n\nReview it. Report anything that needs human attention before it ships,\nnaming the specific file and what is wrong with it. If nothing does, say so.\n",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 30,
+      "graders": [
+        {
+          "name": "finds-the-hidden-behaviour-change",
+          "type": "llm",
+          "weight": 3,
+          "graderMarkdown": "The response must identify that src/deref.ts changed behaviour in the\nreviewed commit, beyond reindentation.\n\nAward full credit only if the response conveys BOTH:\n  1. That `dereference` now returns the input `document` rather than the\n     value produced by `walk(...)`.\n  2. Why that matters — the two differ when the root document is itself a\n     $ref, because `walk` mutates nested nodes in place but produces a NEW\n     object for a root-level ref. Accept any phrasing of this: \"a\n     root-level $ref comes back unresolved\", \"only diverges when the whole\n     document is a $ref\", \"the walked result is discarded\", etc.\n\nAward partial credit if it flags src/deref.ts as a real (non-formatting)\nchange but does not explain the root-ref divergence.\n\nAward NO credit if it reports the commit as formatting-only, or names a\ndifferent file as the behavioural change.\n\nJudge meaning, not wording. The reviewer may describe the same finding in\nmany valid ways; do not require any particular phrase, term, or structure.\n",
+          "config": {
+            "criteria": "The response must identify that src/deref.ts changed behaviour in the\nreviewed commit, beyond reindentation.\n\nAward full credit only if the response conveys BOTH:\n  1. That `dereference` now returns the input `document` rather than the\n     value produced by `walk(...)`.\n  2. Why that matters — the two differ when the root document is itself a\n     $ref, because `walk` mutates nested nodes in place but produces a NEW\n     object for a root-level ref. Accept any phrasing of this: \"a\n     root-level $ref comes back unresolved\", \"only diverges when the whole\n     document is a $ref\", \"the walked result is discarded\", etc.\n\nAward partial credit if it flags src/deref.ts as a real (non-formatting)\nchange but does not explain the root-ref divergence.\n\nAward NO credit if it reports the commit as formatting-only, or names a\ndifferent file as the behavioural change.\n\nJudge meaning, not wording. The reviewer may describe the same finding in\nmany valid ways; do not require any particular phrase, term, or structure.\n",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "no-false-positives-on-reflow",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "Decide whether the response treats these four files as clean:\nsrc/normalize.ts, src/router.ts, src/validate.ts, src/cache.ts.\nThey changed by reindentation only.\n\nPASS if the response does ANY of the following:\n  - describes them as reflow, reindentation, or formatting-only\n  - lists them as verified, unchanged, or reproducing exactly\n  - does not mention them at all\n  - mentions them only as context while attributing the defect elsewhere\n\nFAIL only if the response asserts that one of those four files contains a\nbug, a behavioural change, or a logic error.\n\nObservations about OTHER things — src/deref.ts, tools/format.sh, missing\ntests, the commit message — are irrelevant here and never cause a FAIL.\nA response that correctly blames src/deref.ts and says nothing about these\nfour files is a PASS.\n",
+          "config": {
+            "criteria": "Decide whether the response treats these four files as clean:\nsrc/normalize.ts, src/router.ts, src/validate.ts, src/cache.ts.\nThey changed by reindentation only.\n\nPASS if the response does ANY of the following:\n  - describes them as reflow, reindentation, or formatting-only\n  - lists them as verified, unchanged, or reproducing exactly\n  - does not mention them at all\n  - mentions them only as context while attributing the defect elsewhere\n\nFAIL only if the response asserts that one of those four files contains a\nbug, a behavioural change, or a logic error.\n\nObservations about OTHER things — src/deref.ts, tools/format.sh, missing\ntests, the commit message — are irrelevant here and never cause a FAIL.\nA response that correctly blames src/deref.ts and says nothing about these\nfour files is a PASS.\n",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "names-the-offending-file",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": "last_message",
+            "pattern": "deref",
+            "flags": "",
+            "match": "contains"
+          }
+        },
+        {
+          "name": "consulted-the-review-skill",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "arm": "with-only"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0.2,
+            "passed": false,
+            "turns": 31,
+            "costUsd": 0.21348569999999994,
+            "judgeCostUsd": 0.002929,
+            "durationSeconds": 102,
+            "startedAt": "2026-09-12T12:25:35.092Z",
+            "error": "exit 1: Reached maximum number of turns (30)",
+            "tracePath": "/private/tmp/e-yW7ea4/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": false,
+                "weight": 3,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "Let me examine the TypeScript files in the repository to check the formatting changes:"
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "Let me examine the TypeScript files in the repository to check the formatting changes:"
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": false,
+                "weight": 1,
+                "explanation": "pattern not found in last_message",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "consulted-the-review-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              }
+            ]
+          },
+          {
+            "score": 0.2,
+            "passed": false,
+            "turns": 31,
+            "costUsd": 0.15296220000000002,
+            "judgeCostUsd": 0.0024460000000000003,
+            "durationSeconds": 80,
+            "startedAt": "2026-09-12T12:27:16.633Z",
+            "error": "exit 1: Reached maximum number of turns (30)",
+            "tracePath": "/private/tmp/e-4E0DDH/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": false,
+                "weight": 3,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "Now let me review the commit in the actual repository here. Let me examine the files:"
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "Now let me review the commit in the actual repository here. Let me examine the files:"
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": false,
+                "weight": 1,
+                "explanation": "pattern not found in last_message",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "consulted-the-review-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 23,
+            "costUsd": 0.1376217,
+            "judgeCostUsd": 0.0040079999999999985,
+            "durationSeconds": 87,
+            "startedAt": "2026-09-12T12:28:37.104Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-M1UJCu/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": true,
+                "weight": 3,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "## Review Summary\n\n**BLOCKER FOUND**: This commit contains a hidden code change beyond formatting.\n\n### Issue: Behavioral Change in `src/deref.ts`\n\n**File:** `src/deref.ts`\n\n**What's wrong:**\nThe final return statement was changed during what should be a formatter-only upgrade:\n\n**Old (HEAD~1):**\n```typescript\nreturn walk(document, \"#\").value as T;\n```\n\n**New (HEAD):**\n```typescript\nwalk(document, \"#\");\nreturn document;\n```\n\nThis is a real behavioral change that was snuck in alongside the indentation formatting. The function now ignores the `Resolved` return value from `walk()` and returns the document directly, rather than extracting and casting `.value`.\n\n**Why this matters:**\n- This commit message says \"upgrade formatter to 2.0\" — it should contain *only* indentation changes\n- All other 5 TypeScript files (cache.ts, normalize.ts, parity.test.ts, router.ts, validate.ts) contain only indentation changes as expected\n- The format.sh tool was correctly updated\n- A formatter bump should never change code behavior\n\n**Recommendation:**\nRevert the deref.ts change to keep the original return statement, then re-commit with only the indentation changes. Alternatively, split this into two commits: (1) formatter update with indentation changes, (2) a separate commit explaining why the dereference logic changed."
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "## Review Summary\n\n**BLOCKER FOUND**: This commit contains a hidden code change beyond formatting.\n\n### Issue: Behavioral Change in `src/deref.ts`\n\n**File:** `src/deref.ts`\n\n**What's wrong:**\nThe final return statement was changed during what should be a formatter-only upgrade:\n\n**Old (HEAD~1):**\n```typescript\nreturn walk(document, \"#\").value as T;\n```\n\n**New (HEAD):**\n```typescript\nwalk(document, \"#\");\nreturn document;\n```\n\nThis is a real behavioral change that was snuck in alongside the indentation formatting. The function now ignores the `Resolved` return value from `walk()` and returns the document directly, rather than extracting and casting `.value`.\n\n**Why this matters:**\n- This commit message says \"upgrade formatter to 2.0\" — it should contain *only* indentation changes\n- All other 5 TypeScript files (cache.ts, normalize.ts, parity.test.ts, router.ts, validate.ts) contain only indentation changes as expected\n- The format.sh tool was correctly updated\n- A formatter bump should never change code behavior\n\n**Recommendation:**\nRevert the deref.ts change to keep the original return statement, then re-commit with only the indentation changes. Alternatively, split this into two commits: (1) formatter update with indentation changes, (2) a separate commit explaining why the dereference logic changed."
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "consulted-the-review-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 4,
+            "costUsd": 0.33171925,
+            "judgeCostUsd": 0.003089999999999999,
+            "durationSeconds": 275,
+            "startedAt": "2026-09-12T12:30:04.213Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-yrlpDk/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": true,
+                "weight": 3,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "**⚠\ufe0f Critical bug found — do not ship this commit.**\n\n**File: `src/deref.ts`, line 56**\n\nThe `dereference()` function has a logic error that breaks the entire module. \n\n**What's wrong:**\n- **Before:** `return walk(document, \"#\").value as T;` — correctly returns the dereferenced result\n- **After:** `walk(document, \"#\");` followed by `return document;` — now returns the original unresolved document instead\n\n**Impact:** The function ignores the walk operation's output and returns the input unchanged. All `$ref` pointer resolution is broken.\n\nThis appears to be an accidental refactoring mistake during the formatter upgrade. The walk call's result is discarded, making the function a no-op."
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "**⚠\ufe0f Critical bug found — do not ship this commit.**\n\n**File: `src/deref.ts`, line 56**\n\nThe `dereference()` function has a logic error that breaks the entire module. \n\n**What's wrong:**\n- **Before:** `return walk(document, \"#\").value as T;` — correctly returns the dereferenced result\n- **After:** `walk(document, \"#\");` followed by `return document;` — now returns the original unresolved document instead\n\n**Impact:** The function ignores the walk operation's output and returns the input unchanged. All `$ref` pointer resolution is broken.\n\nThis appears to be an accidental refactoring mistake during the formatter upgrade. The walk call's result is discarded, making the function a no-op."
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 0.4,
+            "passed": false,
+            "turns": 21,
+            "costUsd": 0.09216359999999998,
+            "judgeCostUsd": 0.003462,
+            "durationSeconds": 64,
+            "startedAt": "2026-09-12T12:34:39.279Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-aCFUxA/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": false,
+                "weight": 3,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "**This needs to be fixed before shipping:**\n\n**File: `tools/format.sh` (and related indentation issue)**\n\nThe commit claims to upgrade formatter v2 with \"indent 4 → 2\", but the source files (`src/*.ts`) still contain 4-space indentation throughout. There are 63 lines with 4-space indentation that should have been converted to 2-space.\n\nThe `format.sh` script exists with the correct conversion logic, but **it appears the script was never actually run on the source files** before committing. The files need to be reformatted using this script before this commit can ship, otherwise the codebase is inconsistent with the declared formatter version.\n\nExample of unconverted indentation:\n- `src/cache.ts:5` — `    if (limit < 1) {` (should be `  if (limit < 1) {`)\n- `src/deref.ts:20` — `    isWalkable(value) &&` (should be `  isWalkable(value) &&`)"
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "**This needs to be fixed before shipping:**\n\n**File: `tools/format.sh` (and related indentation issue)**\n\nThe commit claims to upgrade formatter v2 with \"indent 4 → 2\", but the source files (`src/*.ts`) still contain 4-space indentation throughout. There are 63 lines with 4-space indentation that should have been converted to 2-space.\n\nThe `format.sh` script exists with the correct conversion logic, but **it appears the script was never actually run on the source files** before committing. The files need to be reformatted using this script before this commit can ship, otherwise the codebase is inconsistent with the declared formatter version.\n\nExample of unconverted indentation:\n- `src/cache.ts:5` — `    if (limit < 1) {` (should be `  if (limit < 1) {`)\n- `src/deref.ts:20` — `    isWalkable(value) &&` (should be `  isWalkable(value) &&`)"
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 0.4,
+            "passed": false,
+            "turns": 5,
+            "costUsd": 0.19284705,
+            "judgeCostUsd": 0.0033000000000000043,
+            "durationSeconds": 176,
+            "startedAt": "2026-09-12T12:35:43.447Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-5xBVJZ/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "finds-the-hidden-behaviour-change",
+                "passed": false,
+                "weight": 3,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "✅ **Nothing needs human attention.** \n\nThe commit is a straightforward dependency upgrade with pure formatting changes. The review found:\n\n- **TypeScript files** (`src/cache.ts`, `src/deref.ts`, `src/normalize.ts`, `src/parity.test.ts`, `src/router.ts`, `src/validate.ts`): All indentation converted correctly from 4→2 spaces with no syntax errors\n- **format.sh**: The Perl regex for indent conversion is syntactically correct and produces the intended behavior\n- No logic changes, no cross-file breakage, no edge cases\n\nThe upgrade is safe to ship."
+              },
+              {
+                "name": "no-false-positives-on-reflow",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "✅ **Nothing needs human attention.** \n\nThe commit is a straightforward dependency upgrade with pure formatting changes. The review found:\n\n- **TypeScript files** (`src/cache.ts`, `src/deref.ts`, `src/normalize.ts`, `src/parity.test.ts`, `src/router.ts`, `src/validate.ts`): All indentation converted correctly from 4→2 spaces with no syntax errors\n- **format.sh**: The Perl regex for indent conversion is syntactically correct and produces the intended behavior\n- No logic changes, no cross-file breakage, no edge cases\n\nThe upgrade is safe to ship."
+              },
+              {
+                "name": "names-the-offending-file",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched deref",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0.4666666666666666,
+        "passRate": 0.3333333333333333,
+        "scoreWithout": 0.6,
+        "passRateWithout": 0.3333333333333333,
+        "delta": -0.13333333333333336
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 0,
+    "overallScore": 0.4666666666666666,
+    "overallPassRate": 0.3333333333333333,
+    "meanDelta": -0.13333333333333336
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.269",
+  "startedAt": "2026-09-12T12:16:37.108Z",
+  "durationSeconds": 1,
+  "costUsd": 0,
+  "partial": false,
+  "suite": {
+    "root": "/usr/local/src/khalic-lab/schmock/.claude/skills/pr-review",
+    "ablation": "with-without",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "pr-review",
+        "path": "/usr/local/src/khalic-lab/schmock/.claude/skills/pr-review"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "dep-bump-formatter-churn",
+      "dir": "evals/dep-bump-formatter-churn",
+      "source": "case_yaml",
+      "promptMarkdown": "The most recent commit in this repository is a dependency bump.\n\nReview it. Report anything that needs human attention before it ships,\nnaming the specific file and what is wrong with it. If nothing does, say so.\n",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 30,
+      "graders": [
+        {
+          "name": "finds-the-hidden-behaviour-change",
+          "type": "llm",
+          "weight": 3,
+          "graderMarkdown": "The response must identify that src/deref.ts changed behaviour in the\nreviewed commit, beyond reindentation.\n\nAward full credit only if the response conveys BOTH:\n  1. That `dereference` now returns the input `document` rather than the\n     value produced by `walk(...)`.\n  2. Why that matters — the two differ when the root document is itself a\n     $ref, because `walk` mutates nested nodes in place but produces a NEW\n     object for a root-level ref. Accept any phrasing of this: \"a\n     root-level $ref comes back unresolved\", \"only diverges when the whole\n     document is a $ref\", \"the walked result is discarded\", etc.\n\nAward partial credit if it flags src/deref.ts as a real (non-formatting)\nchange but does not explain the root-ref divergence.\n\nAward NO credit if it reports the commit as formatting-only, or names a\ndifferent file as the behavioural change.\n\nJudge meaning, not wording. The reviewer may describe the same finding in\nmany valid ways; do not require any particular phrase, term, or structure.\n",
+          "config": {
+            "criteria": "The response must identify that src/deref.ts changed behaviour in the\nreviewed commit, beyond reindentation.\n\nAward full credit only if the response conveys BOTH:\n  1. That `dereference` now returns the input `document` rather than the\n     value produced by `walk(...)`.\n  2. Why that matters — the two differ when the root document is itself a\n     $ref, because `walk` mutates nested nodes in place but produces a NEW\n     object for a root-level ref. Accept any phrasing of this: \"a\n     root-level $ref comes back unresolved\", \"only diverges when the whole\n     document is a $ref\", \"the walked result is discarded\", etc.\n\nAward partial credit if it flags src/deref.ts as a real (non-formatting)\nchange but does not explain the root-ref divergence.\n\nAward NO credit if it reports the commit as formatting-only, or names a\ndifferent file as the behavioural change.\n\nJudge meaning, not wording. The reviewer may describe the same finding in\nmany valid ways; do not require any particular phrase, term, or structure.\n",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "no-false-positives-on-reflow",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "Decide whether the response treats these four files as clean:\nsrc/normalize.ts, src/router.ts, src/validate.ts, src/cache.ts.\nThey changed by reindentation only.\n\nPASS if the response does ANY of the following:\n  - describes them as reflow, reindentation, or formatting-only\n  - lists them as verified, unchanged, or reproducing exactly\n  - does not mention them at all\n  - mentions them only as context while attributing the defect elsewhere\n\nFAIL only if the response asserts that one of those four files contains a\nbug, a behavioural change, or a logic error.\n\nObservations about OTHER things — src/deref.ts, tools/format.sh, missing\ntests, the commit message — are irrelevant here and never cause a FAIL.\nA response that correctly blames src/deref.ts and says nothing about these\nfour files is a PASS.\n",
+          "config": {
+            "criteria": "Decide whether the response treats these four files as clean:\nsrc/normalize.ts, src/router.ts, src/validate.ts, src/cache.ts.\nThey changed by reindentation only.\n\nPASS if the response does ANY of the following:\n  - describes them as reflow, reindentation, or formatting-only\n  - lists them as verified, unchanged, or reproducing exactly\n  - does not mention them at all\n  - mentions them only as context while attributing the defect elsewhere\n\nFAIL only if the response asserts that one of those four files contains a\nbug, a behavioural change, or a logic error.\n\nObservations about OTHER things — src/deref.ts, tools/format.sh, missing\ntests, the commit message — are irrelevant here and never cause a FAIL.\nA response that correctly blames src/deref.ts and says nothing about these\nfour files is a PASS.\n",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "names-the-offending-file",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": "last_message",
+            "pattern": "deref",
+            "flags": "",
+            "match": "contains"
+          }
+        },
+        {
+          "name": "consulted-the-review-skill",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "arm": "with-only"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 0,
+            "costUsd": 0,
+            "judgeCostUsd": 0,
+            "durationSeconds": 1,
+            "startedAt": "2026-09-12T12:16:37.117Z",
+            "error": "case \"dep-bump-formatter-churn\" execution.env key \"PATH\" is not allowed — only EVAL_* keys can be set from case.yaml. Anything else must come from the operator's shell.",
+            "tracePath": "",
+            "skippedPaidGraders": false,
+            "graders": []
+          }
+        ],
+        "without": [
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 0,
+            "costUsd": 0,
+            "judgeCostUsd": 0,
+            "durationSeconds": 1,
+            "startedAt": "2026-09-12T12:16:37.655Z",
+            "error": "case \"dep-bump-formatter-churn\" execution.env key \"PATH\" is not allowed — only EVAL_* keys can be set from case.yaml. Anything else must come from the operator's shell.",
+            "tracePath": "",
+            "skippedPaidGraders": false,
+            "graders": []
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0,
+        "passRate": 0,
+        "scoreWithout": 0,
+        "passRateWithout": 0,
+        "delta": 0
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 0,
+    "overallScore": 0,
+    "overallPassRate": 0,
+    "meanDelta": 0
+  }
+}
