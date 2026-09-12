@@ -197,7 +197,12 @@ function resolvePointer(document: unknown, refPath: string): Resolved {
   };
 
   for (let i = 0; i < tokens.length; i++) {
-    if (followRefs(false)) path = joinPointer(path, tokens.slice(i));
+    // At `i === 0` `value` is still the document root. A root that is itself a
+    // `$ref` must not be followed before the pointer's own tokens are applied:
+    // a JSON pointer is resolved against the document as written, and following
+    // the root here re-enters `resolvePointer` for every pointer in the
+    // document, which recurses until the stack gives out.
+    if (i > 0 && followRefs(false)) path = joinPointer(path, tokens.slice(i));
 
     const token = tokens[i];
     if (!isWalkable(value)) {
@@ -364,6 +369,12 @@ export function dereferenceInternal<T>(document: T): T {
     return result;
   }
 
-  crawl(document, "#", "#");
-  return document;
+  // `crawl` mutates walkable children in place, so for almost every document
+  // `document` and the crawl result are the same object. A document whose ROOT
+  // is itself a `$ref` is the exception: it resolves to the target, a different
+  // object, and returning `document` would hand back the undereferenced root.
+  // The assertion is sound because dereferencing only replaces `$ref` nodes
+  // with values drawn from the same document, leaving `T`'s shape intact.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  return crawl(document, "#", "#").value as T;
 }

@@ -305,9 +305,11 @@ describe("internal dereference parity with swagger-parser", () => {
   });
 
   it("resolves a reference to the whole document", async () => {
+    // `#` names the document itself, so the dereferenced schema has to BE the
+    // root object rather than a copy of it — `fingerprint` compares identity.
     await expectParity(
       specWith({
-        Whole: { type: "object", properties: {} },
+        Whole: { $ref: "#" },
       }),
     );
   });
