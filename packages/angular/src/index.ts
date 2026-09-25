@@ -21,6 +21,7 @@ import {
   matchPathPrefix,
   normalizeResponse,
   parsePathPrefix,
+  SchmockError,
   schmock,
   serializeResponseBody,
 } from "@schmock/core";
@@ -473,6 +474,11 @@ interface Interception {
   responseMethod: Schmock.HttpMethod;
 }
 
+/**
+ * Local rather than core's `isThenable`, which `@schmock/core` does not
+ * export and which rejects function-typed thenables. A hook may return one,
+ * and it must still be awaited.
+ */
 function isPromiseLike<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
   return (
     (typeof value === "object" || typeof value === "function") &&
@@ -839,6 +845,12 @@ export function provideSchmockInterceptor(
   };
 }
 
+/**
+ * One code for a missing and a malformed `@schmock/openapi` peer, so callers
+ * can tell "the optional peer is unusable" apart from a failing spec.
+ */
+const OPENAPI_PEER_UNAVAILABLE = "OPENAPI_PEER_UNAVAILABLE";
+
 type OpenapiFactory = (
   options: Schmock.OpenApiOptions,
 ) => Promise<Schmock.Plugin>;
@@ -855,7 +867,16 @@ type OpenapiFactory = (
  */
 async function loadOptionalOpenapi(): Promise<OpenapiFactory> {
   const specifier = ["@schmock", "openapi"].join("/");
-  const mod: unknown = await import(/* @vite-ignore */ specifier);
+  let mod: unknown;
+  try {
+    mod = await import(/* @vite-ignore */ specifier);
+  } catch (cause) {
+    throw new SchmockError(
+      "@schmock/openapi could not be loaded; install it to use the spec helpers",
+      OPENAPI_PEER_UNAVAILABLE,
+      { cause },
+    );
+  }
   if (
     typeof mod === "object" &&
     mod !== null &&
@@ -865,7 +886,10 @@ async function loadOptionalOpenapi(): Promise<OpenapiFactory> {
     const factory = mod.openapi;
     return (options) => factory(options);
   }
-  throw new Error("@schmock/openapi does not export an openapi() factory");
+  throw new SchmockError(
+    "@schmock/openapi does not export an openapi() factory",
+    OPENAPI_PEER_UNAVAILABLE,
+  );
 }
 
 /**

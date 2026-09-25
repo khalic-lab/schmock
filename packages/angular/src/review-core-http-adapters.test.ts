@@ -15,7 +15,7 @@ import {
 import type * as Schmock from "@schmock/core";
 import { schmock } from "@schmock/core";
 import { firstValueFrom, of } from "rxjs";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AngularAdapterOptions, createSchmockInterceptor } from "./index";
 
 const passthrough: HttpHandler = {
@@ -76,6 +76,43 @@ describe("Angular in-band errorFormatter output is normalized", () => {
 
     expect(error.error).toEqual({ when: "1970-01-01T00:00:00.000Z" });
     expect(error.headers.get("content-type")).toBe("application/json");
+  });
+
+  it("falls back to the minimal body when the formatted body has an undefined property", async () => {
+    // A plain Error has no `code`, so this common formatter yields
+    // `{ message, code: undefined }`. The normalizer rejects undefined leaves
+    // instead of dropping them, as Express and the fetch interceptor do.
+    const error = await interceptError(
+      throwingMock(),
+      new HttpRequest("GET", "/boom"),
+      {
+        errorFormatter: (e) => ({
+          message: e.message,
+          code: "code" in e ? e.code : undefined,
+        }),
+      },
+    );
+
+    expect(error.status).toBe(500);
+    expect(error.error).toEqual({
+      error: "Internal Server Error",
+      code: "INTERNAL_ERROR",
+    });
+  });
+
+  it("keeps the formatted body when an absent field is null instead of undefined", async () => {
+    const error = await interceptError(
+      throwingMock(),
+      new HttpRequest("GET", "/boom"),
+      {
+        errorFormatter: (e) => ({
+          message: e.message,
+          code: "code" in e ? e.code : null,
+        }),
+      },
+    );
+
+    expect(error.error).toEqual({ message: "boom", code: null });
   });
 
   it("falls back to the minimal body when the formatter returns an Error", async () => {
@@ -166,4 +203,50 @@ describe("Angular bundle keeps @schmock/openapi optional", () => {
       rmSync(outDir, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe("Angular reports an unusable @schmock/openapi peer as a SchmockError", () => {
+  // resetModules reloads @schmock/core too, so the class to check against
+  // comes from the same fresh module graph as the adapter.
+  async function specInterceptorError() {
+    vi.resetModules();
+    const { createSchmockInterceptorFromSpec } = await import("./index");
+    const core = await import("@schmock/core");
+    try {
+      await createSchmockInterceptorFromSpec({ spec: {} });
+    } catch (error) {
+      return { error, FreshSchmockError: core.SchmockError };
+    }
+    throw new Error("expected createSchmockInterceptorFromSpec to reject");
+  }
+
+  afterEach(() => {
+    vi.doUnmock("@schmock/openapi");
+    vi.resetModules();
+  });
+
+  it("when the peer cannot be imported", async () => {
+    vi.doMock("@schmock/openapi", () => {
+      throw new Error("Cannot find package '@schmock/openapi'");
+    });
+
+    const { error, FreshSchmockError } = await specInterceptorError();
+
+    expect(error).toBeInstanceOf(FreshSchmockError);
+    expect(error).toMatchObject({ code: "OPENAPI_PEER_UNAVAILABLE" });
+    // The import failure is kept as the cause, not swallowed.
+    expect(error).toHaveProperty("context.cause", expect.any(Error));
+  });
+
+  it("when the peer has no openapi() factory", async () => {
+    vi.doMock("@schmock/openapi", () => ({ openapi: "not a factory" }));
+
+    const { error, FreshSchmockError } = await specInterceptorError();
+
+    expect(error).toBeInstanceOf(FreshSchmockError);
+    expect(error).toMatchObject({
+      code: "OPENAPI_PEER_UNAVAILABLE",
+      message: "@schmock/openapi does not export an openapi() factory",
+    });
+  });
 });
