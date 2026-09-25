@@ -25,7 +25,8 @@ import { assertOutputWithinLimits } from "./output-limits.js";
 import { applyOverrides, determineArrayCount } from "./overrides.js";
 import { applyNullableRolls } from "./post-process.js";
 import { enhanceSchemaWithSmartMapping } from "./schema-enhancement.js";
-import { hasType, isJSONSchema7, validateSchema } from "./validation.js";
+import { isJSONSchema7, isRecord } from "./utils.js";
+import { hasType, validateSchema } from "./validation.js";
 
 export type SchemaGenerationContext = Schmock.SchemaGenerationContext;
 
@@ -43,10 +44,6 @@ export {
   MAX_SCHEMA_NODES,
   MAX_STRING_LENGTH,
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /** A schema that passed `validateSchema`, with its smart-mapping enhancement. */
 interface PreparedSchema {

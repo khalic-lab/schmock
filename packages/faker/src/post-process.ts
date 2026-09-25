@@ -1,6 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import { NULLABLE_NULL_PROBABILITY } from "./constants.js";
-import { isJSONSchema7 } from "./validation.js";
+import { isJSONSchema7, isRecord } from "./utils.js";
 
 /**
  * Reintroduce null at ~5% on nodes the enhancer marked `schmockNullable`.
@@ -47,10 +47,6 @@ interface Applicable {
 
 /** How deep `couldMatch` looks into a candidate branch before giving up. */
 const MATCH_DEPTH = 4;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function visit(
   data: unknown,

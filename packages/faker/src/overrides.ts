@@ -1,12 +1,9 @@
 import type { JSONSchema7 } from "json-schema";
 import { DEFAULT_ARRAY_COUNT } from "./constants.js";
 import { cloneOwned } from "./jsf-config.js";
+import { isRecord } from "./utils.js";
 
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * Determine number of items to generate for array schema

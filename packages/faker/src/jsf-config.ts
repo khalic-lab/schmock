@@ -1,5 +1,5 @@
 import { base, en, Faker } from "@faker-js/faker";
-import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
+import type { JSONSchema7 } from "json-schema";
 import {
   type GenerateOptions,
   generate,
@@ -9,6 +9,8 @@ import {
 } from "json-schema-faker-private";
 import { DETERMINISTIC_REF_DATE, JSF_MAX_DEPTH } from "./constants.js";
 import { assertOutputWithinLimits } from "./output-limits.js";
+import { mapSchemaChildren, type SchemaChildSlot } from "./schema-children.js";
+import { isJSONSchema7 } from "./utils.js";
 
 // Re-exported here because this module owns the seeded-generation contract the
 // constant serves; `constants.ts` is its home.
@@ -341,40 +343,51 @@ export function createSeededRandom(seed: number): () => number {
   };
 }
 
-function normalizeDefinitionForJsf(
-  definition: JSONSchema7Definition,
+/**
+ * The JSF copy of one child entry. Boolean schemas pass through, schema objects
+ * are normalized, and a `dependencies` property list is copied. Any other entry
+ * is malformed: it is dropped from a list or map, and a single-schema keyword
+ * keeps its raw copy.
+ */
+function normalizeChildForJsf(
+  child: unknown,
+  slot: SchemaChildSlot,
   context: NormalizeContext,
-): JsonSchema {
-  return typeof definition === "boolean"
-    ? definition
-    : normalizeSchemaNodeForJsf(definition, context);
+): JsonSchema | string[] | undefined {
+  if (typeof child === "boolean") return child;
+  if (isJSONSchema7(child)) return normalizeSchemaNodeForJsf(child, context);
+  if (slot.keyword === "dependencies" && Array.isArray(child)) {
+    return [...child];
+  }
+  return undefined;
 }
 
-function normalizeUnknownDefinitionForJsf(
-  definition: unknown,
-  context: NormalizeContext,
-): JsonSchema | undefined {
-  if (typeof definition === "boolean") return definition;
-  return isSchemaObject(definition)
-    ? normalizeSchemaNodeForJsf(definition, context)
-    : undefined;
+/**
+ * The schema the child walk reads, without the keywords json-schema-faker
+ * would misread. A Draft-7 tuple (`items` as a list) ignores a native
+ * `prefixItems`, since the tuple becomes the `prefixItems`. `additionalItems`
+ * without `items` constrains nothing, so it keeps its raw copy.
+ */
+function jsfTraversalView(schema: JSONSchema7): JSONSchema7 {
+  if (Array.isArray(schema.items)) {
+    if (Reflect.get(schema, "prefixItems") === undefined) return schema;
+    const view = { ...schema };
+    Reflect.deleteProperty(view, "prefixItems");
+    return view;
+  }
+  if (schema.items === undefined && schema.additionalItems !== undefined) {
+    const view = { ...schema };
+    Reflect.deleteProperty(view, "additionalItems");
+    return view;
+  }
+  return schema;
 }
 
-function isSchemaObject(value: unknown): value is JSONSchema7 {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function normalizeDefinitionMap(
-  definitions: Record<string, JSONSchema7Definition>,
-  context: NormalizeContext,
-): Record<string, JsonSchema> {
-  return Object.fromEntries(
-    Object.entries(definitions).map(([key, definition]) => [
-      key,
-      normalizeDefinitionForJsf(definition, context),
-    ]),
-  );
-}
+/** Where a Draft-7 tuple's keywords land in the 2020-12 form JSF reads. */
+const TUPLE_TARGETS: Readonly<Record<string, string>> = {
+  items: "prefixItems",
+  additionalItems: "items",
+};
 
 /**
  * json-schema-faker consumes tuple schemas through the 2020-12 `prefixItems`
@@ -407,135 +420,29 @@ function normalizeSchemaNodeForJsf(
   }
   closeLoneNumericBound(schema, normalized);
 
-  if (schema.properties) {
-    normalized.properties = normalizeDefinitionMap(schema.properties, context);
-  }
-
-  if (schema.definitions) {
-    normalized.definitions = normalizeDefinitionMap(
-      schema.definitions,
-      context,
-    );
-  }
-
-  if (schema.$defs) {
-    normalized.$defs = normalizeDefinitionMap(schema.$defs, context);
-  }
-
-  if (schema.patternProperties) {
-    const patternProperties = normalizeDefinitionMap(
-      schema.patternProperties,
-      context,
-    );
-    normalized.patternProperties = patternProperties;
-    addPatternPropertyKeys({ schema, normalized, patternProperties, context });
-  }
-
-  if (Array.isArray(schema.items)) {
-    normalized.prefixItems = schema.items.map((definition) =>
-      normalizeDefinitionForJsf(definition, context),
-    );
-    normalized.items =
-      schema.additionalItems === undefined
-        ? true
-        : normalizeDefinitionForJsf(schema.additionalItems, context);
+  // Bespoke pre-step: a Draft-7 tuple's list becomes `prefixItems`, and its
+  // `additionalItems` becomes `items` (`true` when absent or malformed).
+  const tuple = Array.isArray(schema.items);
+  if (tuple) {
+    normalized.items = true;
     delete normalized.additionalItems;
-  } else if (schema.items !== undefined) {
-    normalized.items = normalizeDefinitionForJsf(schema.items, context);
-    if (schema.additionalItems !== undefined) {
-      normalized.additionalItems = normalizeDefinitionForJsf(
-        schema.additionalItems,
-        context,
-      );
-    }
   }
 
-  const prefixItems = Reflect.get(schema, "prefixItems");
-  if (!Array.isArray(schema.items) && Array.isArray(prefixItems)) {
-    normalized.prefixItems = prefixItems.flatMap((definition) => {
-      const normalizedDefinition = normalizeUnknownDefinitionForJsf(
-        definition,
-        context,
-      );
-      return normalizedDefinition === undefined ? [] : [normalizedDefinition];
-    });
-  }
-
-  for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
-    const definitions = schema[keyword];
-    if (definitions) {
-      normalized[keyword] = definitions.map((definition) =>
-        normalizeDefinitionForJsf(definition, context),
-      );
-    }
-  }
-
-  if (schema.additionalProperties !== undefined) {
-    normalized.additionalProperties = normalizeDefinitionForJsf(
-      schema.additionalProperties,
-      context,
-    );
-  }
-
-  for (const keyword of [
-    "contains",
-    "not",
-    "if",
-    "then",
-    "else",
-    "propertyNames",
-  ] as const) {
-    const definition = schema[keyword];
-    if (definition !== undefined) {
-      normalized[keyword] = normalizeDefinitionForJsf(definition, context);
-    }
-  }
-
-  if (schema.dependencies) {
-    normalized.dependencies = Object.fromEntries(
-      Object.entries(schema.dependencies).map(([key, dependency]) => [
-        key,
-        Array.isArray(dependency)
-          ? [...dependency]
-          : normalizeDefinitionForJsf(dependency, context),
-      ]),
-    );
-  }
-
-  const contentSchema = normalizeUnknownDefinitionForJsf(
-    Reflect.get(schema, "contentSchema"),
-    context,
+  const children = mapSchemaChildren(jsfTraversalView(schema), (child, slot) =>
+    normalizeChildForJsf(child, slot, context),
   );
-  if (contentSchema !== undefined) normalized.contentSchema = contentSchema;
-
-  const dependentSchemas = Reflect.get(schema, "dependentSchemas");
-  if (
-    dependentSchemas !== null &&
-    typeof dependentSchemas === "object" &&
-    !Array.isArray(dependentSchemas)
-  ) {
-    normalized.dependentSchemas = Object.fromEntries(
-      Object.entries(dependentSchemas).flatMap(([key, definition]) => {
-        const normalizedDefinition = normalizeUnknownDefinitionForJsf(
-          definition,
-          context,
-        );
-        return normalizedDefinition === undefined
-          ? []
-          : [[key, normalizedDefinition]];
-      }),
-    );
-  }
-
-  const containsAll = Reflect.get(schema, "containsAll");
-  if (Array.isArray(containsAll)) {
-    normalized.containsAll = containsAll.flatMap((definition) => {
-      const normalizedDefinition = normalizeUnknownDefinitionForJsf(
-        definition,
+  for (const { keyword, value } of children) {
+    normalized[tuple ? (TUPLE_TARGETS[keyword] ?? keyword) : keyword] = value;
+    // Pattern keys are invented here, before the walk descends into `items`
+    // and later keywords, so the seed each one draws stays where it was.
+    if (keyword === "patternProperties" && normalized.patternProperties) {
+      addPatternPropertyKeys({
+        schema,
+        normalized,
+        patternProperties: normalized.patternProperties,
         context,
-      );
-      return normalizedDefinition === undefined ? [] : [normalizedDefinition];
-    });
+      });
+    }
   }
 
   return normalized;
@@ -633,7 +540,7 @@ function addPatternPropertyKeys(request: PatternKeyRequest): void {
   if (patterns.length === 0) return;
 
   const properties: Record<string, JsonSchema> = {
-    ...(isSchemaObject(normalized.properties) ? normalized.properties : {}),
+    ...(isJSONSchema7(normalized.properties) ? normalized.properties : {}),
   };
   const declared = Object.keys(properties).length;
   const wanted = Math.max(1, (schema.minProperties ?? 0) - declared);

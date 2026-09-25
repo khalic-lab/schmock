@@ -3,7 +3,7 @@ import { ResourceLimitError, SchemaValidationError } from "@schmock/core";
 import { define, generate as generateWithConsumerJsf } from "json-schema-faker";
 import { expect, vi } from "vitest";
 import { fakerPlugin, generateFromSchema, MAX_STRING_LENGTH } from "../index";
-import { isJSONSchema7 } from "../validation";
+import { isJSONSchema7 } from "../utils";
 
 const feature = await loadFeature("../../features/faker-plugin.feature");
 

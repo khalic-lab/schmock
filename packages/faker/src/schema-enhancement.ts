@@ -4,7 +4,9 @@ import {
   findBestMapping,
   GENERATABLE_FORMATS,
 } from "./field-name-matcher.js";
-import { isJSONSchema7, validateFakerMethod } from "./validation.js";
+import { mapSchemaChildren, type SchemaChildSlot } from "./schema-children.js";
+import { isJSONSchema7 } from "./utils.js";
+import { validateFakerMethod } from "./validation.js";
 
 /** JSONSchema7 extended with json-schema-faker's `faker` property and schmock markers */
 interface FakerSchema extends JSONSchema7 {
@@ -148,10 +150,6 @@ interface EnhancementState {
   cache: Map<JSONSchema7, Map<EnhancementContext, FakerSchema>>;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 const PRIMITIVE_TYPES = new Set(["string", "number", "integer", "boolean"]);
 
 /** True when `schema` generates a single primitive type (nullable allowed). */
@@ -237,111 +235,35 @@ function enhanceChildren(
   state: EnhancementState,
   context: EnhancementContext,
 ): void {
-  if (enhanced.properties) {
-    const properties = { ...enhanced.properties };
-    for (const [fieldName, definition] of Object.entries(properties)) {
-      if (isJSONSchema7(definition)) {
-        properties[fieldName] = enhanceSchema(definition, state, fieldName);
-      }
-    }
-    enhanced.properties = properties;
+  const children = mapSchemaChildren(enhanced, (child, slot) =>
+    isJSONSchema7(child)
+      ? enhanceSchema(child, state, childContext({ context, child, slot }))
+      : child,
+  );
+  for (const { keyword, value } of children) {
+    Reflect.set(enhanced, keyword, value);
   }
+}
 
-  for (const keyword of [
-    "definitions",
-    "$defs",
-    "patternProperties",
-  ] as const) {
-    const definitions = Reflect.get(enhanced, keyword);
-    if (!isRecord(definitions)) continue;
-    const copied: Record<string, unknown> = { ...definitions };
-    for (const [name, definition] of Object.entries(copied)) {
-      if (isJSONSchema7(definition)) {
-        copied[name] = enhanceSchema(definition, state, ROOT_CONTEXT);
-      }
-    }
-    Reflect.set(enhanced, keyword, copied);
-  }
+interface ChildContextRequest {
+  context: EnhancementContext;
+  child: JSONSchema7;
+  slot: SchemaChildSlot;
+}
 
-  if (enhanced.dependencies) {
-    const dependencies = { ...enhanced.dependencies };
-    for (const [name, dependency] of Object.entries(dependencies)) {
-      if (!Array.isArray(dependency) && isJSONSchema7(dependency)) {
-        dependencies[name] = enhanceSchema(dependency, state, ROOT_CONTEXT);
-      }
-    }
-    enhanced.dependencies = dependencies;
+/**
+ * A property is enhanced under its own name and a single `items` schema under
+ * its parent's (see `itemContext`). No other child has a name to map.
+ */
+function childContext(request: ChildContextRequest): EnhancementContext {
+  const { context, child, slot } = request;
+  if (slot.keyword === "properties" && slot.location.form === "map") {
+    return slot.location.name;
   }
-
-  const dependentSchemas = Reflect.get(enhanced, "dependentSchemas");
-  if (isRecord(dependentSchemas)) {
-    const copied: Record<string, unknown> = { ...dependentSchemas };
-    for (const [name, definition] of Object.entries(copied)) {
-      if (isJSONSchema7(definition)) {
-        copied[name] = enhanceSchema(definition, state, ROOT_CONTEXT);
-      }
-    }
-    Reflect.set(enhanced, "dependentSchemas", copied);
+  if (slot.keyword === "items" && slot.location.form === "single") {
+    return itemContext(context, child);
   }
-
-  if (Array.isArray(enhanced.items)) {
-    enhanced.items = enhanced.items.map((item) =>
-      isJSONSchema7(item) ? enhanceSchema(item, state, ROOT_CONTEXT) : item,
-    );
-  } else if (isJSONSchema7(enhanced.items)) {
-    enhanced.items = enhanceSchema(
-      enhanced.items,
-      state,
-      itemContext(context, enhanced.items),
-    );
-  }
-
-  for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
-    const branches = enhanced[keyword];
-    if (branches) {
-      enhanced[keyword] = branches.map((branch) =>
-        isJSONSchema7(branch)
-          ? enhanceSchema(branch, state, ROOT_CONTEXT)
-          : branch,
-      );
-    }
-  }
-
-  for (const keyword of ["prefixItems", "containsAll"] as const) {
-    const definitions = Reflect.get(enhanced, keyword);
-    if (Array.isArray(definitions)) {
-      Reflect.set(
-        enhanced,
-        keyword,
-        definitions.map((definition) =>
-          isJSONSchema7(definition)
-            ? enhanceSchema(definition, state, ROOT_CONTEXT)
-            : definition,
-        ),
-      );
-    }
-  }
-
-  for (const keyword of [
-    "additionalItems",
-    "contains",
-    "additionalProperties",
-    "propertyNames",
-    "not",
-    "if",
-    "then",
-    "else",
-    "contentSchema",
-  ] as const) {
-    const definition = Reflect.get(enhanced, keyword);
-    if (isJSONSchema7(definition)) {
-      Reflect.set(
-        enhanced,
-        keyword,
-        enhanceSchema(definition, state, ROOT_CONTEXT),
-      );
-    }
-  }
+  return ROOT_CONTEXT;
 }
 
 /**

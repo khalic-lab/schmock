@@ -13,6 +13,7 @@ import {
 } from "./constants.js";
 import { createFakerInstance } from "./jsf-config.js";
 import { collectSchemaChildren, type SchemaChild } from "./schema-children.js";
+import { isJSONSchema7, isRecord } from "./utils.js";
 
 let validationFaker: Faker | undefined;
 
@@ -25,10 +26,6 @@ const MAX_COMPOSITION_FRAMES = 200;
 
 /** JSONSchema7 extended with json-schema-faker's `faker` property. */
 type FakerAwareSchema = JSONSchema7 & { faker?: unknown };
-
-export function isJSONSchema7(value: unknown): value is JSONSchema7 {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * Type-aware check that tolerates the union form the OpenAPI normalizer emits
@@ -90,11 +87,9 @@ interface WalkState {
 /**
  * Validate JSON Schema structure and enforce resource limits.
  *
- * Walks every distinct schema node and edge exactly once — `properties`,
- * `patternProperties`, `additionalProperties`, `propertyNames`, `items` (object
- * and tuple forms), `additionalItems`, `contains`, `allOf`/`anyOf`/`oneOf`,
- * `not`, `if`/`then`/`else`, `definitions`, `$defs` and the schema form of
- * `dependencies` — checking structure, faker methods, cycles, nesting depth,
+ * Walks every distinct schema node and edge exactly once, through every
+ * keyword in `SCHEMA_KEYWORDS` (schema-children.ts, in that table's order),
+ * checking structure, faker methods, cycles, nesting depth,
  * array sizes and generation budgets. Local JSON Pointer and embedded `$id`
  * references become graph edges: active-path re-entry is a cycle, while a
  * completed target is a shared DAG node whose memoized estimate is charged at
@@ -1066,7 +1061,7 @@ function validateFakerAllocationArguments(
   for (const rule of FAKER_ALLOCATION_POLICIES[method] ?? []) {
     const argument = args[rule.argumentIndex];
     let actual = rule.direct ? maximumCardinality(argument) : 0;
-    if (rule.property && isRecordValue(argument)) {
+    if (rule.property && isRecord(argument)) {
       actual = Math.max(
         actual,
         maximumCardinality(Reflect.get(argument, rule.property)),
@@ -1101,13 +1096,9 @@ function validateFakerAllocationArguments(
   }
 }
 
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function maximumCardinality(value: unknown): number {
   if (typeof value === "number") return value;
-  if (!isRecordValue(value)) return 0;
+  if (!isRecord(value)) return 0;
 
   let maximum = 0;
   for (const key of ["min", "max"] as const) {
@@ -1178,7 +1169,7 @@ function parseFakeArguments(text: string): unknown[] {
 
 /** `helpers.mustache` repeats each value once per `{{key}}` occurrence. */
 function validateMustacheTemplate(text: unknown, data: unknown): void {
-  if (typeof text !== "string" || !isRecordValue(data)) return;
+  if (typeof text !== "string" || !isRecord(data)) return;
   let length = text.length;
   for (const [key, value] of Object.entries(data)) {
     const placeholder = `{{${key}}}`;
@@ -1405,7 +1396,7 @@ function withResourcePath(
   path: string,
 ): ResourceLimitError {
   const context = error.context;
-  if (!isRecordValue(context)) return error;
+  if (!isRecord(context)) return error;
   const { resource, limit, actual } = context;
   if (typeof resource !== "string" || typeof limit !== "number") return error;
   return new ResourceLimitError(
