@@ -1,9 +1,6 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
 import { expect } from "vitest";
-// @schmock/validation does not depend on @schmock/query, so the query plugin
-// is imported from its sources for the combined review scenarios.
-import { type QueryPluginOptions, queryPlugin } from "../../../query/src/index";
 import { type ValidationPluginOptions, validationPlugin } from "../index";
 
 const feature = await loadFeature(
@@ -45,18 +42,6 @@ function unauthorizedGuard(): Schmock.Plugin {
   };
 }
 
-function rejectingGuard(response: unknown): Schmock.Plugin {
-  return {
-    name: "rejecting-guard",
-    beforeRequest(context) {
-      return { context, response };
-    },
-    process(context, incomingResponse) {
-      return { context, response: incomingResponse };
-    },
-  };
-}
-
 type ResponseRules = NonNullable<ValidationPluginOptions["response"]>;
 
 const objectWithIdAndName: ResponseRules["body"] = {
@@ -65,9 +50,7 @@ const objectWithIdAndName: ResponseRules["body"] = {
   properties: { id: { type: "integer" }, name: { type: "string" } },
 };
 
-const ERROR_ITEMS = [{ msg: "a" }, { msg: "b" }];
-
-describeFeature(feature, ({ Scenario }) => {
+describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
   let creationError: unknown;
@@ -473,145 +456,277 @@ describeFeature(feature, ({ Scenario }) => {
     },
   );
 
-  // ── Query plugin on error responses (finding 40) ─────────────────────────
+  // ── Header names reached only through the record (cold review) ─────────
 
   Scenario(
-    "A route's 4xx error array is not paginated",
-    ({ Given, When, Then, And }) => {
+    "Unreferenced definitions whose names differ only by case do not affect headers",
+    ({ Given, Then, When, And }) => {
       Given(
-        "a paginated route that returns a 400 tuple with two error items",
-        () => {
-          mock = schmock();
-          mock("GET /errors", () => [400, ERROR_ITEMS]).pipe(
-            queryPlugin({ pagination: { defaultLimit: 1 } }),
-          );
+        "a header schema that references {string} from a definitions bundle whose other models declare {string} and {string}",
+        (_, header: string, upper: string, lower: string) => {
+          creationError = captureError(() => {
+            mock = schmock();
+            mock("GET /secure", { ok: true }).pipe(
+              validationPlugin({
+                request: {
+                  headers: {
+                    $ref: "#/definitions/Headers",
+                    definitions: {
+                      Headers: {
+                        type: "object",
+                        properties: {
+                          [header]: { type: "string", minLength: 8 },
+                        },
+                      },
+                      User: { type: "object", properties: { [upper]: {} } },
+                      Order: { type: "object", properties: { [lower]: {} } },
+                    },
+                  },
+                },
+              }),
+            );
+          });
         },
       );
 
-      When("I request the paginated error route", async () => {
-        response = await mock.handle("GET", "/errors");
+      Then("the header plugin should have been created", () => {
+        expect(creationError).toBeUndefined();
       });
 
-      Then("the paginated response status should be {int}", (_, status) => {
+      When(
+        "I send header {string} with value {string}",
+        async (_, name: string, value: string) => {
+          response = await mock.handle("GET", "/secure", {
+            headers: { [name]: value },
+          });
+        },
+      );
+
+      Then("the header response status should be {int}", (_, status) => {
         expect(response.status).toBe(status);
       });
 
       And(
-        "the paginated response body should be the two unwrapped error items",
-        () => {
-          expect(response.body).toEqual(ERROR_ITEMS);
+        "the header response body should have code {string}",
+        (_, code: string) => {
+          expect(bodyRecord(response).code).toBe(code);
         },
       );
     },
   );
 
   Scenario(
-    "A guard's 4xx rejection array is not paginated",
+    "propertyNames sees a declared header in the schema's spelling",
     ({ Given, When, Then, And }) => {
       Given(
-        "a guard that rejects with a 422 tuple of two error items before a paginating query plugin",
-        () => {
+        "a header schema declaring {string} whose property names must be lowercase",
+        (_, header: string) => {
           mock = schmock();
-          mock("GET /errors", [{ id: 1 }, { id: 2 }])
-            .pipe(rejectingGuard([422, ERROR_ITEMS]))
-            .pipe(queryPlugin({ pagination: { defaultLimit: 1 } }));
+          mock("GET /secure", { ok: true }).pipe(
+            validationPlugin({
+              request: {
+                headers: {
+                  type: "object",
+                  properties: { [header]: { type: "string", minLength: 8 } },
+                  propertyNames: { pattern: "^[a-z0-9-]+$" },
+                },
+              },
+            }),
+          );
         },
       );
 
-      When("I request the paginated error route", async () => {
-        response = await mock.handle("GET", "/errors");
-      });
+      When(
+        "I send header {string} with value {string}",
+        async (_, name: string, value: string) => {
+          response = await mock.handle("GET", "/secure", {
+            headers: { [name]: value },
+          });
+        },
+      );
 
-      Then("the paginated response status should be {int}", (_, status) => {
+      Then("the header response status should be {int}", (_, status) => {
         expect(response.status).toBe(status);
       });
 
       And(
-        "the paginated response body should be the two unwrapped error items",
-        () => {
-          expect(response.body).toEqual(ERROR_ITEMS);
-        },
-      );
-    },
-  );
-
-  // ── Query option validation and order case (finding 90) ──────────────────
-
-  Scenario(
-    "A default sort field outside the allowed list fails during plugin creation",
-    ({ When, Then }) => {
-      When(
-        "I create a query plugin whose default sort field {string} is not in the allowed list",
-        (_, field: string) => {
-          creationError = captureError(() =>
-            queryPlugin({ sorting: { allowed: ["name"], default: field } }),
+        "the header response body should reject the property name {string}",
+        (_, name: string) => {
+          expect(bodyRecord(response).details).toContainEqual(
+            expect.objectContaining({
+              keyword: "pattern",
+              propertyName: name,
+            }),
           );
         },
       );
-
-      Then(
-        "plugin creation should fail with code {string}",
-        (_, code: string) => {
-          expect(creationError).toMatchObject({
-            code,
-            context: { option: "sorting.default", received: "nme" },
-          });
-        },
-      );
     },
   );
 
-  Scenario(
-    "An unknown default sort order fails during plugin creation",
-    ({ When, Then }) => {
-      When(
-        "I create a query plugin with default sort order {string}",
-        (_, order: string) => {
-          const sorting = { allowed: ["name"] };
-          Reflect.set(sorting, "defaultOrder", order);
-          const options: QueryPluginOptions = { sorting };
-          creationError = captureError(() => queryPlugin(options));
-        },
-      );
-
-      Then(
-        "plugin creation should fail with code {string}",
-        (_, code: string) => {
-          expect(creationError).toMatchObject({
-            code,
-            context: { option: "sorting.defaultOrder", received: "DESC" },
-          });
-        },
-      );
-    },
-  );
-
-  Scenario(
-    "The order query value is matched case-insensitively",
-    ({ Given, When, Then }) => {
+  ScenarioOutline(
+    "patternProperties sees declared headers in the schema's spelling and others lowercased",
+    ({ Given, When, Then }, variables) => {
       Given(
-        "a sortable route with items {string} and {string}",
-        (_, first: string, second: string) => {
+        "a header schema declaring {string} with a {string} pattern limited to {int} characters",
+        (_, header: string, pattern: string, maxLength: number) => {
           mock = schmock();
-          mock("GET /names", [{ n: first }, { n: second }]).pipe(
-            queryPlugin({ sorting: { allowed: ["n"] } }),
+          mock("GET /secure", { ok: true }).pipe(
+            validationPlugin({
+              request: {
+                headers: {
+                  type: "object",
+                  properties: { [header]: { type: "string" } },
+                  patternProperties: {
+                    [pattern]: { type: "string", maxLength },
+                  },
+                },
+              },
+            }),
           );
         },
       );
 
-      When(
-        "I request the sortable route with order {string}",
-        async (_, order: string) => {
-          response = await mock.handle("GET", "/names", {
-            query: { sort: "n", order },
+      When("I send header {string} with value {string}", async () => {
+        response = await mock.handle("GET", "/secure", {
+          headers: { [variables.header]: variables.value },
+        });
+      });
+
+      Then("the header response status should be <status>", () => {
+        expect(response.status).toBe(Number(variables.status));
+      });
+    },
+  );
+
+  // ── Coerced numbers must be finite plain decimals (cold review) ──────────
+
+  function boundedLimitRoute(onRun: (limit: unknown) => void): void {
+    mock = schmock();
+    mock("GET /items", ({ query }) => {
+      onRun(query.limit);
+      return [{ id: 1 }];
+    }).pipe(
+      validationPlugin({
+        request: {
+          query: {
+            type: "object",
+            properties: { limit: { type: "integer", minimum: 1, maximum: 50 } },
+          },
+        },
+      }),
+    );
+  }
+
+  ScenarioOutline(
+    "A bounded integer query schema rejects a number the route would misread",
+    ({ Given, When, Then, And }, variables) => {
+      let routeRan = false;
+
+      Given(
+        "a query schema requiring an integer limit from 1 through 50",
+        () => {
+          routeRan = false;
+          boundedLimitRoute(() => {
+            routeRan = true;
           });
         },
       );
 
-      Then(
-        "the sorted names should be {string} then {string}",
-        (_, first: string, second: string) => {
-          expect(response.body).toEqual([{ n: first }, { n: second }]);
+      When("I request the bounded list with query limit {string}", async () => {
+        response = await mock.handle("GET", "/items", {
+          query: { limit: variables.limit },
+        });
+      });
+
+      Then("the bounded response status should be {int}", (_, status) => {
+        expect(response.status).toBe(status);
+      });
+
+      And(
+        "the bounded response body should have code {string}",
+        (_, code: string) => {
+          expect(bodyRecord(response).code).toBe(code);
+        },
+      );
+
+      And("the bounded route should not have run", () => {
+        expect(routeRan).toBe(false);
+      });
+    },
+  );
+
+  Scenario(
+    "A bounded integer query schema accepts a decimal limit within range",
+    ({ Given, When, Then, And }) => {
+      let receivedLimit: unknown;
+
+      Given(
+        "a query schema requiring an integer limit from 1 through 50",
+        () => {
+          receivedLimit = undefined;
+          boundedLimitRoute((limit) => {
+            receivedLimit = limit;
+          });
+        },
+      );
+
+      When(
+        "I request the bounded list with query limit {string}",
+        async (_, limit: string) => {
+          response = await mock.handle("GET", "/items", { query: { limit } });
+        },
+      );
+
+      Then("the bounded response status should be {int}", (_, status) => {
+        expect(response.status).toBe(status);
+      });
+
+      And(
+        "the bounded route should have received limit as the string {string}",
+        (_, limit: string) => {
+          expect(receivedLimit).toBe(limit);
+        },
+      );
+    },
+  );
+
+  ScenarioOutline(
+    "A bounded integer header schema rejects a non-finite value",
+    ({ Given, When, Then, And }, variables) => {
+      Given(
+        "a header schema requiring an integer {string} header from 1 through 50",
+        (_, name: string) => {
+          mock = schmock();
+          mock("GET /secure", { ok: true }).pipe(
+            validationPlugin({
+              request: {
+                headers: {
+                  type: "object",
+                  properties: {
+                    [name]: { type: "integer", minimum: 1, maximum: 50 },
+                  },
+                  required: [name],
+                },
+              },
+            }),
+          );
+        },
+      );
+
+      When("I send header {string} with value {string}", async () => {
+        response = await mock.handle("GET", "/secure", {
+          headers: { "x-limit": variables.limit },
+        });
+      });
+
+      Then("the header response status should be {int}", (_, status) => {
+        expect(response.status).toBe(status);
+      });
+
+      And(
+        "the header response body should have code {string}",
+        (_, code: string) => {
+          expect(bodyRecord(response).code).toBe(code);
         },
       );
     },

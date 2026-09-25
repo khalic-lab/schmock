@@ -220,6 +220,103 @@ describe("validationPlugin header name case", () => {
     expect(Object.keys(headers.properties)).toEqual(["X-Api-Key"]);
     expect(headers.required).toEqual(["X-Api-Key"]);
   });
+
+  it("ignores case-colliding names inside header property schemas", () => {
+    expect(
+      creationError({
+        request: {
+          headers: {
+            type: "object",
+            properties: {
+              "x-meta": {
+                type: "string",
+                not: { type: "object", properties: { ID: {}, id: {} } },
+              },
+            },
+          },
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("still rejects a case collision reached through a $ref", () => {
+    expect(
+      creationError({
+        request: {
+          headers: {
+            allOf: [{ $ref: "#/$defs/Auth" }],
+            properties: { "x-api-key": { type: "string" } },
+            $defs: {
+              Auth: { type: "object", required: ["X-Api-Key"] },
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
+      code: "VALIDATION_CONFIG_INVALID",
+      context: { option: "request.headers" },
+    });
+  });
+
+  it("matches capitalized names from another slot's $id resource", async () => {
+    const plugin = validationPlugin({
+      request: {
+        body: {
+          $id: "https://example.test/shared.json",
+          type: "object",
+          definitions: {
+            Headers: {
+              type: "object",
+              properties: { "X-Api-Key": { type: "string", minLength: 8 } },
+              required: ["X-Api-Key"],
+            },
+          },
+        },
+        headers: {
+          $ref: "https://example.test/shared.json#/definitions/Headers",
+        },
+      },
+    });
+    const valid = await runBeforeRequest(
+      plugin,
+      context({ headers: { "x-api-key": "abcdefghij" } }),
+    );
+    expect(valid.response).toBeUndefined();
+    const short = await runBeforeRequest(
+      plugin,
+      context({ headers: { "x-api-key": "short" } }),
+    );
+    expect(short.response).toMatchObject({ status: 400 });
+  });
+});
+
+describe("validationPlugin header names seen by name keywords", () => {
+  const schema = {
+    type: "object" as const,
+    properties: { "X-Api-Key": { type: "string" as const } },
+    patternProperties: { "^x-": { type: "string" as const, maxLength: 12 } },
+  };
+
+  it("applies a lowercase patternProperties key to undeclared headers", async () => {
+    const plugin = validationPlugin({ request: { headers: schema } });
+    const result = await runBeforeRequest(
+      plugin,
+      context({ headers: { "X-Trace-Id": "0123456789abc" } }),
+    );
+    expect(result.response).toMatchObject({
+      status: 400,
+      body: { details: [{ instancePath: "/x-trace-id" }] },
+    });
+  });
+
+  it("keys a declared header by the schema's spelling for patternProperties", async () => {
+    const plugin = validationPlugin({ request: { headers: schema } });
+    const result = await runBeforeRequest(
+      plugin,
+      context({ headers: { "x-api-key": "0123456789abcdefghijklmno" } }),
+    );
+    expect(result.response).toBeUndefined();
+  });
 });
 
 describe("validationPlugin query and header coercion", () => {
@@ -262,6 +359,91 @@ describe("validationPlugin query and header coercion", () => {
     });
     expect(accepted.status).toBe(200);
     expect(rejected.status).toBe(400);
+  });
+
+  const numberQuery = validationPlugin({
+    request: {
+      query: {
+        type: "object",
+        properties: {
+          count: { type: "number" },
+          flag: { type: "boolean" },
+        },
+      },
+    },
+  });
+
+  it.each([
+    "Infinity",
+    "-Infinity",
+    "1e400",
+    "1".repeat(400),
+    "0x10",
+    "0b11",
+    "0o7",
+    "1e1",
+    " 7 ",
+    "+5",
+    ".5",
+  ])("rejects %j, which a route would read differently", async (count) => {
+    const result = await runBeforeRequest(
+      numberQuery,
+      context({ query: { count } }),
+    );
+    expect(result.response).toMatchObject({
+      status: 400,
+      body: {
+        code: "QUERY_VALIDATION_ERROR",
+        details: [
+          {
+            instancePath: "/count",
+            keyword: "type",
+            params: { value: count },
+          },
+        ],
+      },
+    });
+  });
+
+  it.each(["0", "-3", "2.5", "007"])(
+    "accepts the plain decimal %j",
+    async (count) => {
+      const result = await runBeforeRequest(
+        numberQuery,
+        context({ query: { count } }),
+      );
+      expect(result.response).toBeUndefined();
+    },
+  );
+
+  it("leaves non-numeric coercions alone", async () => {
+    const result = await runBeforeRequest(
+      numberQuery,
+      context({ query: { flag: "true", extra: "Infinity" } }),
+    );
+    expect(result.response).toBeUndefined();
+  });
+
+  it("escapes the header name in the error path", async () => {
+    const plugin = validationPlugin({
+      request: {
+        headers: {
+          type: "object",
+          properties: { "x-a/b~c": { type: "integer" } },
+        },
+      },
+    });
+    const result = await runBeforeRequest(
+      plugin,
+      context({ headers: { "x-a/b~c": "Infinity" } }),
+    );
+    expect(result.response).toMatchObject({
+      status: 400,
+      body: {
+        code: "HEADER_VALIDATION_ERROR",
+        details: [{ instancePath: "/x-a~1b~0c" }],
+      },
+    });
   });
 
   it("keeps request bodies strictly typed", async () => {

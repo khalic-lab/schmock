@@ -455,24 +455,114 @@ function namesDeclaredBy(schema: JSONSchema7): string[] {
   return names;
 }
 
+function isSchema(value: unknown): value is JSONSchema7 {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Subschemas that apply to the same instance as `schema` rather than to one
+ * of its properties or items: the in-place applicators and schema-form
+ * `dependencies`. `$ref` targets are resolved separately.
+ */
+function inPlaceSchemas(schema: JSONSchema7): JSONSchema7[] {
+  const applied: JSONSchema7[] = [];
+  for (const definition of [
+    ...(schema.allOf ?? []),
+    ...(schema.anyOf ?? []),
+    ...(schema.oneOf ?? []),
+    schema.if,
+    schema.then,
+    schema.else,
+    schema.not,
+  ]) {
+    pushDefinition(applied, definition);
+  }
+  for (const dependency of Object.values(schema.dependencies ?? {})) {
+    if (!Array.isArray(dependency)) pushDefinition(applied, dependency);
+  }
+  return applied;
+}
+
+function decodePointerSegment(segment: string): string {
+  return segment.replace(/~1/g, "/").replace(/~0/g, "~");
+}
+
+/** Reads a URI-fragment JSON pointer (`/definitions/Headers`) from `root`. */
+function readPointer(root: JSONSchema7, fragment: string): unknown {
+  let pointer: string;
+  try {
+    pointer = decodeURIComponent(fragment);
+  } catch {
+    return undefined;
+  }
+  if (pointer === "") return root;
+  if (!pointer.startsWith("/")) return undefined;
+  let current: unknown = root;
+  for (const segment of pointer.slice(1).split("/")) {
+    if (typeof current !== "object" || current === null) return undefined;
+    current = readOwnValue(current, decodePointerSegment(segment));
+  }
+  return current;
+}
+
+interface ScopedSchema {
+  schema: JSONSchema7;
+  baseId: string;
+}
+
+interface HeaderSchemaGraph {
+  root: JSONSchema7;
+  /** Every `$id` resource the header validator can reference. */
+  resources: ReadonlyMap<string, JSONSchema7>;
+  resolver: SchemaUriResolver;
+}
+
+function resolveRef(
+  graph: HeaderSchemaGraph,
+  baseId: string,
+  ref: string,
+): ScopedSchema | undefined {
+  const resolved = normalizeSchemaId(graph.resolver, baseId, ref);
+  const hashIndex = resolved.indexOf("#");
+  const uri = hashIndex < 0 ? resolved : resolved.slice(0, hashIndex);
+  const fragment = hashIndex < 0 ? "" : resolved.slice(hashIndex + 1);
+  const resource =
+    uri === "" && typeof graph.root.$id !== "string"
+      ? graph.root
+      : graph.resources.get(uri);
+  if (!resource) return undefined;
+  const target = readPointer(resource, fragment);
+  return isSchema(target) ? { schema: target, baseId: uri } : undefined;
+}
+
 /**
  * Header names are case-insensitive and arrive lowercased, while a schema may
  * spell them `X-Api-Key`. Maps each lowercased name to the schema's own
- * spelling so incoming headers are keyed the way the schema expects. Header
- * values are strings, so every declared name anywhere in the schema graph
- * describes the header record itself.
+ * spelling so incoming headers are keyed the way the schema expects. Only
+ * subschemas that apply to the header record itself contribute names: the
+ * root, its in-place applicators and the `$ref` targets they reach. Property
+ * schemas describe string values and unreferenced `definitions` describe
+ * nothing, so names declared there are ignored.
  */
-function headerNameSpellings(schema: JSONSchema7): ReadonlyMap<string, string> {
+function headerNameSpellings(
+  graph: HeaderSchemaGraph,
+): ReadonlyMap<string, string> {
   const spellings = new Map<string, string>();
   const visited = new WeakSet<object>();
-  const pending: JSONSchema7[] = [schema];
+  const pending: ScopedSchema[] = [{ schema: graph.root, baseId: "" }];
 
   while (pending.length > 0) {
     const current = pending.pop();
-    if (!current || visited.has(current)) continue;
-    visited.add(current);
+    if (!current || visited.has(current.schema)) continue;
+    visited.add(current.schema);
 
-    for (const name of namesDeclaredBy(current)) {
+    const { schema } = current;
+    const baseId =
+      typeof schema.$id === "string"
+        ? normalizeSchemaId(graph.resolver, current.baseId, schema.$id)
+        : current.baseId;
+
+    for (const name of namesDeclaredBy(schema)) {
       const folded = name.toLowerCase();
       const existing = spellings.get(folded);
       if (existing !== undefined && existing !== name) {
@@ -480,14 +570,75 @@ function headerNameSpellings(schema: JSONSchema7): ReadonlyMap<string, string> {
       }
       spellings.set(folded, name);
     }
-    pending.push(...childSchemas(current));
+
+    if (typeof schema.$ref === "string") {
+      const target = resolveRef(graph, baseId, schema.$ref);
+      if (target) pending.push(target);
+    }
+    for (const applied of inPlaceSchemas(schema)) {
+      pending.push({ schema: applied, baseId });
+    }
   }
 
   return spellings;
 }
 
-function isSchema(value: unknown): value is JSONSchema7 {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+/** The target's own resources first, then the first sibling to claim each ID. */
+function referenceableResources(
+  target: SchemaInventory,
+  inventories: readonly SchemaInventory[],
+): ReadonlyMap<string, JSONSchema7> {
+  const resources = new Map(target.resources);
+  for (const inventory of inventories) {
+    for (const [id, schema] of inventory.resources) {
+      if (!resources.has(id)) resources.set(id, schema);
+    }
+  }
+  return resources;
+}
+
+/**
+ * Plain decimal notation, which `Number()`, `parseInt` and `parseFloat` read
+ * alike. Ajv's coercion accepts anything `Number()` does, including
+ * `Infinity`, `1e400`, `0x10` and padded `" 7 "`.
+ */
+const PLAIN_DECIMAL = /^-?\d+(?:\.\d+)?$/;
+
+interface CoercionError {
+  instancePath: string;
+  keyword: "type";
+  params: { value: string };
+  message: string;
+}
+
+function escapePointerSegment(segment: string): string {
+  return segment.replace(/~/g, "~0").replace(/\//g, "~1");
+}
+
+/**
+ * Ajv skips `minimum`/`maximum` for non-finite numbers, and the route still
+ * receives the original string, so a value Ajv coerced to a number must be a
+ * finite number in plain decimal notation to pass.
+ */
+function numericCoercionErrors(
+  original: Record<string, string>,
+  coerced: Record<string, unknown>,
+): CoercionError[] {
+  const errors: CoercionError[] = [];
+  for (const [name, value] of Object.entries(original)) {
+    const coercedValue = readOwnValue(coerced, name);
+    if (typeof value !== "string" || typeof coercedValue !== "number") {
+      continue;
+    }
+    if (Number.isFinite(coercedValue) && PLAIN_DECIMAL.test(value)) continue;
+    errors.push({
+      instancePath: `/${escapePointerSegment(name)}`,
+      keyword: "type",
+      params: { value },
+      message: "must be a finite number in plain decimal notation",
+    });
+  }
+  return errors;
 }
 
 function cloneSchema(schema: JSONSchema7 | undefined): JSONSchema7 | undefined {
@@ -571,8 +722,12 @@ export function validationPlugin(
       coerceTypes: false,
     });
   }
-  const headerSpellings = requestHeadersSchema
-    ? headerNameSpellings(requestHeadersSchema)
+  const headerSpellings = requestHeadersInventory
+    ? headerNameSpellings({
+        root: requestHeadersInventory.schema,
+        resources: referenceableResources(requestHeadersInventory, inventories),
+        resolver,
+      })
     : new Map<string, string>();
 
   // Only the original, unchanged rejection bypasses response validation once.
@@ -634,12 +789,16 @@ export function validationPlugin(
       // Validate request query parameters. Ajv coerces in place, so a copy
       // keeps the strings the route and later plugins receive untouched.
       if (validators.requestQuery && context.query) {
-        if (!validators.requestQuery({ ...context.query })) {
+        const coercedQuery: Record<string, unknown> = { ...context.query };
+        const errors = validators.requestQuery(coercedQuery)
+          ? numericCoercionErrors(context.query, coercedQuery)
+          : validators.requestQuery.errors;
+        if (errors && errors.length > 0) {
           return rejectRequest(
             context,
             "Query parameter validation failed",
             "QUERY_VALIDATION_ERROR",
-            validators.requestQuery.errors,
+            errors,
           );
         }
       }
@@ -659,12 +818,18 @@ export function validationPlugin(
             return [headerSpellings.get(folded) ?? folded, value];
           }),
         );
-        if (!validators.requestHeaders(normalizedHeaders)) {
+        const coercedHeaders: Record<string, unknown> = {
+          ...normalizedHeaders,
+        };
+        const errors = validators.requestHeaders(coercedHeaders)
+          ? numericCoercionErrors(normalizedHeaders, coercedHeaders)
+          : validators.requestHeaders.errors;
+        if (errors && errors.length > 0) {
           return rejectRequest(
             context,
             "Header validation failed",
             "HEADER_VALIDATION_ERROR",
-            validators.requestHeaders.errors,
+            errors,
           );
         }
       }
