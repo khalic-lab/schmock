@@ -53,6 +53,33 @@ Feature: OpenAPI generation review fixes
       | page.items     |
       | _embedded.pets |
 
+  Scenario Outline: A list envelope whose array is <shape> still carries the collection
+    Given a pets mock whose list envelope declares "items" as <shape> next to "total", with response validation
+    And a pet named "Rex" has been created
+    When I list the pets
+    Then the list response has status 200
+    And the list body carries the created pet under "items"
+
+    Examples:
+      | shape                               |
+      | an array or null through anyOf      |
+      | a nullable allOf of an array        |
+      | an array or an object through oneOf |
+      | an array without items              |
+
+  Scenario Outline: A list envelope keeps its declared key order
+    Given a pets mock whose list envelope is "<envelope>"
+    And a pet named "Rex" has been created
+    When I list the pets
+    Then the list response has status 200
+    And the list body's keys at "<level>" are "<keys>" in that order
+
+    Examples:
+      | envelope                    | level | keys            |
+      | items before total          | .     | items,total     |
+      | total between data and meta | .     | data,total,meta |
+      | page with items before size | page  | items,size      |
+
   Scenario: A list contract with no array serves the declared object
     Given a settings mock whose list response is an object without any array, with response validation
     When I list the settings

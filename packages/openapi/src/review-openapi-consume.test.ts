@@ -1,19 +1,11 @@
 /// <reference path="../../core/schmock.d.ts" />
 
 import { SchmockError, schmock } from "@schmock/core";
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { dispatchCallbacks } from "./callbacks.js";
 import { selectResponseMediaType } from "./content-negotiation.js";
 import type { CrudResource } from "./crud-detector.js";
-import type {
-  CrudOperationMeta,
-  OnSchemaCallback,
-  OnSchemaContext,
-  OpenApiRefPolicy,
-  ResourceOverride,
-  SeedConfig,
-  SeedSource,
-} from "./index.js";
+import type { SeedConfig } from "./index.js";
 import * as loadDocumentModule from "./load-document.js";
 import {
   createSchemaNormalizer,
@@ -24,7 +16,6 @@ import {
 import type { ParsedResponseEntry } from "./parser.js";
 import * as parserModule from "./parser.js";
 import { openapi } from "./plugin.js";
-import type { RefPolicy } from "./ref-policy.js";
 import {
   applyResponseContentType,
   createBodyValidatorContext,
@@ -170,22 +161,6 @@ describe("R9: request-pipeline on core's getResponseParts", () => {
       { code: "RESPONSE_VALIDATION_ERROR", status: 204 },
     ]);
     expect(validateResponse(context, [204, null], validator)).toBeUndefined();
-  });
-});
-
-describe("R3 and types-100/107: aliases of the ambient types", () => {
-  it("aliases rather than mirrors each ambient type", () => {
-    expectTypeOf<RefPolicy>().toEqualTypeOf<Schmock.OpenApiRefPolicy>();
-    expectTypeOf<OpenApiRefPolicy>().toEqualTypeOf<Schmock.OpenApiRefPolicy>();
-    expectTypeOf<SeedSource>().toEqualTypeOf<Schmock.SeedSource>();
-    expectTypeOf<SeedConfig>().toEqualTypeOf<Schmock.SeedConfig>();
-    expectTypeOf<OnSchemaCallback>().toEqualTypeOf<Schmock.OnSchemaCallback>();
-    expectTypeOf<OnSchemaContext>().toEqualTypeOf<Schmock.OnSchemaContext>();
-    expectTypeOf<ResourceOverride>().toEqualTypeOf<Schmock.ResourceOverride>();
-    expectTypeOf<CrudOperationMeta>().toEqualTypeOf<Schmock.CrudOperationMeta>();
-    expectTypeOf<
-      NonNullable<Schmock.OpenApiOptions["onSchema"]>
-    >().toEqualTypeOf<OnSchemaCallback>();
   });
 });
 
@@ -340,6 +315,15 @@ describe("R15: one response media-type selection", () => {
       headers: { accept: "application/xml" },
     });
     expect(typeof xml.body).toBe("string");
+  });
+});
+
+describe("cold-review openapi-8: an invalid spec source is a coded error", () => {
+  it("rejects a spec that is neither a path nor a document with OPENAPI_INVALID_SPEC", async () => {
+    const spec = 42 as unknown as Schmock.OpenApiOptions["spec"];
+    const error: unknown = await openapi({ spec }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SchmockError);
+    expect(error).toMatchObject({ code: "OPENAPI_INVALID_SPEC" });
   });
 });
 

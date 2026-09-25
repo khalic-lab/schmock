@@ -1,8 +1,18 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { SchmockError, schmock } from "@schmock/core";
-import { expect, type MockInstance, vi } from "vitest";
-import type { OnSchemaCallback, OpenApiOptions, SeedConfig } from "../plugin";
+import { expect, expectTypeOf, type MockInstance, vi } from "vitest";
+import type {
+  CrudOperationMeta,
+  OnSchemaCallback,
+  OnSchemaContext,
+  OpenApiOptions,
+  OpenApiRefPolicy,
+  ResourceOverride,
+  SeedConfig,
+  SeedSource,
+} from "../index";
 import { openapi } from "../plugin";
+import type { RefPolicy } from "../ref-policy";
 import { isRecord } from "../utils";
 
 const feature = await loadFeature(
@@ -635,6 +645,73 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
     });
   });
 
+  Scenario(
+    "A resources override key naming no resource is rejected",
+    ({ When, Then, And }) => {
+      When('I build a review mock overriding the resource "petz"', async () => {
+        await captureBuildError({
+          spec: crudPetSpec(),
+          resources: { petz: { listFlat: true } },
+        });
+      });
+      Then(
+        'the review build fails with code "OPENAPI_UNKNOWN_RESOURCE_OVERRIDE"',
+        () => {
+          expect(buildError).toBeInstanceOf(SchmockError);
+          expect(buildError).toMatchObject({
+            code: "OPENAPI_UNKNOWN_RESOURCE_OVERRIDE",
+            context: { key: "petz", resources: ["pets"] },
+          });
+        },
+      );
+      And('the review build error lists the resource "pets"', () => {
+        expect(String(buildError)).toContain('"pets"');
+      });
+    },
+  );
+
+  Scenario(
+    "A resources override keyed by a resource's pre-rename name points at its new name",
+    ({ When, Then, And }) => {
+      When(
+        'I build a review mock of "/repos/{owner}/{repo}" overriding the resource ":owner"',
+        async () => {
+          await captureBuildError({
+            spec: {
+              openapi: "3.0.3",
+              info: { title: "Repos", version: "1.0.0" },
+              paths: {
+                "/repos/{owner}/{repo}": {
+                  get: {
+                    responses: {
+                      "200": { description: "Repo", content: petContent },
+                    },
+                  },
+                  delete: { responses: { "204": { description: "Deleted" } } },
+                },
+              },
+            },
+            resources: {
+              ":owner": { errorSchema: { type: "object" } },
+            },
+          });
+        },
+      );
+      Then(
+        'the review build fails with code "OPENAPI_UNKNOWN_RESOURCE_OVERRIDE"',
+        () => {
+          expect(buildError).toMatchObject({
+            code: "OPENAPI_UNKNOWN_RESOURCE_OVERRIDE",
+            context: { key: ":owner", resources: ["repos"] },
+          });
+        },
+      );
+      And('the review build error names "repos" as the key to use', () => {
+        expect(String(buildError)).toContain('use "repos"');
+      });
+    },
+  );
+
   // ── Create status selection ──────────────────────────────────────────────
 
   Scenario(
@@ -658,6 +735,29 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
       });
       Then("the review response status is 201", () => {
         expect(response.status).toBe(201);
+      });
+    },
+  );
+
+  // Type-level only: this file is compiled by `typecheck:bdd`
+  // (tsconfig.tests.json), so a hand-mirrored type that drifts from the
+  // ambient one fails the build. A `*.test.ts` file is never type-checked.
+  Scenario(
+    "The exported option types alias the ambient Schmock types",
+    ({ Given, Then }) => {
+      Given("the option types the openapi package exports", () => {});
+      Then("each one is exactly the ambient Schmock type it names", () => {
+        expectTypeOf<RefPolicy>().toEqualTypeOf<Schmock.OpenApiRefPolicy>();
+        expectTypeOf<OpenApiRefPolicy>().toEqualTypeOf<Schmock.OpenApiRefPolicy>();
+        expectTypeOf<SeedSource>().toEqualTypeOf<Schmock.SeedSource>();
+        expectTypeOf<SeedConfig>().toEqualTypeOf<Schmock.SeedConfig>();
+        expectTypeOf<OnSchemaCallback>().toEqualTypeOf<Schmock.OnSchemaCallback>();
+        expectTypeOf<OnSchemaContext>().toEqualTypeOf<Schmock.OnSchemaContext>();
+        expectTypeOf<ResourceOverride>().toEqualTypeOf<Schmock.ResourceOverride>();
+        expectTypeOf<CrudOperationMeta>().toEqualTypeOf<Schmock.CrudOperationMeta>();
+        expectTypeOf<
+          NonNullable<Schmock.OpenApiOptions["onSchema"]>
+        >().toEqualTypeOf<OnSchemaCallback>();
       });
     },
   );

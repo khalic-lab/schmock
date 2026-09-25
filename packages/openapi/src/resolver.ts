@@ -1,7 +1,12 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
 import { SchmockError } from "@schmock/core";
 import type { OpenAPI } from "openapi-types";
-import type { RefFetch, RefParserOptions } from "./ref-policy.js";
+import {
+  collectUnresolvedRefs,
+  isHttpUrl,
+  type RefFetch,
+  type RefParserOptions,
+} from "./ref-policy.js";
 import { createGuardedFetch } from "./ref-transport.js";
 import { isRecord } from "./utils.js";
 
@@ -170,10 +175,6 @@ function isLocalLocation(url: string): boolean {
   return protocol === undefined || protocol === "file";
 }
 
-function isHttpLocation(url: string): boolean {
-  return /^https?:\/\//i.test(url);
-}
-
 /**
  * ref-parser's `url.resolve`, which decides the URL a nested `$ref` is read
  * from. Mirrored exactly — including resolving a relative base against a
@@ -196,26 +197,20 @@ function stripHash(url: string): string {
   return hash === -1 ? url : url.slice(0, hash);
 }
 
-/** Where every external `$ref` in `document`, read from `base`, points. */
+/**
+ * Where every external `$ref` in `document`, read from `base`, points. The
+ * refs are the ones the policy pre-scan collects, so the two cannot disagree
+ * on which refs exist.
+ */
 function referencedLocations(base: string, document: object): Set<string> {
   const targets = new Set<string>();
-  const seen = new WeakSet<object>();
-  const stack: unknown[] = [document];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (typeof node !== "object" || node === null || seen.has(node)) continue;
-    seen.add(node);
-    if (isRecord(node)) {
-      const ref = node.$ref;
-      if (typeof ref === "string" && ref.length > 0 && !ref.startsWith("#")) {
-        try {
-          targets.add(stripHash(resolveReference(base, ref)));
-        } catch {
-          // Not a URL ref-parser could resolve either; nothing to allow.
-        }
-      }
+  for (const ref of collectUnresolvedRefs(document)) {
+    if (ref.length === 0) continue;
+    try {
+      targets.add(stripHash(resolveReference(base, ref)));
+    } catch {
+      // Not a URL ref-parser could resolve either; nothing to allow.
     }
-    for (const child of Object.values(node)) stack.push(child);
   }
   return targets;
 }
@@ -286,7 +281,7 @@ function fileResolverGuard(parser: SwaggerParser, httpEnabled: boolean) {
       const { root, documents } = liveDocuments(parser.$refs);
       if (file.url === root) return true;
       for (const { location, value } of documents) {
-        if (isHttpLocation(location) || !isRecord(value)) continue;
+        if (isHttpUrl(location) || !isRecord(value)) continue;
         let targets = targetsByDocument.get(value);
         if (targets === undefined) {
           targets = referencedLocations(location, value);

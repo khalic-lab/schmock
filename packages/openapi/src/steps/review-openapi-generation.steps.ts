@@ -146,30 +146,129 @@ const namedPetSchema = {
   properties: { id: { type: "integer" }, name: { type: "string" } },
 };
 
-function petsEnvelopeSpec(listSchema: Record<string, unknown>) {
-  return spec({
-    "/pets": {
-      get: {
-        responses: {
-          "200": { description: "List", content: json(listSchema) },
+function petsEnvelopeSpec(
+  listSchema: Record<string, unknown>,
+  components?: Record<string, unknown>,
+) {
+  return spec(
+    {
+      "/pets": {
+        get: {
+          responses: {
+            "200": { description: "List", content: json(listSchema) },
+          },
+        },
+        post: {
+          requestBody: { content: json(namedPetSchema) },
+          responses: {
+            "201": { description: "Created", content: json(namedPetSchema) },
+          },
         },
       },
-      post: {
-        requestBody: { content: json(namedPetSchema) },
-        responses: {
-          "201": { description: "Created", content: json(namedPetSchema) },
+      "/pets/{petId}": {
+        get: {
+          responses: {
+            "200": { description: "Pet", content: json(namedPetSchema) },
+          },
         },
       },
     },
-    "/pets/{petId}": {
-      get: {
-        responses: {
-          "200": { description: "Pet", content: json(namedPetSchema) },
-        },
-      },
-    },
-  });
+    components,
+  );
 }
+
+/**
+ * List envelopes whose `items` array hides behind a composition or omits
+ * `items`, each with the OpenAPI version whose idiom it is.
+ */
+const composedArrayEnvelopes: Record<
+  string,
+  { openapi: string; items: unknown; components?: Record<string, unknown> }
+> = {
+  // FastAPI / pydantic on 3.1: `Optional[list[Pet]]`.
+  "an array or null through anyOf": {
+    openapi: "3.1.0",
+    items: {
+      anyOf: [{ type: "array", items: namedPetSchema }, { type: "null" }],
+    },
+  },
+  // The 3.0 idiom: `allOf: [{$ref}]` plus `nullable: true`.
+  "a nullable allOf of an array": {
+    openapi: "3.0.3",
+    items: {
+      allOf: [{ $ref: "#/components/schemas/PetList" }],
+      nullable: true,
+    },
+    components: {
+      schemas: { PetList: { type: "array", items: namedPetSchema } },
+    },
+  },
+  "an array or an object through oneOf": {
+    openapi: "3.0.3",
+    items: {
+      oneOf: [
+        { type: "array", items: namedPetSchema },
+        { type: "object", properties: { next: { type: "string" } } },
+      ],
+    },
+  },
+  // Valid in OAS 3.1 / JSON Schema 2020-12.
+  "an array without items": {
+    openapi: "3.1.0",
+    items: { type: "array" },
+  },
+};
+
+const orderedEnvelopes: Record<string, Record<string, unknown>> = {
+  "items before total": {
+    type: "object",
+    required: ["items", "total"],
+    properties: {
+      items: { type: "array", items: namedPetSchema },
+      total: { type: "integer" },
+    },
+  },
+  // The Scalar Galaxy shape: the envelope assembled from allOf branches.
+  "total between data and meta": {
+    allOf: [
+      {
+        type: "object",
+        required: ["data"],
+        properties: { data: { type: "array", items: namedPetSchema } },
+      },
+      {
+        type: "object",
+        required: ["total"],
+        properties: { total: { type: "integer" } },
+      },
+      {
+        type: "object",
+        required: ["meta"],
+        properties: {
+          meta: {
+            type: "object",
+            required: ["limit"],
+            properties: { limit: { type: "integer" } },
+          },
+        },
+      },
+    ],
+  },
+  "page with items before size": {
+    type: "object",
+    required: ["page"],
+    properties: {
+      page: {
+        type: "object",
+        required: ["items", "size"],
+        properties: {
+          items: { type: "array", items: namedPetSchema },
+          size: { type: "integer" },
+        },
+      },
+    },
+  },
+};
 
 const untypedEnvelope = {
   required: ["data", "total"],
@@ -725,6 +824,84 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           { id: 1, name: "Rex" },
         ]);
       });
+    },
+  );
+
+  ScenarioOutline(
+    "A list envelope whose array is <shape> still carries the collection",
+    ({ Given, And, When, Then }, variables) => {
+      Given(
+        'a pets mock whose list envelope declares "items" as <shape> next to "total", with response validation',
+        async () => {
+          const envelope = composedArrayEnvelopes[variables.shape];
+          expect(envelope).toBeDefined();
+          await build({
+            spec: {
+              ...petsEnvelopeSpec(
+                {
+                  type: "object",
+                  required: ["items", "total"],
+                  properties: {
+                    items: envelope.items,
+                    total: { type: "integer" },
+                  },
+                },
+                envelope.components,
+              ),
+              openapi: envelope.openapi,
+            },
+            validateResponses: true,
+          });
+        },
+      );
+
+      And('a pet named "Rex" has been created', createRex);
+
+      When("I list the pets", async () => {
+        response = await mock.handle("GET", "/pets");
+      });
+
+      Then("the list response has status 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And('the list body carries the created pet under "items"', () => {
+        expect(at(response.body, "items")).toEqual([{ id: 1, name: "Rex" }]);
+      });
+    },
+  );
+
+  ScenarioOutline(
+    "A list envelope keeps its declared key order",
+    ({ Given, And, When, Then }, variables) => {
+      Given('a pets mock whose list envelope is "<envelope>"', async () => {
+        const envelope = orderedEnvelopes[variables.envelope];
+        expect(envelope).toBeDefined();
+        await build({ spec: petsEnvelopeSpec(envelope) });
+      });
+
+      And('a pet named "Rex" has been created', createRex);
+
+      When("I list the pets", async () => {
+        response = await mock.handle("GET", "/pets");
+      });
+
+      Then("the list response has status 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And(
+        `the list body's keys at "<level>" are "<keys>" in that order`,
+        () => {
+          const level =
+            variables.level === "."
+              ? response.body
+              : at(response.body, variables.level);
+          expect(Object.keys(asRecord(level))).toEqual(
+            variables.keys.split(","),
+          );
+        },
+      );
     },
   );
 

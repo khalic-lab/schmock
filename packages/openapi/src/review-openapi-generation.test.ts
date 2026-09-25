@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+import { schmock } from "@schmock/core";
 import Ajv2020 from "ajv/dist/2020.js";
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
@@ -12,6 +14,7 @@ import {
 } from "./generators";
 import { collectAccessModes, normalizeSchema } from "./normalizer";
 import { parseSpec } from "./parser";
+import { openapi } from "./plugin";
 
 const ajv = new Ajv2020({ strictSchema: false, strictTypes: false });
 
@@ -655,5 +658,97 @@ describe("update commit merges onto the live row (#12, #141)", () => {
       if (typeof commit === "function") commit();
     }
     expect(state[key]).toEqual([]);
+  });
+});
+
+describe("list envelope key order (cold-review openapi-5)", () => {
+  it("serves the Scalar Galaxy planets list as data, then meta", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: resolve(import.meta.dirname, "__fixtures__/scalar-galaxy.yaml"),
+        fakerSeed: 1,
+      }),
+    );
+    const response = await mock.handle("GET", "/planets");
+    expect(response.status).toBe(200);
+    expect(Object.keys(Object(response.body))).toEqual(["data", "meta"]);
+  });
+});
+
+describe("list envelopes naming prototype keys (cold-review openapi-1)", () => {
+  // Built from JSON so `__proto__` is an OWN key, as a parsed spec file has it;
+  // an object literal would set the prototype instead and prove nothing.
+  const pollutingSpec = () =>
+    JSON.parse(`{
+      "openapi": "3.0.3",
+      "info": { "title": "Proto", "version": "1.0.0" },
+      "paths": {
+        "/items": {
+          "get": { "responses": { "200": { "description": "List", "content": {
+            "application/json": { "schema": {
+              "type": "object",
+              "properties": { "__proto__": {
+                "type": "object",
+                "properties": { "headers": {
+                  "type": "array", "items": { "$ref": "#/components/schemas/Item" }
+                } }
+              } }
+            } } } } } },
+          "post": {
+            "requestBody": { "content": { "application/json": {
+              "schema": { "$ref": "#/components/schemas/Item" } } } },
+            "responses": { "201": { "description": "Created", "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Item" } } } } }
+          }
+        },
+        "/items/{itemId}": {
+          "get": { "responses": { "200": { "description": "Item", "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/Item" } } } } } }
+        }
+      },
+      "components": { "schemas": { "Item": {
+        "type": "object",
+        "properties": { "id": { "type": "integer" }, "name": { "type": "string" } }
+      } } }
+    }`);
+
+  it("leaves Object.prototype alone and keeps other mocks' envelopes working", async () => {
+    try {
+      const mock = schmock({ state: {} });
+      mock.pipe(await openapi({ spec: pollutingSpec() }));
+      await mock.handle("POST", "/items", { body: { name: "created-one" } });
+      await mock.handle("GET", "/items");
+
+      expect(Object.hasOwn(Object.prototype, "headers")).toBe(false);
+      expect(Reflect.get({}, "headers")).toBeUndefined();
+
+      const other = schmock();
+      other("POST /things", () => ({ status: 201, body: { id: 7 } }));
+      const created = await other.handle("POST", "/things");
+      expect(created.status).toBe(201);
+      expect(created.body).toEqual({ id: 7 });
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "headers");
+    }
+  });
+
+  it("does not read a prototype-named property as the list array", () => {
+    const item: JSONSchema7 = {
+      type: "object",
+      properties: { id: { type: "integer" } },
+    };
+    for (const name of ["__proto__", "constructor", "prototype"]) {
+      const properties: Record<string, JSONSchema7> = {};
+      Object.defineProperty(properties, name, {
+        value: {
+          type: "object",
+          properties: { data: { type: "array", items: item } },
+        },
+        enumerable: true,
+      });
+      const info = findArrayProperty({ type: "object", properties });
+      expect(arrayPropertyPath(info)).toBeUndefined();
+    }
   });
 });

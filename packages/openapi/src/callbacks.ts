@@ -12,6 +12,14 @@ export function getRouteCallbacks(
   return Array.isArray(value) ? value : undefined;
 }
 
+/** How {@link dispatchCallbacks} generates bodies and reports skips. */
+interface DispatchCallbackOptions {
+  /** Faker seed for callback bodies generated from their declared schema. */
+  seed?: number;
+  /** Log callbacks skipped because their URL expression did not resolve. */
+  debug?: boolean;
+}
+
 /**
  * Resolve and deliver callbacks through the application-owned dispatcher.
  * Schmock deliberately performs no network I/O itself.
@@ -30,8 +38,7 @@ export async function dispatchCallbacks(
   dispatcher: Schmock.OpenApiCallbackOptions["dispatch"],
   context: Schmock.PluginContext,
   response: unknown,
-  seed?: number,
-  debug = false,
+  { seed, debug = false }: DispatchCallbackOptions = {},
 ): Promise<void> {
   for (const callback of callbacks) {
     const resolved = resolveCallbackUrl(

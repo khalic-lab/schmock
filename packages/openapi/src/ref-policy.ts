@@ -178,7 +178,8 @@ export function isUnsafeHost(hostname: string): boolean {
 
 export type RefVerdict = { allowed: true } | { allowed: false; reason: string };
 
-function isHttpUrl(ref: string): boolean {
+/** An absolute `http:`/`https:` URL, in any case. */
+export function isHttpUrl(ref: string): boolean {
   return /^https?:\/\//i.test(ref);
 }
 

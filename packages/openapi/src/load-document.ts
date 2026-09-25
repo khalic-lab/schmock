@@ -126,8 +126,10 @@ export async function loadDocument(
   } else if (isOpenApiDocument(source)) {
     raw = structuredClone(source);
   } else {
-    throw new Error(
+    throw new SchmockError(
       "Invalid OpenAPI spec: must be a string path or an OpenAPI document object",
+      "OPENAPI_INVALID_SPEC",
+      { spec: undefined },
     );
   }
 

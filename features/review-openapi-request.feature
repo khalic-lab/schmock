@@ -125,9 +125,27 @@ Feature: OpenAPI request pipeline review fixes
     When I build a review mock seeding "pets" with a "counts" object
     Then the review build fails with code "OPENAPI_INVALID_OPTION"
 
+  # ── Resource override keys are validated ─────────────────────────────────
+
+  Scenario: A resources override key naming no resource is rejected
+    When I build a review mock overriding the resource "petz"
+    Then the review build fails with code "OPENAPI_UNKNOWN_RESOURCE_OVERRIDE"
+    And the review build error lists the resource "pets"
+
+  Scenario: A resources override keyed by a resource's pre-rename name points at its new name
+    When I build a review mock of "/repos/{owner}/{repo}" overriding the resource ":owner"
+    Then the review build fails with code "OPENAPI_UNKNOWN_RESOURCE_OVERRIDE"
+    And the review build error names "repos" as the key to use
+
   # ── Create status selection ──────────────────────────────────────────────
 
   Scenario: A create declaring both 201 and 200 answers 201
     Given a review mock whose create declares both 201 and 200
     When I create a review pet named "Alice"
     Then the review response status is 201
+
+  # ── Public option types ──────────────────────────────────────────────────
+
+  Scenario: The exported option types alias the ambient Schmock types
+    Given the option types the openapi package exports
+    Then each one is exactly the ambient Schmock type it names

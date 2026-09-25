@@ -239,6 +239,41 @@ function propertyDeclarations(
 }
 
 /**
+ * Property names that reach `Object.prototype` (or a constructor) when used as
+ * a key. A spec is untrusted input, so these never become a path the
+ * collection is written along.
+ */
+const PROTOTYPE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * The array a property declares, looking through the compositions real specs
+ * wrap it in: `anyOf: [{type: array, …}, {type: null}]` (FastAPI/pydantic on
+ * 3.1), a 3.0 `allOf` + `nullable: true` (normalized to that same `anyOf`), or
+ * a `oneOf` array-or-object. A declared non-array `type` ends the search, and
+ * `{type: "null"}` branches are skipped by that rule. `items` is optional: a
+ * bare `{type: array}` is valid 3.1 and still carries the collection.
+ */
+function declaredArray(
+  schema: JSONSchema7,
+  seen: Set<object> = new Set(),
+): JSONSchema7 | undefined {
+  if (seen.has(schema)) return undefined;
+  seen.add(schema);
+  if (hasType(schema, "array")) return schema;
+  if (schema.type !== undefined) return undefined;
+  for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
+    const branches = schema[keyword];
+    if (!Array.isArray(branches)) continue;
+    for (const branch of branches) {
+      if (!isRecord(branch)) continue;
+      const found = declaredArray(branch, seen);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Every array property of an object envelope: its own (and its `allOf`
  * branches') properties first, then one level down inside object-shaped
  * properties. Declaration order is preserved within each level.
@@ -247,18 +282,20 @@ function collectArrayCandidates(schema: JSONSchema7): ArrayCandidate[] {
   const top: ArrayCandidate[] = [];
   const nested: ArrayCandidate[] = [];
   for (const [key, prop] of propertyDeclarations(schema)) {
-    if (hasType(prop, "array")) {
-      if (prop.items) {
-        top.push({ path: [key], itemSchema: arrayItemSchema(prop) });
-      }
+    if (PROTOTYPE_KEYS.has(key)) continue;
+    const array = declaredArray(prop);
+    if (array) {
+      top.push({ path: [key], itemSchema: arrayItemSchema(array) });
       continue;
     }
     if (!isObjectShaped(prop)) continue;
     for (const [inner, innerProp] of propertyDeclarations(prop)) {
-      if (hasType(innerProp, "array") && innerProp.items) {
+      if (PROTOTYPE_KEYS.has(inner)) continue;
+      const innerArray = declaredArray(innerProp);
+      if (innerArray) {
         nested.push({
           path: [key, inner],
-          itemSchema: arrayItemSchema(innerProp),
+          itemSchema: arrayItemSchema(innerArray),
         });
       }
     }
@@ -951,15 +988,16 @@ export function createListGenerator(
     );
     if (!wrapperPath) {
       if (!isObjectShaped(effective)) return flat;
-      // An object contract with no array to carry the collection (a singleton
+      // An object contract with no array-like property at all (a singleton
       // such as `/settings` grouped as a list): a bare array is a shape the
       // contract forbids, so answer with the declared body, as a static route
-      // would.
-      return buildResponse({
-        status: responseStatus,
-        body: await generateDeclaredBody(effective, hooks, resource),
-        headers,
-      });
+      // would. When that body cannot be generated, the live items still beat
+      // a 500 on every request — the degradation `generateWrapperSkeleton`
+      // makes for an envelope's decoration.
+      const declared = await generateDeclaredBody(effective, hooks?.fakerSeed);
+      return declared === undefined
+        ? flat
+        : buildResponse({ status: responseStatus, body: declared, headers });
     }
 
     // Generate the wrapper's decoration without the array property — the live
@@ -971,10 +1009,9 @@ export function createListGenerator(
       hooks?.fakerSeed,
     );
     if (isRecord(skeleton)) {
-      setAtPath(skeleton, wrapperPath, items);
       return buildResponse({
         status: responseStatus,
-        body: skeleton,
+        body: injectAtPath(skeleton, effective, wrapperPath, items),
         headers,
       });
     }
@@ -999,43 +1036,85 @@ function resolveWrapperInfo(
 }
 
 /**
- * Generate a list route's declared object body when it carries no array.
- * Throws like `createStaticGenerator` does: core renders a structured 500.
+ * Generate a list route's declared object body when it carries no array, or
+ * `undefined` (with a warning) when faker cannot, so the caller can fall back
+ * to the live collection.
  */
 async function generateDeclaredBody(
   schema: JSONSchema7,
-  hooks: CrudGenerationHooks | undefined,
-  resource: CrudResource,
+  seed?: number,
 ): Promise<unknown> {
   try {
-    return await generateFromSchema({ schema, seed: hooks?.fakerSeed });
+    return await generateFromSchema({ schema, seed });
   } catch (error) {
-    throw asSchemaGenerationError(
-      error,
-      `${hooks?.method ?? "GET"} ${hooks?.path ?? resource.basePath}`,
-      schema,
+    console.warn(
+      "[@schmock/openapi] List body generation failed, serving the collection:",
+      error instanceof Error ? error.message : error,
     );
+    return undefined;
   }
 }
 
-/** Write `value` at `path`, creating intermediate objects the skeleton lacks. */
-function setAtPath(
+/**
+ * Create an own, enumerable data property. Plain assignment runs the
+ * `__proto__` accessor instead when `key` is `"__proto__"` — and a spec, which
+ * is untrusted input, chooses the key.
+ */
+function defineOwn(
   target: Record<string, unknown>,
-  path: readonly string[],
+  key: string,
   value: unknown,
 ): void {
-  let node = target;
-  for (const key of path.slice(0, -1)) {
-    const next = node[key];
-    if (isRecord(next)) {
-      node = next;
-    } else {
-      const created: Record<string, unknown> = {};
-      node[key] = created;
-      node = created;
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
+/**
+ * Put `value` at `path` inside the generated `skeleton`, returning a rebuilt
+ * copy whose objects along the path list their keys in declared order.
+ *
+ * The skeleton was generated without the array property, so writing it back
+ * afterwards would move it to the end of the object: `{items, total}` would go
+ * out as `{"total":…,"items":[…]}`. Each level is therefore rebuilt from the
+ * schema's declaration order (own `properties`, then `allOf` branches), with
+ * undeclared skeleton keys after it and an undeclared path key last.
+ *
+ * Only own properties are read and every key is defined, never assigned, so a
+ * `__proto__` path segment names an ordinary key rather than the prototype.
+ */
+function injectAtPath(
+  skeleton: Record<string, unknown>,
+  schema: JSONSchema7 | undefined,
+  path: readonly string[],
+  value: unknown,
+): Record<string, unknown> {
+  const [head, ...rest] = path;
+  const declarations = schema ? propertyDeclarations(schema) : [];
+  let slot = value;
+  if (rest.length > 0) {
+    const child = Object.hasOwn(skeleton, head) ? skeleton[head] : undefined;
+    const childSchema = declarations.find(([key]) => key === head)?.[1];
+    slot = injectAtPath(isRecord(child) ? child : {}, childSchema, rest, value);
+  }
+
+  const order = new Set([
+    ...declarations.map(([key]) => key),
+    ...Object.keys(skeleton),
+    head,
+  ]);
+  const out: Record<string, unknown> = {};
+  for (const key of order) {
+    if (key === head) {
+      defineOwn(out, key, slot);
+    } else if (Object.hasOwn(skeleton, key)) {
+      defineOwn(out, key, skeleton[key]);
     }
   }
-  node[path[path.length - 1]] = value;
+  return out;
 }
 
 /**
@@ -1077,13 +1156,13 @@ function withoutPath(
   if (head === undefined) return schema;
   const clone: JSONSchema7 = { ...schema };
 
-  if (isRecord(schema.properties) && head in schema.properties) {
+  if (isRecord(schema.properties) && Object.hasOwn(schema.properties, head)) {
     const properties = { ...schema.properties };
     const child = properties[head];
     if (rest.length === 0) {
       delete properties[head];
     } else if (typeof child === "object") {
-      properties[head] = withoutPath(child, rest);
+      defineOwn(properties, head, withoutPath(child, rest));
     }
     clone.properties = properties;
   }
@@ -1183,7 +1262,7 @@ export function createCreateGenerator(
         withoutPath(responseSchema, [wrapper.property]),
         hooks?.fakerSeed,
       );
-      shell[wrapper.property] = item;
+      defineOwn(shell, wrapper.property, item);
       body = shell;
     }
     return buildResponse({

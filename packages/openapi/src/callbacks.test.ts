@@ -101,7 +101,7 @@ describe("dispatchCallbacks", () => {
       dispatcher,
       makeContext(),
       [201, { result: "created" }],
-      42,
+      { seed: 42 },
     );
 
     expect(dispatcher).toHaveBeenCalledTimes(1);
@@ -118,7 +118,7 @@ describe("dispatchCallbacks", () => {
       dispatcher,
       makeContext(),
       [201, { result: "created" }],
-      42,
+      { seed: 42 },
     );
 
     expect(dispatcher).toHaveBeenCalledWith({
@@ -173,8 +173,12 @@ describe("dispatchCallbacks", () => {
     const first = vi.fn((_request: Schmock.OpenApiCallbackRequest) => {});
     const second = vi.fn((_request: Schmock.OpenApiCallbackRequest) => {});
 
-    await dispatchCallbacks(callbacks, first, makeContext(), undefined, 1234);
-    await dispatchCallbacks(callbacks, second, makeContext(), undefined, 1234);
+    await dispatchCallbacks(callbacks, first, makeContext(), undefined, {
+      seed: 1234,
+    });
+    await dispatchCallbacks(callbacks, second, makeContext(), undefined, {
+      seed: 1234,
+    });
 
     expect(JSON.stringify(first.mock.calls[0][0].body)).toBe(
       JSON.stringify(second.mock.calls[0][0].body),

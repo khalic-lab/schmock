@@ -1,5 +1,5 @@
 import type * as Schmock from "@schmock/core";
-import { toRouteKey } from "@schmock/core";
+import { SchmockError, toRouteKey } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import type {
   CrudOperation,
@@ -313,6 +313,42 @@ export function applyOverrides(
         route.meta.errorSchemas = errorSchemaMap;
       }
     }
+  }
+}
+
+/**
+ * Reject a `resources` override key that names no detected resource.
+ *
+ * Overrides are looked up by resource name, so a key that matches none used to
+ * be dropped without a word — which is exactly what happened to specs whose
+ * collection path ends in a parameter when their resource was renamed from
+ * `:owner` to `repos`. Mirrors the `seed` key check
+ * (`OPENAPI_UNKNOWN_SEED_RESOURCE`), and names the new resource when the key is
+ * the name that resource had before the rename.
+ */
+export function assertKnownResourceOverrides(
+  overrides: Readonly<Record<string, unknown>> | undefined,
+  resources: readonly CrudResource[],
+): void {
+  if (!overrides) return;
+  const resourceNames = resources.map((resource) => resource.name);
+  for (const key of Object.keys(overrides)) {
+    if (resourceNames.includes(key)) continue;
+    const detected =
+      resourceNames.length > 0
+        ? resourceNames.map((name) => `"${name}"`).join(", ")
+        : "none";
+    const renamed = resources.find(
+      (resource) => resource.basePath.split("/").pop() === key,
+    );
+    const hint = renamed
+      ? ` A resource whose collection path ends in a parameter is named after its last literal segment: use "${renamed.name}".`
+      : "";
+    throw new SchmockError(
+      `Resource override key "${key}" matches no CRUD resource in the spec. Detected resources: ${detected}.${hint}`,
+      "OPENAPI_UNKNOWN_RESOURCE_OVERRIDE",
+      { key, resources: resourceNames },
+    );
   }
 }
 

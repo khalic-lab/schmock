@@ -6,6 +6,7 @@ import { dispatchCallbacks, getRouteCallbacks } from "./callbacks.js";
 import { detectCrudResources } from "./crud-detector.js";
 import {
   applyOverrides,
+  assertKnownResourceOverrides,
   logResourceDetection,
   registerCrudRoutes,
   registerNonCrudRoutes,
@@ -93,6 +94,7 @@ export async function openapi(
   }
 
   const { resources, nonCrudPaths } = detectCrudResources(spec.paths);
+  assertKnownResourceOverrides(options.resources, resources);
   // `null` is read as "no seed" like `undefined`; anything else goes through
   // validation, so a JS caller's `seed: 42` (meant as `fakerSeed`) or a typo'd
   // resource key fails here instead of silently leaving collections empty.
@@ -258,8 +260,7 @@ export async function openapi(
             options.callbacks.dispatch,
             context,
             response,
-            options.fakerSeed,
-            options.debug === true,
+            { seed: options.fakerSeed, debug: options.debug === true },
           );
         }
       }

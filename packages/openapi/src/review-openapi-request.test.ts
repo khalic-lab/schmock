@@ -48,8 +48,7 @@ async function dispatchedUrls(
     },
     context,
     response,
-    undefined,
-    debug,
+    { debug },
   );
   return urls;
 }

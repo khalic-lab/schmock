@@ -4,7 +4,9 @@ import { isRecord, toJsonSchema } from "./utils.js";
 /**
  * Where the parser records the explicit mapping key or implicit component name
  * for the branch at index i, before dereference erases its `$ref`. Written in
- * parser.ts; read here; dropped with the whole `discriminator` object below.
+ * load-document.ts (`markDiscriminatorValues` /
+ * `markDereferencedDiscriminatorValues`); read here; dropped with the whole
+ * `discriminator` object below.
  */
 const DISCRIMINATOR_VALUES_MARKER = "x-schmock-discriminator-values";
 
@@ -125,7 +127,7 @@ export function normalizeSchema(
  *
  * The `schmockNullable` marker alone leaves the non-null `type` in place, so a
  * generated `null` fails the plugin's own validator. Every branch below emits a
- * schema that accepts `null` and keeps the marker so `postProcessGenerated`
+ * schema that accepts `null` and keeps the marker so `applyNullableRolls`
  * still rolls nulls at ~5%.
  */
 function applyNullability(
@@ -201,7 +203,9 @@ function normalizeNode(
     const propName = disc.propertyName;
     if (typeof propName === "string" && Array.isArray(node.oneOf)) {
       // Explicit mapping keys or implicit `$ref` component names are resolved
-      // BEFORE dereference in parser.ts and handed over index-aligned here.
+      // BEFORE dereference in load-document.ts (`markDiscriminatorValues` /
+      // `markDereferencedDiscriminatorValues`) and handed over index-aligned
+      // here.
       const resolvedRaw = disc[DISCRIMINATOR_VALUES_MARKER];
       const resolved = Array.isArray(resolvedRaw) ? resolvedRaw : undefined;
 
