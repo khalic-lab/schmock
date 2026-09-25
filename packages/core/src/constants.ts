@@ -1,3 +1,4 @@
+import { InvalidHttpMethodError } from "./errors.js";
 import type { HttpMethod } from "./types.js";
 
 export const ROUTE_NOT_FOUND_CODE = "ROUTE_NOT_FOUND" as const;
@@ -70,10 +71,14 @@ export function isHttpMethod(method: string): method is HttpMethod {
   return (HTTP_METHODS as readonly string[]).includes(method);
 }
 
+/**
+ * Uppercase `method` and narrow it to an {@link HttpMethod}.
+ * @throws InvalidHttpMethodError (code `INVALID_HTTP_METHOD`) for any other verb
+ */
 export function toHttpMethod(method: string): HttpMethod {
   const upper = method.toUpperCase();
   if (!isHttpMethod(upper)) {
-    throw new Error(`Invalid HTTP method: "${method}"`);
+    throw new InvalidHttpMethodError(method);
   }
   return upper;
 }
@@ -159,6 +164,62 @@ export function canonicalizePath(path: string): string {
     }
   }
   return result;
+}
+
+/**
+ * The one trailing-slash rule for a path prefix: a single trailing slash is
+ * dropped, so "/api/" and "/api" are the same prefix, and the root "/" becomes
+ * "" (matches every path).
+ */
+function trimPrefixPath(canonicalPath: string): string {
+  return canonicalPath === "/" ? "" : canonicalPath.replace(/\/$/, "");
+}
+
+/**
+ * Parse a `baseUrl` or namespace into its origin and canonical path prefix.
+ *
+ * - "/api/"                → { origin: null, path: "/api" }
+ * - "api"                  → { origin: null, path: "/api" }
+ * - "https://x.com/api/v1" → { origin: "https://x.com", path: "/api/v1" }
+ * - "https://x.com"        → { origin: "https://x.com", path: "" }
+ *
+ * The path is canonicalized like request paths are (so "/café" and
+ * "/caf%C3%A9" are one prefix), gains a leading slash when it has none, and
+ * loses one trailing slash. A value containing "://" that is not a valid URL
+ * is read as a path.
+ */
+export function parsePathPrefix(prefix: string): Schmock.PathPrefix {
+  if (prefix.includes("://")) {
+    try {
+      const url = new URL(prefix);
+      return {
+        origin: url.origin,
+        path: trimPrefixPath(canonicalizePath(url.pathname)),
+      };
+    } catch {
+      // Not a URL after all: read it as a path below.
+    }
+  }
+  const rooted = prefix.startsWith("/") ? prefix : `/${prefix}`;
+  return { origin: null, path: trimPrefixPath(canonicalizePath(rooted)) };
+}
+
+/**
+ * Whether `path` lies under the prefix, on a segment boundary: "/api" matches
+ * "/api" and "/api/users" but never "/apiv2". `path` is canonicalized first,
+ * so a raw or an encoded spelling of the same path match alike. Only the path
+ * is compared; checking `prefix.origin` against the request's origin is the
+ * caller's job.
+ */
+export function matchPathPrefix(
+  prefix: Schmock.PathPrefix,
+  path: string,
+): boolean {
+  if (prefix.path === "") return true;
+  const canonicalPath = canonicalizePath(path);
+  return (
+    canonicalPath === prefix.path || canonicalPath.startsWith(`${prefix.path}/`)
+  );
 }
 
 /**

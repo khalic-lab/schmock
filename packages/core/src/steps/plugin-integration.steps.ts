@@ -420,16 +420,23 @@ describeFeature(feature, ({ Scenario }) => {
           mock("GET /async-install", { active: false });
           asyncPlugin = {
             name: "async-install",
-            async install(instance) {
-              instance("GET /before-await", { leaked: true });
-              await Promise.resolve();
-              instance("GET /after-await", { leaked: true });
-            },
             process(context, response) {
               processCount += 1;
               return { context, response };
             },
           };
+          // `Plugin.install` returns `undefined`, so an async hook no longer
+          // compiles. Plain JavaScript can still supply one, and that is the
+          // runtime rejection this scenario pins, so it is attached untyped.
+          Reflect.set(
+            asyncPlugin,
+            "install",
+            async (instance: Schmock.CallableMockInstance) => {
+              instance("GET /before-await", { leaked: true });
+              await Promise.resolve();
+              instance("GET /after-await", { leaked: true });
+            },
+          );
         },
       );
 

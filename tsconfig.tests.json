@@ -10,6 +10,7 @@
     "types": ["vitest/globals"],
     "paths": {
       "@schmock/core": ["./packages/core/src"],
+      "@schmock/core/adapter": ["./packages/core/src/adapter"],
       "@schmock/express": ["./packages/express/src"],
       "@schmock/faker": ["./packages/faker/src"],
       "@schmock/angular": ["./packages/angular/src"],

@@ -23,6 +23,32 @@ function isPluginResult(value: unknown): value is Schmock.PluginResult {
   );
 }
 
+/** The failure a plugin hook raises by returning something that is not a PluginResult. */
+function invalidPluginResultError(pluginName: string): PluginError {
+  return new PluginError(pluginName, new Error("didn't return valid result"));
+}
+
+function isAttributedTo(error: PluginError, pluginName: string): boolean {
+  const context: unknown = error.context;
+  return (
+    typeof context === "object" &&
+    context !== null &&
+    "pluginName" in context &&
+    context.pluginName === pluginName
+  );
+}
+
+/**
+ * Attribute an unrecovered failure to the plugin that raised it, once: an
+ * error that already is that plugin's PluginError (an invalid result) is not
+ * wrapped a second time.
+ */
+function toPluginError(pluginName: string, error: Error): PluginError {
+  return error instanceof PluginError && isAttributedTo(error, pluginName)
+    ? error
+    : new PluginError(pluginName, error);
+}
+
 function preserveRequestSignal(
   context: Schmock.PluginContext,
   signal: AbortSignal | undefined,
@@ -101,7 +127,7 @@ export async function runPluginBeforeRequest(
       throwIfAborted(signal);
       if (result === undefined) continue;
       if (!isPluginResult(result)) {
-        throw new Error(`Plugin ${plugin.name} didn't return valid result`);
+        throw invalidPluginResultError(plugin.name);
       }
 
       currentContext = preserveRequestSignal(result.context, signal);
@@ -135,7 +161,7 @@ export async function runPluginBeforeRequest(
           requestShortCircuited: true,
         };
       }
-      throw new PluginError(plugin.name, recovery.error);
+      throw toPluginError(plugin.name, recovery.error);
     }
   }
 
@@ -203,7 +229,7 @@ export async function runPluginPipeline(
       throwIfAborted(signal);
 
       if (!isPluginResult(result)) {
-        throw new Error(`Plugin ${plugin.name} didn't return valid result`);
+        throw invalidPluginResultError(plugin.name);
       }
 
       currentContext = preserveRequestSignal(result.context, signal);
@@ -241,7 +267,7 @@ export async function runPluginPipeline(
           recoveredFromError: true,
         };
       }
-      throw new PluginError(plugin.name, recovery.error);
+      throw toPluginError(plugin.name, recovery.error);
     }
   }
 

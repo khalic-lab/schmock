@@ -104,6 +104,20 @@ export class PluginError extends SchmockError {
 }
 
 /**
+ * Error thrown by `toHttpMethod` for a string that is not one of the HTTP
+ * methods Schmock routes (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`,
+ * `OPTIONS`), compared case-insensitively.
+ */
+export class InvalidHttpMethodError extends SchmockError {
+  constructor(method: string) {
+    super(`Invalid HTTP method: "${method}"`, "INVALID_HTTP_METHOD", {
+      method,
+    });
+    this.name = "InvalidHttpMethodError";
+  }
+}
+
+/**
  * Error thrown when route definition is invalid
  */
 export class RouteDefinitionError extends SchmockError {

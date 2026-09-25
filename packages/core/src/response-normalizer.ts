@@ -1,5 +1,6 @@
 import { isBinaryBody } from "./binary.js";
 import { errorMessage, InvalidResponseError } from "./errors.js";
+import { hasHeader } from "./headers.js";
 
 const BODY_FORBIDDEN_STATUSES = new Set([204, 205, 304]);
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
@@ -381,4 +382,105 @@ export function serializeResponseBody(
   // routes that return JSON.stringify(...) themselves.
   const serialized = typeof body === "string" ? body : stringifyJsonBody(body);
   return new TextEncoder().encode(serialized);
+}
+
+/**
+ * Give a response the content type its body implies when it declares none:
+ * `application/octet-stream` for a binary body, `application/json` for any
+ * other non-string body (`null` included, which serializes as JSON). A string
+ * body is sent as-is and gets no default.
+ *
+ * Total: it never throws and never mutates `response`. The result is not
+ * normalized; pass it to `normalizeResponse` when it still needs to be.
+ */
+export function withDefaultContentType(
+  response: Schmock.Response,
+): Schmock.Response {
+  const headers = { ...response.headers };
+  const body = response.body;
+  if (body !== undefined && !hasHeader(headers, "content-type")) {
+    if (isBinaryBody(body)) {
+      headers["content-type"] = "application/octet-stream";
+    } else if (typeof body !== "string") {
+      headers["content-type"] = "application/json";
+    }
+  }
+  return { status: response.status, body, headers };
+}
+
+/**
+ * A formatted error body is always JSON, whatever the replaced response
+ * declared. Every case variant of content-type is dropped first: a leftover
+ * `Content-Type` beside the lowercase key makes the pair untransportable.
+ */
+function withJsonContentType(
+  headers: Record<string, string> | undefined,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    if (name.toLowerCase() === "content-type") continue;
+    result[name] = value;
+  }
+  result["content-type"] = "application/json";
+  return result;
+}
+
+function internalErrorResponse(method: string): Schmock.Response {
+  return normalizeResponse(
+    {
+      status: 500,
+      body: { error: "Internal Server Error", code: "INTERNAL_ERROR" },
+      headers: { "content-type": "application/json" },
+    },
+    method,
+  );
+}
+
+/**
+ * Run an `errorFormatter` and build the normalized 500 that carries its result.
+ *
+ * Total: it never throws, and the formatter runs exactly once. There are two
+ * fallbacks. When the inherited headers cannot be sent (a non-string value, a
+ * control character, a case-duplicate name), the formatted body is kept and
+ * sent with the fixed JSON header set instead, since losing the body would
+ * silently change the caller's error contract. When the formatter throws or
+ * its result cannot be serialized, the minimal
+ * `{ error: "Internal Server Error", code: "INTERNAL_ERROR" }` body is sent,
+ * inheriting nothing.
+ */
+export function buildFormattedErrorResponse(
+  options: Schmock.FormattedErrorOptions,
+): Schmock.Response {
+  const { formatter, error, inheritedHeaders, method } = options;
+  let formatted: unknown;
+  try {
+    formatted = formatter(error);
+  } catch {
+    return internalErrorResponse(method);
+  }
+  try {
+    return normalizeResponse(
+      {
+        status: 500,
+        body: formatted,
+        headers: withJsonContentType(inheritedHeaders),
+      },
+      method,
+    );
+  } catch {
+    // The inherited headers were not transportable. `formatted` is reused,
+    // so the formatter still fires exactly once.
+  }
+  try {
+    return normalizeResponse(
+      {
+        status: 500,
+        body: formatted,
+        headers: { "content-type": "application/json" },
+      },
+      method,
+    );
+  } catch {
+    return internalErrorResponse(method);
+  }
 }

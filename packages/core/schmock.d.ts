@@ -123,16 +123,23 @@ declare namespace Schmock {
      * Called once when the plugin is added via .pipe()
      * Route registrations are committed atomically only when this hook returns
      * synchronously. The scoped instance must not be retained or used later.
-     * Returning a Promise is unsupported and leaves the plugin inactive.
+     *
+     * Returning a Promise is unsupported: `pipe()` rejects it at runtime with
+     * `PLUGIN_ASYNC_INSTALL_UNSUPPORTED`. The return type is `void | undefined`
+     * rather than `void` so that an `async install()` is also a compile error:
+     * TypeScript accepts any return value for a function typed `=> void`, but
+     * checks the union normally. Every synchronous hook, annotated `: void` or
+     * not, still satisfies it.
      * @param instance - A synchronous, installation-scoped callable instance
      */
-    install?(instance: CallableMockInstance): void;
+    install?(instance: CallableMockInstance): void | undefined;
 
     /**
      * Called during reset after every request admitted with this plugin settles.
-     * Cleanup runs in reverse registration order and must complete synchronously.
+     * Cleanup runs in reverse registration order and must complete synchronously;
+     * as with `install`, an async hook is a compile error.
      */
-    uninstall?(instance: CallableMockInstance): void;
+    uninstall?(instance: CallableMockInstance): void | undefined;
 
     /**
      * Inspect or transform a request before its route generator executes.
@@ -649,8 +656,15 @@ declare namespace Schmock {
       response: AdapterResponse,
       request: AdapterRequest,
     ) => AdapterResponse | void | Promise<AdapterResponse | void>;
-    /** Format errors into custom response bodies */
-    errorFormatter?: (error: Error) => unknown;
+    /**
+     * Format errors into custom response bodies.
+     *
+     * `request` is passed the way the Express and Angular adapters pass
+     * theirs: the request as routed, after `beforeRequest` once that hook has
+     * returned. When the request body itself could not be read, it is the
+     * incoming request without a body.
+     */
+    errorFormatter?: (error: Error, request: AdapterRequest) => unknown;
   }
 
   interface InterceptHandle {
@@ -665,6 +679,77 @@ declare namespace Schmock {
     update(options?: InterceptOptions): void;
     /** Whether this interceptor is currently active */
     readonly active: boolean;
+  }
+
+  // ===== Transport Primitives =====
+
+  /**
+   * A route result taken apart the way core's response parser reads it.
+   * Returned by `getResponseParts()`.
+   *
+   * - `"object"`: a `{ status, body, headers? }` envelope. `headers`, when
+   *   present, must be a string record, or the value is not an envelope.
+   * - `"tuple"`: `[status, body]` or `[status, body, headers]`.
+   * - `"plain"`: anything else, delivered whole as the body.
+   */
+  interface ResponseParts {
+    /** The status core answers with: a plain `null`/`undefined` body is 204. */
+    status: number;
+    /** The body element as carried. Core sends no body for `null`/`undefined`. */
+    body: unknown;
+    /**
+     * A copy of the carried headers. A tuple whose third element is not a
+     * string record yields `{}` here, and core rejects it as INVALID_RESPONSE.
+     */
+    headers: Record<string, string>;
+    kind: "plain" | "tuple" | "object";
+  }
+
+  /**
+   * A parsed `baseUrl` or namespace. Returned by `parsePathPrefix()` and read
+   * by `matchPathPrefix()`.
+   */
+  interface PathPrefix {
+    /** The origin an origin-form prefix names, or `null` for a path prefix. */
+    origin: string | null;
+    /**
+     * The canonical (percent-encoded) path, without a trailing slash; `""`
+     * when the prefix is the root and matches every path.
+     */
+    path: string;
+  }
+
+  /** Routes one request: the signature of `CallableMockInstance.handle`. */
+  type MockRequestHandler = (
+    method: HttpMethod,
+    path: string,
+    options?: RequestOptions,
+  ) => Promise<Response>;
+
+  /**
+   * One request admitted against a snapshot of a mock's routes and plugins.
+   * `handle` must be called at most once, and `release` exactly once after
+   * the request settles, so a `reset()` waits for it before uninstalling.
+   * Acquired through `acquireRequestAdmission()` from `@schmock/core/adapter`.
+   */
+  interface RequestAdmission {
+    handle: MockRequestHandler;
+    release(): void;
+  }
+
+  /** Input to `buildFormattedErrorResponse()`. */
+  interface FormattedErrorOptions {
+    /** The `errorFormatter` hook, called exactly once. */
+    formatter: (error: Error) => unknown;
+    /** The error being formatted. */
+    error: Error;
+    /**
+     * Headers of the response being replaced (e.g. `retry-after`). Kept when
+     * they can be sent, minus any content type: a formatted body is JSON.
+     */
+    inheritedHeaders?: Record<string, string>;
+    /** Request method; a HEAD response carries no body. */
+    method: string;
   }
 
   // ===== Lifecycle Events =====
@@ -769,7 +854,12 @@ declare namespace Schmock {
    * Context for schema-based data generation
    */
   interface SchemaGenerationContext {
-    schema: JSONSchema7;
+    /**
+     * The schema to generate from. Typed `Schema` so an inline literal may use
+     * the `faker`, `schmockNullable` and `schmockTrueProbability` keywords; a
+     * plain `JSONSchema7` is still accepted.
+     */
+    schema: Schema;
     count?: number;
     overrides?: Record<string, unknown>;
     params?: Record<string, string>;
@@ -782,7 +872,12 @@ declare namespace Schmock {
    * Options for the faker plugin
    */
   interface FakerPluginOptions {
-    schema: JSONSchema7;
+    /**
+     * The schema to generate from. Typed `Schema` so an inline literal may use
+     * the `faker`, `schmockNullable` and `schmockTrueProbability` keywords; a
+     * plain `JSONSchema7` is still accepted.
+     */
+    schema: Schema;
     count?: number;
     overrides?: Record<string, unknown>;
     seed?: number;
@@ -797,6 +892,10 @@ declare namespace Schmock {
 
   /**
    * Configuration options for Express adapter
+   *
+   * @deprecated Import `ExpressAdapterOptions` from `@schmock/express`, which
+   * types `req`/`res` as Express's `Request`/`Response`. This copy types them
+   * `unknown` and will be removed in the next major version.
    */
   interface ExpressAdapterOptions {
     errorFormatter?: (error: Error, req: unknown) => unknown;
@@ -823,6 +922,10 @@ declare namespace Schmock {
 
   /**
    * Configuration options for Angular adapter
+   *
+   * @deprecated Import `AngularAdapterOptions` from `@schmock/angular`, which
+   * types `request` as Angular's `HttpRequest`. This copy types it `unknown`
+   * and will be removed in the next major version.
    */
   interface AngularAdapterOptions {
     baseUrl?: string;
@@ -861,7 +964,9 @@ declare namespace Schmock {
     allowHttp?: boolean;
     /**
      * Hostnames an `http(s)` `$ref` may target. Empty or omitted means any
-     * host, still minus loopback, link-local and private ranges.
+     * host, still minus loopback, link-local, private and reserved ranges,
+     * checked against every address a host resolves to, so an allow-listed
+     * name that resolves to one is refused too.
      */
     allowedHosts?: string[];
     /** Per-request timeout for http `$ref`s, in ms. Default 5000. */
@@ -913,17 +1018,26 @@ declare namespace Schmock {
     /** Replace response schemas for specific routes. Key format: "METHOD /path" or "METHOD /path STATUS" */
     schemas?: Record<string, import("json-schema").JSONSchema7>;
     /** Called before generating a response body. Return a schema to replace the original, or void to keep it. */
-    onSchema?: (
-      schema: import("json-schema").JSONSchema7,
-      context: {
-        method: string;
-        path: string;
-        params: Record<string, string>;
-        query: Record<string, string>;
-        headers: Record<string, string>;
-      },
-    ) => import("json-schema").JSONSchema7 | undefined;
+    onSchema?: OnSchemaCallback;
   }
+
+  /** The request an {@link OnSchemaCallback} is generating a response for. */
+  interface OnSchemaContext {
+    method: string;
+    path: string;
+    params: Record<string, string>;
+    query: Record<string, string>;
+    headers: Record<string, string>;
+  }
+
+  /**
+   * `OpenApiOptions.onSchema`: called before a response body is generated.
+   * Return a schema to replace the original, or `undefined` to keep it.
+   */
+  type OnSchemaCallback = (
+    schema: import("json-schema").JSONSchema7,
+    context: OnSchemaContext,
+  ) => import("json-schema").JSONSchema7 | undefined;
 
   /**
    * Seed data source: inline array, file path, or auto-generate count

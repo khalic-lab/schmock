@@ -1,6 +1,7 @@
 import { isBinaryBody } from "./binary.js";
 import { isStatusTuple } from "./constants.js";
 import { InvalidResponseError } from "./errors.js";
+import { hasHeader } from "./headers.js";
 
 const BINARY_CONTENT_TYPE = "application/octet-stream";
 
@@ -27,9 +28,7 @@ function toOwnHeaderRecord(value: unknown): Record<string, string> {
 }
 
 function hasContentType(headers: Record<string, string>): boolean {
-  return Object.keys(headers).some(
-    (header) => header.toLowerCase() === "content-type",
-  );
+  return hasHeader(headers, "content-type");
 }
 
 /**
@@ -70,6 +69,88 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   );
 }
 
+/** A route result split on the envelope rules, headers not yet checked. */
+interface DecomposedResponse {
+  kind: Schmock.ResponseParts["kind"];
+  status: number;
+  body: unknown;
+  /** The carried headers exactly as given: absent, a record, or anything. */
+  rawHeaders: unknown;
+}
+
+/**
+ * The single place a route result is split into status, body and headers.
+ * `parseResponse` and the exported `getResponseParts` both build on it, so
+ * what a plugin inspects is what core delivers.
+ */
+function decomposeResponse(result: unknown): DecomposedResponse {
+  // Handle already-formed response objects (from plugin error recovery)
+  if (isResponseObject(result)) {
+    return {
+      kind: "object",
+      status: result.status,
+      body: result.body,
+      rawHeaders: result.headers,
+    };
+  }
+  // Handle tuple response format [status, body, headers?]
+  if (isStatusTuple(result)) {
+    return {
+      kind: "tuple",
+      status: result[0],
+      body: result[1],
+      rawHeaders: result[2],
+    };
+  }
+  return { kind: "plain", status: 200, body: result, rawHeaders: undefined };
+}
+
+function isNullish(value: unknown): value is null | undefined {
+  return value === null || value === undefined;
+}
+
+/**
+ * Split a route or plugin result into the status, body and headers core will
+ * answer with, using exactly the guards `handle()` applies: an object is an
+ * envelope only when it has a numeric `status`, a `body`, and `headers` that
+ * are absent or a string record; anything else is delivered whole as the body.
+ *
+ * `body` is the element as carried (`null` stays `null`, though core sends no
+ * body for it), `status` is what core answers with (a plain `null` or
+ * `undefined` result is 204), and `headers` is a fresh copy, `{}` when the
+ * carried headers are not a string record.
+ */
+export function getResponseParts(response: unknown): Schmock.ResponseParts {
+  const parts = decomposeResponse(response);
+  return {
+    kind: parts.kind,
+    status:
+      parts.kind === "plain" && isNullish(parts.body) ? 204 : parts.status,
+    body: parts.body,
+    headers: isStringRecord(parts.rawHeaders) ? { ...parts.rawHeaders } : {},
+  };
+}
+
+/**
+ * Put `body` in place of the body `response` carries, keeping its shape: a
+ * tuple stays a tuple of the same length, an envelope keeps its status and
+ * headers (other properties are dropped, as core ignores them), and a plain
+ * result is replaced by `body` itself. Never mutates `response`.
+ */
+export function replaceResponseBody(response: unknown, body: unknown): unknown {
+  if (isResponseObject(response)) {
+    return response.headers === undefined
+      ? { status: response.status, body }
+      : { status: response.status, body, headers: response.headers };
+  }
+  if (isStatusTuple(response)) {
+    return response.length === 3
+      ? [response[0], body, response[2]]
+      : [response[0], body];
+  }
+  return body;
+}
+
 /**
  * Parse and normalize response result into Response object
  * Handles tuple format [status, body, headers], direct values, and response objects
@@ -78,24 +159,11 @@ export function parseResponse(
   result: unknown,
   routeConfig: Schmock.RouteConfig,
 ): Schmock.Response {
-  let status = 200;
-  let body: unknown = result;
-  let headers: Record<string, string> = {};
-
-  let tupleFormat = false;
-
-  // Handle already-formed response objects (from plugin error recovery)
-  if (isResponseObject(result)) {
-    status = result.status;
-    body = result.body;
-    headers = toOwnHeaderRecord(result.headers);
-    tupleFormat = true;
-  } else if (isStatusTuple(result)) {
-    // Handle tuple response format [status, body, headers?]
-    [status, body] = result;
-    headers = toOwnHeaderRecord(result[2]);
-    tupleFormat = true;
-  }
+  const parts = decomposeResponse(result);
+  let status = parts.status;
+  let body: unknown = parts.body;
+  const headers = toOwnHeaderRecord(parts.rawHeaders);
+  const tupleFormat = parts.kind !== "plain";
 
   // Handle null/undefined responses with 204 No Content
   // But don't auto-convert if tuple format was used (status was explicitly provided)

@@ -1,16 +1,19 @@
 /// <reference path="../schmock.d.ts" />
 
 import { awaitWithAbort, throwIfAborted } from "./abort.js";
-import { isBinaryBody } from "./binary.js";
 import {
   canonicalizePath,
   getResponseException,
   isHttpMethod,
   isRouteNotFound,
+  matchPathPrefix,
+  parsePathPrefix,
 } from "./constants.js";
 import {
+  buildFormattedErrorResponse,
   normalizeResponse,
   serializeResponseBody,
+  withDefaultContentType,
 } from "./response-normalizer.js";
 
 const PASSTHROUGH = Symbol("schmock.fetch.passthrough");
@@ -38,12 +41,6 @@ interface InterceptorRequestOptions extends Schmock.RequestOptions {
   signal: AbortSignal;
 }
 
-type InterceptRequestHandler = (
-  method: Schmock.HttpMethod,
-  path: string,
-  requestOptions?: Schmock.RequestOptions,
-) => Promise<Schmock.Response>;
-
 interface InterceptDispatch {
   request: NormalizedFetchRequest;
   /**
@@ -60,15 +57,6 @@ interface RegisteredInterceptor {
   // distinct effective request once; undefined means the lease stands alone.
   owner?: symbol;
   intercept: (dispatch: InterceptDispatch) => Promise<InterceptorResult>;
-}
-
-interface InterceptRequestAdmission {
-  /**
-   * The mock's own handle(), bound to the admission snapshot. Its responses
-   * are already normalized for the method they were produced for.
-   */
-  handle: InterceptRequestHandler;
-  release(): void;
 }
 
 interface FetchResponseContext {
@@ -297,38 +285,6 @@ function registerInterceptor(
   };
 }
 
-/**
- * Parse the user-supplied baseUrl option into its origin and path parts.
- * - "/api"                  → { origin: null, path: "/api" }
- * - "https://x.com/api/v1"  → { origin: "https://x.com", path: "/api/v1" }
- * - "https://x.com"         → { origin: "https://x.com", path: "" }
- *
- * Trailing slash is stripped from the path so the segment-boundary check
- * works the same way for "/api" and "/api/".
- */
-function parseBaseUrl(baseUrl: string): {
-  origin: string | null;
-  path: string;
-} {
-  if (baseUrl.includes("://")) {
-    try {
-      const parsed = new URL(baseUrl);
-      const canonicalPath = canonicalizePath(parsed.pathname);
-      const path =
-        canonicalPath === "/" ? "" : canonicalPath.replace(/\/$/, "");
-      return { origin: parsed.origin, path };
-    } catch {
-      // Fall through to path-only handling
-    }
-  }
-  // Request pathnames always start with "/", so a base written as "api"
-  // would match nothing and silently send every request to the network.
-  const rootedBase = baseUrl.startsWith("/") ? baseUrl : `/${baseUrl}`;
-  const canonicalPath = canonicalizePath(rootedBase);
-  const path = canonicalPath === "/" ? "" : canonicalPath.replace(/\/$/, "");
-  return { origin: null, path };
-}
-
 function extractQuery(url: URL): Record<string, string> {
   return Object.fromEntries(url.searchParams);
 }
@@ -393,26 +349,6 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
-function withDefaultContentType(response: Schmock.Response): Schmock.Response {
-  const headers = { ...response.headers };
-  const hasContentType = Object.keys(headers).some(
-    (name) => name.toLowerCase() === "content-type",
-  );
-  if (
-    !hasContentType &&
-    response.body !== null &&
-    response.body !== undefined
-  ) {
-    if (isBinaryBody(response.body)) {
-      headers["content-type"] = "application/octet-stream";
-    } else if (typeof response.body !== "string") {
-      headers["content-type"] = "application/json";
-    }
-  }
-
-  return { status: response.status, body: response.body, headers };
-}
-
 /**
  * Build the fetch Response from an already-normalized Schmock response.
  */
@@ -474,103 +410,27 @@ function unroutedResult(
 }
 
 /**
- * Formatted error bodies are always JSON, so the replaced response's own
- * content type must be dropped rather than inherited. Every case variant goes
- * first: leaving a `Content-Type` beside the forced lowercase key makes the
- * pair transport-invalid and the normalizer rejects it.
- */
-function withJsonContentType(
-  headers: Record<string, string> | undefined,
-): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [name, value] of Object.entries(headers ?? {})) {
-    if (name.toLowerCase() === "content-type") continue;
-    result[name] = value;
-  }
-  result["content-type"] = "application/json";
-  return result;
-}
-
-function internalErrorResponse(context: FetchResponseContext): Response {
-  return jsonErrorResponse({
-    status: 500,
-    error: "Internal Server Error",
-    code: "INTERNAL_ERROR",
-    context,
-  });
-}
-
-/**
- * Build the 500 response for an errorFormatter result. TOTAL — it never
- * throws.
- *
- * `responseHeaders` carries the (post-hook) headers of the response being
- * replaced so metadata such as `retry-after` survives. There are two distinct
- * fallbacks. When the inherited headers are untransportable, the send is
- * retried once with the fixed JSON header set and the SAME formatted body —
- * nothing is on the wire yet, and losing the body would silently change the
- * user's error contract. Only a body the transport cannot serialize reaches
- * the minimal fallback, which deliberately inherits nothing.
+ * The fetch Response for an errorFormatter result, built by the shared
+ * {@link buildFormattedErrorResponse}. TOTAL: it never throws, and the
+ * formatter runs exactly once. It runs inside the interceptor's `try`, so an
+ * escaping error would land in the catch below and invoke the formatter a
+ * second time.
  */
 function formattedErrorResponse(input: {
-  formatted: unknown;
+  formatter: (error: Error) => unknown;
+  error: Error;
   responseHeaders?: Record<string, string>;
   context: FetchResponseContext;
 }): Response {
-  const { formatted, responseHeaders, context } = input;
-  try {
-    return toFetchResponse(
-      {
-        status: 500,
-        body: formatted,
-        headers: withJsonContentType(responseHeaders),
-      },
-      context,
-    );
-  } catch {
-    // `formatted` is reused, so the formatter still fires exactly once.
-  }
-  try {
-    return toFetchResponse(
-      {
-        status: 500,
-        body: formatted,
-        headers: { "content-type": "application/json" },
-      },
-      context,
-    );
-  } catch {
-    return internalErrorResponse(context);
-  }
-}
-
-/**
- * Invoke the errorFormatter for a core-marked exception and build its
- * response, falling back to a minimal safe body when the formatter throws or
- * its result is not serializable.
- *
- * This helper is TOTAL — it never throws. It runs inside the interceptor's
- * `try`, so an escaping error would land in the catch below and invoke the
- * formatter a second time; the re-entrancy is exactly the defect the Express
- * adapter's `sendFormattedError` was shaped to avoid.
- */
-function formatInterceptedError(input: {
-  errorFormatter: (error: Error) => unknown;
-  error: Error;
-  responseHeaders: Record<string, string> | undefined;
-  context: FetchResponseContext;
-}): Response {
-  let formatted: unknown;
-  try {
-    formatted = input.errorFormatter(input.error);
-  } catch {
-    return internalErrorResponse(input.context);
-  }
-  return formattedErrorResponse({
-    formatted,
-    responseHeaders: input.responseHeaders,
-    context: input.context,
-  });
+  return createFetchResponse(
+    buildFormattedErrorResponse({
+      formatter: input.formatter,
+      error: input.error,
+      inheritedHeaders: input.responseHeaders,
+      method: input.context.method,
+    }),
+    input.context,
+  );
 }
 
 /** Fetch reports the request URL without its fragment. */
@@ -593,9 +453,9 @@ function effectiveRequestKey(method: string, path: string): string {
  * handler — and emits its lifecycle events — once per request it is asked.
  */
 export function createFetchInterceptor(
-  handle: InterceptRequestHandler,
+  handle: Schmock.MockRequestHandler,
   options: Schmock.InterceptOptions = {},
-  admitRequest?: () => InterceptRequestAdmission,
+  admitRequest?: () => Schmock.RequestAdmission,
   owner?: symbol,
 ): Schmock.InterceptHandle {
   // The options live in a mutable cell that each request reads once at its
@@ -625,15 +485,12 @@ export function createFetchInterceptor(
       //   - path form ("/api"): match pathname prefix only.
       // Both enforce a segment boundary so "/api" doesn't match "/apiv2".
       if (baseUrl) {
-        const { origin: baseOrigin, path: basePath } = parseBaseUrl(baseUrl);
-        if (baseOrigin && origin !== baseOrigin) {
+        const base = parsePathPrefix(baseUrl);
+        if (base.origin && origin !== base.origin) {
           return FILTERED;
         }
-        if (basePath) {
-          const isMatch = path === basePath || path.startsWith(`${basePath}/`);
-          if (!isMatch) {
-            return FILTERED;
-          }
+        if (!matchPathPrefix(base, path)) {
+          return FILTERED;
         }
       }
 
@@ -652,6 +509,9 @@ export function createFetchInterceptor(
       context.method = initialMethod;
       const admission = admitRequest?.();
       const admittedHandle = admission?.handle ?? handle;
+      // The request handed to errorFormatter: the latest one this lease built,
+      // so it reflects beforeRequest once that hook has returned.
+      let formatterRequest: Schmock.AdapterRequest | undefined;
 
       try {
         const body = await awaitWithAbort(extractBody(request), request.signal);
@@ -676,6 +536,7 @@ export function createFetchInterceptor(
           body: body.value,
           query: extractQuery(url),
         };
+        formatterRequest = adapterRequest;
 
         // Apply beforeRequest hook
         if (beforeRequest) {
@@ -687,6 +548,7 @@ export function createFetchInterceptor(
           throwIfAborted(request.signal);
           if (modified) {
             adapterRequest = modified;
+            formatterRequest = modified;
           }
         }
 
@@ -747,8 +609,9 @@ export function createFetchInterceptor(
         // Angular): a beforeResponse that rewrites an exception into a 503 or
         // a 200 is honoured instead of being forced back to a formatted 500.
         if (errorFormatter && internalError && response.status === 500) {
-          return formatInterceptedError({
-            errorFormatter,
+          const seenRequest = adapterRequest;
+          return formattedErrorResponse({
+            formatter: (error) => errorFormatter(error, seenRequest),
             error: internalError,
             responseHeaders: response.headers,
             context,
@@ -774,11 +637,24 @@ export function createFetchInterceptor(
           // A formatter that throws here propagates and rejects the fetch; a
           // body it returns that cannot be serialized falls back to the same
           // INTERNAL_ERROR body the core-marked path uses.
+          const failure =
+            error instanceof Error ? error : new Error(String(error));
+          // No request was built when the body itself could not be read.
           const formatted = errorFormatter(
-            error instanceof Error ? error : new Error(String(error)),
+            failure,
+            formatterRequest ?? {
+              method: request.method,
+              path,
+              headers: extractHeaders(request),
+              query: extractQuery(url),
+            },
           );
           throwIfAborted(request.signal);
-          return formattedErrorResponse({ formatted, context });
+          return formattedErrorResponse({
+            formatter: () => formatted,
+            error: failure,
+            context,
+          });
         }
         throw error;
       } finally {

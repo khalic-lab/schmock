@@ -90,14 +90,13 @@ describe("namespace functionality", () => {
       const mock = schmock({ namespace: "/api/" });
       mock("GET /users", "users");
 
-      // Should work with or without the trailing slash in the request
       const response1 = await mock.handle("GET", "/api/users");
       const response2 = await mock.handle("GET", "/api//users");
 
       expect(response1.body).toBe("users");
-      // New logic gracefully handles double slashes by stripping the full namespace
-      expect(response2.status).toBe(200);
-      expect(response2.body).toBe("users");
+      // One trailing-slash rule (parsePathPrefix): "/api/" is the namespace
+      // "/api", so the doubled slash is not consumed, exactly as under "/api".
+      expect(response2.status).toBe(404);
     });
 
     it("handles empty namespace", async () => {

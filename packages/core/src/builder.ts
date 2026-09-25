@@ -3,11 +3,11 @@ import { awaitWithAbort, throwIfAborted } from "./abort.js";
 import { isBinaryBody } from "./binary.js";
 import {
   canonicalizePath,
-  HTTP_METHODS,
-  isHttpMethod,
   markResponseException,
   markRouteNotFound,
+  matchPathPrefix,
   normalizePath,
+  parsePathPrefix,
 } from "./constants.js";
 import {
   errorMessage,
@@ -15,14 +15,8 @@ import {
   RouteNotFoundError,
   SchmockError,
 } from "./errors.js";
-import {
-  collectBody,
-  HttpIngressError,
-  parseNodeHeaders,
-  parseNodeQuery,
-  writeRejectedSchmockResponse,
-  writeSchmockResponse,
-} from "./http-helpers.js";
+import { redactHeaders } from "./headers.js";
+import { DEFAULT_MAX_BODY_SIZE, serveNodeRequest } from "./http-helpers.js";
 import { createFetchInterceptor } from "./interceptor.js";
 import { parseRouteKey } from "./parser.js";
 import {
@@ -53,7 +47,11 @@ interface PendingServerStart {
   settled: boolean;
 }
 
-interface RequestAdmission {
+/**
+ * What an admitted request captured at arrival. The transports' public
+ * `Schmock.RequestAdmission` wraps one of these.
+ */
+interface AdmissionSnapshot {
   readonly requestGeneration: RequestGeneration;
   readonly historyGeneration: symbol;
   readonly plugins: readonly Schmock.Plugin[];
@@ -172,40 +170,6 @@ function assertValidHistoryLimit(limit: number | undefined): void {
   }
 }
 
-/**
- * Header names whose VALUE is replaced in debug logs. The name is kept so a log
- * still shows the header was present; only the credential is hidden. Matches
- * the set the CLI already masks.
- */
-const REDACTED_HEADER_NAMES = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "set-cookie",
-  "x-api-key",
-  "x-auth-token",
-  "x-schmock-admin-token",
-]);
-
-const REDACTED_HEADER_VALUE = "[redacted]";
-
-/**
- * Copy-on-write redaction: the input record is handed on to plugins, history
- * and transports, so it must never be mutated. When nothing is sensitive the
- * original object is returned unchanged.
- */
-function redactSensitiveHeaders(
-  headers: Record<string, string>,
-): Record<string, string> {
-  let redacted: Record<string, string> | undefined;
-  for (const name of Object.keys(headers)) {
-    if (!REDACTED_HEADER_NAMES.has(name.toLowerCase())) continue;
-    redacted ??= { ...headers };
-    redacted[name] = REDACTED_HEADER_VALUE;
-  }
-  return redacted ?? headers;
-}
-
 function snapshotHistoryValue(value: unknown): unknown {
   try {
     return removeSharedMemory(structuredClone(value));
@@ -294,8 +258,7 @@ function copyStaticData(
 
 interface CanonicalNamespace {
   readonly raw: string;
-  readonly prefix: string;
-  readonly root: string;
+  readonly prefix: Schmock.PathPrefix;
 }
 
 /** What history records about the request, captured before any hook runs. */
@@ -374,64 +337,6 @@ function assertValidPlugin(plugin: unknown): asserts plugin is Schmock.Plugin {
 
 /** `request:end` status for a request its caller cancelled. */
 const ABORTED_REQUEST_STATUS = 499;
-
-/** Placeholder origin for origin-form request targets; never contacted. */
-const REQUEST_TARGET_ORIGIN = "http://schmock.invalid";
-const ALLOWED_METHODS_HEADER = HTTP_METHODS.join(", ");
-
-/**
- * A client error the built-in server answers itself, before the mock sees the
- * request: 400 for a request it cannot parse, 405 for a verb Schmock does not
- * route. Mirrors the CLI server's answers for the same requests.
- */
-class ServerRequestError extends SchmockError {
-  constructor(
-    readonly status: 400 | 405,
-    code: "BAD_REQUEST" | "METHOD_NOT_ALLOWED",
-    message: string,
-    readonly headers: Readonly<Record<string, string>> = {},
-  ) {
-    super(message, code);
-    this.name = "ServerRequestError";
-  }
-}
-
-/**
- * Parse a Node request target into a URL without letting it pick the host.
- *
- * Resolving an origin-form target (`/path?q`) against a base reads a leading
- * `//` as a protocol-relative URL: `//users` would become host "users" with
- * path "/" and be served by `GET /`. Appending it to a fixed origin keeps the
- * whole target as the path. The asterisk-form (`OPTIONS *`) keeps the `/*`
- * path it always resolved to; any other target must be an absolute URL.
- */
-function parseRequestTarget(target: string): URL {
-  try {
-    if (target.startsWith("/"))
-      return new URL(`${REQUEST_TARGET_ORIGIN}${target}`);
-    if (target === "*") return new URL(`${REQUEST_TARGET_ORIGIN}/*`);
-    return new URL(target);
-  } catch {
-    throw new ServerRequestError(
-      400,
-      "BAD_REQUEST",
-      "Malformed request target",
-    );
-  }
-}
-
-function parseRequestMethod(method: string | undefined): Schmock.HttpMethod {
-  const upper = (method ?? "GET").toUpperCase();
-  if (!isHttpMethod(upper)) {
-    throw new ServerRequestError(
-      405,
-      "METHOD_NOT_ALLOWED",
-      `Unsupported HTTP method: ${upper}`,
-      { allow: ALLOWED_METHODS_HEADER },
-    );
-  }
-  return upper;
-}
 
 /**
  * Debug logger that respects debug mode configuration
@@ -1023,7 +928,7 @@ export class CallableMockInstance {
     this.logger.log("lifecycle", "State cleared");
   }
 
-  #captureRequestAdmission(): RequestAdmission {
+  #captureRequestAdmission(): AdmissionSnapshot {
     const requestGeneration = this.requestGeneration;
     requestGeneration.activeAdmissions += 1;
     // O(1) snapshot: the containers are captured by reference. `plugins` is
@@ -1043,7 +948,7 @@ export class CallableMockInstance {
     };
   }
 
-  #releaseRequestAdmission(admission: RequestAdmission): void {
+  #releaseRequestAdmission(admission: AdmissionSnapshot): void {
     if (admission.released) return;
     admission.released = true;
 
@@ -1073,7 +978,7 @@ export class CallableMockInstance {
     this.retiredGenerations.add(generation);
   }
 
-  createRequestAdmission() {
+  createRequestAdmission(): Schmock.RequestAdmission {
     const admission = this.#captureRequestAdmission();
     return {
       handle: (
@@ -1144,102 +1049,13 @@ export class CallableMockInstance {
     createServer: typeof import("node:http").createServer,
   ): void {
     const httpServer = createServer((req, res) => {
+      // Admitted on arrival, before the request is parsed, so a reset() while
+      // its body uploads neither changes its routes nor uninstalls its plugins.
       const admittedRequest = this.createRequestAdmission();
-      const abortController = new AbortController();
-      const abortRequest = () => abortController.abort();
-      req.once("aborted", abortRequest);
-      res.once("close", abortRequest);
-      let requestMethod: Schmock.HttpMethod =
-        req.method?.toUpperCase() === "HEAD" ? "HEAD" : "GET";
-      const handleRequest = async () => {
-        try {
-          // Client errors are answered as such, in the CLI server's order:
-          // the target first, then the verb. Only the target's path and
-          // query are used, so Host is required but never parsed.
-          if (!req.headers.host) {
-            throw new ServerRequestError(
-              400,
-              "BAD_REQUEST",
-              "Missing Host header",
-            );
-          }
-          const url = parseRequestTarget(req.url ?? "/");
-          const method = parseRequestMethod(req.method);
-          requestMethod = method;
-          const path = url.pathname;
-          const headers = parseNodeHeaders(req);
-          const query = parseNodeQuery(url);
-          const body = await collectBody(req, headers);
-          const schmockResponse = await admittedRequest.handle(method, path, {
-            headers,
-            body,
-            query,
-            signal: abortController.signal,
-          });
-          writeSchmockResponse(res, schmockResponse);
-        } finally {
-          req.off("aborted", abortRequest);
-          res.off("close", abortRequest);
-          admittedRequest.release();
-        }
-      };
-
-      handleRequest().catch((error) => {
-        // A failing error-response write must never escape this handler as an
-        // unhandled rejection: destroy the socket so the client is not left
-        // hanging on a response that will never arrive.
-        try {
-          const ingressError =
-            error instanceof HttpIngressError ? error : undefined;
-          const requestError =
-            error instanceof ServerRequestError ? error : undefined;
-          const status = ingressError?.status ?? requestError?.status ?? 500;
-          const code =
-            ingressError?.code ?? requestError?.code ?? "SERVER_ERROR";
-          if (!res.headersSent && !res.writableEnded) {
-            if (ingressError) res.shouldKeepAlive = false;
-            // `shouldKeepAlive = false` alone emits no Connection header when
-            // writeHead is given a header object, so the announcement has to be
-            // explicit. It travels on the transport's own header channel rather
-            // than on the response: normalizeResponse strips hop-by-hop headers
-            // from everything a route produces.
-            const transportHeaders = ingressError
-              ? { connection: "close" }
-              : undefined;
-            const response = normalizeResponse(
-              {
-                status,
-                body: {
-                  error:
-                    error instanceof Error
-                      ? error.message
-                      : "Internal Server Error",
-                  code,
-                },
-                headers: {
-                  "content-type": "application/json",
-                  ...requestError?.headers,
-                },
-              },
-              requestMethod,
-            );
-            if (ingressError?.status === 413) {
-              writeRejectedSchmockResponse(
-                req,
-                res,
-                response,
-                transportHeaders,
-              );
-            } else {
-              writeSchmockResponse(res, response, transportHeaders);
-            }
-          } else if (!res.writableEnded) {
-            res.end();
-          }
-        } catch {
-          res.destroy();
-        }
-      });
+      void serveNodeRequest(req, res, {
+        handle: admittedRequest.handle,
+        maxBodySize: DEFAULT_MAX_BODY_SIZE,
+      }).finally(() => admittedRequest.release());
     });
 
     operation.server = httpServer;
@@ -1392,7 +1208,7 @@ export class CallableMockInstance {
     method: Schmock.HttpMethod,
     path: string,
     options?: Schmock.RequestOptions,
-    admission?: RequestAdmission,
+    admission?: AdmissionSnapshot,
   ): Promise<Schmock.Response> {
     const requestAdmission = admission ?? this.#captureRequestAdmission();
     try {
@@ -1411,7 +1227,7 @@ export class CallableMockInstance {
     method: Schmock.HttpMethod,
     requestedPath: string,
     options: Schmock.RequestOptions | undefined,
-    admission: RequestAdmission,
+    admission: AdmissionSnapshot,
   ): Promise<Schmock.Response> {
     // Canonicalize before anything observes the path: a transport hands over an
     // already-encoded `url.pathname` while a direct handle() caller may type
@@ -1436,7 +1252,7 @@ export class CallableMockInstance {
     const reqHeaders = { ...(options?.headers ?? {}) };
     const requestBody = options?.body;
     this.logger.log("request", `[${requestId}] ${method} ${path}`, {
-      headers: redactSensitiveHeaders(reqHeaders),
+      headers: redactHeaders(reqHeaders),
       query: reqQuery,
       // Presence, not truthiness: "", 0 and false are bodies too.
       bodyType:
@@ -1464,31 +1280,21 @@ export class CallableMockInstance {
     let historySnapshot: RequestHistorySnapshot | undefined;
 
     try {
-      // Apply namespace if configured
-      if (namespace && namespace !== "/") {
-        const { prefix: normalizedNamespace, root: namespaceRoot } =
-          this.#canonicalNamespace(namespace);
-
+      // Apply namespace if configured. A root namespace ("/") parses to the
+      // empty prefix and strips nothing.
+      const namespacePrefix = namespace
+        ? this.#namespacePrefix(namespace)
+        : undefined;
+      if (namespacePrefix !== undefined && namespacePrefix.path !== "") {
         const pathToCheck = path.startsWith("/") ? path : `/${path}`;
 
-        // Check if path starts with namespace
-        // handle both "/api/users" (starts with /api) and "/api" (exact match)
-        // but NOT "/apiv2" (prefix match but wrong segment). The bare root
-        // matches whether or not the namespace was configured with a trailing
-        // slash: "/api/" serves "/api" exactly as "/api" does.
-        const isMatch =
-          pathToCheck === normalizedNamespace ||
-          pathToCheck === namespaceRoot ||
-          pathToCheck.startsWith(
-            normalizedNamespace.endsWith("/")
-              ? normalizedNamespace
-              : `${normalizedNamespace}/`,
-          );
-
-        if (!isMatch) {
+        // Segment-boundary match: "/api" serves "/api" and "/api/users" but
+        // not "/apiv2". The trailing-slash rule is parsePathPrefix's, shared
+        // with intercept({ baseUrl }): "/api/" is the same namespace as "/api".
+        if (!matchPathPrefix(namespacePrefix, pathToCheck)) {
           this.logger.log(
             "route",
-            `[${requestId}] Path doesn't match namespace ${normalizedNamespace}`,
+            `[${requestId}] Path doesn't match namespace ${namespacePrefix.path}`,
           );
           // A request outside the namespace is a route miss like any other, so
           // it reports one instead of silently ending.
@@ -1502,7 +1308,7 @@ export class CallableMockInstance {
         }
 
         // Remove namespace prefix, ensuring we always start with /
-        const stripped = pathToCheck.slice(normalizedNamespace.length);
+        const stripped = pathToCheck.slice(namespacePrefix.path.length);
         requestPath = stripped.startsWith("/") ? stripped : `/${stripped}`;
       }
 
@@ -1840,7 +1646,7 @@ export class CallableMockInstance {
       `[${input.requestId}] Sending response ${response.status}`,
       {
         status: response.status,
-        headers: redactSensitiveHeaders(response.headers),
+        headers: redactHeaders(response.headers),
         bodyType: typeof response.body,
       },
     );
@@ -1874,21 +1680,19 @@ export class CallableMockInstance {
   }
 
   /**
-   * The namespace in the canonical form request paths are compared in:
-   * `prefix` is percent-encoded with a leading slash and keeps a configured
-   * trailing slash (which strips one more slash, so `"/api/"` serves
-   * `/api//users`), while `root` drops it so the bare `/api` matches either
-   * way. Cached per namespace string instead of re-encoded per request.
+   * The namespace as the path prefix request paths are compared with:
+   * percent-encoded, with a leading slash and without a trailing one, so
+   * `"/api/"` and `"/api"` behave identically (both serve `/api`, neither
+   * serves `/api//users`). `""` for a root namespace. Only the path of an
+   * origin-form namespace is used. Cached per namespace string instead of
+   * re-parsed per request.
    */
-  #canonicalNamespace(namespace: string): CanonicalNamespace {
+  #namespacePrefix(namespace: string): Schmock.PathPrefix {
     const cached = this.namespaceCache;
-    if (cached?.raw === namespace) return cached;
-    const prefix = canonicalizePath(
-      namespace.startsWith("/") ? namespace : `/${namespace}`,
-    );
-    const canonical = { raw: namespace, prefix, root: normalizePath(prefix) };
-    this.namespaceCache = canonical;
-    return canonical;
+    if (cached?.raw === namespace) return cached.prefix;
+    const prefix = parsePathPrefix(namespace);
+    this.namespaceCache = { raw: namespace, prefix };
+    return prefix;
   }
 
   /**

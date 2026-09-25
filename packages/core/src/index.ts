@@ -1,6 +1,6 @@
+import { REQUEST_ADMISSION_KEY } from "./admission.js";
 import { CallableMockInstance } from "./builder.js";
-
-const REQUEST_ADMISSION = Symbol.for("@schmock/core.request-admission");
+import { createFetchInterceptor as createAdapterFetchInterceptor } from "./interceptor.js";
 
 /**
  * Create a new Schmock mock instance with callable API.
@@ -77,7 +77,7 @@ export function schmock(
     },
   );
 
-  Object.defineProperty(callableInstance, REQUEST_ADMISSION, {
+  Object.defineProperty(callableInstance, REQUEST_ADMISSION_KEY, {
     value: () => instance.createRequestAdmission(),
   });
 
@@ -85,6 +85,15 @@ export function schmock(
 
   return callableInstance;
 }
+
+/**
+ * @deprecated Use `mock.intercept()`, which also tracks the lease and admits
+ * each request against the mock's routes. Adapter authors who need the raw
+ * interceptor import `createFetchInterceptor` from `@schmock/core/adapter`.
+ * This root export will be removed in the next major version.
+ */
+export const createFetchInterceptor: typeof createAdapterFetchInterceptor =
+  createAdapterFetchInterceptor;
 
 export { isBinaryBody } from "./binary.js";
 // Re-export constants and utilities
@@ -94,12 +103,15 @@ export {
   isHttpMethod,
   isRouteNotFound,
   isStatusTuple,
+  matchPathPrefix,
+  parsePathPrefix,
   ROUTE_NOT_FOUND_CODE,
   toHttpMethod,
   toRouteKey,
 } from "./constants.js";
 // Re-export errors
 export {
+  InvalidHttpMethodError,
   InvalidResponseError,
   PluginError,
   ResourceLimitError,
@@ -110,6 +122,12 @@ export {
   SchemaValidationError,
   SchmockError,
 } from "./errors.js";
+// Re-export header helpers
+export {
+  getHeader,
+  redactHeaders,
+  SENSITIVE_HEADER_NAMES,
+} from "./headers.js";
 // Re-export response helpers
 export {
   badRequest,
@@ -121,52 +139,81 @@ export {
   serverError,
   unauthorized,
 } from "./helpers.js";
-export type { HttpIngressErrorCode } from "./http-helpers.js";
+export type {
+  HttpErrorReply,
+  HttpIngressErrorCode,
+  ServeNodeRequestOptions,
+  ServeNodeResponseContext,
+} from "./http-helpers.js";
 // Re-export HTTP server helpers
 export {
   collectBody,
   HttpIngressError,
   parseNodeHeaders,
   parseNodeQuery,
+  serveNodeRequest,
   writeRejectedSchmockResponse,
   writeSchmockResponse,
 } from "./http-helpers.js";
-// Re-export types
-// Re-export interceptor
-export { createFetchInterceptor } from "./interceptor.js";
 export {
+  buildFormattedErrorResponse,
   normalizeResponse,
   serializeResponseBody,
+  withDefaultContentType,
 } from "./response-normalizer.js";
+export {
+  getResponseParts,
+  replaceResponseBody,
+} from "./response-parser.js";
 // Re-export types
 export type {
   AdapterRequest,
   AdapterRequestOverride,
   AdapterResponse,
+  /**
+   * @deprecated Import `AngularAdapterOptions` from `@schmock/angular`; this
+   * copy will be removed in the next major version.
+   */
   AngularAdapterOptions,
   CallableMockInstance,
   CrudOperationMeta,
+  /**
+   * @deprecated Import `ExpressAdapterOptions` from `@schmock/express`; this
+   * copy will be removed in the next major version.
+   */
   ExpressAdapterOptions,
   FakerPluginOptions,
+  FormattedErrorOptions,
   Generator,
   GeneratorFunction,
   GlobalConfig,
   HttpMethod,
   InterceptHandle,
   InterceptOptions,
+  OnSchemaCallback,
+  OnSchemaContext,
   OpenApiCallbackOptions,
   OpenApiCallbackRequest,
   OpenApiOptions,
+  OpenApiRefPolicy,
+  PaginatedResponse,
+  PaginateOptions,
+  PathPrefix,
   Plugin,
   PluginContext,
   PluginResult,
   RequestContext,
+  RequestEndEvent,
+  RequestMatchEvent,
+  RequestNotFoundEvent,
   RequestOptions,
   RequestRecord,
+  RequestStartEvent,
   ResourceOverride,
   Response,
   ResponseBody,
   ResponseHeaderDef,
+  ResponseParts,
   ResponseResult,
   RouteConfig,
   RouteInfo,
@@ -174,6 +221,8 @@ export type {
   Schema,
   SchemaDefinition,
   SchemaGenerationContext,
+  SchmockEvent,
+  SchmockEventMap,
   SeedConfig,
   SeedSource,
   ServerInfo,
