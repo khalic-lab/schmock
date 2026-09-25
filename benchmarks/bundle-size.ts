@@ -4,13 +4,11 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
-  realpathSync,
   rmSync,
   statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
 /**
@@ -19,16 +17,18 @@ import { gzipSync } from "node:zlib";
  * Columns:
  * - Dist JS: bytes of the runtime JavaScript in dist/ as built. Declarations
  *   (.d.ts), declaration maps and source maps are left out.
- * - Min+gz: the package's main entry re-bundled with `bun build --minify`,
- *   every bare import external, then gzipped. core ships unminified tsc output
- *   while most packages ship minified bundles, so this is the only column that
- *   compares packages with each other.
- * - Source: .ts/.tsx under src/, without tests, step files and test utilities.
+ * - Min+gz: the package's main entry (the browser build when there is one, see
+ *   `mainEntry`) re-bundled with `bun build --minify`, every bare import
+ *   external, then gzipped. core ships unminified tsc output while most
+ *   packages ship minified bundles, so this is the only column that compares
+ *   packages with each other.
+ * - Source: .ts/.tsx under src/, without tests, step files, fixtures and
+ *   test-utils modules.
  */
 
 const SHIPPED_JS = /\.(?:js|mjs|cjs)$/;
 const TEST_SOURCE =
-  /(?:\.test|\.spec|\.steps)\.tsx?$|(?:^|\/)(?:steps|__tests__|__fixtures__)\//;
+  /(?:\.test|\.spec|\.steps)\.tsx?$|(?:^|\/)test-utils\.tsx?$|(?:^|\/)(?:steps|__tests__|__fixtures__)\//;
 
 interface WorkspacePackage {
   directory: string;
@@ -59,8 +59,11 @@ export function distJsSize(dir: string): number {
   return size;
 }
 
-/** Bytes of hand-written source under `dir`, without tests and steps. */
-function sourceSize(dir: string): number {
+/**
+ * Bytes of hand-written source under `dir`, without tests, steps, fixtures
+ * and test utilities.
+ */
+export function sourceSize(dir: string): number {
   if (!existsSync(dir)) return 0;
   let size = 0;
   for (const file of walkFiles(dir)) {
@@ -87,7 +90,12 @@ function readManifest(path: string): Record<string, unknown> {
   return Object.fromEntries(Object.entries(manifest));
 }
 
-/** The built file behind the `.` export's import condition, if any. */
+/**
+ * The built file behind the `.` export's `browser` condition, else its
+ * `import` condition, else `default`, if any. For a package with a browser
+ * build (openapi) the Min+gz column therefore measures that build, not the
+ * Node entry.
+ */
 function mainEntry(manifest: Record<string, unknown>): string | undefined {
   const exportsField = manifest.exports;
   if (typeof exportsField === "string") return exportsField;
@@ -192,16 +200,8 @@ function report(): void {
   }
 }
 
-function isEntryPoint(): boolean {
-  const entry = process.argv[1];
-  if (entry === undefined) return false;
-  try {
-    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isEntryPoint()) {
+// Run only as `bun run benchmarks/bundle-size.ts`, not when
+// review-tooling.steps.ts imports `distJsSize` and `sourceSize`.
+if (import.meta.main) {
   report();
 }

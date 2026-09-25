@@ -1,7 +1,5 @@
 /// <reference path="../packages/core/schmock.d.ts" />
 
-import { realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { schmock } from "../packages/core/src/index";
 
 /**
@@ -251,17 +249,9 @@ async function run() {
   console.log("\nDone.");
 }
 
-function isEntryPoint(): boolean {
-  const entry = process.argv[1];
-  if (entry === undefined) return false;
-  try {
-    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isEntryPoint()) {
+// Run only as `bun run benchmarks/handle-throughput.ts`, not when
+// review-tooling.steps.ts imports `createParamRouteLookup`.
+if (import.meta.main) {
   run().catch((error: unknown) => {
     console.error(error);
     process.exit(1);

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Fail when a browser bundle still imports a Node built-in that is not on the
- * allowlist.
+ * Fail when a browser bundle still imports a Node built-in, unless that
+ * built-in is on the allowlist AND every import of it is a lazy `import()`.
  *
  *   node scripts/check-browser-node-imports.mjs --allow node:http meta.json [...]
  *
@@ -15,6 +15,13 @@
  * that for every `node:` built-in and leaves only an unquoted `// node:util`
  * comment behind).
  *
+ * `--allow` admits a specifier only as a `dynamic-import`, read from each
+ * metafile import's `kind`. `--external:node:*` hides the difference that
+ * matters: a browser bundler that externalises nothing (Angular's application
+ * builder) leaves a caught `import("node:http")` alone but fails outright on a
+ * static `import "node:http"` or a `require("node:http")`. An allowlisted
+ * specifier reached any other way therefore fails the gate.
+ *
  * `node:http` is allowlisted by the release gate on purpose: it is core's
  * `listen()`, imported lazily on a branch a browser never takes (#395).
  */
@@ -22,7 +29,8 @@ import { readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 
 const USAGE =
-  "Usage: check-browser-node-imports.mjs [--allow <specifier>]... <metafile>...";
+  "Usage: check-browser-node-imports.mjs [--allow <specifier>]... <metafile>...\n" +
+  "  --allow <specifier>  accept <specifier> when every import of it is a dynamic import()";
 
 function parseArgs(argv) {
   const allowed = new Set();
@@ -56,9 +64,13 @@ function isNodeBuiltin(specifier) {
   );
 }
 
-/** Every external Node built-in the bundle described by `metafile` imports. */
+/**
+ * Every external Node built-in the bundle described by `metafile` imports,
+ * sorted by specifier, with every import kind (`import-statement`,
+ * `require-call`, `dynamic-import`, ...) it is reached through.
+ */
 function nodeImports(metafile) {
-  const found = new Set();
+  const found = new Map();
   const outputs = metafile?.outputs;
   if (typeof outputs !== "object" || outputs === null) {
     throw new Error("not an esbuild metafile: no outputs");
@@ -66,11 +78,26 @@ function nodeImports(metafile) {
   for (const output of Object.values(outputs)) {
     for (const imported of output?.imports ?? []) {
       if (imported?.external === true && isNodeBuiltin(imported.path)) {
-        found.add(imported.path);
+        const kinds = found.get(imported.path) ?? new Set();
+        kinds.add(String(imported.kind ?? "unknown"));
+        found.set(imported.path, kinds);
       }
     }
   }
-  return [...found].sort();
+  return [...found.keys()]
+    .sort()
+    .map((path) => ({ path, kinds: [...found.get(path)].sort() }));
+}
+
+/**
+ * Why `imported` breaks a browser build, or `undefined` when it does not: an
+ * allowlisted specifier reached only through `import()`.
+ */
+function violation({ path, kinds }, allowed) {
+  if (!allowed.has(path)) return `${path} (${kinds.join(", ")})`;
+  const eager = kinds.filter((kind) => kind !== "dynamic-import");
+  if (eager.length === 0) return undefined;
+  return `${path} (${eager.join(", ")}; allowlisted only as a dynamic import)`;
 }
 
 function main() {
@@ -78,18 +105,21 @@ function main() {
   const failures = [];
   for (const path of metafiles) {
     const imports = nodeImports(JSON.parse(readFileSync(path, "utf8")));
-    const unexpected = imports.filter((specifier) => !allowed.has(specifier));
+    const unexpected = imports
+      .map((imported) => violation(imported, allowed))
+      .filter((reason) => reason !== undefined);
     if (unexpected.length > 0) {
       failures.push(`${path}: ${unexpected.join(", ")}`);
     } else {
+      const specifiers = imports.map((imported) => imported.path);
       console.log(
-        `${path}: Node imports ${imports.length === 0 ? "none" : imports.join(", ")} (allowed)`,
+        `${path}: Node imports ${specifiers.length === 0 ? "none" : `${specifiers.join(", ")} (dynamic, allowed)`}`,
       );
     }
   }
   if (failures.length > 0) {
     console.error(
-      `Browser bundle imports Node built-ins outside the allowlist [${[...allowed].join(", ")}]:\n  ${failures.join("\n  ")}`,
+      `Browser bundle imports Node built-ins outside the dynamic-import allowlist [${[...allowed].join(", ")}]:\n  ${failures.join("\n  ")}`,
     );
     process.exit(1);
   }

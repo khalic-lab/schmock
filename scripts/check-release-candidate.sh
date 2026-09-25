@@ -321,8 +321,9 @@ echo "[types-ts56 1/1] Compiling the Core declaration entry with TypeScript 5.6"
 
 # Both browser stages bundle with esbuild, `--platform=browser`, and every
 # `node:*` specifier external, then read the esbuild metafile: each surviving
-# `node:` import is listed there, and the gate fails on any not allowlisted. A
-# BARE built-in (`path`, `util`, `fs`) arrives only through a dependency's
+# `node:` import is listed there with its import kind, and the gate fails on any
+# not allowlisted, and on an allowlisted one reached other than through a lazy
+# `import()`. A BARE built-in (`path`, `util`, `fs`) arrives only through a dependency's
 # CommonJS `require`, which esbuild refuses to resolve, so it fails the bundle.
 #
 # Not `bun build`: Bun's browser target inlines a polyfill for every `node:`
@@ -330,9 +331,13 @@ echo "[types-ts56 1/1] Compiling the Core declaration entry with TypeScript 5.6"
 # and turns an unresolvable CommonJS `require` into a shim that throws only when
 # called.
 #
-# `node:http` is allowlisted: it is core's `listen()`, imported lazily on a
-# branch a browser never takes (#395), and pinned the same way by
-# packages/openapi/src/browser-bundle.test.ts.
+# `node:http` is allowlisted as a dynamic import only: it is core's `listen()`,
+# imported lazily on a branch a browser never takes (#395). `--external:node:*`
+# would let a static `import "node:http"` through, but Angular's application
+# builder externalises nothing and fails on one, so the gate checks the kind.
+# packages/openapi/src/browser-bundle.test.ts covers the same case the other
+# way: it bundles with no externals at all, and esbuild leaves `node:http`
+# external only because core's `import()` carries its own rejection handler.
 BROWSER_NODE_IMPORT_ALLOWLIST=(--allow node:http)
 
 echo "[browser 1/2] Bundling the validation candidate with esbuild for a browser target"

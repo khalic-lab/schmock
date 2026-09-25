@@ -14,7 +14,7 @@ import { join, resolve } from "node:path";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
 import { createViteServer } from "vitest/node";
-import { distJsSize } from "../../../../benchmarks/bundle-size";
+import { distJsSize, sourceSize } from "../../../../benchmarks/bundle-size";
 import { createParamRouteLookup } from "../../../../benchmarks/handle-throughput";
 
 const feature = await loadFeature("../../features/review-tooling.feature");
@@ -51,15 +51,27 @@ function writeStub(binDir: string, name: string, body: string): void {
   chmodSync(path, 0o755);
 }
 
-/** An esbuild metafile with one output whose externals are `externals`. */
-function metafileWithExternals(externals: string[]): string {
+/** One external import of an esbuild metafile output. */
+interface ExternalImport {
+  path: string;
+  kind: "dynamic-import" | "import-statement" | "require-call";
+}
+
+/**
+ * An esbuild metafile with one output whose externals are `externals`. A bare
+ * specifier is a lazy `import()`, which is how core reaches `node:http`.
+ */
+function metafileWithExternals(
+  externals: Array<string | ExternalImport>,
+): string {
   return JSON.stringify({
     inputs: {},
     outputs: {
       "bundle.js": {
-        imports: externals.map((path) => ({
-          path,
-          kind: "dynamic-import",
+        imports: externals.map((external) => ({
+          ...(typeof external === "string"
+            ? { path: external, kind: "dynamic-import" }
+            : external),
           external: true,
         })),
       },
@@ -108,7 +120,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   // ── #115: the browser gate reads esbuild metafiles, not bundle text ──────
 
   function gateScenario(): {
-    givenMetafile: (externals: string[]) => void;
+    givenMetafile: (externals: Array<string | ExternalImport>) => void;
     check: () => void;
     result: () => CommandResult;
   } {
@@ -173,6 +185,58 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       Then("the gate passes", () => {
         expect(gate.result().stderr).toBe("");
         expect(gate.result().exitCode).toBe(0);
+      });
+    },
+  );
+
+  // A static `import "node:http"` passes esbuild's `--external:node:*` but
+  // fails Angular's builder, which externalises nothing: only a caught
+  // `import()` survives there.
+  Scenario(
+    "The browser gate rejects a static import of an allowlisted built-in",
+    ({ Given, When, Then }) => {
+      const gate = gateScenario();
+
+      Given(
+        'an esbuild metafile whose bundle imports "node:http" statically as an external',
+        () =>
+          gate.givenMetafile([{ path: "node:http", kind: "import-statement" }]),
+      );
+
+      When(
+        'I check it with the browser Node-import gate allowing only "node:http"',
+        () => gate.check(),
+      );
+
+      Then('the gate fails and names "node:http" as a static import', () => {
+        expect(gate.result().exitCode).toBe(1);
+        expect(gate.result().stderr).toContain("node:http (import-statement");
+      });
+    },
+  );
+
+  Scenario(
+    "The browser gate rejects an allowlisted built-in imported both lazily and statically",
+    ({ Given, When, Then }) => {
+      const gate = gateScenario();
+
+      Given(
+        'an esbuild metafile whose bundle imports "node:http" both dynamically and through require',
+        () =>
+          gate.givenMetafile([
+            "node:http",
+            { path: "node:http", kind: "require-call" },
+          ]),
+      );
+
+      When(
+        'I check it with the browser Node-import gate allowing only "node:http"',
+        () => gate.check(),
+      );
+
+      Then('the gate fails and names "node:http" as a require call', () => {
+        expect(gate.result().exitCode).toBe(1);
+        expect(gate.result().stderr).toContain("node:http (require-call");
       });
     },
   );
@@ -591,6 +655,36 @@ exit 0`,
 
       Then("only the JS file's bytes are counted", () => {
         expect(measured).toBe(120);
+      });
+    },
+  );
+
+  Scenario(
+    "The bundle-size benchmark leaves test helpers out of the source size",
+    ({ Given, When, Then }) => {
+      let src = "";
+      let measured = -1;
+
+      Given(
+        "a src directory with a module, a test, a step file and a test-utils helper",
+        () => {
+          src = mkdtempSync(join(tmpdir(), "schmock-source-size-"));
+          cleanup.push(src);
+          mkdirSync(join(src, "steps"));
+          writeFileSync(join(src, "index.ts"), "x".repeat(100));
+          writeFileSync(join(src, "index.test.ts"), "t".repeat(1000));
+          writeFileSync(join(src, "steps", "a.steps.ts"), "s".repeat(1000));
+          // packages/faker/src/test-utils.ts is imported only by tests.
+          writeFileSync(join(src, "test-utils.ts"), "u".repeat(1000));
+        },
+      );
+
+      When("the bundle-size benchmark measures its source", () => {
+        measured = sourceSize(src);
+      });
+
+      Then("only the module's bytes are counted", () => {
+        expect(measured).toBe(100);
       });
     },
   );

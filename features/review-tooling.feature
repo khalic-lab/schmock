@@ -13,6 +13,16 @@ Feature: Review fixes for release and developer tooling
     When I check it with the browser Node-import gate allowing only "node:http"
     Then the gate passes
 
+  Scenario: The browser gate rejects a static import of an allowlisted built-in
+    Given an esbuild metafile whose bundle imports "node:http" statically as an external
+    When I check it with the browser Node-import gate allowing only "node:http"
+    Then the gate fails and names "node:http" as a static import
+
+  Scenario: The browser gate rejects an allowlisted built-in imported both lazily and statically
+    Given an esbuild metafile whose bundle imports "node:http" both dynamically and through require
+    When I check it with the browser Node-import gate allowing only "node:http"
+    Then the gate fails and names "node:http" as a require call
+
   Scenario: The browser gate treats a bare built-in as a Node import
     Given an esbuild metafile whose bundle imports "util" as an external
     When I check it with the browser Node-import gate allowing only "node:http"
@@ -60,3 +70,8 @@ Feature: Review fixes for release and developer tooling
     Given a dist directory with a JS file, a declaration, a declaration map and a source map
     When the bundle-size benchmark measures its JavaScript
     Then only the JS file's bytes are counted
+
+  Scenario: The bundle-size benchmark leaves test helpers out of the source size
+    Given a src directory with a module, a test, a step file and a test-utils helper
+    When the bundle-size benchmark measures its source
+    Then only the module's bytes are counted
