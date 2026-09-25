@@ -25,7 +25,12 @@ function App() {
 }
 ```
 
-`SchmockProvider` patches `globalThis.fetch` on mount and restores it on unmount. Any client that uses `globalThis.fetch` — including React Query or SWR when configured with fetch — is intercepted automatically. Clients using another transport are not intercepted. The installer commits before descendant layout effects, so a child may safely fetch from `useLayoutEffect` on its first mount. Rendering on the server installs nothing: without a DOM the provider only supplies the mock through context.
+`SchmockProvider` patches `globalThis.fetch` while it renders and restores it on unmount. Any client that uses `globalThis.fetch` — including React Query or SWR when configured with fetch — is intercepted automatically. Clients using another transport are not intercepted. The installer commits before descendant layout effects, so a child may safely fetch from `useLayoutEffect` on its first mount. Rendering on the server installs nothing: without a DOM the provider only supplies the mock through context.
+
+The DOM check runs when the provider renders and commits, not when the module
+is imported. A test that registers jsdom or happy-dom after its hoisted imports
+still intercepts. Environments with no `document` at all (React Native,
+`react-test-renderer` under Node) install nothing, by design.
 
 If another library replaces `globalThis.fetch`, a later Schmock provider wraps
 that current implementation as its passthrough boundary. Cleanup never
@@ -36,7 +41,16 @@ overwrites a third-party replacement it no longer owns.
 The provider takes an interception lease per mounted provider, and a mock can
 back several leases at once. Nesting a provider inside another provider for the
 same mock is allowed, as is `renderWithSchmock({ mock })` under an outer
-provider — both install, and neither disturbs the other.
+provider.
+
+Every lease of the same mock applies its own `baseUrl` and `beforeRequest`.
+The mock is then asked each distinct resulting request (method and path) once,
+newest lease first. An outer provider whose `beforeRequest` strips `/api`
+therefore keeps serving its routes under a nested provider or
+`renderWithSchmock({ mock })`. When two leases produce the same method and
+path, the newest lease's `passthrough`, `beforeResponse` and `errorFormatter`
+apply to it. An older `passthrough: false` lease does not turn a newer
+`passthrough: true` lease's miss into a 404.
 
 Changing `options` (including a fresh inline `beforeRequest` on every render)
 reconfigures the existing lease in place; it does not re-register it. The
@@ -50,7 +64,18 @@ history, plugins, and listeners but preserves the provider's explicit
 interception lease. Re-register routes on the same mock without remounting the
 provider.
 
-> **Strict Mode:** In React 18+ development mode, components mount → unmount → remount. `SchmockProvider` handles this correctly (it restores fetch on unmount and re-intercepts on remount), but there is a brief window between unmount and remount where fetch is unpatched. If you see intermittent failures in Strict Mode, this is why — they won't occur in production builds.
+### Render-time interception
+
+`SchmockProvider` takes its interception lease while it renders, so a fetch
+started during render is intercepted on the first mount. This covers Suspense
+data fetching (TanStack `useSuspenseQuery`, SWR with `suspense`, `use()` over a
+promise created in render), and `renderWithSchmock` gets the same guarantee.
+
+> **Strict Mode:** The provider holds exactly one lease under `StrictMode`. A render that React discards without committing (a suspended first mount, a render that throws) releases its lease at the next microtask.
+
+One gap remains. In a time-sliced (transition) render, a fetch started in a
+later render slice, before the provider commits, can be missed. If you depend
+on that case, call `mock.intercept()` before the first render.
 
 ## Options
 
@@ -89,6 +114,10 @@ When `true` (default), requests that don't match any Schmock route are forwarded
 
 Only intercept requests whose pathname starts with this string. Non-matching requests go straight to real `fetch` without being processed.
 
+`baseUrl` only filters which requests are mocked. It does not strip the
+prefix, so register routes with the full path (`GET /api/users`). The Angular
+adapter's `baseUrl` strips the prefix instead.
+
 ### `errorFormatter`
 
 `errorFormatter(error)` formats core-marked internal exceptions — an error
@@ -110,7 +139,11 @@ invoked a second time.
 
 A hook that *throws* is handled separately: that response inherits no headers
 beyond `content-type: application/json`, and a formatter that throws while
-handling it propagates, rejecting the `fetch` call.
+handling it propagates, rejecting the `fetch` call. If the formatter returns a
+body the transport cannot serialize (a `BigInt`, a circular object, an
+`undefined` leaf), the response falls back to a 500
+`{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }`, the same fallback
+the core-marked exception path uses.
 
 ## `useSchmock` Hook
 

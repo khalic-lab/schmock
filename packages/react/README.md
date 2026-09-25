@@ -13,13 +13,14 @@ bun add -d @schmock/react
 ## Usage
 
 ```tsx
+import type { ReactNode } from "react";
 import { schmock } from "@schmock/core";
 import { SchmockProvider } from "@schmock/react";
 
 const mock = schmock();
 mock("GET /users", [{ id: 1, name: "Alice" }]);
 
-export function App({ children }) {
+export function App({ children }: { children: ReactNode }) {
   return <SchmockProvider mock={mock}>{children}</SchmockProvider>;
 }
 ```

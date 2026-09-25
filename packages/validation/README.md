@@ -18,7 +18,8 @@ import { validationPlugin } from "@schmock/validation";
 
 const mock = schmock();
 
-mock("POST /users", ({ body }) => [201, body]).pipe(
+// Plugins apply to every route on the mock, not only to one route.
+mock.pipe(
   validationPlugin({
     request: {
       body: {
@@ -30,8 +31,16 @@ mock("POST /users", ({ body }) => [201, body]).pipe(
   }),
 );
 
+mock("POST /users", ({ body }) => [201, body]);
+
 // A body without `name` never reaches the generator — it returns 400.
 ```
+
+- `response.statuses` scopes response validation: `"2xx"`, or a list of
+  statuses. Without it, every response status is validated.
+- Header schema names are matched case-insensitively.
+- Query and header schemas can use `integer`, `number` and `boolean` types.
+  Values are coerced for validation only; routes still receive strings.
 
 ## Documentation
 

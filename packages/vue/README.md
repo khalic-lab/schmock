@@ -1,6 +1,6 @@
 # @schmock/vue
 
-Vue 3 adapter for Schmock — a plugin and a composable that intercept `fetch`.
+Vue 3.5+ adapter for Schmock — a plugin and a composable that intercept `fetch`. It needs `app.onUnmount`, which Vue added in 3.5.
 
 Part of [Schmock](https://github.com/khalic-lab/schmock) — mock APIs from OpenAPI specs or hand-crafted routes.
 

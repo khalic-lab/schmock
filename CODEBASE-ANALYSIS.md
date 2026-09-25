@@ -81,7 +81,7 @@ Public-documentation reconciliation completed part of Phase 5:
 - README, contributor guidance, and the project sheet now inventory all 11 workspaces and distinguish historical product milestones from audit-remediation phases.
 - Core and adapter guides now document the completed state, reset, history, event, plugin, fetch, cancellation, response, server-lifecycle, and Node-ingress contracts.
 - Release guidance now documents reproducibility, packed consumers, standalone declarations, TypeScript 5.6, React cross-entry identity, `publint`, and `attw` checks.
-- Six of the 13 baseline documentation-drift rows are resolved. The table under "Documentation And API Drift" identifies the seven open rows; the separate schema-generator API promise also remains open.
+- All 13 baseline documentation-drift rows are resolved, and the schema-generator API promise was closed by removing the `JSONSchema7` arm from `Generator` (see "Documentation And API Drift", reconciled 2026-09-25).
 
 Phase 1 local remediation verification passed:
 
@@ -125,6 +125,8 @@ Refuted (no action needed): the claim that `reset()` retaining the interception 
 
 Open minor observations from the second pass, left for later phases: cancelling a non-awaited `listen()` can surface an unhandled rejection; plugin `uninstall()` observes pre- or post-wipe state depending on in-flight requests; interceptor passthrough reconstructs the request rather than forwarding the caller's original arguments; `assertDeclaredTargets` skips the CLI `bin` entry; a failed watcher reload still leaves `cliServer` pointing at a closed server (already tracked under M28/Phase 4); and the async-listener isolation test asserts only weakly.
 
+> **Status note (2026-09-25 review):** `uninstall()` now receives a read-only, expiring facade, so it can no longer pipe plugins or register routes into the new generation, and re-piping a plugin after `reset()` runs its pending uninstall before the new install. What `uninstall()` reads still depends on timing. The M3/M7 admission snapshot is now copy-on-write (O(1) per request instead of copying the route tables), and `reset()` replaces the route containers instead of clearing them in place.
+
 ### Review of the repairs themselves
 
 The repairs above were then adversarially reviewed in turn, with runtime probes on Node 26 and Bun 1.3 driving the real interceptor, the real adapters, and Express 5. Three follow-on defects were confirmed and fixed:
@@ -139,6 +141,8 @@ The same review cleared the riskiest first-round repairs with direct probes: the
 
 Minor observations from this round, recorded for later: `normalizeResponse` now strips a user-set `Content-Length` from ordinary (non-HEAD/304) responses, which lands unevenly across transports (Express recomputes it, the core/CLI servers fall back to chunked, the interceptor emits neither) and costs Range/206 responses their declared length; the 5 s rejected-request drain cap coincides with Vitest's default test timeout; a string body under an explicit `application/json` content type is emitted verbatim even when it is not valid JSON (the documented trade-off of the double-encoding fix); a `Uint8Array` subclass with an incompatible `Symbol.species` now surfaces as a 500 instead of being copied; and `writeRejectedSchmockResponse` resolves the handler promise while the response can stay open for up to five seconds, so in-flight accounting and `server.close()` treat the request as finished early.
 
+> **Status note (2026-09-25 review):** the core/CLI chunked fallback is gone. `writeSchmockResponse` now declares `Content-Length` for every response with a body; a user-set `Content-Length` is still stripped by `normalizeResponse` and replaced by the computed one.
+
 ## Phase 3 Remediation And Review (OpenAPI)
 
 Phase 3 was implemented in this worktree on 2026-08-10 as seven ordered clusters that make the OpenAPI plugin's operations transactional and owned. The findings below still describe revision `3f64677`; this section records the delta.
@@ -147,13 +151,13 @@ Phase 3 was implemented in this worktree on 2026-08-10 as seven ordered clusters
 |---|---|---|
 | M10 | Implemented | Each `openapi()` call mints one owner token stamped onto every route it registers; `beforeRequest`/`process` bail on the first statement for any route the plugin did not register, so a manual route or a second plugin's routes are never secured, negotiated, content-checked, Prefer-handled, callback-dispatched or mutation-settled against a foreign spec. |
 | M11 | Implemented (breaking) | CRUD registration iterates one descriptor per declared method, so only the methods a spec declares on an item path exist — a PUT-only spec no longer synthesizes a PATCH — and PUT/PATCH each keep their own status, response schema, declared headers and error schema. HEAD/OPTIONS/POST-on-item and param-name-mismatch paths route to non-CRUD registration instead of 404-ing. |
-| M12 | Implemented | Create/update/delete stage their write and commit only once the plugin knows the final status; a response ≥ 400 (`Prefer: code=4xx`, a 406 from negotiation, a response-validation failure) discards it. Commit closures re-read by key and id so a seeder array swap or a concurrent shift cannot corrupt the write. |
+| M12 | Implemented | Create/update/delete stage their write and commit only once the plugin knows the final status; a response ≥ 400 (`Prefer: code=4xx`, a 406 from negotiation, a response-validation failure) discards it. Commit closures re-read by key and id so a seeder array swap or a concurrent shift cannot corrupt the write, and update commits re-merge the request's fields onto the row as it is at commit time, so concurrent updates to one item no longer lose fields (review 2026-09-25 #12/#141). Scope of the rollback (2026-09-25): staged writes are discarded when openapi's own `process()` returns ≥ 400 or when any `Prefer` directive applied. A rejection or throw from a plugin piped after openapi does not roll the write back; that needs a core post-pipeline hook, tracked as review finding 39. |
 | M13 | Implemented (breaking) | Collections are keyed by the resource's full collection path and per parent id, so same-named collections at different paths and nested collections under different parents are isolated. |
 | M14 | Implemented (breaking) | Schema overrides apply before detection and seeding; created bodies are generated from the declared contract then overlaid with the request body (undeclared fields dropped only under `additionalProperties: false`); identifiers follow the declared schema (`id`, string/uuid) rather than the path parameter, minted deterministically. |
 | M15 | Implemented | The normalizer backtracks with a stack + memo so a component referenced twice populates both slots; `nullable: true` becomes validation-visible null; `@schmock/validation` accepts schmock's generation markers. |
 | M16 | Implemented (breaking) | External `$ref`s are opt-in (`refs: { external }`), resolve spec-relative, and are blocked for loopback/link-local/RFC1918 hosts with a hardened `fetch`; `strict` validates the document; `basePath`/`servers[].url` are documented as deliberately not applied and removed from the exported type. |
 | M17 | Implemented | Per-media-type request schemas drive a 415 (behind `validateRequests`); Swagger 2 `consumes`/`produces` are honored. |
-| M18 | Implemented (breaking) | Seed and generation budgets reject at construction; response-schema generation failures return a structured 500 instead of a laundered `200 {}`; an operation with no 2xx answers its lowest declared status with that entry's schema and headers. Empty/untyped response schemas (`schema: {}`, a property with no `type`, an `array` with no `items`) that used to launder to `200 {}` now surface as a coded 500. |
+| M18 | Implemented (breaking) | Seed and generation budgets reject at construction; response-schema generation failures return a structured 500 instead of a laundered `200 {}`; an operation with no 2xx answers its lowest declared status with that entry's schema and headers. Empty/untyped response schemas (`schema: {}`, a property with no `type`, an `array` with no `items`) that used to launder to `200 {}` now surface as a coded 500. The byte/character budget half was delivered on 2026-09-25: `@schmock/faker` charges an aggregate `MAX_GENERATED_CHARS` budget, reported as `generated_chars` (DECISIONS.md D39). |
 | M19 | Implemented (breaking) | Callback payloads come from the callback operation's own declared request body; static routes emit their declared response headers; one `buildResponse` helper assembles every CRUD and static exit. |
 
 A subsequent adversarial review (Claude, 2026-08-10) put the Phase 3 diff through eight dimension reviewers with per-finding refutation and confirmed nine defects; the six actionable ones were fixed in this worktree, three were deferred with recorded reasons:
@@ -207,6 +211,8 @@ The three refuted findings were left unchanged: a claimed Angular header/body co
 
 Recorded for Phase 5, deliberately not fixed here: the fetch interceptor invokes `errorFormatter` only from its catch block, so core-marked exception 500s reach React/Vue unformatted despite the docs advertising parity with Express; Angular's `headersToObject` takes only the first value of a repeated header (`getAll().join(", ")` is the faithful form); a CLI reload never retires the discarded mock's plugins (pre-existing leak, now more visible); the watcher follows the spec's inode so an atomic editor save silently un-arms it (parent-directory watching is the fix); a second SIGINT is absorbed silently with no user feedback; a post-listen server `error` event is swallowed by the permanently attached listen-time listener; and one lease-dedup consequence worth knowing — an older `passthrough: false` lease behind a newer `passthrough: true` lease on the same mock now sends an unmatched fetch to the network instead of 404-ing, because only the newest lease of the owner is consulted.
 
+> **Status note (2026-09-25 review):** lease de-duplication is now keyed on the effective method and path after each lease's `baseUrl` filter and `beforeRequest`, so an older lease whose hook rewrites the request is still consulted. The `passthrough: false` shadowing trade-off remains only for identical effective requests.
+
 ## Phase 5 Remediation And Review (Data Plugins, Minor Findings, Drift, Packaging)
 
 Phase 5 was implemented in this worktree on 2026-08-10 and closes the remainder of the report: the four data-plugin majors, every minor finding, both Phase 3 deferrals reversed, the documentation-drift rows, and the packaging, dead-code and CI items. Nine scouts first re-verified 85 candidate items against the current tree; 70 were still broken and 15 had already been closed by earlier phases, and the 70 were implemented as three conflict-ordered waves. The findings below still describe revision `3f64677`; this section records the delta.
@@ -229,7 +235,7 @@ An adversarial review of the Phase 5 diff (Claude, 2026-08-10) put it through ei
 | Major | A request header literally named `__proto__` escaped header validation entirely: the plugin built its normalized record by assignment, which reaches the prototype setter instead of creating an own property, so AJV's `ownProperties` check never saw it. | Built with `Object.fromEntries`, which creates a real data property. Tests construct the record the same way and assert `Object.hasOwn` first — an object-literal `__proto__:` key would have made them vacuous. |
 | Major | `docs/api.md` documented a `details[].path` field the validation plugin never emits; the real shape is AJV's `ErrorObject` with `instancePath`. | Replaced with the emitted shape, verified by probe, including the `bodyRequired` exception (no `schemaPath`, no `params`) and a note that `@schmock/openapi` reshapes to `{ path }`. |
 | Major | `docs/api.md` still claimed unrecovered processing errors are not recorded in history; the builder records a matched route whose generator or plugin threw, with the 500 in the record. | Corrected to match `docs/getting-started.md`. |
-| Major | Schema-override keys had to use Express `:param` paths, but the newly documented grammar accepted `{param}` — and the rejection said the spec declares no such operation, pointing at the spec rather than at the spelling. | The key's path runs through the same `convertPathTemplate` that produced the parsed route, so both spellings resolve to one operation. The unknown-route message now names the user's verbatim path and, only when the spellings differ, the Express form it was looked up as. |
+| Major | Schema-override keys had to use Express `:param` paths, but the newly documented grammar accepted `{param}` — and the rejection said the spec declares no such operation, pointing at the spec rather than at the spelling. | The key's path runs through the same `convertPathTemplate` that produced the parsed route, so both spellings resolve to one operation. The unknown-route message now names the user's verbatim path and, only when the spellings differ, the Express form it was looked up as. Since 2026-09-25 the conversion itself lives in `packages/openapi/src/path-template.ts` (`convertPathTemplate` in `parser.ts` delegates to it): it escapes literal colons as `\:` and quotes names outside core's plain grammar (`{user.id}` → `:"user.id"`), and `parseSpec` skips templates core cannot express, with a warning. |
 | Major | A response `content` key carrying a media-type parameter (`application/json; charset=utf-8`) made every request with an explicit `Accept` return an unsatisfiable 406: the negotiator compared a parameter-stripped range against the raw available string. | Normalization moved inside the specificity comparison; `negotiateContentType` still returns the raw key, because both downstream maps are keyed raw. Tests assert the body and the `content-type`, not just the status, so a match that lost the schema would still fail. |
 | Major | The Express hook-ownership short-circuit was missing from the catch path, so a hook that threw after sending had its committed response ended on its behalf by the formatter's last-resort fallback — truncating a partially written body — or handed live to `next(error)`. | The same `headersSent || writableEnded` guard the two in-band exits use. Three regression tests, including a real express-and-supertest hook that writes, schedules an `end` and then throws. |
 | Major | The CLI README's quickstart failed as written: `--seed` takes a manifest path, not a number. | Corrected to `--seed-random 42` and run verbatim, with a separate `--seed ./seed.json` example so the two flags cannot be confused again. |
@@ -722,6 +728,8 @@ Generated defaults, enum objects, override objects/arrays, and single-expression
 
 The package externalizes `json-schema-faker`, whose extension/format registries are module-global. Consumer calls to its global registration API can change Schmock generation despite per-call Faker instances.
 
+> **Status note (2026-09-25 review):** the package no longer externalizes json-schema-faker. `build:lib` bundles it into `dist/index.js`, and both `json-schema-faker` and `json-schema-faker-private` (now `npm:json-schema-faker@0.6.3`, no longer a tarball URL) are devDependencies.
+
 Smallest safe fix: provide a deterministic reference date, clone non-primitive assigned/generated values, and isolate or encapsulate JSF registries rather than relying on shared module globals.
 
 ### M22. Query pagination and property access accept invalid states
@@ -839,14 +847,14 @@ These are actionable but lower priority than the findings above.
 | Location | Finding | Direction |
 |---|---|---|
 | `packages/core/src/route-matcher.ts:32-44` | Static routes accept trailing slashes but parameterized routes do not, while duplicate detection treats them as equivalent. | Canonicalize route and request paths once. |
-| `packages/core/src/parser.ts:23-35` | The documented strict `METHOD /path` grammar accepts `GET users`. | Require a leading slash and refine `RouteKey`. |
+| `packages/core/src/parser.ts:23-35` | The documented strict `METHOD /path` grammar accepts `GET users`. | Require a leading slash and refine `RouteKey`. Grammar note (2026-09-25): route keys are now tokenized, not split. Tokens are `:name` (`[A-Za-z0-9_-]`), a trailing hyphen run before another parameter read as a separator (`:from-:to`), quoted `:"name"`, and escaped `\:`; adjacent parameters are rejected. In a multi-parameter segment every capture except the last excludes the next literal's first character, which keeps matching linear and closes the multi-parameter ReDoS (DECISIONS.md D37). |
 | `packages/core/src/route-matcher.ts:63-66` | Parameter names such as `__proto__` disappear when assigned into `{}`. Similar loss exists in query parsing. | Use null-prototype records or own-property definitions. |
 | `packages/core/src/builder.ts:662-671` | Fractional, negative, `NaN`, and infinite history limits are not validated. | Require a finite non-negative integer at construction. |
 | `packages/core/src/helpers.ts:46-57` | `paginate()` produces nonsensical slices/pages for invalid numeric options. | Normalize or reject public numeric inputs. |
 | `packages/core/src/errors.ts:1-3` | Non-Error throws lose their useful value as `Unknown error`. | Preserve strings and safely stringify other values. |
 | `packages/core/src/response-parser.ts:12-27` | Any domain object with numeric `status` and `body` is treated as an undocumented response envelope. | Export/document an explicit envelope or remove public ambiguity. |
 | `packages/core/src/response-parser.ts:57-83` | Tuple header objects are retained and can be mutated by response parsing or later consumers. | Clone headers before mutation/return. |
-| `packages/core/src/constants.ts:63-72` | A three-element tuple is accepted without validating the header element; `[200, [], null]` becomes a core 500. | Validate tuple headers in the type guard. |
+| `packages/core/src/constants.ts:63-72` | A three-element tuple is accepted without validating the header element; `[200, [], null]` becomes a core 500. | Validate tuple headers in the type guard. Resolved 2026-09-25: `isStatusTuple` types the third element as `unknown`, so it no longer promises string-record headers. |
 | `packages/core/src/http-helpers.ts:84-90` | MIME matching is case-sensitive and over-permissive (bare substring match on `json`). **Verification correction:** media-type parameters such as `; charset=` do not break the check; the original "parameter-sensitive" wording was wrong. | Normalize the base media type. |
 | `packages/core/src/builder.ts:645-723` | Matched generator/plugin failures are not recorded in history and use global delay instead of the matched route override. | Use one matched-request finalizer for success and failure. |
 | `packages/core/src/interceptor.ts:101-117`, `packages/core/src/route-matcher.ts:56-68` | Unicode/literal path behavior differs between direct handling and encoded transport URLs; captured params remain percent-encoded. | Define one encoded path representation and decode captures safely. |
@@ -874,7 +882,7 @@ These are not necessarily defects under the current development-mock contract, b
 
 | Risk | Current behavior |
 |---|---|
-| Concurrent state updates | Shared state is mutable with no transaction/atomic update API; async read-await-write generators can lose updates. |
+| Concurrent state updates | Shared state is mutable with no transaction/atomic update API; async read-await-write generators can lose updates. The OpenAPI update generator no longer does (2026-09-25): it re-merges at commit time. The remaining last-writer-wins cases there are a PATCH racing a DELETE (200, no write) and concurrent DELETEs (both 204). |
 | Collection growth | OpenAPI CRUD collections and response bodies have no size/retention policy. |
 | History memory | Core history remains intentionally unbounded unless the caller opts into a count cap; the cap does not account for body bytes. |
 | Route scale | Parameterized matching is linear and duplicate registration is linear, so bulk registration can become quadratic during setup. |
@@ -1012,22 +1020,22 @@ Locations and drift descriptions refer to the reviewed baseline. The final colum
 | Baseline location | Baseline drift | Current worktree status |
 |---|---|---|
 | `docs/angular.md:16-24` | Registers `/api/users` while `baseUrl: "/api"` strips the prefix and routes to `/users`. | Resolved: the guide registers `/users`. |
-| `docs/testing.md:203-215` | Repeats the Angular path mismatch and uses the unsupported runtime-generated `useClass` setup. | Open. |
-| `docs/api.md:502-510` | Documents `useClass` even though implementation deliberately returns `useFactory`. | Open. |
+| `docs/testing.md:203-215` | Repeats the Angular path mismatch and uses the unsupported runtime-generated `useClass` setup. | Resolved: `docs/testing.md:204-236` registers the route without the `/api` prefix, provides the interceptor with `useFactory`, and warns that `useClass` fails with NG0204. |
+| `docs/api.md:502-510` | Documents `useClass` even though implementation deliberately returns `useFactory`. | Resolved: `docs/api.md:815-826` documents the `useFactory` provider and the NG0204 reason. |
 | `docs/getting-started.md:145`, `docs/api.md:102` | Say `resetState()` restores initial values; implementation clears to `{}`. | Resolved: both guides document replacement with `{}` and caller-state preservation. |
-| `docs/api.md:244-250` | Documents synchronous `generateFromSchema`; implementation returns a Promise. | Open. |
-| `docs/api.md:355-363` | Documents optional Query options; implementation requires them and returns a plugin 500 when omitted on arrays. | Open. |
-| `docs/api.md:300-311` | Documents custom Faker schema keywords that are absent from public schema types and rejected by ordinary strict AJV. | Open. |
+| `docs/api.md:244-250` | Documents synchronous `generateFromSchema`; implementation returns a Promise. | Resolved: `docs/api.md:426-434` documents it as async, returning `Promise<unknown>`, with a `.rejects` note. |
+| `docs/api.md:355-363` | Documents optional Query options; implementation requires them and returns a plugin 500 when omitted on arrays. | Resolved: `queryPlugin()` with no options is an explicit pass-through, and `docs/api.md:626-657` documents `queryPlugin(options?)` with every section optional. |
+| `docs/api.md:300-311` | Documents custom Faker schema keywords that are absent from public schema types and rejected by ordinary strict AJV. | Resolved: `docs/api.md:508-525` introduces the `Schmock.Schema` type carrying the three keywords. |
 | `docs/react.md:28`, `docs/vue.md:25` | Claim axios or any HTTP library is intercepted; only libraries using `globalThis.fetch` are covered. | Resolved: both guides limit interception to clients using `globalThis.fetch`. |
 | `docs/vue.md:109-130` | Registers the same route twice; first-registration-wins means the empty-state example still returns Alice. | Resolved: each test registers exactly one route on a fresh mock. |
-| `examples/debug-example.ts:71-83` | Calls the route API without the required generator and expects Faker to synthesize one. | Open. |
-| `examples/content-type-example.ts:81-105` | Reads lowercase headers but direct calls pass title-case headers; output also reads the wrong header casing. | Open. |
+| `examples/debug-example.ts:71-83` | Calls the route API without the required generator and expects Faker to synthesize one. | Resolved: `examples/debug-example.ts` pipes `fakerPlugin` and comments the generator-less route as faker-filled. |
+| `examples/content-type-example.ts:81-105` | Reads lowercase headers but direct calls pass title-case headers; output also reads the wrong header casing. | Resolved: the example documents header lowercasing and its direct calls use lowercase `content-type` keys. |
 | `docs/cli.md:15-18` | Startup output does not match the implementation. | Resolved: startup output matches `run()`. |
 | `README.md:28-40` | Package table omits React, Vue, and the aggregate package. | Resolved: all 11 workspaces are listed. |
 
-Six baseline drift rows are resolved and seven remain open. The ambient `Generator` type issue below is separate and also remains open.
+All thirteen baseline drift rows are resolved (the last seven reconciled against the tree on 2026-09-25). The ambient `Generator` type issue below is separate and also resolved.
 
-The ambient `Generator` type includes `JSONSchema7`, but core treats schema objects as ordinary static data. Combined with the broken debug example, this is an API promise without an implementation. Either remove the schema branch or introduce an explicit schema-generator wrapper; heuristic object detection would be ambiguous.
+The ambient `Generator` type included `JSONSchema7`, but core treated schema objects as ordinary static data. Combined with the broken debug example, this was an API promise without an implementation. Resolved: the schema arm was removed, and `packages/core/schmock.d.ts` now declares `type Generator = GeneratorFunction | StaticData`.
 
 ## Recommended Remediation Order
 

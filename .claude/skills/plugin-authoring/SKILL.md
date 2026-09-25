@@ -10,22 +10,35 @@ argument-hint: "<plugin-name> <package>"
 
 ## Plugin Interface
 
-Defined in `packages/core/schmock.d.ts`:
+`packages/core/schmock.d.ts` is the source of truth. Read it before writing a
+plugin. The shape at the time of writing:
 
 ```typescript
 interface Plugin {
   name: string;           // Unique plugin identifier
   version?: string;       // Plugin version (semver)
 
-  process(context: PluginContext, response?: any): PluginResult | Promise<PluginResult>;
-
+  install?(instance: CallableMockInstance): void;
+  uninstall?(instance: CallableMockInstance): void;
+  beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>;
+  process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>;
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
 }
 ```
 
+- `install()` runs once when the plugin is piped. It must return synchronously;
+  a Promise-returning install leaves the plugin inactive. Do not keep the
+  scoped instance it receives.
+- `uninstall()` runs during `reset()`, after every request admitted with the
+  plugin has settled, in reverse registration order. It must be synchronous.
+- `beforeRequest()` runs before the route generator. Returning a response
+  short-circuits the generator; returning only a context passes request changes
+  into it.
+- `process()` runs after the generator and transforms its result.
+
 ## PluginContext
 
-Available in `process()` and `onError()`:
+Available in `beforeRequest()`, `process()` and `onError()`:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -35,9 +48,11 @@ Available in `process()` and `onError()`:
 | `params` | `Record<string, string>` | Route parameters (`:id` etc.) |
 | `query` | `Record<string, string>` | Query string parameters |
 | `headers` | `Record<string, string>` | Request headers |
-| `body` | `unknown` | Request body |
+| `body` | `unknown` (optional) | Request body |
 | `state` | `Map<string, unknown>` | Shared state between plugins for this request |
-| `routeState` | `Record<string, unknown>` | Route-specific state |
+| `requestShortCircuited` | `boolean` (optional) | `true` when a `beforeRequest` hook supplied the response |
+| `routeState` | `Record<string, unknown>` (optional) | Route-specific state |
+| `signal` | `AbortSignal` (optional, read-only) | Abort signal of the admitted request |
 
 ## PluginResult
 
@@ -50,17 +65,30 @@ interface PluginResult {
 
 ## Pipeline Behavior
 
-1. Plugins are called in order via `.pipe()`
-2. **First plugin to set `response`** in its `PluginResult` is the generator
-3. Subsequent plugins receive the response and can transform it
-4. If no plugin sets a response, the route's generator function is used
+Plugins are global to the mock instance. `.pipe()` always attaches to the
+instance, even when chained onto a route definition, so every plugin sees every
+route. Each request runs in this order:
+
+1. `beforeRequest` hooks, in `.pipe()` order. The first one that returns a
+   response rejects the request before the route generator runs, so route side
+   effects never happen.
+2. The route generator, unless a `beforeRequest` hook short-circuited it.
+3. `process` hooks, in `.pipe()` order. Each receives the generator's result
+   (or the short-circuit response) and may transform it. A plugin that fills in
+   missing data checks for an existing response first.
+
+Guards such as auth or request validation belong in `beforeRequest`. A guard in
+`process` runs after the generator, so it cannot stop route side effects.
 
 ```typescript
 const mock = schmock({});
-mock('GET /users', () => defaultData, {})
-  .pipe(authPlugin())    // Can reject unauthenticated requests
-  .pipe(cachePlugin())   // Can serve cached responses
-  .pipe(logPlugin());    // Can log but pass through
+
+// Plugins apply to every route on the mock.
+mock.pipe(authPlugin());    // beforeRequest: rejects unauthenticated requests
+mock.pipe(cachePlugin());   // beforeRequest: serves cached responses
+mock.pipe(logPlugin());     // process: logs and passes the response through
+
+mock('GET /users', () => defaultData);
 ```
 
 ## Error Handling
@@ -81,16 +109,16 @@ export function fakerPlugin(options: FakerPluginOptions): Plugin {
 
   return {
     name: "faker",
-    version: "1.0.1",
+    version: packageVersion, // imported from the package's package.json
 
-    process(context: PluginContext, response?: any) {
+    async process(context: PluginContext, response?: unknown) {
       // Pass through if another plugin already generated a response
       if (response !== undefined && response !== null) {
         return { context, response };
       }
 
       // Generate response from schema
-      const generatedResponse = generateFromSchema({ ... });
+      const generatedResponse = await generateFromSchema({ ... });
       return { context, response: generatedResponse };
     }
   };
@@ -139,7 +167,8 @@ Use `/plugin-authoring <name> <package>` to generate plugin boilerplate:
 1. Define the plugin's purpose and behavior in a `.feature` file (BDD-first!)
 2. Write step definitions
 3. Implement the plugin factory function
-4. Handle the "response already exists" case (pass-through or transform)
-5. Implement `onError` if the plugin needs error handling
-6. Add unit tests for complex internal logic
-7. Run `bun test:all` to verify
+4. Put request guards in `beforeRequest`, not `process`
+5. Handle the "response already exists" case (pass-through or transform)
+6. Implement `onError` if the plugin needs error handling
+7. Add unit tests for complex internal logic
+8. Run `bun test:all` to verify

@@ -146,6 +146,10 @@ describe('Petstore API', () => {
 })
 ```
 
+A file-path `spec` (`'./petstore.yaml'`), and any relative external `$ref`s
+it has with `refs: { external: true }`, is read from disk in jsdom and
+happy-dom test environments too, not fetched relative to `window.location`.
+
 ## Testing with Express
 
 Use `supertest` with the Express adapter:
@@ -361,6 +365,14 @@ bun run typecheck:bdd
 
 The root `typecheck` and CI typecheck jobs include this BDD gate automatically.
 
+Unit and BDD suites of every package resolve sibling `@schmock/*` imports to
+`../<pkg>/src` through `resolve.alias` in `vitest.config.ts` and
+`vitest.config.bdd.ts`, so they test source without a build. Only the tests
+that load `dist` by file path need `bun run build` first: `dist-shape.test.ts`
+in core and angular, and in openapi `browser-compat.test.ts`,
+`browser-bundle.test.ts`, `entry-parity.test.ts` and
+`steps/openapi-browser-build.steps.ts`.
+
 Package manifests, exports, build output, or release changes also require the
 packed release-candidate gate:
 
@@ -375,6 +387,12 @@ verifies clean/repeated build equality and stale-artifact removal, packs all
 declaration entries, compiles packed Core declarations with TypeScript 5.6,
 checks React root/testing context identity, exercises the CLI and browser
 bundle, runs the release-script tests, and runs `publint` plus `attw`.
+
+Both browser stages bundle with esbuild (`--platform=browser --external:node:*
+--metafile`) and run `scripts/check-browser-node-imports.mjs`, which fails on
+any external Node built-in outside the allowlist. The allowlist holds only
+`node:http`, core's lazy `listen()` import. A bare built-in such as `path` or
+`util` fails the esbuild bundle itself.
 
 ## Releasing
 

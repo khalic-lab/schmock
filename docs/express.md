@@ -137,12 +137,23 @@ discarding the formatted body. If
 `beforeResponse` rewrites an exception to a non-500 status, that response is
 sent as-is and the formatter is not called.
 
+### Query parameters
+
+By default the adapter re-reads `req.originalUrl` with the same parser as the
+CLI, so the mock sees the same query whatever `app.set('query parser', ...)`
+is. Keys stay literal (`filter[name]`, `sort[]`), and a repeated key resolves
+to its last value. Express 4's default `qs` "extended" parser therefore no
+longer turns `filter[name]=rex` into `[object Object]`. A custom
+`transformQuery` still receives `req.query` as Express parsed it.
+
 ## Response Behavior
 
 - Final statuses must be integers from 200 through 599.
 - HEAD, 204, 205, and 304 responses are sent without a body.
 - Ordinary response framing headers are adapter-owned. HEAD may retain an
   explicit representation `Content-Length`, and 304 headers are preserved.
+- Route headers are sent verbatim. A route's `content-type: application/json`
+  is not rewritten to `application/json; charset=utf-8`.
 - If the client disconnects, pending adapter-hook awaits settle early and core
   plugins, delays, and route generators receive an aborted signal. Adapter
   hooks do not receive the signal directly, and no response is written.

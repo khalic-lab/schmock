@@ -132,6 +132,8 @@ The operator reviewed the full type hygiene audit and instructed 'Fix ALL'. Scop
 
 Two `as any` casts in `faker/src/jsf-config.ts:30,40` were flagged as suspicious (json-schema-faker API boundary) but are included in the fix scope. Implementation started (all relevant files read), session ended before edits were applied.
 
+**Status (2026-09-25 review):** items 4–5 are partly closed. The response helpers now return literal status tuples (`notFound()` is `[404, object]`, `noContent()` is `[204, null]`), and `paginate` takes `readonly T[]`. Still open: an exported `SchmockErrorCode` union, a `ValidationErrorCode` union, and explicit return types for `SchmockProvider` and the Angular providers (`multi: true`).
+
 ### D30: BDD feature files refactored to eliminate redundancy; adapters restricted to framework-specific integration behavior (2026-04-04)
 
 After receiving the consolidated BDD quality audit across all 37 feature files, the operator instructed 'FIX ALL'. Audit identified: ~25 scenarios to remove (trivial, exact duplicates, tests of framework/language behavior rather than Schmock), ~12 to merge, ~15 to rewrite (weak assertions, vague titles, implementation-detail tests), ~5 to split (bloated multi-behavior scenarios). Key cross-file duplications identified: passthrough/baseUrl tested 4×, error status codes 5×, POST with JSON 3×, plugin pipeline 3×. The governing principle established: adapter feature files (angular-adapter, react-adapter, vue-adapter, express-adapter) must cover only framework integration concerns — HttpResponse wrapping, Provider lifecycle, middleware wiring — and must not re-test core routing, error handling, or response helpers already covered in core-owned feature files. developer-experience.feature to be stripped to genuine DX pitfalls only. Five parallel agents were launched to execute the changes.
@@ -165,8 +167,8 @@ Tier A scope shipped in this release:
 1. **I11 (validation, ajv-formats)** — silent trust violation: `format: "email"` silently passed any string. Added ajv-formats dep, called `addFormats(ajv)`. Two new BDD scenarios.
 2. **I2 (core, duplicate routes)** — warning + staticRoutes dedup already existed (D28), but `this.routes.push` still added duplicates. Now returns early. New BDD scenario asserts `getRoutes()` is deduped.
 3. **I4 (core, requestHistory cap)** — new `GlobalConfig.maxHistorySize` option, opt-in FIFO eviction; defaults to unbounded so existing users see no change. Technically a minor-version feature in strict semver but bundled per operator sign-off.
-4. **I5 (core, parser)** — `:name.json` no longer swallows `.json`; param names restricted to `[A-Za-z0-9_-]+`; pattern build is now split → escape literal segments → substitute capture groups. Two regression tests.
-5. **I10 (faker, validateSchema perf)** — full-tree checks (circular, depth, deep-nesting-with-arrays, array-size-limits) gated on `path === "$"`. Per-node checks remain on every recursion. Legacy `$ref="#"` error message preserved by gating it too.
+4. **I5 (core, parser)** — `:name.json` no longer swallows `.json`; param names restricted to `[A-Za-z0-9_-]+`; pattern build is now split → escape literal segments → substitute capture groups. Two regression tests. (Extended by D37.)
+5. **I10 (faker, validateSchema perf)** — full-tree checks (circular, depth, deep-nesting-with-arrays, array-size-limits) gated on `path === "$"`. Per-node checks remain on every recursion. Legacy `$ref="#"` error message preserved by gating it too. (The deep-nesting-with-arrays check is superseded by D39.)
 6. **I15 (openapi, AJV per plugin)** — replaced module-level AJV singleton with `BodyValidatorContext` factory. Each `openapi()` call gets its own instance + schema cache; multi-spec processes no longer collide on `$id`. New plugin test exercises two plugins sharing `$id`.
 7. **I14 (core, isStatusTuple ambiguity)** — documented `[200, 300]`-as-data ambiguity in constants.ts JSDoc and docs/api.md. No code change.
 
@@ -187,3 +189,41 @@ Tier B from the post-2.0.2 audit plan closed. Three items, all behavioural/test 
 Bumped to minor (not patch) because I3 changes behaviour for users who passed an origin-form `baseUrl` (previously silently ignored, now actually intercepts). I7 is a strict expansion — formatter sees strictly more error paths than before.
 
 All AUDIT.md IMPORTANT items (I1–I15) are now resolved. No items deferred to 3.x.
+
+### D37: Route-key grammar follow-up to I5 (2026-09-25)
+
+The 2026-09-25 review found that adjacent captures in one path segment collapsed into each other, which mis-routed custom methods and let a long segment backtrack polynomially. The grammar was extended rather than replaced:
+
+1. Plain parameter names keep the D35 charset `[A-Za-z0-9_-]`.
+2. Hyphens that end a name directly before another parameter are the separator between the two, so `:from-:to` reads as in Express. A hyphen inside a name (`:user-id`) still belongs to it.
+3. `:"name"` quotes a name outside the plain grammar, and `\:` is a literal colon. Both follow path-to-regexp v8. `@schmock/openapi` uses them to route templates such as `{job}:cancel` and `{user.id}`.
+4. Two parameters with nothing between them throw a `RouteParseError`.
+5. In a multi-parameter segment every capture except the last excludes the next literal's first character, so the segment splits at the first separator (Express's lazy behaviour) instead of the old greedy split, and matching cannot backtrack polynomially.
+
+### D38: Unsatisfiable faker schemas pass through unvalidated (2026-09-25)
+
+Schemas that no value can satisfy — `allOf` with disjoint types, `minimum` above `maximum`, `minLength` above `maxLength` — are passed to json-schema-faker as they are. It returns a best-effort value that violates the schema. `validateSchema` checks structure and resource limits, not satisfiability. Two tests in `packages/faker/src/advanced-features.test.ts` pin this pass-through explicitly; they do not claim the output is valid. Extending the M20 fail-loud policy to these schemas (rejecting them with `SchemaValidationError`) is an open decision. If it is taken, flip both tests to `rejects.toThrow(SchemaValidationError)`.
+
+### D39: Faker generation budgets replace the memory heuristics (2026-09-25)
+
+The depth×count memory heuristics (`deep_nesting_memory_risk`, `memory_estimation`, and the `DEEP_NESTING_THRESHOLD`/`LARGE_ARRAY_THRESHOLD` constants) are removed in favour of the memoized `MAX_GENERATED_NODES` estimate. This supersedes the deep-nesting-with-arrays check listed under D35 item 5.
+
+An aggregate `MAX_GENERATED_CHARS` budget (16,777,216 UTF-16 code units, 256 maximal strings) bounds one response. At plugin creation it is charged only from what a schema is certain to generate: `minLength`, nested `maxItems`, the root `minItems`, or an explicit `count`. The generated value is checked against it as well, reported as `generated_chars`.
+
+The `chance` keyword is rejected at validation rather than stripped: Schmock registers no chance instance, so the keyword could only fail or be silently ignored. Resource limits are charged along generating edges only. Depth counting through `$defs`, `not` and `if` stays deliberate (see CODEBASE-ANALYSIS.md, Phase 5 refuted findings).
+
+### D40: Node ingress body shapes and the query-key rule (2026-09-25)
+
+`collectBody` (the CLI and `mock.listen()`) follows the fetch interceptor's media-type table: JSON is parsed and capped at 256 levels of nesting, `application/x-www-form-urlencoded` becomes an object, `text/*` a string, `multipart/*` a `FormData`, and anything else an `ArrayBuffer`. A repeated query key resolves to its last value on every adapter. That was already the CLI and interceptor rule; Express and Angular changed from first-wins. Every `exports` entry carries a `default` condition, and declaration maps are not shipped.
+
+### D41: Validation checks every response status by default (2026-09-25)
+
+`@schmock/validation`'s `response.body` validates every response status by default, including other plugins' request rejections and route error tuples. The scenario "Another plugin's request rejection is still response validated" and the unit test "response-validates a request rejection from another plugin" pin this. The review of findings 38 and 88 kept that default and added the opt-in `response.statuses` (`"2xx"` or a list of statuses) instead of flipping it.
+
+Also decided in the same review: the query and header validators coerce scalar types while bodies stay strict; header schema names are matched case-insensitively, and names that differ only by case throw at plugin creation; `queryPlugin` skips responses with status 400 or above.
+
+### D42: Resolve dot segments in every transport (proposed, 2026-09-25)
+
+Status: proposed for the owner to accept or reject; not implemented. Raised by review finding 57 (dot-segment parity).
+
+The CLI, core `mock.listen()` and the fetch interceptor already resolve `.`, `..` and `%2e%2e` path segments through `new URL(...).pathname`. Express is the outlier: it matches the raw `req.path`, so `GET /a/../pets` routes differently there. The proposal is to make Express use `new URL(req.originalUrl, base).pathname` with the mount prefix stripped, and to add a raw-socket parity test for `GET /a/../pets` across transports. The "never resolves `.`/`..`" comment on `canonicalizePath` covers only strings passed directly to `handle()`, which stay unresolved.

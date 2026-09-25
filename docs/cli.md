@@ -34,7 +34,7 @@ schmock <spec> [options]
 | `--errors` | Enable request validation | `false` |
 | `--watch` | Watch spec file for changes | `false` |
 | `--admin` | Enable admin API endpoints | `false` |
-| `--admin-token <token>` | Bearer token required by `/schmock-admin/*` | generated |
+| `--admin-token <token>` | Bearer token required by `/schmock-admin/*`; requires `--admin` | generated |
 | `--admin-history-limit <number>` | Requests retained for `/schmock-admin/history` | `500` |
 | `--strict` | Validate the spec against the OpenAPI schema at startup | `false` |
 | `--refs-external` | Resolve `$ref`s outside the spec document | `false` |
@@ -46,10 +46,20 @@ schmock <spec> [options]
 Bad invocations fail at startup rather than starting a server that quietly does
 something else:
 
-- `--seed-random` must be a finite integer. Negatives are fine (`--seed-random=-1`;
-  the `=` form is required for a leading dash). `abc`, an empty value and `1.5`
-  are rejected, where they previously became `NaN`, "no seed at all" and a
+- `--port` takes decimal digits only. `--port=` (for example an unset shell
+  variable), a blank value, `0x1F90`, `1e3`, `80.0` and `+80` are rejected with
+  `Invalid port`.
+- `--admin-history-limit` also takes decimal digits only.
+- `--seed-random` must be an optional minus sign followed by digits (`-?\d+`).
+  Negatives are fine (`--seed-random=-1`; the `=` form is required for a leading
+  dash). `abc`, an empty value, `1.5`, `1e3`, `0x10` and `+5` are rejected,
+  where the first three previously became `NaN`, "no seed at all" and a
   fractional seed.
+- `--admin-token` without `--admin` fails with `--admin-token requires --admin.`;
+  the token does not turn the admin API on.
+- `createCliServer({ admin: true, adminToken })` throws `Invalid admin token. The
+  token must be non-empty and contain no whitespace.` for an empty token or one
+  containing whitespace, including a trailing newline read from a file.
 - `--hostname` must be a non-empty host. A blank value is rejected: it is *not*
   the `127.0.0.1` default — `listen(port, '')` binds every interface, so a typo
   used to publish the mock to the network. The same check applies to
@@ -60,9 +70,19 @@ something else:
 ### Shutting down
 
 `SIGINT`/`SIGTERM` starts a graceful shutdown bounded by `shutdownGraceMs`
-(default 5000). Pressing Ctrl-C again during that window does not force an
-exit — the drain is already bounded — but it is acknowledged on stderr once so
-you can tell the signal was received.
+(default 5000). A repeat signal inside the grace window does not force an exit —
+the drain is already bounded — but it is acknowledged on stderr once:
+
+```
+Shutdown already in progress; waiting for in-flight requests (signal again after 5000 ms to force an exit)...
+```
+
+A signal that arrives after the grace window has passed, while the close is
+still running, prints `Shutdown did not finish within the grace window; forcing
+exit.` and exits with code 1. At the grace deadline the CLI destroys every open
+connection itself instead of relying only on the runtime's
+`closeAllConnections()`, which under Bun does not release a connection with a
+half-sent request body.
 
 ### Multi-file specs and `$ref` policy
 
@@ -77,10 +97,22 @@ schmock ./api/openapi.yaml --refs-external --refs-allow-http schemas.example.com
 ```
 
 `--refs-allow-http` requires `--refs-external`; on its own it is a no-op. Passing
-it with an empty list allows any public host. Loopback, link-local and private
-addresses are always refused. Fetched refs use a 5s timeout, refuse redirects and
-are capped at 1 MB; those limits are not flags — use the plugin's `refs` option
-programmatically to change them.
+it with an empty list (`--refs-allow-http ''`) allows any public host.
+Loopback, link-local, private and reserved addresses are always refused. With an
+empty list or an explicit host list, every address a host resolves to is checked
+when the connection is made, so an allow-listed hostname that resolves to a
+private address is refused, and so are names like `127.0.0.1.nip.io`. The
+refused ranges are listed in the
+[OpenAPI guide](./openapi.md#external-refs-are-opt-in).
+
+A remote document cannot pull in local files: a `$ref` to a local file that
+appears only in a document fetched over http fails with
+`OPENAPI_EXTERNAL_REF_BLOCKED`. `--refs-external` alone still reads any local
+file the spec and its local documents reference.
+
+Fetched refs use a 5s timeout, refuse redirects and are capped at 1 MB. The cap
+is enforced while the body streams, after decompression. Those limits are not
+flags — use the plugin's `refs` option programmatically to change them.
 
 `--strict` rejects a spec that fails OpenAPI schema validation instead of
 skipping the parts that do not parse. It is off by default because it is both
@@ -122,6 +154,10 @@ with `Seed entry "…" must stay inside the seed manifest directory`.
 Because entry paths are resolved when the manifest is read, a typo'd path now
 fails at startup with `Seed entry "…" points to a missing file` rather than
 later, from inside seed loading.
+
+A manifest key must name a CRUD resource the spec declares. An unknown key makes
+the server fail at startup with `OPENAPI_UNKNOWN_SEED_RESOURCE`, and the message
+lists the detected resources.
 
 The manifest itself is capped at 1 MiB (`MAX_SEED_MANIFEST_BYTES`), each
 referenced seed file at 5 MiB, and each resource at 10 000 items; a breach
@@ -170,9 +206,25 @@ admitted against it has finished.
 
 Watching is on the spec's **directory**, not its inode, so an atomic editor
 save — write a temp file, rename it over the spec, which is what vim, JetBrains
-and VS Code do — keeps working, as do all the edits after it. Writes to other
-files in that directory are ignored. A symlinked spec is watched at the link's
-own directory, so saving the link *target* elsewhere is not seen.
+and VS Code do — keeps working, as do all the edits after it. A symlinked spec
+is watched at the link's own directory, so saving the link *target* elsewhere is
+not seen.
+
+Besides the spec, the `--seed` manifest and every file entry it names are
+watched, each through its own directory. The watched set is re-derived after
+every reload, so an entry added to the manifest is followed. With
+`--refs-external`, any change in the spec's directory reloads, because a sibling
+`$ref`'d schema file is part of the contract. A `$ref` target in a different
+directory is not watched; touch the root spec to reload after editing it. Writes
+to other files in watched directories are ignored.
+
+A reload builds a fresh mock: CRUD rows created since startup and the admin
+request history are discarded, and `--seed` data is applied again. The reload
+line on stderr says so:
+
+```
+Schmock server reloaded on http://127.0.0.1:3000 (state and request history reset)
+```
 
 `--watch` is also available programmatically as `watch: true` — see
 [Programmatic usage](#programmatic-usage).
@@ -233,27 +285,51 @@ Request history exists only to serve `GET /schmock-admin/history`:
 - without `--admin`, nothing is retained at all;
 - with `--admin`, the most recent 500 requests are kept, adjustable via
   `--admin-history-limit <n>` (`0` keeps nothing; the value must be a
-  non-negative integer). Passing it without `--admin` has no effect.
+  non-negative integer). Passing it without `--admin` has no effect and prints a
+  `WARNING` line on stderr.
 
 In the admin projection the values of `authorization`, `proxy-authorization`,
 `cookie`, `set-cookie`, `x-api-key`, `x-auth-token` and `x-schmock-admin-token`
-read `"[redacted]"`. The core `mock.history()` API is untouched and still
-returns raw header values.
+read `"[redacted]"`. In addition, any header or query parameter whose name,
+compared case-insensitively, is exactly `key`, `token`, `apikey`, `api_key`,
+`api-key`, `secret` or `password`, or ends in one of those after a `-` or `_`
+(for example `X-Pet-Key`, `access_token`, `client_secret`), is masked the same
+way. This covers the usual spellings of spec-declared apiKey schemes, but a name
+outside that pattern (such as `X-Pet-Credential`) is shown as sent. The core
+`mock.history()` API is untouched and still returns raw values.
 
 ### Binding beyond loopback
 
 `--admin --hostname 0.0.0.0` is allowed — containers need it — but the CLI
 prints a warning, because the admin API then reaches every host that can route
 to the port. The bearer token is the only thing standing between them and the
-recorded traffic.
+recorded traffic. Loopback binds (`127.0.0.0/8`, `::1`, `localhost`, and
+IPv4-mapped loopback such as `::ffff:127.0.0.1`) print no warning.
+
+An IPv6 host is printed bracketed: `--hostname ::1` gives
+`Schmock server running on http://[::1]:<port>`, and the reload line does the
+same.
 
 ## Request Handling
 
 Request bodies are limited to 10 MiB using both declared `Content-Length` and
 the bytes actually received. Oversized requests return structured 413
 `PAYLOAD_TOO_LARGE`, close that connection, and do not execute routes or enter
-history. Malformed JSON for `application/json` or `+json` media types returns
-structured 400 `MALFORMED_JSON`. Media-type matching is case-insensitive.
+history. Media-type matching is case-insensitive.
+
+The handler receives the body in the same shape the fetch interceptor gives it.
+The same rules apply to `mock.listen()`:
+
+| Content type | Body |
+|---|---|
+| `application/json` and any `+json` type | The parsed value. Malformed JSON gives 400 `MALFORMED_JSON`; nesting deeper than 256 levels gives 400 `JSON_TOO_DEEP` |
+| `application/x-www-form-urlencoded` | A flat object of strings; the last duplicate key wins |
+| `text/*` | A UTF-8 string (the `charset` parameter is ignored) |
+| `multipart/*` | `FormData`. Malformed multipart gives 400 `MALFORMED_MULTIPART` |
+| Anything else, including no content type | An `ArrayBuffer` |
+| Empty body | `undefined` |
+
+Every response with a body carries `Content-Length` rather than chunked framing.
 
 If a client disconnects, the CLI aborts pending plugin hooks, delays, and route
 generators while keeping the server available for later requests.

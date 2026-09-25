@@ -70,8 +70,8 @@ so it is logged as `RESPONSE`, recorded in history, and reported to
 | `ERROR` | Error handling |
 | `EVENT` | Isolated lifecycle-listener failures and rejected promises |
 | `LIFECYCLE` | Interception leases, and `reset()` / `resetHistory()` / `resetState()` |
-| `WARNING` | Recoverable misconfiguration, e.g. a duplicate route |
-| `SERVER` | Standalone server start and stop |
+| `WARNING` | Recoverable misconfiguration, e.g. a duplicate route or a plugin piped twice |
+| `SERVER` | Standalone server start, stop and server-level errors |
 
 These eleven are the complete set — `packages/core` is the only emitter, and a
 unit test pins the list so it cannot drift from this table.

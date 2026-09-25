@@ -62,7 +62,7 @@ export const HTTP_METHODS: readonly HttpMethod[] = [
 **Use template literal types for structured strings:**
 
 ```typescript
-type RouteKey = `${HttpMethod} ${string}`;
+type RouteKey = `${HttpMethod} /${string}`;
 ```
 
 **Use union types for flexible APIs:**
@@ -85,13 +85,13 @@ interface SchemaGenerationContext {
   params?: Record<string, string>;
 }
 
-function generateFromSchema(options: SchemaGenerationContext): any
+async function generateFromSchema(options: SchemaGenerationContext): Promise<unknown>
 
 // Avoid
-function generateFromSchema(
+async function generateFromSchema(
   schema: JSONSchema7, count?: number,
   overrides?: Record<string, any>, params?: Record<string, string>
-): any
+): Promise<unknown>
 ```
 
 ### Imports
@@ -260,7 +260,10 @@ export class SchemaValidationError extends SchmockError {
 
 ### Never Throw from Public APIs
 
-Public-facing methods like `handle()` catch errors and return a response:
+Public-facing methods like `handle()` catch errors and return a response.
+Cancellation is the one exception: when the request's `signal` aborts,
+`handle()` rejects with the signal's reason (or an `AbortError`) and records
+no history.
 
 ```typescript
 async handle(method, path, options?): Promise<Response> {
@@ -283,7 +286,8 @@ async handle(method, path, options?): Promise<Response> {
 
 ```typescript
 try {
-  return generateFromSchema({ schema });
+  // `await` keeps the async rejection inside this try block
+  return await generateFromSchema({ schema });
 } catch (error) {
   if (error instanceof SchemaValidationError || error instanceof ResourceLimitError) {
     throw error; // re-throw domain errors as-is
@@ -313,7 +317,7 @@ Name all magic numbers and strings. Centralize limits:
 
 ```typescript
 const MAX_ARRAY_SIZE = 10000;
-const MAX_NESTING_DEPTH = 10;
+const MAX_NESTING_DEPTH = 15;
 const DEFAULT_ARRAY_COUNT = 3;
 export const ROUTE_NOT_FOUND_CODE = "ROUTE_NOT_FOUND" as const;
 ```
@@ -394,16 +398,27 @@ interface Plugin {
 }
 ```
 
-Design plugins to be pipeline-aware — pass through response if none exists, transform if one does:
+Design plugins to be pipeline-aware — pass through response if none exists, transform if one does.
+`process` receives the raw `ResponseResult`, so a transformer unwraps a
+`[status, body]` tuple (or a `{ status, body, headers? }` envelope), transforms
+the body, and rewraps it. It leaves short-circuit and error responses alone:
 
 ```typescript
 process(context, response) {
-  if (response) {
-    return { context, response: transform(response) };
+  if (response === undefined || response === null || context.requestShortCircuited) {
+    return { context, response };
   }
-  return { context, response };
+  if (isStatusTuple(response)) {
+    if (response[0] >= 300) return { context, response };
+    const [status, body, ...headers] = response;
+    return { context, response: [status, transform(body), ...headers] };
+  }
+  return { context, response: transform(response) };
 }
 ```
+
+The Transformer pattern in [Plugin Development](./plugins.md#transformer--modify-existing-response)
+also handles the envelope form.
 
 ### Lazy Initialization
 
@@ -544,8 +559,8 @@ export const schemas = {
 
 // Semantic assertions
 export const schemaTests = {
-  expectValid: (schema: JSONSchema7): void => {
-    expect(() => generateFromSchema({ schema })).not.toThrow();
+  expectValid: async (schema: JSONSchema7): Promise<void> => {
+    await expect(generateFromSchema({ schema })).resolves.toBeDefined();
   },
   expectSchemaError: (schema: any, path: string): void => {
     // validates error type, path, and message

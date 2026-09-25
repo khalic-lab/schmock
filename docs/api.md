@@ -25,6 +25,9 @@ it leaves history unbounded. Any other value — negative (which once meant
 unbounded), fractional, `NaN` or `Infinity` — throws a `SchmockError`
 (`INVALID_CONFIG`) from `schmock()`.
 
+A trailing slash on `namespace` is allowed: `namespace: '/api/'` serves the bare
+`/api` just as `'/api'` does, and also `/api/`, `/api/users` and `/api//users`.
+
 Each mock keeps one persistent state object from creation. A supplied state
 object is used until reset; when `state` is omitted, the default is one empty
 object rather than a new object per request.
@@ -70,6 +73,12 @@ A route key without a leading slash is a compile error and is rejected at
 definition time with `RouteParseError`. Build keys from untyped strings with
 `toRouteKey(method, path)`, which supplies the slash.
 
+A route that matches the same requests as an existing route of the same method
+is a duplicate, including one that differs only in parameter names
+(`GET /users/:id` then `GET /users/:userId`). The first registration wins,
+`getRoutes()` lists only that one, and debug mode logs
+`Duplicate route: GET /users/:userId matches the same requests as GET /users/:id — first registration wins`.
+
 There is no schema arm: a JSON Schema passed as the generator is static data
 and is serialized back to the client as a literal schema document. Schema-driven
 responses come from a plugin — `.pipe(fakerPlugin({ schema }))`.
@@ -84,6 +93,33 @@ a function generator defaults to `application/json`, a static string, number or
 boolean defaults to `text/plain`, static binary values default to
 `application/octet-stream`, and everything else defaults to
 `application/json`.
+
+##### Path parameters
+
+| Syntax | Meaning | Example |
+|--------|---------|---------|
+| `:name` | A parameter. Name characters are `[A-Za-z0-9_-]`; any other character ends the name and is literal. | `GET /files/:name.json` |
+| `:a-:b` | Hyphens that end a name directly before another parameter are a literal separator. | `GET /range/:from-:to` on `/range/1-5` gives `{ from: '1', to: '5' }` |
+| `:"name"` | A quoted name may contain other characters. | `GET /users/:"user.id"` gives `params['user.id']` |
+| `\:` | A literal colon. | `POST /jobs/:job\:cancel` on `/jobs/abc:cancel` gives `{ job: 'abc' }` |
+
+A hyphen inside a name that is not followed by another parameter still belongs
+to the name: `:user-id` is one parameter. In JavaScript source the escaped
+colon is written with a doubled backslash, `"POST /jobs/:job\\:cancel"`. A key
+whose only colon is escaped is a static route: `POST /jobs\:batchGet` serves
+`/jobs:batchGet`.
+
+Two parameters with nothing between them (`/:a:b`) throw `RouteParseError`
+(`ROUTE_PARSE_ERROR`) at definition time.
+
+With several parameters in one segment, each one except the last stops at the
+first character of the literal that follows it, as in Express: `:name.:ext` on
+`a.tar.gz` gives name `'a'` and ext `'tar.gz'`. A single parameter before a
+suffix stays greedy: `:name.json` on `report.v2.json` gives `'report.v2'`.
+
+`getRoutes()` reports a route with parameters in its escaped spelling
+(`/jobs/:job\:cancel`) and a route without parameters as its literal path
+(`/jobs:batchGet`).
 
 #### `.handle(method, path, options?)`
 
@@ -116,6 +152,14 @@ Add a plugin to the pipeline. Returns the instance for chaining.
 pipe(plugin: Plugin): CallableMockInstance
 ```
 
+`pipe()` throws `SchmockError` `PLUGIN_INVALID` for a plugin that could never
+work: a non-object, a missing or non-function `process`, or an `install` or
+`beforeRequest` set to a truthy non-function. Falsy hooks (`onError: null`,
+`install: false`) are accepted. Piping the same plugin object again is a no-op,
+and debug mode logs `Plugin <name> is already piped into this mock — ignored`.
+Distinct objects with the same name, such as two `openapi()` plugins, still
+stack.
+
 #### Request spying
 
 ```typescript
@@ -139,7 +183,11 @@ interface RequestRecord {
 Every request that matched a route is recorded, including one whose generator
 or plugin threw — the recorded `response` carries the resulting 500. Route
 misses and canceled requests are not recorded. Records
-are detached snapshots created when a request completes. A request or response
+are detached snapshots created when a request completes. The recorded `body`,
+`query`, `headers` and `params` are captured when the route matches, before any
+plugin or the generator runs, so they show what the client sent even if a
+generator edits `ctx.body` in place. The generator itself still receives the
+caller's object by reference. A request or response
 body that cannot be structured-cloned is stored as an `unavailable` descriptor
 instead of retaining a mutable application reference. `resetHistory()` is also
 a barrier: requests admitted before it cannot later repopulate the cleared
@@ -184,6 +232,11 @@ Listener failures are isolated from the request, and returned promises are
 observed for rejection but are not awaited. A full reset clears listeners and
 suppresses events from the retired request generation.
 
+Every `request:start` is followed by exactly one `request:end`. A request
+cancelled through its `signal` emits `request:end` with `status: 499` (client
+closed request) before the promise rejects with the abort reason. It is still
+not recorded in history.
+
 #### HTTP server
 
 ```typescript
@@ -205,6 +258,15 @@ structured 413 `PAYLOAD_TOO_LARGE`; malformed JSON for `application/json` or
 `+json` media types returns a structured 400 `MALFORMED_JSON`. Ingress failures
 close the connection and do not execute a route or enter history. Client
 disconnects abort admitted work.
+
+The built-in server answers a request without a `Host` header, or with a
+malformed request target, with 400 `BAD_REQUEST`. It answers a method outside
+`HTTP_METHODS` with 405 `METHOD_NOT_ALLOWED` and
+`Allow: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS`, the same as the CLI. The
+request target is routed by its full path: `GET //users` is looked up as
+`//users`, never as `/` or `/users`. A server-level `error` event after startup
+(such as an accept `EMFILE`) is logged in the debug `server` category instead
+of crashing the process.
 
 #### `.intercept(options?)`
 
@@ -234,8 +296,10 @@ interface InterceptHandle {
 
 `baseUrl` accepts either a pathname prefix or an absolute origin with an
 optional path. Path prefixes enforce segment boundaries. Relative URLs resolve
-against the browser document base when available. The base filters requests but
-does not strip the matching prefix before route lookup.
+against the browser document base when available. A path-form base without a
+leading slash is rooted: `'api'` behaves as `'/api'`. The base filters requests
+but, unlike the Angular adapter's `baseUrl`, does not strip the matching prefix
+before route lookup, so register routes with the full path (`GET /api/users`).
 
 The interceptor creates one effective `Request`, including `RequestInit`
 overrides, and snapshots it at admission. JSON bodies are parsed only for JSON
@@ -243,11 +307,26 @@ media types; unmatched passthrough receives the original effective body and
 headers. Aborts settle pending request/response hooks, route generators, and
 passthrough fetches.
 
+An empty JSON body reaches the route as `undefined`. With `passthrough: false`,
+a JSON body that does not parse gets 400
+`{ error: 'Malformed JSON request body', code: 'MALFORMED_JSON' }` before any
+route runs, and nothing enters history, as with the Node ingress. With
+`passthrough: true` a matching route still receives the unparsed text.
+
+A method outside `HTTP_METHODS` (`PROPFIND`, `PURGE`, …), including one a
+`beforeRequest` hook produces, is a route miss: it passes through when
+`passthrough` is `true` and gets 404 `ROUTE_NOT_FOUND` when it is `false`.
+
+A mocked `Response` reports `response.url` as the request URL without its
+fragment. `statusText` is `''`.
+
 Interception is a lease, not a lock. A mock may hold any number of concurrent
 leases — nested providers, separate roots, or an adapter alongside a manual
 `intercept()` — and each one carries its own options and its own idempotent
 `restore()`. Leases are consulted newest-first regardless of which mock owns
-them, and the original `fetch` returns once the last lease is released.
+them, and the original `fetch` returns once the last lease is released. A mock
+is consulted once per distinct effective method and path across its leases, so
+its handler and lifecycle events run once per request it is asked.
 
 `update(options?)` reconfigures a lease without re-registering it, so it keeps
 its position in the dispatch order: an adapter can apply new hooks without
@@ -280,6 +359,10 @@ interface RequestContext {
 plugins that post-process its response — `@schmock/openapi` stages CRUD
 mutations there and commits them once the final status is known. It is absent
 when a generator is called outside the request pipeline.
+
+A repeated query key resolves to its last value (`?tag=a&tag=b` gives `'b'`)
+on every transport: the CLI, `mock.listen()`, `mock.intercept()` (React and
+Vue), Express and Angular.
 
 ### Response Result
 
@@ -364,8 +447,34 @@ interface PluginResult {
 `install()` receives a synchronous, installation-scoped callable. Routes it
 registers are committed atomically only after the hook returns successfully;
 the callable must not be retained. Promise-returning installs are rejected.
+
 During `reset()`, `uninstall()` runs in reverse order after requests admitted
-with that plugin generation have settled.
+with that plugin generation have settled. It receives a read-only, expiring
+instance: `history`, `called`, `callCount`, `lastRequest`, `getRoutes` and
+`getState` work. Route registration, `pipe`, `handle`,
+`reset`/`resetHistory`/`resetState`, `on`/`off` and `listen`/`close`/`intercept`
+throw `PLUGIN_UNINSTALL_OPERATION_UNSUPPORTED`, and any use after the hook
+returns throws `PLUGIN_UNINSTALL_SCOPE_EXPIRED`. Re-piping a plugin object
+whose uninstall is still pending (a request was in flight at `reset()`) runs
+that uninstall immediately, before the new `install()`.
+
+Plugin lifecycle errors are `SchmockError`s with these codes:
+
+| Code | Thrown when |
+|------|-------------|
+| `PLUGIN_INVALID` | `pipe()` receives a plugin that could never work |
+| `PLUGIN_ASYNC_INSTALL_UNSUPPORTED` | `install()` returns a Promise |
+| `PLUGIN_INSTALL_OPERATION_UNSUPPORTED` | the install instance is used for anything but route registration and reads |
+| `PLUGIN_INSTALL_SCOPE_EXPIRED` | the install instance is used after `install()` returns |
+| `PLUGIN_UNINSTALL_OPERATION_UNSUPPORTED` | the uninstall instance is used for anything but reads |
+| `PLUGIN_UNINSTALL_SCOPE_EXPIRED` | the uninstall instance is used after `uninstall()` returns |
+
+Static route data (a non-function generator) and `context.route` are
+per-request copies. Editing them in place changes only the current response
+and request, never the registered route or later requests. Static data is
+copied deeply, but only its arrays and plain objects; Dates, binary values and
+class instances are passed by reference. `context.route` is a shallow copy, so
+custom route data nested inside it is shared.
 
 ### Error Classes
 
@@ -387,7 +496,17 @@ class SchmockError extends Error {
 | `PluginError` | `PLUGIN_ERROR` | `{ pluginName, originalError }` |
 | `SchemaValidationError` | `SCHEMA_VALIDATION_ERROR` | `{ schemaPath, issue, suggestion }` |
 | `SchemaGenerationError` | `SCHEMA_GENERATION_ERROR` | `{ route, originalError, schema }` |
-| `ResourceLimitError` | `RESOURCE_LIMIT_ERROR` | `{ resource, limit, actual }` |
+| `ResourceLimitError` | `RESOURCE_LIMIT_ERROR` | `{ resource, limit, actual, path? }` |
+
+When a resource-limit breach has a location, `path` is the schema path
+(`$.properties.a.properties.b` for a declared `minItems`,
+`$.properties.a.faker` for a faker argument) and the message ends with
+` at <path>`:
+`Resource limit exceeded for array_max_items: limit=10000, actual=20000 at $.properties.a.properties.b`.
+
+`HttpIngressError`, thrown by `collectBody()`, is the one exception: it extends
+plain `Error`, not `SchmockError`. See
+[Adapter-author utilities](#adapter-author-utilities).
 
 `ResponseGenerationError` was removed: a failing generator now surfaces as the
 same structured 500 (`INTERNAL_ERROR`) as any other unhandled exception, and a
@@ -403,6 +522,86 @@ isHttpMethod(s)       // type guard → HttpMethod
 toHttpMethod(s)       // normalize → HttpMethod (throws on invalid)
 toRouteKey(m, path)   // build a RouteKey, supplying the required leading slash
 ```
+
+### Response helpers
+
+```typescript
+notFound(message?: string | object): [404, object]
+badRequest(message?: string | object): [400, object]
+unauthorized(message?: string | object): [401, object]
+forbidden(message?: string | object): [403, object]
+serverError(message?: string | object): [500, object]
+created(body: object): [201, object]
+noContent(): [204, null]
+paginate<T>(items: readonly T[], options?: { page?: number; pageSize?: number }): PaginatedResponse<T>
+```
+
+`paginate()` normalizes its options: `page` and `pageSize` must be integers `>= 1`, and any other
+value (`0`, negative, fractional, `NaN`, `Infinity`, missing) falls back to page `1` and page size
+`10`. The returned envelope echoes the normalized values, so `data`, `page`, `pageSize` and
+`totalPages` are always mutually consistent.
+
+`@schmock/angular` re-exports these helpers.
+
+### Adapter-author utilities
+
+`@schmock/core` exports the pieces its own adapters are built from. Application
+code does not need them.
+
+```typescript
+isStatusTuple(v)            // v is [number, unknown] | [number, unknown, unknown]
+isBinaryBody(v)             // v is ArrayBuffer | ArrayBufferView
+isRouteNotFound(response)   // true for the mock's own route-miss 404
+getResponseException(response)  // the Error an exception response was built from, or undefined
+createFetchInterceptor(handle, options?)  // the lease behind mock.intercept()
+
+// Node ingress, as used by mock.listen() and the CLI
+parseNodeHeaders(req): Record<string, string>
+parseNodeQuery(url: URL): Record<string, string>
+collectBody(req, headers, maxBodySize?): Promise<unknown>  // default limit: 10 MiB
+writeSchmockResponse(res, response, extraHeaders?): void
+writeRejectedSchmockResponse(req, res, response, extraHeaders?): void
+```
+
+`isStatusTuple(v)` checks only the length and the status, so its third element
+is typed `unknown`. Check that it is a string record before reading it as
+headers.
+
+`isRouteNotFound(response)` tells a route miss apart from a 404 a route
+returned on purpose. Adapters use it to decide whether to pass a request
+through to the real backend.
+
+`parseNodeHeaders()` keeps only string-valued headers. `parseNodeQuery()`
+resolves a repeated key to its last value.
+
+`collectBody()` returns the body in the shape the fetch interceptor gives the
+same request, or `undefined` for an empty body:
+
+| Content type | Body |
+|--------------|------|
+| `application/json`, `+json` | the parsed value |
+| `application/x-www-form-urlencoded` | a flat object; a repeated key keeps its last value |
+| `text/*` | a string |
+| `multipart/*` | `FormData` |
+| anything else, or none | an `ArrayBuffer` |
+
+It rejects with `HttpIngressError`, which carries `status` and `code`:
+
+| Code | Status | Cause |
+|------|--------|-------|
+| `MALFORMED_JSON` | 400 | a JSON body that does not parse |
+| `JSON_TOO_DEEP` | 400 | a JSON body nested more than 256 levels |
+| `MALFORMED_MULTIPART` | 400 | a multipart body that does not parse |
+| `PAYLOAD_TOO_LARGE` | 413 | a declared or received size above `maxBodySize` |
+
+`HttpIngressError` extends `Error`, not `SchmockError`, so
+`err instanceof SchmockError` does not catch it. `HttpIngressErrorCode` is
+exported as a type.
+
+`writeRejectedSchmockResponse()` writes an error response while the client may
+still be uploading. It keeps the socket open until the upload ends, goes idle
+or runs out of grace time, so the client reads the response instead of a
+connection reset.
 
 ---
 
@@ -456,6 +655,19 @@ overrides: {
 }
 ```
 
+### Override paths
+
+A dotted key such as `'address.city'` sets a nested value. It enters an array
+only by a canonical, in-range index: `'addresses.0.city': 'Paris'` edits the
+first item alone, and the nested form `{ addresses: { 0: { city: 'Paris' } } }`
+does the same. A path the generated value cannot hold is ignored:
+
+- a non-index segment on an array (`addresses.city`)
+- an out-of-range or non-canonical index (`addresses.5`, `addresses.01`)
+- a segment below a generated primitive (`name.first` when `name` is a string)
+
+A missing or `null` intermediate value is created as an object.
+
 ### Smart field name mapping
 
 The faker plugin maps property names to appropriate faker methods automatically. Examples:
@@ -469,7 +681,9 @@ The faker plugin maps property names to appropriate faker methods automatically.
 | `avatar`, `photo_url`, `profile_image` | Image URL |
 | `city`, `state`, `country` | Location data |
 | `price`, `amount`, `salary` | Currency amount |
-| `created_at`, `updated_at` | ISO datetime |
+| `created_at`, `updated_at` | ISO-8601 UTC date-time |
+| `birthday`, `dob`, `start_date`, `due_date`, `timestamp` | ISO-8601 UTC date-time |
+| `username`, `login`, `nickname` | Username |
 | `is_active`, `enabled` | Boolean (90% true) |
 | `is_deleted` | Boolean (5% true) |
 | `uuid`, `guid` | UUID v4 |
@@ -481,6 +695,42 @@ The faker plugin maps property names to appropriate faker methods automatically.
 Unconstrained strings without a recognized field name use non-empty lorem text;
 explicit constraints such as `minLength: 0` remain authoritative. Draft 7 tuple
 schemas are normalized recursively, including tuples behind `$ref` definitions.
+
+Every date mapping (`createdAt`, `updatedAt`, `deletedAt`, `publishedAt`,
+`expiresAt`, `timestamp`/`ts`, `birthday`/`dob`/`birthdate`/`born`,
+`startDate`/`beginDate`, `endDate`/`dueDate`/`deadline`) emits an ISO-8601 UTC
+date-time string such as `"1990-05-12T08:31:44.000Z"`. A birthday is a
+date-time too, not a `YYYY-MM-DD` date. The output does not depend on the
+machine time zone, so seeded output is the same on every machine.
+
+A primitive array item inherits the singular form of its property name when
+that singular form maps: `emails: { type: 'array', items: { type: 'string' } }`
+generates email addresses. Explicit keywords on the item still win.
+
+#### Precedence
+
+Explicit schema keywords always win over field-name heuristics. A property
+that declares `default`, `const`, `enum`, `pattern`, `faker` or `$ref` is never
+re-mapped by its name. Neither is one with a `format` the generator can
+produce: `date-time`, `date`, `time`, `duration`, `email`, `idn-email`,
+`hostname`, `idn-hostname`, `ipv4`, `ipv6`, `uri`, `uri-reference`, `iri`,
+`iri-reference`, `json-pointer`, `relative-json-pointer`, `uuid` or `byte`. The
+OpenAPI normalizer turns `example` into `default`, so an OpenAPI example also
+wins. A declared `schmockTrueProbability` is never overwritten by the name
+weighting: `active: { type: 'boolean', schmockTrueProbability: 0.1 }` is 10%
+true, not 90%.
+
+#### Matching rules
+
+A keyword shorter than 5 characters matches inside a field name only when it
+lines up with token edges (camelCase, snake_case or kebab-case), with an
+optional plural `s` or `es`. `urls` maps to a URL, but `latency`, `population`
+and `namespace` do not map to a latitude or a person's name.
+
+A field whose last token is `type`, `status`, `format`, `code` or `kind` only
+matches a mapping that names it exactly or ends with that token. `phoneType`,
+`emailStatus` and `cityCode` get no phone number, email or city; `countryCode`
+and `zipCode` still map through their own keywords.
 
 ### Schema extensions
 
@@ -505,6 +755,19 @@ passes request and response validation. The generation path collapses the union
 back to the non-null shape, so json-schema-faker does not treat it as a 50/50
 type choice.
 
+Native nullability gets the same ~5% null roll without the marker:
+`type: [T, 'null']`, or a two-branch `anyOf`/`oneOf` with a bare
+`{ type: 'null' }` branch in either order. Set `schmockNullable: false` on a
+node to opt out; json-schema-faker then picks between the union's types as
+written.
+
+Both extensions apply wherever the value is generated. Boolean weighting, from
+`schmockTrueProbability` or from a field name such as `isDeleted`, also applies
+inside `allOf`/`anyOf`/`oneOf` branches, `$ref` targets and
+`additionalProperties` values. The null roll also applies through `$ref`,
+`allOf`, `additionalProperties`/`patternProperties`, and the single
+`anyOf`/`oneOf` branch a value matches.
+
 `faker`, `schmockNullable` and `schmockTrueProbability` are Schmock's own
 keywords and are not part of `JSONSchema7`, so a schema literal that uses them
 fails to typecheck against it. Declare such schemas as `Schmock.Schema` — draft-07
@@ -525,12 +788,70 @@ mock.pipe(fakerPlugin({ schema: userSchema }))
 ```
 
 Only `@schmock/*` packages understand these keywords, and AJV in strict mode
-rejects keywords it does not know. `@schmock/validation` registers
-`schmockNullable` and `schmockTrueProbability` on its own instance
-(`ajv.addVocabulary([...])`), but **not** `faker`: handing a `faker`-carrying
-schema to `validationPlugin` throws `strict mode: unknown keyword: "faker"` at
-plugin construction. Keep the generation schema and the validation schema
-separate, or register the keyword on your own AJV instance the same way.
+rejects keywords it does not know. `@schmock/validation` registers all three
+(`faker`, `schmockNullable` and `schmockTrueProbability`) as annotation-only
+vocabulary on its own instance, so one schema can serve both `fakerPlugin` and
+`validationPlugin`. To validate such a schema with your own AJV instance,
+register them the same way:
+`ajv.addVocabulary(['faker', 'schmockNullable', 'schmockTrueProbability'])`.
+
+### Schema support
+
+- `format: 'byte'` strings are valid padded base64, so they pass `ajv-formats`
+  under `validateResponses`.
+- `patternProperties` generate at least one key matching a pattern, and enough
+  keys to reach `minProperties` without passing `maxProperties`.
+- A lone `minimum`/`exclusiveMinimum` of 1000 or more, or a lone
+  `maximum`/`exclusiveMaximum` of -1000 or less, generates in range.
+- Union `type` arrays are checked member by member, and
+  `type: ['array', 'null']` needs `items` like `type: 'array'`.
+- The json-schema-faker `chance` keyword is not supported. It is rejected with
+  `SCHEMA_VALIDATION_ERROR` at `<path>.chance`; use `faker` instead.
+- A faker method string that resolves to an `Object.prototype` member
+  (`person.toString`) or to a `_`-prefixed member is rejected.
+
+### Generation limits
+
+Every limit is checked when the plugin is created, and again on the generated
+value where the schema alone cannot decide. A breach throws
+`ResourceLimitError` with the `resource` below. The exported constants come
+from `@schmock/faker`.
+
+| `resource` | Constant | Bound |
+|------------|----------|-------|
+| `array_size`, `array_max_items` | `MAX_ARRAY_SIZE` | 10,000 items |
+| `schema_nesting_depth` | `MAX_NESTING_DEPTH` | 15 levels |
+| `schema_nodes` | `MAX_SCHEMA_NODES` | 50,000 distinct schema nodes |
+| `generated_nodes` | `MAX_GENERATED_NODES` | 1,000,000 generated JSON nodes |
+| `object_properties` | `MAX_OBJECT_PROPERTIES` | 10,000 properties per object |
+| `string_length` | `MAX_STRING_LENGTH` | 65,536 UTF-16 code units per string |
+| `generated_chars` | not exported | 16,777,216 UTF-16 code units per response |
+| `schema_composition_depth` | not exported | 200 composition frames |
+
+`generated_chars` counts every string and object key in one response. At
+creation it is checked against the least the schema can produce: each
+`minLength` multiplied by its array counts. Nested arrays are bounded by
+`generated_nodes`; there is no separate memory estimate.
+
+Faker arguments that set a size are held to the string limit:
+
+| Methods | Largest count |
+|---------|---------------|
+| `lorem.words`, `lorem.sentence`, `lorem.slug`, `word.words` (`count`) | 32,768 words |
+| `lorem.sentences`, `lorem.lines`, `lorem.paragraph` | 9,362 sentences |
+| `lorem.paragraphs` | 3,120 paragraphs |
+
+`helpers.fake` placeholders are checked like direct calls. The expanded
+`helpers.mustache` output and the explicit upper quantifier in
+`helpers.fromRegExp` must fit in 65,536 characters, and a schema `pattern`
+whose shortest match is longer than that is rejected at creation.
+
+Limits inside `not`, `if` and unreferenced `$defs`/`definitions` do not reject a
+schema, because nothing is generated from them. `then`/`else` and definitions
+reached through `$ref` still count.
+
+The limits are constants, not options. To generate less for one request,
+return a trimmed schema from the `@schmock/openapi` `onSchema` callback.
 
 ---
 
@@ -552,6 +873,7 @@ interface ValidationPluginOptions {
   }
   response?: {
     body?: JSONSchema7
+    statuses?: '2xx' | readonly number[]  // default: every status
   }
   requestErrorStatus?: number    // default: 400
   responseErrorStatus?: number   // default: 500
@@ -563,6 +885,23 @@ interface ValidationPluginOptions {
 
 Request rules run before the route generator. Set `bodyRequired: true` when an
 absent body must be rejected; supplied bodies are always validated.
+
+Query and header values always arrive as strings, so their schemas coerce
+scalar types: `'2'` satisfies `type: 'integer'`, `'25'` satisfies
+`type: 'number'` with `maximum: 50`, and `'true'` satisfies `type: 'boolean'`.
+Numeric range keywords therefore work on query and header parameters.
+Coercion happens on a copy: the route and later plugins still receive the
+original strings in `context.query`. Request and response bodies keep strict
+typing, so `'3'` does not satisfy `type: 'integer'` in `request.body`.
+
+Header schemas may spell names in any case (`'X-Api-Key'`). Incoming header
+names are matched case-insensitively against every name the schema declares in
+`properties`, `required` and `dependencies`, anywhere in the schema. Two names
+that differ only by case (`'X-Api-Key'` and `'x-api-key'`, or a property
+`'x-api-key'` with `required: ['X-Api-Key']`) throw `SchmockError`
+`VALIDATION_CONFIG_INVALID` with `context.option` `'request.headers'` at
+creation time. `patternProperties` and `propertyNames` still see lowercased
+header names, so write those patterns in lowercase.
 
 Error response format:
 
@@ -608,6 +947,29 @@ envelope. An envelope whose `headers` is present but is not a record of
 strings is not a valid envelope: core delivers the whole object as the body,
 and validation applies the schema to that same whole object — which normally
 fails and returns `RESPONSE_VALIDATION_ERROR`.
+
+`response.statuses` chooses which responses `response.body` applies to:
+
+| `statuses` | Validated |
+|------------|-----------|
+| omitted | every response on every route, including error tuples and envelopes such as `[404, {...}]` and request rejections from other plugins (a guard's 401, openapi's 400/406/415) |
+| `'2xx'` | statuses 200–299 |
+| `[200, 201]` | only the listed statuses |
+
+The status is read from `tuple[0]` or `envelope.status`. Any other bare body
+counts as 200, and a bare `null` or `undefined` counts as 204. With the
+default, a non-conforming error body becomes a 500 `RESPONSE_VALIDATION_ERROR`.
+Scope the schema to successes, or keep the default and widen the schema with
+`anyOf: [successSchema, { type: 'object', required: ['error'] }]`:
+
+```typescript
+validationPlugin({ response: { body: userSchema, statuses: '2xx' } })
+```
+
+An empty array, a non-integer, a value outside 100–599, or a string other than
+`'2xx'` throws `VALIDATION_CONFIG_INVALID` with `context.option`
+`'response.statuses'` at creation time. The list is copied when the plugin is
+created.
 
 #### Schema trust boundary
 
@@ -657,8 +1019,19 @@ interface QueryPluginOptions {
 Every section is optional — `queryPlugin()` with no options passes responses
 through untouched. Invalid options throw a `SchmockError`
 (`QUERY_CONFIG_INVALID`) at creation time: limits must be positive integers,
-parameter names must be non-empty strings, and `allowed` must be an array of
-field names that excludes `__proto__`, `constructor` and `prototype`.
+parameter names must be non-empty strings, `allowed` must be an array of
+field names that excludes `__proto__`, `constructor` and `prototype`,
+`sorting.default` must be a non-empty string listed in `sorting.allowed`, and
+`sorting.defaultOrder` must be exactly `'asc'` or `'desc'`. The error's
+`context.option` names the offending option, such as `'sorting.default'`. A
+`pagination.defaultLimit` above `maxLimit` (or above the default `maxLimit` of
+100) is clamped to `maxLimit`, not rejected.
+
+Only successful array responses are transformed. A tuple or envelope with a
+status of 400 or more, whether a route's own error or another plugin's
+`beforeRequest` rejection, passes through untouched. 2xx and 3xx arrays,
+including a 2xx list served by a `beforeRequest` hook, are filtered, sorted and
+paginated.
 
 Query parameters:
 
@@ -670,7 +1043,8 @@ Query parameters:
 
 `page` and `limit` must be exact positive integers (`"2"`); anything else —
 padded, signed, fractional, exponent notation or partially numeric — falls
-back to the default rather than being coerced.
+back to the default rather than being coerced. The `order` value is matched
+case-insensitively: `order=DESC` and `order=Desc` sort descending.
 
 Filters must use a prefixed form. The plain `?field=value` form is not
 honoured, so a filterable field named `page` can never collide with the
@@ -696,6 +1070,20 @@ Pagination response format:
   pagination: { page: 2, limit: 10, total: 50, totalPages: 5 }
 }
 ```
+
+#### Pipeline order
+
+- Pipe `queryPlugin` after whatever produces the array body: `fakerPlugin`,
+  `openapi`, or a route generator. Piped before faker, it sees an undefined
+  body and passes it through without paginating.
+- A response validator piped after `queryPlugin` must describe the
+  `PaginatedResult` envelope `{ data, pagination }`, not the raw array. One
+  piped before it validates the raw array, and the envelope goes unvalidated.
+- For the same list across page requests, give `fakerPlugin` a `seed` or back
+  the list with state. Unseeded faker generates a different list on every
+  request.
+
+See [Ordering the built-in plugins](./plugins.md#ordering-the-built-in-plugins).
 
 ---
 
@@ -734,7 +1122,7 @@ interface OpenApiRefPolicy {
   allowedHosts?: string[]  // hosts an http ref may target (default: any public host)
   timeoutMs?: number       // default: 5000
   redirects?: number       // default: 0
-  maxBytes?: number        // default: 1_000_000
+  maxBytes?: number        // default: 1_000_000, counted on the decoded body
 }
 
 type SeedConfig = Record<string, SeedSource>
@@ -758,13 +1146,70 @@ interface ResourceOverride {
 }
 ```
 
+An empty or omitted `allowedHosts` means any host, still minus loopback,
+link-local, private and reserved addresses. That block applies to every
+address a host resolves to, including hosts you list. `maxBytes` is enforced
+while the body streams, counting decoded bytes. Only http(s) redirect targets
+are followed, and each hop is checked against the policy again.
+
 Callbacks are disabled by default and never issue implicit network requests.
 The legacy `queryFeatures` option is unsupported and throws
 `OPENAPI_UNSUPPORTED_OPTION` when supplied.
 
+Invalid `seed` options throw `SchmockError` when the plugin is created:
+
+| Code | Cause | Context |
+|------|-------|---------|
+| `OPENAPI_UNKNOWN_SEED_RESOURCE` | a `seed` key names no detected CRUD resource | `{ key, resources }` |
+| `OPENAPI_INVALID_OPTION` | `seed` is not an object, or an entry is not an array, a file path or `{ count }` | `{ option: 'seed', resource? }` |
+
 Supports Swagger 2.0, OpenAPI 3.0, and OpenAPI 3.1.
 
 See the [OpenAPI guide](./openapi.md) for detailed usage.
+
+---
+
+## React Adapter (`@schmock/react`)
+
+```typescript
+function SchmockProvider(props: SchmockProviderProps): ReactElement
+function useSchmock(): CallableMockInstance
+
+interface SchmockProviderProps {
+  mock: CallableMockInstance
+  options?: InterceptOptions   // passed to mock.intercept()
+  children: ReactNode
+}
+```
+
+`SchmockContext` is exported for custom hooks. `@schmock/react/testing`
+exports `renderWithSchmock()`. The provider holds one `mock.intercept()` lease
+for as long as it is mounted.
+
+See the [React guide](./react.md) for detailed usage.
+
+---
+
+## Vue Adapter (`@schmock/vue`)
+
+```typescript
+const schmockPlugin: Plugin<SchmockPluginOptions>
+function useSchmock(): CallableMockInstance
+function restoreSchmockInterception(app: App): void
+
+interface SchmockPluginOptions {
+  mock: CallableMockInstance
+  interceptOptions?: InterceptOptions   // passed to mock.intercept()
+}
+```
+
+In a browser, `app.use(schmockPlugin, { mock })` takes one `mock.intercept()`
+lease for the app and releases it when the app unmounts or fails to mount.
+Without a DOM it provides the mock but does not patch `fetch`.
+`restoreSchmockInterception(app)` releases the lease early and is safe to call
+for an app that never intercepted.
+
+See the [Vue guide](./vue.md) for detailed usage.
 
 ---
 
@@ -847,7 +1292,7 @@ async function provideSchmockInterceptorFromSpec(
 
 ```typescript
 interface AngularAdapterOptions {
-  baseUrl?: string              // only intercept requests starting with this URL
+  baseUrl?: string              // intercept only this prefix (segment boundary) and strip it before routing
   passthrough?: boolean         // pass unmatched requests to real backend (default: true)
   errorFormatter?: (error: Error, request: HttpRequest<any>) => any
   transformRequest?: (request: HttpRequest<any>) => {
@@ -857,23 +1302,15 @@ interface AngularAdapterOptions {
 }
 ```
 
+`baseUrl` intercepts only requests whose path starts with the prefix on a
+segment boundary, and strips the prefix before routing: with `baseUrl: '/api'`,
+a request to `/api/users` matches a route registered as `GET /users`.
+
 ### Helper functions
 
-```typescript
-notFound(message?: string | object): [404, object]
-badRequest(message?: string | object): [400, object]
-unauthorized(message?: string | object): [401, object]
-forbidden(message?: string | object): [403, object]
-serverError(message?: string | object): [500, object]
-created(body: object): [201, object]
-noContent(): [204, null]
-paginate<T>(items: T[], options?: { page?: number; pageSize?: number }): PaginatedResponse<T>
-```
-
-`paginate()` normalizes its options: `page` and `pageSize` must be integers `>= 1`, and any other
-value (`0`, negative, fractional, `NaN`, `Infinity`, missing) falls back to page `1` and page size
-`10`. The returned envelope echoes the normalized values, so `data`, `page`, `pageSize` and
-`totalPages` are always mutually consistent.
+`@schmock/angular` re-exports the core response helpers (`notFound`,
+`badRequest`, `unauthorized`, `forbidden`, `serverError`, `created`,
+`noContent`, `paginate`). See [Response helpers](#response-helpers).
 
 See the [Angular guide](./angular.md) for detailed usage.
 
@@ -950,7 +1387,23 @@ async function run(args: string[]): Promise<void>
 The returned promise settles when the server has shut down, not when it has
 started: on `--help` or a missing `--spec` it resolves immediately, otherwise
 it stays pending until `SIGINT`/`SIGTERM` arrives and the close completes (and
-rejects if that close fails). Both signal handlers are removed as shutdown
-begins, so a host process that calls `run` repeatedly does not accumulate them.
+rejects if that close fails). Both signal handlers stay attached until the
+close settles, so a repeat signal is acknowledged instead of killing the drain;
+a signal that arrives after `shutdownGraceMs` has passed forces an exit. The
+handlers are then removed, so a host process that calls `run` repeatedly does
+not accumulate them.
+
+### `loadSeedFile(path)`
+
+Read and check a `--seed` manifest, returning the `seed` option for
+`openapi()`.
+
+```typescript
+function loadSeedFile(seedPath: string): SeedConfig
+```
+
+File entries resolve relative to the manifest and may not leave its directory.
+An entry of an unrecognized shape throws. See
+[Manifest rules](./cli.md#manifest-rules).
 
 See the [CLI guide](./cli.md) for detailed usage.

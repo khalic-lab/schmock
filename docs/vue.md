@@ -1,6 +1,6 @@
 # Vue Adapter
 
-Intercept fetch calls in Vue 3 apps with Schmock. Works in both tests (Node/jsdom) and browser (dev-time).
+Intercept fetch calls in Vue 3.5+ apps with Schmock. Works in both tests (Node/jsdom) and browser (dev-time).
 
 ```sh
 bun install @schmock/vue
@@ -97,6 +97,10 @@ When `true` (default), requests that don't match any Schmock route are forwarded
 
 Only intercept requests whose pathname starts with this string. Non-matching requests go straight to real `fetch` without being processed.
 
+`baseUrl` only filters which requests are mocked. It does not strip the
+prefix, so register routes with the full path (`GET /api/users`). The Angular
+adapter's `baseUrl` strips the prefix instead.
+
 ### `errorFormatter`
 
 `errorFormatter(error)` formats core-marked internal exceptions — an error
@@ -118,7 +122,11 @@ invoked a second time.
 
 A hook that *throws* is handled separately: that response inherits no headers
 beyond `content-type: application/json`, and a formatter that throws while
-handling it propagates, rejecting the `fetch` call.
+handling it propagates, rejecting the `fetch` call. If the formatter returns a
+body the transport cannot serialize (a `BigInt`, a circular object, an
+`undefined` leaf), the response falls back to a 500
+`{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }`, the same fallback
+the core-marked exception path uses.
 
 ## `useSchmock` Composable
 

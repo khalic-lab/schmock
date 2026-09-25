@@ -101,7 +101,9 @@ release, but still requires the exact confirmation token.
 - Execute mode requires
   `--confirm <scope>@v<live-version>:<full-commit-sha>`, a clean worktree, and
   the `main` branch.
-- Execute mode runs lint, the full test suite, and the build before publication.
+- Execute mode runs lint, the build, the full test suite, then `check:publish`
+  before publication. The build runs first so dist-bound tests check the
+  JavaScript being released.
 - Existing npm versions are skipped only when the registry query succeeds.
   Registry or authentication errors stop the release instead of being treated
   as an unpublished version.

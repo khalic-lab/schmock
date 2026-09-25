@@ -27,6 +27,23 @@ already-admitted request using that generation has settled. Cleanup must be
 synchronous. A plugin piped while a request is running belongs to the next
 request generation and cannot enter the in-flight pipeline.
 
+The `uninstall()` instance is read-only and expires when the hook returns:
+`history`, `called`, `callCount`, `lastRequest`, `getRoutes` and `getState`
+work. Route registration, `pipe`, `handle`, `reset`/`resetHistory`/`resetState`,
+`on`/`off` and `listen`/`close`/`intercept` throw
+`PLUGIN_UNINSTALL_OPERATION_UNSUPPORTED`, and any use after the hook returns
+throws `PLUGIN_UNINSTALL_SCOPE_EXPIRED`. Re-piping a plugin object whose
+uninstall is still pending (a request was in flight at `reset()`) runs that
+uninstall immediately, before the new `install()`.
+
+`pipe()` throws `SchmockError` `PLUGIN_INVALID` for a plugin that could never
+work: a non-object, a missing or non-function `process`, or an `install` or
+`beforeRequest` set to a truthy non-function. Falsy hooks (`onError: null`,
+`install: false`) are accepted. Piping the same plugin object again is a no-op,
+and debug mode logs `Plugin <name> is already piped into this mock — ignored`.
+Distinct objects with the same name, such as two `openapi()` plugins, still
+stack.
+
 ## Pipeline Execution
 
 Plugins are global to a mock instance and execute in `.pipe()` order. Request
@@ -43,6 +60,19 @@ Request → beforeRequest hooks → Route generator → process hooks → Respon
 3. `process` receives the generated or short-circuit response and may transform
    it; `context.requestShortCircuited` identifies the latter.
 4. All phases share the same per-request plugin state.
+
+`process` receives the raw `ResponseResult`, not the body: a bare body, a
+`[status, body]` or `[status, body, headers]` tuple, or a
+`{ status, body, headers? }` envelope. A transformer that reshapes the body
+must unwrap and rewrap the envelope, or it turns a 401 or a 201 into a 200 body
+that contains the tuple.
+
+Static route data (a non-function generator) and `context.route` are
+per-request copies. Editing them in place changes only the current response
+and request, never the registered route or later requests. Static data is
+copied deeply, but only its arrays and plain objects; Dates, binary values and
+class instances are passed by reference. `context.route` is a shallow copy, so
+custom route data nested inside it is shared.
 
 ## Plugin Patterns
 
@@ -86,14 +116,35 @@ function timestampPlugin(): Schmock.Plugin {
 ### Transformer — Modify existing response
 
 ```typescript
+import { isStatusTuple } from '@schmock/core'
+
 function wrapPlugin(key: string): Schmock.Plugin {
   return {
     name: 'wrap',
     process(context, response) {
-      if (response) {
-        return { context, response: { [key]: response, _meta: { path: context.path } } }
+      const wrap = (body: unknown) => ({ [key]: body, _meta: { path: context.path } })
+
+      // Nothing to wrap, or a guard's rejection: leave it alone
+      if (response === undefined || response === null || context.requestShortCircuited) {
+        return { context, response }
       }
-      return { context, response }
+      // [status, body] or [status, body, headers]: wrap successful bodies only
+      if (isStatusTuple(response)) {
+        if (response[0] >= 300) return { context, response }
+        const [status, body, ...headers] = response
+        return { context, response: [status, wrap(body), ...headers] }
+      }
+      // { status, body, headers? } envelope
+      if (
+        typeof response === 'object' &&
+        'status' in response &&
+        typeof response.status === 'number' &&
+        'body' in response
+      ) {
+        if (response.status >= 300) return { context, response }
+        return { context, response: { ...response, body: wrap(response.body) } }
+      }
+      return { context, response: wrap(response) }
     },
   }
 }
@@ -189,6 +240,39 @@ mock
 
 mock('GET /data', handler)
 ```
+
+A request without a token gets the guard's 401 unchanged: `wrapPlugin` skips
+short-circuit responses.
+
+### Ordering the built-in plugins
+
+`process` hooks run in `.pipe()` order, and each built-in plugin acts on the
+response as it finds it:
+
+1. `fakerPlugin` first. It fills only an empty response and passes any other
+   through, so a transformer piped before it sees nothing to transform.
+2. Response validation next: `validationPlugin`, or `openapi` with
+   `validateResponses`. It checks the body as it is when it runs, so it must
+   come after the generator and before any transformer that reshapes the body.
+3. `queryPlugin` last. It wraps arrays in `{ data, pagination }`.
+
+```typescript
+mock
+  .pipe(fakerPlugin({ schema: { type: 'array', items: { type: 'integer' } }, count: 25 }))
+  .pipe(validationPlugin({ response: { body: { type: 'array' } } }))
+  .pipe(queryPlugin({ pagination: { defaultLimit: 10 } }))
+```
+
+In any other order the pipeline fails:
+
+| Order | Result |
+|-------|--------|
+| `queryPlugin` before `fakerPlugin` | the full array, unpaginated, with no error |
+| `validationPlugin` before `fakerPlugin`, when faker generates the body | 500 `RESPONSE_VALIDATION_ERROR`: the schema sees the empty response |
+| `queryPlugin` before response validation | 500 `RESPONSE_VALIDATION_ERROR`: the schema sees the envelope |
+
+If response validation must run after `queryPlugin`, write its schema against
+the `{ data, pagination }` envelope.
 
 ## Testing Plugins
 

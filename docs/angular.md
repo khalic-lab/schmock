@@ -90,16 +90,20 @@ shaped by `errorFormatter` rather than a bare `Error`.
 
 ## OpenAPI-Driven Interceptor
 
-Skip manual route definitions — load everything from a spec:
+Skip manual route definitions — load everything from a spec. In the browser,
+pass the spec as an object: a file path or URL throws `OPENAPI_NODE_ONLY` (see
+[Running in a browser](./openapi.md#running-in-a-browser)).
 
 ```typescript
 import { provideSchmockInterceptorFromSpec } from '@schmock/angular'
+
+const spec: object = await fetch('/assets/api.json').then((res) => res.json())
 
 export const appConfig = {
   providers: [
     provideHttpClient(withInterceptorsFromDi()),
     await provideSchmockInterceptorFromSpec(
-      { spec: './assets/api.yaml', seed: { users: { count: 10 } } },
+      { spec, seed: { users: { count: 10 } } },
       { baseUrl: '/api' },
     ),
   ],
@@ -112,7 +116,7 @@ Or with `createSchmockInterceptorFromSpec` for class-based setup:
 import { createSchmockInterceptorFromSpec } from '@schmock/angular'
 
 const InterceptorClass = await createSchmockInterceptorFromSpec(
-  { spec: './api.yaml' },
+  { spec: await fetch('/assets/api.json').then((res) => res.json()) },
   { baseUrl: '/api' },
 )
 
@@ -123,6 +127,11 @@ providers: [
   { provide: HTTP_INTERCEPTORS, useFactory: () => new InterceptorClass(), multi: true },
 ]
 ```
+
+The spec helpers load `@schmock/openapi` through a specifier computed at
+runtime, so an app that does not install it still bundles cleanly with
+`ng build` and esbuild. Webpack-based builders may print a harmless
+`Critical dependency: the request of a dependency is an expression` warning.
 
 ## Helper Functions
 
@@ -237,12 +246,22 @@ describe('UserService', () => {
   empty `text` error body arrives as `null` there — again as it does in Angular
 - Emitted `HttpResponse` and `HttpErrorResponse` report `request.urlWithParams`,
   so serialized `HttpParams` appear on `.url`
+- The query is read from the URL string first, then from `HttpParams`, the
+  order Angular writes them into `urlWithParams`. A repeated key resolves to its
+  last value, as in the other adapters and the CLI
 
 `errorFormatter` formats core-marked internal exceptions and thrown handling
 errors. It does not reinterpret an ordinary route response such as
 `[500, { error: 'domain failure' }]`. Exception provenance is captured before
 `transformResponse` runs, so a hook that clones the response with
 `{ ...response }` does not suppress the formatter.
+
+Formatter output for a core-marked 500 is normalized like any other response.
+A HEAD request gets no body, and `Date` values arrive as ISO strings. The
+`HttpErrorResponse` carries `content-type: application/json` and keeps the
+route's other headers. Output that cannot be serialized, such as an embedded
+`Error`, falls back to
+`{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }`.
 
 Unsubscribing aborts pending Schmock work and unsubscribes any unmatched
 passthrough request. No response is emitted after teardown.

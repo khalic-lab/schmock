@@ -18,7 +18,7 @@ mock.pipe(await openapi({
 }))
 
 const res = await mock.handle('GET', '/pets')
-// → { status: 200, body: [{ petId: 1, name: "Rex", ... }, ...] }
+// → { status: 200, body: [{ petId: 1, name: "<generated>", ... }, ... 5 pets] }
 ```
 
 ## Why Schmock?
@@ -80,8 +80,14 @@ const res = await mock.handle('GET', '/users/1')
 ```typescript
 const mock = schmock({ state: { items: [] } })
 
+// State is typed Record<string, unknown>, so narrow it before use.
+type Item = { id: number; name?: string }
+const isItems = (value: unknown): value is Item[] => Array.isArray(value)
+
 mock('POST /items', ({ body, state }) => {
-  const item = { id: state.items.length + 1, ...body }
+  if (!isItems(state.items)) return [500, { error: 'Invalid state' }]
+  const input = typeof body === 'object' && body !== null ? body : {}
+  const item = { id: state.items.length + 1, ...input }
   state.items.push(item)
   return [201, item]
 })
@@ -131,13 +137,26 @@ mock.lastRequest('POST', '/items')  // { body: { name: 'B' }, ... }
 import { validationPlugin } from '@schmock/validation'
 import { queryPlugin } from '@schmock/query'
 
+// Plugins apply to every route on the mock, not only to one route.
+mock.pipe(validationPlugin({
+  request: {
+    // Query values arrive as strings and are coerced for validation.
+    query: {
+      type: 'object',
+      properties: {
+        page: { type: 'integer', minimum: 1 },
+        limit: { type: 'integer', minimum: 1, maximum: 100 },
+      },
+    },
+  },
+}))
+mock.pipe(queryPlugin({
+  pagination: { defaultLimit: 20 },
+  sorting: { allowed: ['name', 'created_at'] },
+  filtering: { allowed: ['role'] },
+}))
+
 mock('GET /users', ({ state }) => state.users)
-  .pipe(validationPlugin({ request: { query: querySchema } }))
-  .pipe(queryPlugin({
-    pagination: { defaultLimit: 20 },
-    sorting: { allowed: ['name', 'created_at'] },
-    filtering: { allowed: ['role'] },
-  }))
 
 // GET /users?filter[role]=admin&sort=name&page=2&limit=10
 ```
