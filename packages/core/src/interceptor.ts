@@ -25,6 +25,15 @@ const FILTERED = Symbol("schmock.fetch.filtered");
 const ALREADY_CONSULTED = Symbol("schmock.fetch.already-consulted");
 const RELATIVE_REQUEST_BASE = "http://schmock.invalid/";
 
+/**
+ * Where an admission from this module's mock carries its route probe:
+ * `(method, path) => boolean`, whether `handle(method, path)` would reach a
+ * route, answered from the admission's own snapshot by the resolver handle()
+ * uses. Deliberately unregistered: a second copy of `@schmock/core` does not
+ * find it and simply reads the body as before.
+ */
+export const ROUTE_PROBE_KEY = Symbol("schmock.route-probe");
+
 type InterceptorResult =
   | Response
   | typeof PASSTHROUGH
@@ -340,6 +349,19 @@ async function extractNonJsonBody(request: Request): Promise<unknown> {
   return body.arrayBuffer();
 }
 
+/** An admission's route probe, when it carries one this module can read. */
+function routeProbeOf(
+  admission: Schmock.RequestAdmission | undefined,
+): ((method: Schmock.HttpMethod, path: string) => boolean) | undefined {
+  if (admission === undefined) return undefined;
+  const probe: unknown = Reflect.get(admission, ROUTE_PROBE_KEY);
+  if (typeof probe !== "function") return undefined;
+  // Anything but a definite `false` counts as a route, so an unexpected
+  // answer only costs the body read the probe would have saved.
+  return (method, path) =>
+    Reflect.apply(probe, admission, [method, path]) !== false;
+}
+
 function isAbortError(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -509,12 +531,23 @@ export function createFetchInterceptor(
       context.method = initialMethod;
       const admission = admitRequest?.();
       const admittedHandle = admission?.handle ?? handle;
+      // Without a beforeRequest hook (which receives the body and may change
+      // the method or path), the request handle() will see is already known,
+      // so a passthrough lease asks the admission whether any route answers
+      // it. On a definite miss the body is never read: the request reaches
+      // the network untouched, and handle() still runs, without a body, so
+      // request:start/notfound/end are emitted exactly as before.
+      const routeProbe =
+        passthrough && !beforeRequest ? routeProbeOf(admission) : undefined;
       // The request handed to errorFormatter: the latest one this lease built,
       // so it reflects beforeRequest once that hook has returned.
       let formatterRequest: Schmock.AdapterRequest | undefined;
 
       try {
-        const body = await awaitWithAbort(extractBody(request), request.signal);
+        const body: ExtractedBody =
+          routeProbe !== undefined && !routeProbe(initialMethod, path)
+            ? { value: undefined, malformedJson: false }
+            : await awaitWithAbort(extractBody(request), request.signal);
         throwIfAborted(request.signal);
 
         // With passthrough off the lease owns every request that reaches it,
