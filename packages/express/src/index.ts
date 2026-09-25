@@ -1,100 +1,22 @@
 import type * as Schmock from "@schmock/core";
 import {
+  buildFormattedErrorResponse,
   getResponseException,
-  isBinaryBody,
   isRouteNotFound,
   normalizeResponse,
   parseNodeQuery,
   SchmockError,
   serializeResponseBody,
   toHttpMethod,
+  withDefaultContentType,
 } from "@schmock/core";
+import {
+  acquireRequestAdmission,
+  awaitWithAbort,
+  type MockRequestHandler,
+  type RequestAdmission,
+} from "@schmock/core/adapter";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
-
-const REQUEST_ADMISSION = Symbol.for("@schmock/core.request-admission");
-
-type CoreRequestHandler = (
-  method: Schmock.HttpMethod,
-  path: string,
-  options?: Schmock.RequestOptions,
-) => Promise<Schmock.Response>;
-
-interface RequestAdmission {
-  handle: CoreRequestHandler;
-  release(): void;
-}
-
-function isRequestAdmission(value: unknown): value is RequestAdmission {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "handle" in value &&
-    typeof value.handle === "function" &&
-    "release" in value &&
-    typeof value.release === "function"
-  );
-}
-
-function acquireRequestAdmission(
-  mock: Schmock.CallableMockInstance,
-): RequestAdmission | undefined {
-  const admit: unknown = Reflect.get(mock, REQUEST_ADMISSION);
-  if (typeof admit !== "function") return undefined;
-
-  const admission: unknown = Reflect.apply(admit, mock, []);
-  if (!isRequestAdmission(admission)) {
-    throw new Error("Schmock returned an invalid request admission");
-  }
-  return admission;
-}
-
-/**
- * Formatted error bodies are always JSON, so the response's own content-type
- * must be replaced rather than inherited. Every case variant is dropped
- * first: leaving a `Content-Type` alongside the forced lowercase key makes
- * the pair transport-invalid and the normalizer rejects it.
- */
-function withJsonContentType(
-  headers: Record<string, string> | undefined,
-): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [name, value] of Object.entries(headers ?? {})) {
-    if (name.toLowerCase() === "content-type") continue;
-    result[name] = value;
-  }
-  result["content-type"] = "application/json";
-  return result;
-}
-
-function abortReason(signal: AbortSignal): unknown {
-  if ("reason" in signal && signal.reason !== undefined) return signal.reason;
-  const error = new Error("Request aborted");
-  error.name = "AbortError";
-  return error;
-}
-
-function awaitWithAbort<T>(
-  value: T | PromiseLike<T>,
-  signal: AbortSignal,
-): Promise<T> {
-  if (signal.aborted) return Promise.reject(abortReason(signal));
-
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    const finish = (action: () => void) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", abort);
-      action();
-    };
-    const abort = () => finish(() => reject(abortReason(signal)));
-    signal.addEventListener("abort", abort, { once: true });
-    Promise.resolve(value).then(
-      (result) => finish(() => resolve(result)),
-      (error) => finish(() => reject(error)),
-    );
-  });
-}
 
 /**
  * Configuration options for Express adapter
@@ -164,23 +86,10 @@ function schmockToExpressResponse(
   method: Schmock.HttpMethod,
   res: Response,
 ): void {
-  const headers = { ...schmockResponse.headers };
-  const hasContentType = Object.keys(headers).some(
-    (name) => name.toLowerCase() === "content-type",
+  const response = normalizeResponse(
+    withDefaultContentType(schmockResponse),
+    method,
   );
-  if (
-    !hasContentType &&
-    schmockResponse.body !== null &&
-    schmockResponse.body !== undefined
-  ) {
-    if (isBinaryBody(schmockResponse.body)) {
-      headers["content-type"] = "application/octet-stream";
-    } else if (typeof schmockResponse.body !== "string") {
-      headers["content-type"] = "application/json";
-    }
-  }
-
-  const response = normalizeResponse({ ...schmockResponse, headers }, method);
   res.status(response.status);
   // Node's raw setter, not Express's res.set(): the latter appends a
   // mime-types charset to content-type, rewriting a header the route set
@@ -192,61 +101,38 @@ function schmockToExpressResponse(
   res.end(body === undefined ? undefined : Buffer.from(body));
 }
 
+interface FormattedErrorSend {
+  errorFormatter: (error: Error, req: Request) => unknown;
+  error: Error;
+  req: Request;
+  res: Response;
+  method: Schmock.HttpMethod;
+  /**
+   * The (post-hook) headers of the response being replaced, so metadata such
+   * as `retry-after` is not lost, matching the Angular adapter.
+   */
+  inheritedHeaders?: Record<string, string>;
+}
+
 /**
- * Invoke the errorFormatter and send its result, falling back to a minimal
- * safe body when the formatter throws or the response normalizer rejects its
- * body (for example a formatted value carrying an Error instance). The
- * formatter runs inside the guard so it fires exactly once; an unguarded
- * throw would re-enter it and then escape to Express's default handler,
- * which leaks an HTML stack trace with absolute source paths.
- *
- * `responseHeaders` carries the (post-hook) headers of the response being
- * replaced so metadata such as `retry-after` is not lost, matching the
- * Angular adapter. There are two distinct fallbacks below. When the headers
- * themselves are untransportable (a non-string value, a control character, a
- * case-duplicate name) the send is retried once with the fixed JSON header
- * set, because the formatter's body is still good and losing it would
- * silently change the user's error contract. Only a failure of the formatter
- * or of its body reaches the minimal fallback, which deliberately inherits
- * nothing: once the formatter has failed, replaying its response's headers is
- * not obviously safe.
+ * Send the errorFormatter's result as a 500. Core's
+ * `buildFormattedErrorResponse` runs the formatter exactly once and owns the
+ * fallbacks (untransportable inherited headers, a throwing formatter, an
+ * unserializable body), so what is left here is the write. That write is
+ * guarded too: a throw escaping into the middleware's catch would run the
+ * formatter a second time and then reach Express's default handler, which
+ * leaks an HTML stack trace with absolute source paths.
  */
-function sendFormattedError(
-  errorFormatter: (error: Error, req: Request) => unknown,
-  error: Error,
-  req: Request,
-  method: Schmock.HttpMethod,
-  res: Response,
-  responseHeaders: Record<string, string> = {},
-): void {
+function sendFormattedError(send: FormattedErrorSend): void {
+  const { errorFormatter, req, res, method } = send;
+  const response = buildFormattedErrorResponse({
+    formatter: (error) => errorFormatter(error, req),
+    error: send.error,
+    inheritedHeaders: send.inheritedHeaders,
+    method,
+  });
   try {
-    const formatted = errorFormatter(error, req);
-    try {
-      schmockToExpressResponse(
-        {
-          status: 500,
-          body: formatted,
-          headers: withJsonContentType(responseHeaders),
-        },
-        method,
-        res,
-      );
-    } catch {
-      // The inherited post-hook headers were not transportable. The
-      // normalizer validates them before anything is written, so nothing is
-      // on the wire yet: keep the formatter's body and drop the headers
-      // rather than degrading the error contract to the minimal fallback.
-      // `formatted` is reused, so the formatter still fires exactly once.
-      schmockToExpressResponse(
-        {
-          status: 500,
-          body: formatted,
-          headers: { "content-type": "application/json" },
-        },
-        method,
-        res,
-      );
-    }
+    schmockToExpressResponse(response, method, res);
   } catch {
     if (!res.headersSent) {
       res.status(500);
@@ -373,7 +259,7 @@ export function toExpress(
     let responseMethod: Schmock.HttpMethod = "GET";
     try {
       admission = acquireRequestAdmission(mock);
-      const handleRequest: CoreRequestHandler =
+      const handleRequest: MockRequestHandler =
         admission?.handle ??
         ((admittedMethod, admittedPath, admittedOptions) =>
           mock.handle(admittedMethod, admittedPath, admittedOptions));
@@ -467,14 +353,14 @@ export function toExpress(
       // beforeResponse that rewrites an exception into a 503 or a 200 is
       // honoured instead of being forced back to a formatted 500.
       if (errorFormatter && internalError && schmockResponse.status === 500) {
-        sendFormattedError(
+        sendFormattedError({
           errorFormatter,
-          internalError,
+          error: internalError,
           req,
-          requestData.method,
           res,
-          schmockResponse.headers,
-        );
+          method: requestData.method,
+          inheritedHeaders: schmockResponse.headers,
+        });
         return;
       }
 
@@ -499,7 +385,13 @@ export function toExpress(
         // Fires for any Error from the handler/pipeline, not just
         // SchmockError — matches the Angular adapter's behavior.
         const err = error instanceof Error ? error : new Error(String(error));
-        sendFormattedError(errorFormatter, err, req, responseMethod, res);
+        sendFormattedError({
+          errorFormatter,
+          error: err,
+          req,
+          res,
+          method: responseMethod,
+        });
       } else if (passErrorsToNext) {
         next(error);
       } else {

@@ -13,14 +13,18 @@ import {
 import { Injectable } from "@angular/core";
 import type * as Schmock from "@schmock/core";
 import {
+  buildFormattedErrorResponse,
+  getHeader,
   getResponseException,
   isHttpMethod,
   isRouteNotFound,
+  matchPathPrefix,
   normalizeResponse,
+  parsePathPrefix,
   schmock,
   serializeResponseBody,
 } from "@schmock/core";
-import { Observable } from "rxjs";
+import { Observable, type Subscriber } from "rxjs";
 
 type AngularResponseType = HttpRequest<unknown>["responseType"];
 
@@ -38,17 +42,6 @@ function lowercaseHeaderKeys(
     result[name.toLowerCase()] = value;
   }
   return result;
-}
-
-/** Case-insensitive header lookup — normalizeResponse preserves casing. */
-function headerValue(
-  headers: Record<string, string> | undefined,
-  name: string,
-): string | undefined {
-  for (const [key, value] of Object.entries(headers ?? {})) {
-    if (key.toLowerCase() === name) return value;
-  }
-  return undefined;
 }
 
 /** Copy bytes into a standalone ArrayBuffer with no trailing slack. */
@@ -80,7 +73,7 @@ function emptyResponseBody(
       // The package builds for the browser but its tests run under Bun, so
       // fall back to the ArrayBuffer where Blob is unavailable.
       return typeof Blob === "function"
-        ? new Blob([], { type: headerValue(headers, "content-type") ?? "" })
+        ? new Blob([], { type: getHeader(headers, "content-type") ?? "" })
         : new ArrayBuffer(0);
     default:
       return null;
@@ -131,7 +124,7 @@ function applyResponseType(
       // fall back to the ArrayBuffer where Blob is unavailable.
       return typeof Blob === "function"
         ? new Blob([toArrayBufferCopy(bytes)], {
-            type: headerValue(headers, "content-type") ?? "",
+            type: getHeader(headers, "content-type") ?? "",
           })
         : toArrayBufferCopy(bytes);
     default:
@@ -278,6 +271,38 @@ export interface AngularAdapterOptions {
     response: Schmock.Response,
     request: HttpRequest<unknown>,
   ) => Schmock.Response;
+
+  /**
+   * Request hook under the name the fetch interceptor, React, Vue and Express
+   * use. Like `transformRequest`, but it may be async, and returning nothing
+   * leaves the request unchanged. When both are set, `transformRequest` is
+   * used.
+   * @param request - Angular HTTP request
+   * @returns Request overrides, or nothing to keep the request as is
+   */
+  beforeRequest?: (request: HttpRequest<unknown>) =>
+    | Schmock.AdapterRequestOverride
+    // biome-ignore lint/suspicious/noConfusingVoidType: as in InterceptOptions, a hook declared to return void must be accepted
+    | void
+    | Promise<Schmock.AdapterRequestOverride | undefined>;
+
+  /**
+   * Response hook under the name the fetch interceptor, React, Vue and
+   * Express use. Like `transformResponse`, but it may be async, and returning
+   * nothing keeps the response. When both are set, `transformResponse` is
+   * used.
+   * @param response - Response from Schmock
+   * @param request - Original Angular request
+   * @returns The response to emit, or nothing to keep Schmock's
+   */
+  beforeResponse?: (
+    response: Schmock.Response,
+    request: HttpRequest<unknown>,
+  ) =>
+    | Schmock.Response
+    // biome-ignore lint/suspicious/noConfusingVoidType: as in InterceptOptions, a hook declared to return void must be accepted
+    | void
+    | Promise<Schmock.Response | undefined>;
 }
 
 /**
@@ -310,115 +335,62 @@ function extractQueryParams(
 }
 
 /**
- * Extract pathname from URL (handles full URLs and relative paths)
- * - "http://localhost:4200/api/users" → "/api/users"
- * - "/api/users?foo=bar" → "/api/users"
- * - "api/users" → "/api/users"
+ * Split an Angular request URL into its origin (null for a relative URL) and
+ * its pathname, dropping the query:
+ * - "http://localhost:4200/api/users" → origin "http://localhost:4200", "/api/users"
+ * - "/api/users?foo=bar" → origin null, "/api/users"
+ * - "api/users" → origin null, "/api/users"
+ *
+ * The query is dropped before looking for "://", so a relative URL carrying an
+ * absolute one in its query (`/r?to=https://x`) stays relative.
  */
-function extractPathname(url: string): string {
-  // Remove query string first
+function splitRequestUrl(url: string): { origin: string | null; path: string } {
   const queryStart = url.indexOf("?");
   const urlWithoutQuery = queryStart === -1 ? url : url.slice(0, queryStart);
 
-  // Check if it's a full URL with protocol
   if (urlWithoutQuery.includes("://")) {
     try {
       const parsed = new URL(urlWithoutQuery);
-      return parsed.pathname;
+      return { origin: parsed.origin, path: parsed.pathname };
     } catch {
-      // If URL parsing fails, fall through to simple extraction
+      // Not a URL after all: read it as a relative path below.
     }
   }
 
-  // Handle relative paths - ensure it starts with /
-  if (!urlWithoutQuery.startsWith("/")) {
-    return `/${urlWithoutQuery}`;
-  }
-
-  return urlWithoutQuery;
+  return {
+    origin: null,
+    path: urlWithoutQuery.startsWith("/")
+      ? urlWithoutQuery
+      : `/${urlWithoutQuery}`,
+  };
 }
 
 /**
- * Extract origin from a URL string, or null for relative URLs.
+ * The path a request is routed under once the `baseUrl` prefix is stripped,
+ * or `undefined` when the request lies outside it and is passed through.
+ *
+ * Matching is core's, so raw and percent-encoded spellings of the prefix
+ * match alike, exactly as in the fetch interceptor. Stripping is Angular's
+ * own (docs/angular.md): it removes as many leading segments as the prefix
+ * has, so the remainder keeps the spelling the request used. Canonicalizing
+ * never adds or removes a "/", which is what makes the segment count carry
+ * over from the canonical prefix to the raw path.
  */
-function extractOrigin(url: string): string | null {
-  if (!url.includes("://")) return null;
-  try {
-    return new URL(url).origin;
-  } catch {
-    return null;
-  }
-}
+function routePathUnderPrefix(
+  prefix: Schmock.PathPrefix | undefined,
+  url: string,
+): string | undefined {
+  const { origin, path } = splitRequestUrl(url);
+  if (!prefix) return path;
+  // An origin-form base also requires the request's origin; a relative
+  // request, which has none, never matches it.
+  if (prefix.origin !== null && origin !== prefix.origin) return undefined;
+  if (!matchPathPrefix(prefix, path)) return undefined;
+  if (prefix.path === "") return path;
 
-/**
- * Parse a baseUrl option into its origin + path parts. Path-only inputs
- * keep current "pathname prefix" semantics; origin-form inputs require the
- * request's origin to match too.
- */
-function parseBaseUrl(baseUrl: string): {
-  origin: string | null;
-  path: string;
-} {
-  if (baseUrl.includes("://")) {
-    try {
-      const parsed = new URL(baseUrl);
-      const rawPath = parsed.pathname;
-      const path = rawPath === "/" ? "" : rawPath.replace(/\/$/, "");
-      return { origin: parsed.origin, path };
-    } catch {
-      // Fall through to path-only handling
-    }
-  }
-  return { origin: null, path: baseUrl.replace(/\/$/, "") };
-}
-
-/**
- * Replace every case variant of content-type with a JSON one: a formatted
- * error body is always JSON, whatever the failing route declared.
- */
-function withJsonContentType(
-  headers: Record<string, string>,
-): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [name, value] of Object.entries(headers)) {
-    if (name.toLowerCase() !== "content-type") result[name] = value;
-  }
-  result["content-type"] = "application/json";
-  return result;
-}
-
-/**
- * Run an in-band errorFormatter and normalize its output exactly like any
- * other response, so a HEAD request drops the body and Date values arrive as
- * JSON strings, matching the out-of-band path and the Express adapter. The
- * route's other headers (e.g. retry-after) are kept. A throwing formatter, or
- * a body the normalizer rejects (an embedded Error), falls back to a minimal
- * body; the formatter is still invoked exactly once.
- */
-function formatInBandError(input: {
-  format: () => unknown;
-  headers: Record<string, string>;
-  method: Schmock.HttpMethod;
-}): Schmock.Response {
-  try {
-    return normalizeResponse(
-      {
-        status: 500,
-        body: input.format(),
-        headers: withJsonContentType(input.headers),
-      },
-      input.method,
-    );
-  } catch {
-    return normalizeResponse(
-      {
-        status: 500,
-        body: { error: "Internal Server Error", code: "INTERNAL_ERROR" },
-        headers: { "content-type": "application/json" },
-      },
-      input.method,
-    );
-  }
+  const prefixSegments = prefix.path.split("/").length;
+  const rawPrefix = path.split("/").slice(0, prefixSegments).join("/");
+  return path.slice(rawPrefix.length) || "/";
 }
 
 /**
@@ -456,6 +428,343 @@ function headersToObject(
   return headers;
 }
 
+type RequestHook = (
+  request: HttpRequest<unknown>,
+) =>
+  | Schmock.AdapterRequestOverride
+  | PromiseLike<Schmock.AdapterRequestOverride>;
+
+type ResponseHook = (
+  response: Schmock.Response,
+  request: HttpRequest<unknown>,
+) => Schmock.Response | PromiseLike<Schmock.Response>;
+
+/** The request as it is handed to `mock.handle()`. */
+interface RoutedRequest {
+  method: Schmock.HttpMethod;
+  path: string;
+  headers: Record<string, string>;
+  body: unknown;
+  query: Record<string, string>;
+}
+
+/** Everything a subscription needs that is fixed when the interceptor is built. */
+interface InterceptorConfig {
+  mock: Schmock.CallableMockInstance;
+  passthrough: boolean;
+  errorFormatter?: (error: Error, request: HttpRequest<unknown>) => unknown;
+  requestHook?: RequestHook;
+  responseHook?: ResponseHook;
+}
+
+/** The state of one subscription to an intercepted request. */
+interface Interception {
+  readonly config: InterceptorConfig;
+  readonly req: HttpRequest<unknown>;
+  readonly next: HttpHandler;
+  readonly observer: Subscriber<HttpEvent<unknown>>;
+  readonly abortController: AbortController;
+  aborted: boolean;
+  innerSub?: { unsubscribe(): void };
+  /**
+   * Shapes error responses. A request hook's rewrite updates it; a throw
+   * before that leaves the pre-hook method in place.
+   */
+  responseMethod: Schmock.HttpMethod;
+}
+
+function isPromiseLike<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
+  return (
+    (typeof value === "object" || typeof value === "function") &&
+    value !== null &&
+    "then" in value &&
+    typeof value.then === "function"
+  );
+}
+
+/**
+ * Continue with a hook's result: at once when the hook was synchronous, so a
+ * sync hook keeps the timing it always had, or once its promise settles.
+ */
+function whenSettled<T, R>(
+  value: T | PromiseLike<T>,
+  next: (settled: T) => R,
+): R | Promise<R> {
+  return isPromiseLike(value) ? Promise.resolve(value).then(next) : next(value);
+}
+
+/**
+ * The request hook in force: `transformRequest` when set, otherwise
+ * `beforeRequest`, whose empty result means "no change".
+ */
+function resolveRequestHook(
+  options: AngularAdapterOptions,
+): RequestHook | undefined {
+  const { transformRequest, beforeRequest } = options;
+  if (transformRequest) return transformRequest;
+  if (!beforeRequest) return undefined;
+  return (request) =>
+    whenSettled(beforeRequest(request), (override) => override ?? {});
+}
+
+/**
+ * The response hook in force: `transformResponse` when set, otherwise
+ * `beforeResponse`, whose empty result keeps the response.
+ */
+function resolveResponseHook(
+  options: AngularAdapterOptions,
+): ResponseHook | undefined {
+  const { transformResponse, beforeResponse } = options;
+  if (transformResponse) return transformResponse;
+  if (!beforeResponse) return undefined;
+  return (response, request) =>
+    whenSettled(
+      beforeResponse(response, request),
+      (replaced) => replaced ?? response,
+    );
+}
+
+/**
+ * Emit a non-2xx response on Angular's error channel. The body is shaped by
+ * the same responseType law as a success body.
+ */
+function emitHttpError(
+  observer: Subscriber<HttpEvent<unknown>>,
+  req: HttpRequest<unknown>,
+  response: Schmock.Response,
+  body: unknown,
+): void {
+  observer.error(
+    new HttpErrorResponse({
+      error: applyResponseType(
+        body,
+        response.status,
+        response.headers,
+        req.responseType,
+      ),
+      status: response.status,
+      statusText: getStatusText(response.status),
+      url: req.urlWithParams,
+      headers: new HttpHeaders(response.headers),
+    }),
+  );
+}
+
+/** The unformatted body of an adapter failure: its message and code. */
+function defaultErrorBody(error: unknown): { error: string; code: string } {
+  return {
+    error: error instanceof Error ? error.message : "Internal Server Error",
+    code:
+      error !== null &&
+      typeof error === "object" &&
+      "code" in error &&
+      typeof error.code === "string"
+        ? error.code
+        : "INTERNAL_ERROR",
+  };
+}
+
+/**
+ * Shape an out-of-band failure (a throwing hook, a rejected handler) into an
+ * HttpErrorResponse, so the Observable always settles. Without an
+ * errorFormatter, or when it throws, the body is the failure's own message and
+ * code; a formatted body the normalizer rejects falls back to the minimal one.
+ */
+function emitFailure(interception: Interception, error: unknown): void {
+  if (interception.aborted) return;
+  const { req, config } = interception;
+  const { errorFormatter } = config;
+
+  const response = buildFormattedErrorResponse({
+    formatter: (cause) => {
+      if (!errorFormatter) return defaultErrorBody(error);
+      try {
+        return errorFormatter(cause, req);
+      } catch {
+        return defaultErrorBody(error);
+      }
+    },
+    error: error instanceof Error ? error : new Error(String(error)),
+    method: interception.responseMethod,
+  });
+  emitHttpError(interception.observer, req, response, response.body);
+}
+
+/**
+ * Emit the routed response: 2xx as an HttpResponse, anything else as an
+ * HttpErrorResponse. Only a core-marked exception at 500 is formatted; a
+ * domain 500 body is emitted as the route wrote it.
+ */
+function emitResponse(
+  interception: Interception,
+  routed: Schmock.Response,
+  internalError: Error | undefined,
+): void {
+  const { req, observer, config, responseMethod } = interception;
+  const response = normalizeResponse(routed, responseMethod);
+  const { status, headers } = response;
+
+  // Angular treats only final 2xx responses as successful emissions.
+  if (status < 200 || status >= 300) {
+    const { errorFormatter } = config;
+    const errorResponse =
+      status === 500 && errorFormatter && internalError
+        ? buildFormattedErrorResponse({
+            formatter: (error) => errorFormatter(error, req),
+            error: internalError,
+            inheritedHeaders: headers,
+            method: responseMethod,
+          })
+        : response;
+    emitHttpError(observer, req, errorResponse, errorResponse.body);
+    return;
+  }
+
+  observer.next(
+    new HttpResponse({
+      body: applyResponseType(response.body, status, headers, req.responseType),
+      status,
+      statusText: getStatusText(status),
+      url: req.urlWithParams,
+      headers: new HttpHeaders(headers),
+    }),
+  );
+  observer.complete();
+}
+
+/**
+ * Handle what the mock answered: pass an unmatched request on (or answer 404
+ * when passthrough is off), otherwise run the response hook and emit. The
+ * returned promise, when the hook is async, joins the caller's chain so its
+ * rejection is shaped like any other failure.
+ */
+function transformAndEmit(
+  interception: Interception,
+  schmockResponse: Schmock.Response,
+): undefined | Promise<void> {
+  if (interception.aborted) return undefined;
+  const { req, next, observer, config } = interception;
+
+  if (isRouteNotFound(schmockResponse)) {
+    if (config.passthrough) {
+      interception.innerSub = next.handle(req).subscribe(observer);
+      return undefined;
+    }
+    const response = normalizeResponse(
+      {
+        status: 404,
+        body: { message: "No matching mock route found" },
+        headers: {},
+      },
+      interception.responseMethod,
+    );
+    emitHttpError(observer, req, response, response.body);
+    return undefined;
+  }
+
+  // Exception provenance is a non-enumerable symbol on the response, so it
+  // must be read BEFORE the response hook: the documented `{...response}`
+  // hook copies only own enumerable properties and would otherwise strip the
+  // mark, silently bypassing errorFormatter.
+  const internalError = getResponseException(schmockResponse);
+  const { responseHook } = config;
+  if (!responseHook) {
+    emitResponse(interception, schmockResponse, internalError);
+    return undefined;
+  }
+
+  const hooked = responseHook(schmockResponse, req);
+  if (!isPromiseLike(hooked)) {
+    emitResponse(interception, hooked, internalError);
+    return undefined;
+  }
+  return Promise.resolve(hooked).then((response) => {
+    if (!interception.aborted) {
+      emitResponse(interception, response, internalError);
+    }
+  });
+}
+
+/**
+ * Apply a request hook's override. A rewrite to a method no route can match
+ * is passed on to the real backend untouched.
+ */
+function applyRequestOverride(
+  interception: Interception,
+  requestData: RoutedRequest,
+  override: Schmock.AdapterRequestOverride,
+): void {
+  const { req, next, observer } = interception;
+  const method = toSupportedHttpMethod(override.method ?? req.method);
+  if (!method) {
+    interception.innerSub = next.handle(req).subscribe(observer);
+    return;
+  }
+  dispatchRequest(interception, { ...requestData, ...override, method });
+}
+
+/** Route the request through the mock and emit what it answers. */
+function dispatchRequest(
+  interception: Interception,
+  routed: RoutedRequest,
+): void {
+  const { config, abortController } = interception;
+  interception.responseMethod = routed.method;
+
+  config.mock
+    .handle(routed.method, routed.path, {
+      // Fold header casing at the single choke point: doing it inside
+      // headersToObject would miss a request hook override that supplies
+      // capitalized keys.
+      headers: lowercaseHeaderKeys(routed.headers),
+      body: routed.body,
+      query: routed.query,
+      signal: abortController.signal,
+    })
+    .then((response) => transformAndEmit(interception, response))
+    .catch((error: unknown) => emitFailure(interception, error));
+}
+
+/**
+ * Run one subscription: derive the request, apply the request hook and hand
+ * it to the mock. Derivation and the hook run inside the Observable so a
+ * throwing hook is shaped into an HttpErrorResponse by the same path as any
+ * other adapter failure instead of escaping intercept() as a bare Error.
+ */
+function runInterception(interception: Interception, routePath: string): void {
+  const { req, config } = interception;
+  try {
+    const requestData: RoutedRequest = {
+      method: interception.responseMethod,
+      path: routePath,
+      headers: headersToObject(req),
+      body: req.body,
+      // Angular's HttpParams are already parsed
+      query: extractQueryParams(req),
+    };
+
+    const { requestHook } = config;
+    if (!requestHook) {
+      dispatchRequest(interception, requestData);
+      return;
+    }
+    const override = requestHook(req);
+    if (!isPromiseLike(override)) {
+      applyRequestOverride(interception, requestData, override);
+      return;
+    }
+    Promise.resolve(override)
+      .then((settled) => {
+        if (!interception.aborted) {
+          applyRequestOverride(interception, requestData, settled);
+        }
+      })
+      .catch((error: unknown) => emitFailure(interception, error));
+  } catch (error) {
+    emitFailure(interception, error);
+  }
+}
+
 /**
  * Create an Angular HTTP interceptor from a Schmock instance
  */
@@ -463,13 +772,15 @@ export function createSchmockInterceptor(
   mock: Schmock.CallableMockInstance,
   options: AngularAdapterOptions = {},
 ): new () => HttpInterceptor {
-  const {
-    baseUrl,
-    passthrough = true,
+  const { baseUrl, passthrough = true, errorFormatter } = options;
+  const prefix = baseUrl ? parsePathPrefix(baseUrl) : undefined;
+  const config: InterceptorConfig = {
+    mock,
+    passthrough,
     errorFormatter,
-    transformRequest,
-    transformResponse,
-  } = options;
+    requestHook: resolveRequestHook(options),
+    responseHook: resolveResponseHook(options),
+  };
 
   @Injectable()
   class SchmockInterceptor implements HttpInterceptor {
@@ -477,280 +788,30 @@ export function createSchmockInterceptor(
       req: HttpRequest<unknown>,
       next: HttpHandler,
     ): Observable<HttpEvent<unknown>> {
-      // Extract pathname from URL (handles full URLs like http://localhost:4200/api/users)
-      const path = extractPathname(req.url);
-
-      // baseUrl filter. Path-form keeps current "pathname prefix + strip"
-      // semantics. Origin-form additionally requires the request's origin
-      // to match — relative-URL requests with no origin won't match an
-      // origin-form base.
-      let effectiveBasePath = "";
-      if (baseUrl) {
-        const { origin: baseOrigin, path: basePath } = parseBaseUrl(baseUrl);
-        if (baseOrigin) {
-          const reqOrigin = extractOrigin(req.url);
-          if (reqOrigin !== baseOrigin) {
-            return next.handle(req);
-          }
-        }
-        if (basePath && path !== basePath && !path.startsWith(`${basePath}/`)) {
-          return next.handle(req);
-        }
-        effectiveBasePath = basePath;
-      }
-
-      // Strip baseUrl path prefix so routes match without it
-      const routePath = effectiveBasePath
-        ? path.slice(effectiveBasePath.length) || "/"
-        : path;
+      // baseUrl filter, then the prefix is stripped so routes match without
+      // it. An origin-form base also requires the request's origin.
+      const routePath = routePathUnderPrefix(prefix, req.url);
+      if (routePath === undefined) return next.handle(req);
 
       const method = toSupportedHttpMethod(req.method);
-      if (!method) {
-        return next.handle(req);
-      }
+      if (!method) return next.handle(req);
 
-      // Handle with Schmock. Request derivation and transformRequest run
-      // INSIDE the Observable so a throwing hook is shaped into an
-      // HttpErrorResponse by the same path as any other adapter failure
-      // instead of escaping intercept() as a bare Error.
       return new Observable<HttpEvent<unknown>>((observer) => {
-        let innerSub: { unsubscribe(): void } | undefined;
-        let aborted = false;
-        const abortController = new AbortController();
-        const teardown = () => {
-          aborted = true;
-          abortController.abort();
-          innerSub?.unsubscribe();
+        const interception: Interception = {
+          config,
+          req,
+          next,
+          observer,
+          abortController: new AbortController(),
+          aborted: false,
+          responseMethod: method,
         };
-
-        // Shapes error responses; a transformRequest rewrite updates it, and
-        // a throw before that leaves the pre-transform method in place.
-        let responseMethod: Schmock.HttpMethod = method;
-
-        const emitError = (error: unknown) => {
-          if (aborted) return;
-
-          let errorBody: unknown;
-          let formatterFailed = false;
-
-          if (errorFormatter) {
-            // A throwing formatter would leave the promise rejected with
-            // nothing downstream to catch it, so the Observable would
-            // never settle. Fall back to the unformatted body instead.
-            try {
-              errorBody = errorFormatter(
-                error instanceof Error ? error : new Error(String(error)),
-                req,
-              );
-            } catch {
-              formatterFailed = true;
-            }
-          }
-          if (!errorFormatter || formatterFailed) {
-            const hasCode =
-              error !== null &&
-              typeof error === "object" &&
-              "code" in error &&
-              typeof error.code === "string";
-            errorBody = {
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Internal Server Error",
-              code: hasCode ? error.code : "INTERNAL_ERROR",
-            };
-          }
-
-          // The Observable must always settle: if the formatter returned a
-          // value the normalizer rejects (for example an embedded Error),
-          // fall back to a minimal safe body instead of throwing inside
-          // this handler and hanging the HttpClient request forever.
-          let response: Schmock.Response;
-          try {
-            response = normalizeResponse(
-              {
-                status: 500,
-                body: errorBody,
-                headers: { "content-type": "application/json" },
-              },
-              responseMethod,
-            );
-          } catch {
-            response = {
-              status: 500,
-              body: {
-                error: "Internal Server Error",
-                code: "INTERNAL_ERROR",
-              },
-              headers: { "content-type": "application/json" },
-            };
-          }
-          observer.error(
-            new HttpErrorResponse({
-              error: applyResponseType(
-                response.body,
-                response.status,
-                response.headers,
-                req.responseType,
-              ),
-              status: response.status,
-              statusText: "Internal Server Error",
-              url: req.urlWithParams,
-              headers: new HttpHeaders(response.headers),
-            }),
-          );
+        runInterception(interception, routePath);
+        return () => {
+          interception.aborted = true;
+          interception.abortController.abort();
+          interception.innerSub?.unsubscribe();
         };
-
-        try {
-          let requestData = {
-            method,
-            path: routePath,
-            headers: headersToObject(req),
-            body: req.body,
-            // Angular's HttpParams are already parsed
-            query: extractQueryParams(req),
-          };
-
-          // Apply request transformation if provided
-          if (transformRequest) {
-            const transformed = transformRequest(req);
-            const transformedMethod = toSupportedHttpMethod(
-              transformed.method ?? req.method,
-            );
-            if (!transformedMethod) {
-              innerSub = next.handle(req).subscribe(observer);
-              return teardown;
-            }
-            requestData = {
-              ...requestData,
-              ...transformed,
-              method: transformedMethod,
-            };
-          }
-          responseMethod = requestData.method;
-
-          mock
-            .handle(requestData.method, requestData.path, {
-              // Fold header casing at the single choke point: doing it
-              // inside headersToObject would miss a transformRequest
-              // override that supplies capitalized keys.
-              headers: lowercaseHeaderKeys(requestData.headers),
-              body: requestData.body,
-              query: requestData.query,
-              signal: abortController.signal,
-            })
-            .then((schmockResponse: Schmock.Response) => {
-              if (aborted) return;
-
-              // Detect ROUTE_NOT_FOUND responses
-              const routeNotFound = isRouteNotFound(schmockResponse);
-
-              if (routeNotFound && passthrough) {
-                // No matching route, pass to real backend
-                innerSub = next.handle(req).subscribe(observer);
-                return;
-              }
-
-              if (routeNotFound) {
-                // No matching route and passthrough disabled
-                const response = normalizeResponse(
-                  {
-                    status: 404,
-                    body: { message: "No matching mock route found" },
-                    headers: {},
-                  },
-                  requestData.method,
-                );
-                observer.error(
-                  new HttpErrorResponse({
-                    error: applyResponseType(
-                      response.body,
-                      response.status,
-                      response.headers,
-                      req.responseType,
-                    ),
-                    status: response.status,
-                    statusText: "Not Found",
-                    url: req.urlWithParams,
-                    headers: new HttpHeaders(response.headers),
-                  }),
-                );
-                return;
-              }
-
-              // Exception provenance is a non-enumerable symbol on the
-              // response, so it must be read BEFORE transformResponse: the
-              // documented `{...response}` hook copies only own enumerable
-              // properties and would otherwise strip the mark, silently
-              // bypassing errorFormatter.
-              const internalError = getResponseException(schmockResponse);
-
-              // Apply response transformation if provided
-              let response = schmockResponse;
-              if (transformResponse) {
-                response = transformResponse(response, req);
-              }
-              response = normalizeResponse(response, requestData.method);
-
-              const status = response.status;
-              const headers = response.headers || {};
-
-              // Angular treats only final 2xx responses as successful emissions.
-              if (status < 200 || status >= 300) {
-                // Format only core-marked exceptions, not domain 500 bodies.
-                const errorResponse =
-                  status === 500 && errorFormatter && internalError
-                    ? formatInBandError({
-                        format: () => errorFormatter(internalError, req),
-                        headers,
-                        method: requestData.method,
-                      })
-                    : { ...response, headers };
-
-                observer.error(
-                  new HttpErrorResponse({
-                    // Shape the formatter's output too — the error channel
-                    // obeys the same responseType law as the success one.
-                    error: applyResponseType(
-                      errorResponse.body,
-                      status,
-                      errorResponse.headers,
-                      req.responseType,
-                    ),
-                    status,
-                    statusText: getStatusText(status),
-                    url: req.urlWithParams,
-                    headers: new HttpHeaders(errorResponse.headers),
-                  }),
-                );
-              } else {
-                // Convert Schmock response to Angular HttpResponse
-                const httpResponse = new HttpResponse({
-                  body: applyResponseType(
-                    response.body,
-                    status,
-                    headers,
-                    req.responseType,
-                  ),
-                  status,
-                  statusText: getStatusText(status),
-                  url: req.urlWithParams,
-                  headers: new HttpHeaders(headers),
-                });
-
-                observer.next(httpResponse);
-                observer.complete();
-              }
-            })
-            .catch(emitError);
-        } catch (error) {
-          // A throwing transformRequest (or request derivation) is shaped by
-          // the same path as an async failure, so callers always receive an
-          // HttpErrorResponse and the Observable always settles.
-          emitError(error);
-        }
-
-        return teardown;
       });
     }
   }

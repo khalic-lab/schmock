@@ -11,6 +11,11 @@ const SCHMOCK_KEY: InjectionKey<Schmock.CallableMockInstance> =
 export interface SchmockPluginOptions {
   mock: Schmock.CallableMockInstance;
   interceptOptions?: Schmock.InterceptOptions;
+  /**
+   * Alias of `interceptOptions`, under the name React's `SchmockProvider`
+   * takes them. When both are given, `interceptOptions` is used.
+   */
+  options?: Schmock.InterceptOptions;
 }
 
 // Leases are keyed by app so they can be released without an unmount: an app
@@ -32,8 +37,8 @@ export function restoreSchmockInterception(app: App): void {
 }
 
 export const schmockPlugin: Plugin<SchmockPluginOptions> = {
-  install(app: App, options: SchmockPluginOptions) {
-    const { mock, interceptOptions } = options;
+  install(app: App, pluginOptions: SchmockPluginOptions) {
+    const { mock, interceptOptions = pluginOptions.options } = pluginOptions;
 
     app.provide(SCHMOCK_KEY, mock);
 
