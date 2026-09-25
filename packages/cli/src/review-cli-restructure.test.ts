@@ -164,7 +164,7 @@ describe("CLI requests served through core's serveNodeRequest", () => {
     expect(response.headers.connection).toBe("close");
   });
 
-  it("rejects a malformed admin request body before checking the token", async () => {
+  it("refuses an unauthorized admin request before reading its malformed body", async () => {
     server = await createCliServer({
       spec: PETSTORE_SPEC,
       port: 0,
@@ -179,9 +179,66 @@ describe("CLI requests served through core's serveNodeRequest", () => {
         `Content-Length: ${Buffer.byteLength(body)}\r\n` +
         `Connection: close\r\n\r\n${body}`,
     );
-    expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toMatchObject({ code: "MALFORMED_JSON" });
+    expect(response.status).toBe(401);
+    expect(JSON.parse(response.body)).toMatchObject({ code: "UNAUTHORIZED" });
     expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("refuses an unauthorized admin request declaring an oversized body with 401, not 413", async () => {
+    server = await createCliServer({
+      spec: PETSTORE_SPEC,
+      port: 0,
+      admin: true,
+    });
+    const response = await sendRaw(
+      server.port,
+      "POST /schmock-admin/reset HTTP/1.1\r\nHost: localhost\r\n" +
+        "Content-Type: application/json\r\n" +
+        "Content-Length: 20000000\r\n" +
+        "Connection: close\r\n\r\n",
+    );
+    expect(response.status).toBe(401);
+    expect(JSON.parse(response.body)).toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("refuses an unauthorized admin request at once while its body stalls", async () => {
+    server = await createCliServer({
+      spec: PETSTORE_SPEC,
+      port: 0,
+      admin: true,
+      shutdownGraceMs: 100,
+    });
+    const started = Date.now();
+    // 7 of the 100 declared bytes, and then nothing: an answer that waited
+    // for the body would come only when the client or the server gave up.
+    const response = await sendRaw(
+      server.port,
+      "GET /schmock-admin/state HTTP/1.1\r\nHost: localhost\r\n" +
+        "Content-Type: text/plain\r\n" +
+        "Content-Length: 100\r\n" +
+        "Connection: close\r\n\r\npartial",
+    );
+    expect(response.status).toBe(401);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("runs an authorized admin action without decoding a body it never uses", async () => {
+    server = await createCliServer({
+      spec: PETSTORE_SPEC,
+      port: 0,
+      admin: true,
+    });
+    const body = "not gzip at all";
+    const response = await sendRaw(
+      server.port,
+      "POST /schmock-admin/reset HTTP/1.1\r\nHost: localhost\r\n" +
+        `Authorization: Bearer ${server.adminToken}\r\n` +
+        "Content-Type: application/json\r\n" +
+        "Content-Encoding: gzip\r\n" +
+        `Content-Length: ${Buffer.byteLength(body)}\r\n` +
+        `Connection: close\r\n\r\n${body}`,
+    );
+    expect(response.status).toBe(204);
   });
 
   it("declares a Content-Length on admin answers", async () => {
@@ -260,14 +317,13 @@ describe("CLI requests served through core's serveNodeRequest", () => {
     expect(response.body).toBe("");
   });
 
-  it("reads a preflight's body before answering it", async () => {
+  it("answers a preflight without reading its body", async () => {
     server = await createCliServer({
       spec: PETSTORE_SPEC,
       port: 0,
       cors: true,
     });
     const body = '{"broken":';
-    // The preflight used to be answered 204 without reading the body.
     const response = await sendRaw(
       server.port,
       "OPTIONS /pets HTTP/1.1\r\nHost: localhost\r\n" +
@@ -275,12 +331,10 @@ describe("CLI requests served through core's serveNodeRequest", () => {
         "Access-Control-Request-Method: POST\r\n" +
         "Content-Type: application/json\r\n" +
         `Content-Length: ${Buffer.byteLength(body)}\r\n` +
-        `Connection: keep-alive\r\n\r\n${body}`,
+        `Connection: close\r\n\r\n${body}`,
     );
-    expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toMatchObject({ code: "MALFORMED_JSON" });
+    expect(response.status).toBe(204);
     expect(response.headers["access-control-allow-origin"]).toBe("*");
-    expect(response.headers.connection).toBe("close");
   });
 
   it("keeps CORS on a 413 for a mock path and closes the connection", async () => {

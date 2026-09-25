@@ -282,6 +282,49 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     },
   );
 
+  // ── cold-review cli-2: --refs-external ignores non-schema siblings ──────
+
+  Scenario(
+    "Writing a log or text file next to a spec loaded with external refs does not reload",
+    ({ Given, And, When, Then }) => {
+      Given(
+        "a temp spec whose response schema lives in a sibling schema file",
+        givenSplitSpec,
+      );
+      And(
+        "a CLI server is started watching that spec with external refs",
+        async () => {
+          await givenWatchedSplitSpec();
+          // Anything the startup printed is not a reload of the writes below.
+          stderr = "";
+        },
+      );
+      When(
+        "a log file and a text file are written next to the spec",
+        async () => {
+          if (!tempDir) throw new Error("Expected a temp directory");
+          // A log grows by appends, each one a directory event on Linux;
+          // several spaced writes stand in for that.
+          for (let line = 1; line <= 3; line += 1) {
+            writeFileSync(join(tempDir, "mock.log"), `line ${line}\n`, {
+              flag: "a",
+            });
+            writeFileSync(join(tempDir, "unrelated.txt"), `x${line}\n`);
+            await sleep(100);
+          }
+        },
+      );
+      Then("no reload is announced", async () => {
+        // Past the 500 ms debounce, with slack for macOS FSEvents latency.
+        await sleep(1_200);
+        expect(stderr).not.toContain("Spec changed, reloading");
+        expect(await servesThing("v1")).toBe(true);
+      });
+      When("the sibling schema file is edited", whenSchemaEdited);
+      Then("the response reflects the edited schema", thenEditedSchemaServed);
+    },
+  );
+
   // ── #92: history redaction covers query keys and custom key headers ─────
 
   Scenario(

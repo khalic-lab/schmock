@@ -61,10 +61,31 @@ async function reloadMock({ holder, rebuild }: ReloadInput): Promise<void> {
 }
 
 /**
- * What one directory watch reacts to: the named entries in it, or every entry
- * (`"any"`) for the spec's directory when `$ref`s may point at sibling files.
+ * What one directory watch reacts to: the named entries in it and, for the
+ * spec's directory when `$ref`s may point at sibling files, any schema-like
+ * sibling ({@link isSchemaSibling}).
  */
-type WatchMatcher = ReadonlySet<string> | "any";
+interface WatchMatcher {
+  readonly names: ReadonlySet<string>;
+  readonly schemaSiblings: boolean;
+}
+
+/** The extensions a `$ref`'d sibling schema file can have. */
+const SCHEMA_EXTENSION = /\.(?:json|ya?ml)$/i;
+
+/**
+ * Whether a sibling of the spec may be a `$ref`'d schema file: a `.json`,
+ * `.yaml` or `.yml` file that is not hidden. Editor swap and backup files
+ * (`schemas.json.swp`, `schemas.json~`) fail the extension test, and a hidden
+ * one (`.schemas.json.swp`, emacs' `.#schemas.json`) the leading dot. Every
+ * other write in the spec's directory is ignored even under
+ * `--refs-external`, so a log file the CLI's own output is redirected to
+ * cannot feed back into an endless reload loop, and `.DS_Store` or a swap
+ * file does not throw away CRUD state.
+ */
+function isSchemaSibling(name: string): boolean {
+  return SCHEMA_EXTENSION.test(name) && !name.startsWith(".");
+}
 
 /**
  * The file entries a `--seed` manifest names, as `loadSeedFile` resolves them.
@@ -92,24 +113,33 @@ function realDirectory(directory: string): string {
 /**
  * Every file a reload reads, grouped by the directory to watch it through:
  * the spec, the `--seed` manifest and each file entry it names. With
- * `--refs-external` the spec's whole directory counts, because a `$ref`'d
- * sibling schema file is part of the contract. A `$ref` target in another
- * directory is still not watched: the openapi plugin does not report which
- * files it resolved.
+ * `--refs-external` every schema-like sibling of the spec counts too, because
+ * a `$ref`'d sibling schema file is part of the contract. A `$ref` target in
+ * another directory is still not watched: the openapi plugin does not report
+ * which files it resolved.
  */
 function collectWatchTargets(options: CliOptions): Map<string, WatchMatcher> {
-  const targets = new Map<string, Set<string> | "any">();
+  const targets = new Map<
+    string,
+    { names: Set<string>; schemaSiblings: boolean }
+  >();
+  const matcherFor = (directory: string) => {
+    let matcher = targets.get(directory);
+    if (!matcher) {
+      matcher = { names: new Set(), schemaSiblings: false };
+      targets.set(directory, matcher);
+    }
+    return matcher;
+  };
   const addFile = (path: string): void => {
-    const directory = dirname(path);
-    const current = targets.get(directory);
-    if (current === "any") return;
-    if (current) current.add(basename(path));
-    else targets.set(directory, new Set([basename(path)]));
+    matcherFor(dirname(path)).names.add(basename(path));
   };
 
   const resolvedSpec = resolvePath(options.spec);
-  if (options.refsExternal) targets.set(dirname(resolvedSpec), "any");
-  else addFile(resolvedSpec);
+  addFile(resolvedSpec);
+  if (options.refsExternal) {
+    matcherFor(dirname(resolvedSpec)).schemaSiblings = true;
+  }
 
   if (options.seed !== undefined) {
     const manifest = resolvePath(options.seed);
@@ -140,9 +170,13 @@ function matchesWatchTarget(
   directory: string,
   filename: string | Buffer | null,
 ): boolean {
-  if (filename == null || matcher === "any") return true;
+  if (filename == null) return true;
   const name = basename(filename.toString());
-  return matcher.has(name) || name === basename(directory);
+  return (
+    matcher.names.has(name) ||
+    name === basename(directory) ||
+    (matcher.schemaSiblings && isSchemaSibling(name))
+  );
 }
 
 /**

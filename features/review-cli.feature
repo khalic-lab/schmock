@@ -28,6 +28,14 @@ Feature: CLI review fixes
     Then the response reflects the edited schema
     And the reload notice says state and request history were reset
 
+  Scenario: Writing a log or text file next to a spec loaded with external refs does not reload
+    Given a temp spec whose response schema lives in a sibling schema file
+    And a CLI server is started watching that spec with external refs
+    When a log file and a text file are written next to the spec
+    Then no reload is announced
+    When the sibling schema file is edited
+    Then the response reflects the edited schema
+
   Scenario: Admin history masks credential-shaped query parameters and headers
     Given a CLI server with the admin API and a known token
     When a client calls the mock with an api key in the query and in a custom header

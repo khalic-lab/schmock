@@ -245,6 +245,53 @@ describe("watcher lifecycle", () => {
     }
   });
 
+  it("reloads on schema-like siblings only under --refs-external", async () => {
+    const stderr: string[] = [];
+    const stderrWrite = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        stderr.push(String(chunk));
+        return true;
+      });
+    const reloads = (): number =>
+      stderr.join("").split("Spec changed, reloading").length - 1;
+
+    try {
+      server = await createCliServer({
+        spec: PETSTORE_SPEC,
+        port: 0,
+        watch: true,
+        refsExternal: true,
+        shutdownGraceMs: 100,
+      });
+      expect(watchControl.watchers).toHaveLength(1);
+      const watcher = watchControl.watchers[0];
+
+      // The Linux feedback loop: inotify reports every write to a log file
+      // the CLI's stderr is redirected to, in the spec's own directory.
+      for (const name of [
+        "mock.log",
+        "unrelated.txt",
+        ".DS_Store",
+        "schemas.json.swp",
+        ".schemas.json.swp",
+        "schemas.json~",
+        ".#schemas.json",
+      ]) {
+        watcher?.emit("change", "change", name);
+      }
+      // Longer than the watcher's 500 ms debounce, so a reload it did
+      // schedule would have announced itself by now.
+      await new Promise((tick) => setTimeout(tick, 800));
+      expect(reloads()).toBe(0);
+
+      watcher?.emit("change", "change", "schemas.YAML");
+      await vi.waitFor(() => expect(reloads()).toBe(1), { timeout: 3_000 });
+    } finally {
+      stderrWrite.mockRestore();
+    }
+  });
+
   /**
    * A reload replaces the mock instance; the discarded one must be retired so
    * its plugins' `uninstall` hooks run. Nothing about it is observable from
