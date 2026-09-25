@@ -11,6 +11,7 @@ import {
 } from "./constants.js";
 import {
   buildFormattedErrorResponse,
+  buildJsonErrorResponse,
   normalizeResponse,
   serializeResponseBody,
   withDefaultContentType,
@@ -26,13 +27,24 @@ const ALREADY_CONSULTED = Symbol("schmock.fetch.already-consulted");
 const RELATIVE_REQUEST_BASE = "http://schmock.invalid/";
 
 /**
- * Where an admission from this module's mock carries its route probe:
- * `(method, path) => boolean`, whether `handle(method, path)` would reach a
- * route, answered from the admission's own snapshot by the resolver handle()
- * uses. Deliberately unregistered: a second copy of `@schmock/core` does not
- * find it and simply reads the body as before.
+ * Marks an admission whose `handle()` already returns responses normalized
+ * for the request method (hop-by-hop headers dropped, a HEAD body stripped):
+ * only the admissions a `schmock()` instance of this copy creates. The
+ * interceptor re-normalizes the responses of any other admission, such as a
+ * hand-written one passed to `createFetchInterceptor`. Deliberately
+ * unregistered: an admission from a second copy of `@schmock/core` is simply
+ * normalized again.
  */
-export const ROUTE_PROBE_KEY = Symbol("schmock.route-probe");
+export const NORMALIZED_ADMISSION_KEY = Symbol("schmock.normalized-admission");
+
+function isNormalizedAdmission(
+  admission: Schmock.RequestAdmission | undefined,
+): boolean {
+  return (
+    admission !== undefined &&
+    Reflect.get(admission, NORMALIZED_ADMISSION_KEY) === true
+  );
+}
 
 type InterceptorResult =
   | Response
@@ -349,17 +361,22 @@ async function extractNonJsonBody(request: Request): Promise<unknown> {
   return body.arrayBuffer();
 }
 
-/** An admission's route probe, when it carries one this module can read. */
+/** An admission's route probe (`hasRoute`), when it carries one. */
 function routeProbeOf(
   admission: Schmock.RequestAdmission | undefined,
 ): ((method: Schmock.HttpMethod, path: string) => boolean) | undefined {
   if (admission === undefined) return undefined;
-  const probe: unknown = Reflect.get(admission, ROUTE_PROBE_KEY);
+  const probe: unknown = Reflect.get(admission, "hasRoute");
   if (typeof probe !== "function") return undefined;
   // Anything but a definite `false` counts as a route, so an unexpected
-  // answer only costs the body read the probe would have saved.
-  return (method, path) =>
-    Reflect.apply(probe, admission, [method, path]) !== false;
+  // answer, or a throw, only costs the body read the probe would have saved.
+  return (method, path) => {
+    try {
+      return Reflect.apply(probe, admission, [method, path]) !== false;
+    } catch {
+      return true;
+    }
+  };
 }
 
 function isAbortError(error: unknown): boolean {
@@ -404,12 +421,13 @@ function jsonErrorResponse(input: {
   code: string;
   context: FetchResponseContext;
 }): Response {
-  return toFetchResponse(
-    {
+  return createFetchResponse(
+    buildJsonErrorResponse({
       status: input.status,
-      body: { error: input.error, code: input.code },
-      headers: { "content-type": "application/json" },
-    },
+      error: input.error,
+      code: input.code,
+      method: input.context.method,
+    }),
     input.context,
   );
 }
@@ -521,10 +539,23 @@ export function createFetchInterceptor(
         method: request.method,
         url: responseUrlOf(url),
       };
+      const initialMethod = request.method.toUpperCase();
+      // Without a beforeRequest hook (which may change the method or path)
+      // the effective request is already known, so it is claimed before this
+      // lease can answer anything: once a newer lease of the same mock has
+      // passed it through, an older passthrough:false lease must not answer
+      // it with a 404 or a malformed-JSON 400. A lease with a hook claims only
+      // after the hook, so its own 400 for a malformed JSON body (which comes
+      // before the hook) still answers.
+      if (
+        beforeRequest === undefined &&
+        !claim(effectiveRequestKey(initialMethod, path))
+      ) {
+        return ALREADY_CONSULTED;
+      }
       // No route can ever match a method outside the supported set (WebDAV's
       // PROPFIND, a CDN PURGE), so it is a miss like any other rather than a
       // rejected fetch. Checked before admission, which it never needs.
-      const initialMethod = request.method.toUpperCase();
       if (!isHttpMethod(initialMethod)) {
         return unroutedResult(passthrough, context);
       }
@@ -594,7 +625,10 @@ export function createFetchInterceptor(
         }
         context.method = effectiveMethod;
 
-        if (!claim(effectiveRequestKey(effectiveMethod, adapterRequest.path))) {
+        if (
+          beforeRequest !== undefined &&
+          !claim(effectiveRequestKey(effectiveMethod, adapterRequest.path))
+        ) {
           return ALREADY_CONSULTED;
         }
 
@@ -651,10 +685,11 @@ export function createFetchInterceptor(
           });
         }
 
-        // An admission's handle() already normalized its own output for this
-        // method; with no hook to replace or mutate it, a second pass would
-        // only re-validate the same tree. Anything else is re-normalized.
-        if (admission !== undefined && beforeResponse === undefined) {
+        // A schmock() admission's handle() already normalized its own output
+        // for this method; with no hook to replace or mutate it, a second
+        // pass would only re-validate the same tree. Anything else, including
+        // a hand-written admission's response, is re-normalized.
+        if (isNormalizedAdmission(admission) && beforeResponse === undefined) {
           return createFetchResponse(
             withDefaultContentType(schmockResponse),
             context,

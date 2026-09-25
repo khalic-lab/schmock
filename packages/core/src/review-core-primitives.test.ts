@@ -556,6 +556,93 @@ describe("serveNodeRequest", () => {
     });
     expect(fallback.status).toBe(405);
   });
+
+  it("defaults maxBodySize to the 10 MB limit mock.listen() applies", async () => {
+    const mock = schmock();
+    mock("POST /upload", () => "stored");
+    const server = createServer((req, res) => {
+      void serveNodeRequest(req, res, { handle: mock.handle });
+    });
+    const port = await listenOn(server);
+
+    const small = await sendRaw(
+      port,
+      "POST /upload HTTP/1.1\r\nHost: 127.0.0.1\r\n" +
+        "Content-Type: text/plain\r\nContent-Length: 2048\r\n" +
+        `Connection: close\r\n\r\n${"x".repeat(2048)}`,
+    );
+    const oversized = await sendRaw(
+      port,
+      "POST /upload HTTP/1.1\r\nHost: 127.0.0.1\r\n" +
+        `Content-Type: text/plain\r\nContent-Length: ${10 * 1024 * 1024 + 1}\r\n\r\n`,
+    );
+    expect(small.status).toBe(200);
+    expect(oversized.status).toBe(413);
+    expect(bodyCode(oversized)).toBe("PAYLOAD_TOO_LARGE");
+  });
+
+  it("lets answerBeforeBody answer without reading the body", async () => {
+    const mock = schmock();
+    mock("POST /items", ({ body }) => ({ body }));
+    const seen: Array<{ method: string; path: string }> = [];
+    const port = await serve(mock, {
+      answerBeforeBody: (method, path) => {
+        seen.push({ method, path });
+        return path === "/early"
+          ? { status: 202, body: { early: true }, headers: {} }
+          : undefined;
+      },
+      extraHeaders: () => ({ "x-served-by": "schmock" }),
+    });
+
+    const malformed = '{"broken":';
+    const early = await sendRaw(
+      port,
+      "POST /early HTTP/1.1\r\nHost: 127.0.0.1\r\n" +
+        "Content-Type: application/json\r\n" +
+        `Content-Length: ${malformed.length}\r\n` +
+        `Connection: close\r\n\r\n${malformed}`,
+    );
+    const oversized = await sendRaw(
+      port,
+      "POST /early HTTP/1.1\r\nHost: 127.0.0.1\r\n" +
+        "Content-Type: application/json\r\nContent-Length: 4096\r\n" +
+        "Connection: close\r\n\r\n",
+    );
+    const routed = await sendRaw(
+      port,
+      "POST /items HTTP/1.1\r\nHost: 127.0.0.1\r\n" +
+        "Content-Type: application/json\r\nContent-Length: 8\r\n" +
+        'Connection: close\r\n\r\n{"n": 1}',
+    );
+
+    expect(early.status).toBe(202);
+    expect(JSON.parse(early.body)).toEqual({ early: true });
+    expect(early.headers["x-served-by"]).toBe("schmock");
+    // Over the 1024-byte limit, yet answered: the body was never read.
+    expect(oversized.status).toBe(202);
+    expect(routed.status).toBe(200);
+    expect(JSON.parse(routed.body)).toEqual({ body: { n: 1 } });
+    expect(seen).toEqual([
+      { method: "POST", path: "/early" },
+      { method: "POST", path: "/early" },
+      { method: "POST", path: "/items" },
+    ]);
+  });
+
+  it("answers a throwing answerBeforeBody with 500 SERVER_ERROR", async () => {
+    const port = await serve(schmock(), {
+      answerBeforeBody: () => {
+        throw new Error("probe exploded");
+      },
+    });
+    const response = await sendRaw(port, rawRequest("GET /x"));
+    expect(response.status).toBe(500);
+    expect(JSON.parse(response.body)).toEqual({
+      error: "probe exploded",
+      code: "SERVER_ERROR",
+    });
+  });
 });
 
 // ── R8: path prefixes ──────────────────────────────────────────────────────

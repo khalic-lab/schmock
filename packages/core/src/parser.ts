@@ -200,7 +200,9 @@ function escapeCharClass(char: string): string {
  * "report.v2.json" greedily. A parameter followed in the same segment by a
  * literal and then another parameter also excludes that literal's first
  * character, so it can only end at the separator:
- * `:year-:month-:day` → `([^/-]+)-([^/-]+)-([^/]+)`. Without the exclusion
+ * `:year-:month-:day` → `([^/-]+)-([^/-]+)-([^/]+)`. A percent-encoded
+ * literal is excluded whole rather than by its "%": `:first :last` →
+ * `((?:(?!%20)[^/])+)%20([^/]+)`. Without the exclusion
  * every capture could end anywhere, and a long non-matching segment
  * backtracked quadratically (two parameters) or cubically (three).
  */
@@ -216,8 +218,17 @@ function compileRoutePattern(tokens: readonly RouteToken[]): string {
         !next.text.includes("/") &&
         tokens[index + 2]?.kind === "param"
       ) {
-        const separator = canonicalizePath(next.text)[0];
-        return `([^/${escapeCharClass(separator)}]+)`;
+        const separator = canonicalizePath(next.text);
+        // A separator that canonicalizes to a percent triplet (a space, a
+        // brace, any non-ASCII character) starts with "%", and excluding "%"
+        // itself would forbid every encoded character in the capture ("José"
+        // is "Jos%C3%A9"). Exclude the whole encoded literal instead: the
+        // capture still cannot contain the separator, so it can only end at
+        // its first occurrence and the match stays linear.
+        if (separator.startsWith("%")) {
+          return `((?:(?!${escapeRegExp(separator)})[^/])+)`;
+        }
+        return `([^/${escapeCharClass(separator[0])}]+)`;
       }
       return "([^/]+)";
     })

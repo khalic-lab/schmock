@@ -216,6 +216,24 @@ function isPlainObject(value: object): boolean {
 }
 
 /**
+ * Define an own enumerable data property. Plain assignment would run the
+ * `__proto__` setter for an own `__proto__` key (which `JSON.parse` creates),
+ * dropping the key and re-prototyping the copy.
+ */
+function defineDataProperty(
+  target: object,
+  key: PropertyKey,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
+/**
  * Deep-copy the plain data (arrays and plain objects) of a static generator so
  * plugins can edit their response in place without changing the route.
  *
@@ -241,7 +259,11 @@ export function copyStaticData(
     }
     for (const key of Object.getOwnPropertySymbols(value)) {
       if (!Object.getOwnPropertyDescriptor(value, key)?.enumerable) continue;
-      Reflect.set(copy, key, copyStaticData(Reflect.get(value, key), copies));
+      defineDataProperty(
+        copy,
+        key,
+        copyStaticData(Reflect.get(value, key), copies),
+      );
     }
     return copy;
   }
@@ -252,7 +274,11 @@ export function copyStaticData(
   copies.set(value, copy);
   for (const key of Reflect.ownKeys(value)) {
     if (!Object.getOwnPropertyDescriptor(value, key)?.enumerable) continue;
-    copy[key] = copyStaticData(Reflect.get(value, key), copies);
+    defineDataProperty(
+      copy,
+      key,
+      copyStaticData(Reflect.get(value, key), copies),
+    );
   }
   return copy;
 }

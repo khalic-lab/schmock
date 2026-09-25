@@ -54,3 +54,9 @@ Feature: Core primitives shared by every transport
     Given a plugin object literal with unannotated install and uninstall hooks
     When I pipe it into a mock and reset the mock
     Then its install and uninstall hooks both ran
+
+  Scenario: A plugin whose synchronous hooks return a value still pipes, while an async hook is refused
+    Given plugins whose install hooks return the instance, an array and a named function's result
+    When I pipe them into a mock
+    Then every route those hooks registered answers
+    And piping a plugin with an async install is refused

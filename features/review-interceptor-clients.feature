@@ -65,3 +65,19 @@ Feature: Fetch interceptor review fixes
     When I fetch "/api/x" through the scoped lease
     Then the scoped fetch should be served by the mock
     And the network backend should not have been called
+
+  Scenario: An older passthrough-false lease leaves an unmocked malformed-JSON request to the network
+    Given a mock with a route "POST /api/items" held by an older passthrough-disabled lease and a newer default lease
+    When I post the JSON body '{bad' to "/unmocked" through the nested leases
+    Then the network backend should answer the request
+    And the mock should report exactly one start, notfound and end event
+
+  Scenario: An older passthrough-false lease leaves an unmocked valid-JSON request to the network
+    Given a mock with a route "POST /api/items" held by an older passthrough-disabled lease and a newer default lease
+    When I post the JSON body '{}' to "/unmocked" through the nested leases
+    Then the network backend should answer the request
+
+  Scenario: An older passthrough-false lease leaves a non-standard method to the network
+    Given a mock with a route "POST /api/items" held by an older passthrough-disabled lease and a newer default lease
+    When I fetch "https://dav.example.com/files/" with method "PROPFIND"
+    Then the network backend should answer the request

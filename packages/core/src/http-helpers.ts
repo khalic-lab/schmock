@@ -2,7 +2,7 @@ import { HTTP_METHODS, isHttpMethod } from "./constants.js";
 import { SchmockError } from "./errors.js";
 import { getHeader, hasHeader } from "./headers.js";
 import {
-  normalizeResponse,
+  buildJsonErrorResponse,
   serializeResponseBody,
   withDefaultContentType,
 } from "./response-normalizer.js";
@@ -433,6 +433,20 @@ type NodeResponse = RejectedResponseWritable & {
   off(event: "close", listener: () => void): unknown;
 };
 
+/**
+ * The request `serveNodeRequest` accepts: the parts of a Node.js
+ * IncomingMessage it uses. Structural, so a request typed by any `@types/node`
+ * copy fits.
+ */
+export type NodeRequestLike = NodeRequest;
+
+/**
+ * The response `serveNodeRequest` writes to: the parts of a Node.js
+ * ServerResponse it uses. Structural, so a response typed by any
+ * `@types/node` copy fits.
+ */
+export type NodeResponseLike = NodeResponse;
+
 /** What `serveNodeRequest` tells `extraHeaders` about the response it writes. */
 export interface ServeNodeResponseContext {
   /**
@@ -461,9 +475,24 @@ export interface ServeNodeRequestOptions {
   readonly handle: Schmock.MockRequestHandler;
   /**
    * Largest request body accepted, in bytes. A larger one is answered 413 and
-   * the connection is closed.
+   * the connection is closed. Defaults to 10 MB, the limit `mock.listen()`
+   * applies.
    */
-  readonly maxBodySize: number;
+  readonly maxBodySize?: number;
+  /**
+   * Answer a request from its verb and path alone, before its body is read.
+   * Return a response to send it as is (through `extraHeaders`, like any
+   * answer from `handle`), or `undefined` to read the body and call `handle`.
+   * A throw is answered like a `handle` failure.
+   *
+   * For answers that never depend on the body — a CORS preflight, an
+   * authorization refusal — so an oversized, malformed or stalled upload
+   * cannot delay or replace them.
+   */
+  readonly answerBeforeBody?: (
+    method: Schmock.HttpMethod,
+    path: string,
+  ) => Schmock.Response | undefined;
   /**
    * Headers written over every response for this request (CORS headers, for
    * example), replacing any case variant of the same name.
@@ -608,14 +637,13 @@ function answerFailedRequest(input: {
     const closeConnection =
       error instanceof HttpIngressError || reply.status === 413;
     if (closeConnection) res.shouldKeepAlive = false;
-    const response = normalizeResponse(
-      {
-        status: reply.status,
-        body: { error: reply.message, code: reply.code },
-        headers: { "content-type": "application/json", ...reply.headers },
-      },
+    const response = buildJsonErrorResponse({
+      status: reply.status,
+      error: reply.message,
+      code: reply.code,
       method,
-    );
+      headers: reply.headers,
+    });
     const extraHeaders: Record<string, string> = {
       ...options.extraHeaders?.({ isError: true, path }),
       ...(closeConnection ? { connection: "close" } : {}),
@@ -630,14 +658,38 @@ function answerFailedRequest(input: {
   }
 }
 
+/** Read a parsed request's headers, query and body, then route it. */
+async function handleWithBody(
+  req: NodeRequest,
+  url: URL,
+  method: Schmock.HttpMethod,
+  path: string,
+  options: {
+    handle: Schmock.MockRequestHandler;
+    maxBodySize: number;
+    signal: AbortSignal;
+  },
+): Promise<Schmock.Response> {
+  const headers = parseNodeHeaders(req);
+  const query = parseNodeQuery(url);
+  const body = await collectBody(req, headers, options.maxBodySize);
+  return options.handle(method, path, {
+    headers,
+    body,
+    query,
+    signal: options.signal,
+  });
+}
+
 /**
  * Serve one Node.js request through a mock: the bridge `mock.listen()` runs,
  * usable with any `http.createServer` callback.
  *
  * It rejects a request without a parseable Host header or target (400) and a
- * method Schmock does not route (405, with `allow`), then parses headers,
- * query and body (400 for a malformed JSON or multipart body, 413 over
- * `maxBodySize`) and calls `handle` with an abort signal that fires when the
+ * method Schmock does not route (405, with `allow`), gives `answerBeforeBody`
+ * the chance to answer without the body, then parses headers, query and body
+ * (400 for a malformed JSON or multipart body, 413 over `maxBodySize`, 10 MB
+ * by default) and calls `handle` with an abort signal that fires when the
  * client goes away. Every failure is answered as `{ error, code }` JSON; an
  * ingress failure also closes the connection, and a 413 is flushed while the
  * client may still be uploading so it can read it.
@@ -665,15 +717,13 @@ export async function serveNodeRequest(
     const url = parseNodeRequestUrl(req);
     path = url.pathname;
     method = parseNodeRequestMethod(req.method);
-    const headers = parseNodeHeaders(req);
-    const query = parseNodeQuery(url);
-    const body = await collectBody(req, headers, options.maxBodySize);
-    const response = await options.handle(method, path, {
-      headers,
-      body,
-      query,
-      signal: abortController.signal,
-    });
+    const response =
+      options.answerBeforeBody?.(method, path) ??
+      (await handleWithBody(req, url, method, path, {
+        handle: options.handle,
+        maxBodySize: options.maxBodySize ?? DEFAULT_MAX_BODY_SIZE,
+        signal: abortController.signal,
+      }));
     writeSchmockResponse(
       res,
       response,

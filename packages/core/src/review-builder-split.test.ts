@@ -9,7 +9,7 @@ import { SchmockError } from "./errors";
 import { RequestGenerations } from "./generations";
 import { RequestHistory } from "./history";
 import { schmock } from "./index";
-import { ROUTE_PROBE_KEY } from "./interceptor";
+import { createFetchInterceptor } from "./interceptor";
 import { NodeServerController } from "./node-server";
 import { RouteTable } from "./route-table";
 
@@ -445,11 +445,11 @@ describe("handle() after the split", () => {
 function routeProbe(
   admission: Schmock.RequestAdmission,
 ): (method: Schmock.HttpMethod, path: string) => unknown {
-  const probe: unknown = Reflect.get(admission, ROUTE_PROBE_KEY);
-  if (typeof probe !== "function") {
+  const { hasRoute } = admission;
+  if (hasRoute === undefined) {
     throw new Error("the admission carries no route probe");
   }
-  return (method, path) => Reflect.apply(probe, admission, [method, path]);
+  return (method, path) => hasRoute.call(admission, method, path);
 }
 
 describe("the admission's route probe", () => {
@@ -731,5 +731,136 @@ describe("intercept() with the route probe", () => {
       ["POST /upload", "none"],
       ["POST /api/items", "object"],
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cold-review fixes (2026-09-25)
+// ---------------------------------------------------------------------------
+
+describe("a hand-written admission passed to createFetchInterceptor", () => {
+  let originalFetch: typeof globalThis.fetch;
+  let lease: Schmock.InterceptHandle | undefined;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockImplementation(async () => new Response("network"));
+  });
+
+  afterEach(() => {
+    lease?.restore();
+    lease = undefined;
+    globalThis.fetch = originalFetch;
+  });
+
+  function interceptWithRawAdmission(): void {
+    const rawHandle: Schmock.MockRequestHandler = async () => ({
+      status: 200,
+      body: { answer: "from a hand-written admission" },
+      headers: { connection: "close", "content-length": "999" },
+    });
+    const refuse: Schmock.MockRequestHandler = async () => {
+      throw new Error("the admission's handle must answer");
+    };
+    lease = createFetchInterceptor(refuse, {}, () => ({
+      handle: rawHandle,
+      release() {},
+    }));
+  }
+
+  it("has its responses normalized: framing headers are dropped", async () => {
+    interceptWithRawAdmission();
+
+    const response = await fetch("http://localhost/raw");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("connection")).toBeNull();
+    expect(response.headers.get("content-length")).not.toBe("999");
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(await response.json()).toEqual({
+      answer: "from a hand-written admission",
+    });
+  });
+
+  it("has a HEAD body stripped", async () => {
+    interceptWithRawAdmission();
+
+    const response = await fetch("http://localhost/raw", { method: "HEAD" });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("connection")).toBeNull();
+    expect(await response.text()).toBe("");
+  });
+
+  it("is asked for hasRoute, when it declares one, before the body is read", async () => {
+    const asked: string[] = [];
+    const handled: unknown[] = [];
+    lease = createFetchInterceptor(
+      async () => {
+        throw new Error("the admission's handle must answer");
+      },
+      {},
+      () => ({
+        handle: async (_method, _path, options) => {
+          handled.push(options?.body);
+          return { status: 404, body: null, headers: {} };
+        },
+        release() {},
+        hasRoute: (method, path) => {
+          asked.push(`${method} ${path}`);
+          return false;
+        },
+      }),
+    );
+    const clone = vi.spyOn(Request.prototype, "clone");
+
+    await fetch("http://localhost/elsewhere", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ skipped: true }),
+    });
+
+    expect(asked).toEqual(["POST /elsewhere"]);
+    expect(handled).toEqual([undefined]);
+    expect(clone).not.toHaveBeenCalled();
+    clone.mockRestore();
+  });
+});
+
+describe("static route data copied for plugins", () => {
+  it("keeps an own __proto__ key as data once a plugin is piped", async () => {
+    const data = JSON.parse('{"__proto__":{"isAdmin":true},"name":"x"}');
+    const plain = schmock();
+    plain("GET /f", data);
+    const withPlugin = schmock();
+    withPlugin("GET /f", data);
+    const seen: unknown[] = [];
+    withPlugin.pipe({
+      name: "observer",
+      process(context, response) {
+        seen.push(
+          typeof response === "object" && response !== null
+            ? Reflect.get(response, "isAdmin")
+            : "not an object",
+        );
+        return { context, response };
+      },
+    });
+
+    const expected = (await plain.handle("GET", "/f")).body;
+    const body: unknown = (await withPlugin.handle("GET", "/f")).body;
+
+    if (typeof body !== "object" || body === null) {
+      throw new Error("expected an object body");
+    }
+    expect(Object.hasOwn(body, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(body)).toBe(Object.prototype);
+    expect(JSON.stringify(body)).toBe(JSON.stringify(expected));
+    expect(JSON.stringify(body)).toBe(
+      '{"__proto__":{"isAdmin":true},"name":"x"}',
+    );
+    expect(seen).toEqual([undefined]);
   });
 });

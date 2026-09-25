@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { canonicalizePath, normalizePath } from "./constants";
 import { RouteParseError } from "./errors";
+import { schmock } from "./index";
 import { parseRouteKey } from "./parser";
 
 /**
@@ -92,6 +93,50 @@ describe("route grammar review", () => {
           route.pattern.test(path);
           expect(performance.now() - start).toBeLessThan(50);
         }
+      }
+    });
+  });
+
+  describe("percent-encoded separators", () => {
+    it.each([
+      [
+        "GET /people/:first :last",
+        "/people/Jos%C3%A9%20Ramos",
+        ["Jos%C3%A9", "Ramos"],
+      ],
+      ["GET /t/:a{:b}", "/t/%C3%A9%7Bx%7D", ["%C3%A9", "x"]],
+      ["GET /t/:a\u00e9:b", "/t/%C3%A0%C3%A9%C3%A0", ["%C3%A0", "%C3%A0"]],
+      ["GET /t/:a %20:b", "/t/%C3%A9%20%20%C3%A9", ["%C3%A9", "%C3%A9"]],
+    ])(
+      "%s lets the earlier capture hold encoded characters",
+      (key, path, params) => {
+        const route = parseRouteKey(key);
+        expect(path.match(route.pattern)?.slice(1)).toEqual(params);
+      },
+    );
+
+    it("ends the earlier capture at the first encoded separator", () => {
+      const route = parseRouteKey("GET /people/:first :last");
+      expect(
+        "/people/Mary%20Ann%20Smith".match(route.pattern)?.slice(1),
+      ).toEqual(["Mary", "Ann%20Smith"]);
+    });
+
+    it("answers a request whose first value is not ASCII", async () => {
+      const mock = schmock();
+      mock("GET /people/:first :last", ({ params }) => params);
+      const response = await mock.handle("GET", "/people/Jos\u00e9 Ramos");
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ first: "Jos\u00e9", last: "Ramos" });
+    });
+
+    it("matches a 16 KB hostile segment in linear time", () => {
+      const route = parseRouteKey("GET /r/:a :b :c");
+      for (const unit of ["a", "a%20", "%20", "%C3%A9", "%2"]) {
+        const path = `/r/${unit.repeat(Math.ceil(16_384 / unit.length))}/x`;
+        const start = performance.now();
+        route.pattern.test(path);
+        expect(performance.now() - start).toBeLessThan(50);
       }
     });
   });

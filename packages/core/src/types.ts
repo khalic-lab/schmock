@@ -18,6 +18,7 @@ export type CallableMockInstance = Schmock.CallableMockInstance;
 export type Plugin = Schmock.Plugin;
 export type PluginContext = Schmock.PluginContext;
 export type PluginResult = Schmock.PluginResult;
+export type PluginHookResult = Schmock.PluginHookResult;
 export type StaticData = Schmock.StaticData;
 export type RequestRecord = Schmock.RequestRecord;
 export type ServerInfo = Schmock.ServerInfo;

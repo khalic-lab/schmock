@@ -142,6 +142,8 @@ export {
 export type {
   HttpErrorReply,
   HttpIngressErrorCode,
+  NodeRequestLike,
+  NodeResponseLike,
   ServeNodeRequestOptions,
   ServeNodeResponseContext,
 } from "./http-helpers.js";
@@ -201,6 +203,7 @@ export type {
   PathPrefix,
   Plugin,
   PluginContext,
+  PluginHookResult,
   PluginResult,
   RequestContext,
   RequestEndEvent,

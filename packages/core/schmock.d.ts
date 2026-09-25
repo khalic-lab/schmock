@@ -111,6 +111,22 @@ declare namespace Schmock {
   type RouteKey = `${HttpMethod} /${string}`;
 
   /**
+   * What a synchronous plugin hook (`install`, `uninstall`) may return: any
+   * value except a thenable, which is ignored. A thenable would mean the hook
+   * finishes later, which the synchronous install contract cannot honour.
+   */
+  type PluginHookResult =
+    | void
+    | undefined
+    | null
+    | string
+    | number
+    | boolean
+    | bigint
+    | symbol
+    | (object & { then?: never });
+
+  /**
    * Plugin interface for extending Schmock functionality
    */
   interface Plugin {
@@ -125,21 +141,22 @@ declare namespace Schmock {
      * synchronously. The scoped instance must not be retained or used later.
      *
      * Returning a Promise is unsupported: `pipe()` rejects it at runtime with
-     * `PLUGIN_ASYNC_INSTALL_UNSUPPORTED`. The return type is `void | undefined`
-     * rather than `void` so that an `async install()` is also a compile error:
-     * TypeScript accepts any return value for a function typed `=> void`, but
-     * checks the union normally. Every synchronous hook, annotated `: void` or
-     * not, still satisfies it.
+     * `PLUGIN_ASYNC_INSTALL_UNSUPPORTED`, and the return type makes an
+     * `async install()` a compile error too. Any other return value is
+     * accepted and ignored, so an expression-bodied arrow that registers a
+     * route (`install: (mock) => mock("GET /health", { ok: true })`, which
+     * returns the instance) type-checks as it always has.
      * @param instance - A synchronous, installation-scoped callable instance
      */
-    install?(instance: CallableMockInstance): void | undefined;
+    install?(instance: CallableMockInstance): PluginHookResult;
 
     /**
      * Called during reset after every request admitted with this plugin settles.
      * Cleanup runs in reverse registration order and must complete synchronously;
-     * as with `install`, an async hook is a compile error.
+     * as with `install`, an async hook is a compile error and any other return
+     * value is ignored.
      */
-    uninstall?(instance: CallableMockInstance): void | undefined;
+    uninstall?(instance: CallableMockInstance): PluginHookResult;
 
     /**
      * Inspect or transform a request before its route generator executes.
@@ -735,6 +752,15 @@ declare namespace Schmock {
   interface RequestAdmission {
     handle: MockRequestHandler;
     release(): void;
+    /**
+     * Whether `handle(method, path)` would reach a route, answered from the
+     * same snapshot and by the same resolver `handle` uses: a `false` must
+     * never be wrong, or a request a route answers would be passed through.
+     * The fetch interceptor asks it, when present, to skip reading the body
+     * of a request that will pass through anyway. Admissions from
+     * `schmock()` carry it.
+     */
+    hasRoute?(method: HttpMethod, path: string): boolean;
   }
 
   /** Input to `buildFormattedErrorResponse()`. */
@@ -933,6 +959,26 @@ declare namespace Schmock {
     errorFormatter?: (error: Error, request: unknown) => unknown;
     transformRequest?: (request: unknown) => AdapterRequestOverride;
     transformResponse?: (response: Response, request: unknown) => Response;
+    /**
+     * `transformRequest` under the fetch interceptor's name; it may be async,
+     * and returning nothing leaves the request unchanged. When both are set,
+     * `transformRequest` is used.
+     */
+    beforeRequest?: (
+      request: unknown,
+    ) =>
+      | AdapterRequestOverride
+      | void
+      | Promise<AdapterRequestOverride | undefined>;
+    /**
+     * `transformResponse` under the fetch interceptor's name; it may be async,
+     * and returning nothing keeps the response. When both are set,
+     * `transformResponse` is used.
+     */
+    beforeResponse?: (
+      response: Response,
+      request: unknown,
+    ) => Response | void | Promise<Response | undefined>;
   }
 
   // ===== OpenAPI Plugin Options =====
@@ -972,11 +1018,11 @@ declare namespace Schmock {
     /** Per-request timeout for http `$ref`s, in ms. Default 5000. */
     timeoutMs?: number;
     /**
-     * Redirects to follow for an http `$ref`. Default 0.
+     * Maximum redirect hops to follow for an http `$ref`. Default 0.
      *
-     * `fetch` exposes no numeric redirect cap, so this behaves as a boolean:
-     * `0` refuses redirects, any positive value follows up to the platform
-     * default. Use `allowedHosts` when the exact destination matters.
+     * Every hop is checked against `allowHttp` and `allowedHosts` before it
+     * is followed. `0` refuses the first redirect; `n` follows up to `n` hops
+     * and refuses the next one.
      */
     redirects?: number;
     /** Maximum size of a single http `$ref` document, in bytes. Default 1 MB. */
@@ -1075,6 +1121,10 @@ declare namespace Schmock {
      * How many requests the mock retains for `GET /schmock-admin/history`
      * (`--admin-history-limit`, default 500). Ignored — history is disabled
      * entirely — when `admin` is off.
+     *
+     * It becomes the mock's {@link GlobalConfig.maxHistorySize} and applies
+     * only while the admin API is on; it defaults to 500 where a core mock's
+     * history is unbounded.
      */
     adminHistoryLimit?: number;
     /** Validate the spec against the OpenAPI schema at startup (`--strict`). */

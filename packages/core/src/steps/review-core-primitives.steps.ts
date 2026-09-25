@@ -3,7 +3,10 @@ import { connect } from "node:net";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
 import type {
+  AngularAdapterOptions,
   FakerPluginOptions,
+  NodeRequestLike,
+  NodeResponseLike,
   OnSchemaCallback,
   OpenApiRefPolicy,
   PaginatedResponse,
@@ -29,23 +32,62 @@ const feature = await loadFeature(
 
 // ── Compile-time checks (typecheck:bdd) ─────────────────────────────────────
 //
-// `Plugin.install`/`uninstall` return `void | undefined`: an async hook no
-// longer type-checks, while every synchronous hook, annotated or inferred,
-// still does. These aliases resolve to `true` only while that holds.
-type InstallHook = NonNullable<Schmock.Plugin["install"]>;
-type UninstallHook = NonNullable<Schmock.Plugin["uninstall"]>;
-type AsyncHook = (instance: Schmock.CallableMockInstance) => Promise<void>;
-type SyncHook = (instance: Schmock.CallableMockInstance) => void;
-type AsyncInstallRejected = AsyncHook extends InstallHook ? false : true;
-type AsyncUninstallRejected = AsyncHook extends UninstallHook ? false : true;
-type SyncInstallAccepted = SyncHook extends InstallHook ? true : false;
-type SyncUninstallAccepted = SyncHook extends UninstallHook ? true : false;
-const hookTypeChecks: [
-  AsyncInstallRejected,
-  AsyncUninstallRejected,
-  SyncInstallAccepted,
-  SyncUninstallAccepted,
-] = [true, true, true, true];
+// `Plugin.install`/`uninstall` accept any synchronous return value — an
+// expression-bodied arrow that registers a route returns the instance for
+// chaining — while an async hook is a compile error. These fixtures stop
+// compiling if either half breaks; the scenario below also pipes them.
+const processThrough = (
+  context: Schmock.PluginContext,
+  response?: unknown,
+) => ({
+  context,
+  response,
+});
+const registerInstalledRoute = (
+  instance: Schmock.CallableMockInstance,
+): Schmock.CallableMockInstance =>
+  instance("GET /installed-by-reference", { installed: "reference" });
+const valueReturningPlugins: Schmock.Plugin[] = [
+  {
+    name: "expression-bodied",
+    process: processThrough,
+    install: (mock) => mock("GET /installed-by-expression", { installed: 1 }),
+    uninstall: (mock) => mock.getRoutes(),
+  },
+  {
+    name: "array-returning",
+    process: processThrough,
+    install: (mock) =>
+      (["GET /installed-by-array"] as const).map((route) =>
+        mock(route, { installed: 2 }),
+      ),
+  },
+  {
+    name: "by-reference",
+    process: processThrough,
+    install: registerInstalledRoute,
+  },
+];
+const asyncInstallPlugin: Schmock.Plugin = {
+  name: "async-install",
+  process: processThrough,
+  // @ts-expect-error an async install() is rejected at compile time
+  async install() {},
+};
+const asyncUninstallPlugin: Schmock.Plugin = {
+  name: "async-uninstall",
+  process: processThrough,
+  // @ts-expect-error an async uninstall() is rejected at compile time
+  async uninstall() {},
+};
+
+// The deprecated core copy of the Angular options takes the hook aliases the
+// adapter accepts: without them this annotated literal is an excess-property
+// error.
+const deprecatedAngularOptions: AngularAdapterOptions = {
+  beforeRequest: () => undefined,
+  beforeResponse: async (response) => response,
+};
 
 // Faker options take a `Schema`, so an inline literal may use the Schmock
 // keywords without being hoisted into a typed constant first.
@@ -180,8 +222,11 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     ) => Record<string, string>,
   ): Promise<void> {
     const served = currentMock();
+    // Node's real request and response fit the structural types by name.
     const server = createServer((req, res) => {
-      void serveNodeRequest(req, res, {
+      const request: NodeRequestLike = req;
+      const response: NodeResponseLike = res;
+      void serveNodeRequest(request, response, {
         handle: served.handle,
         maxBodySize: 10 * 1024 * 1024,
         extraHeaders,
@@ -448,7 +493,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     ({ Given, When, Then }) => {
       const ran: string[] = [];
       // Deliberately not annotated `Schmock.Plugin`: the hooks' return types
-      // are inferred as `void`, which `void | undefined` must still accept.
+      // are inferred as `void`, which `PluginHookResult` must still accept.
       const plugin = {
         name: "unannotated",
         install(instance: Schmock.CallableMockInstance) {
@@ -466,7 +511,6 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       Given(
         "a plugin object literal with unannotated install and uninstall hooks",
         () => {
-          expect(hookTypeChecks).toEqual([true, true, true, true]);
           expect(inlineFakerOptions.schema.type).toBe("object");
           expect(pageOfOne.data).toEqual([1]);
           expect([endEvent, refPolicy.external, keepSchema.length]).toEqual([
@@ -486,6 +530,52 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
       Then("its install and uninstall hooks both ran", () => {
         expect(ran).toEqual(["install", "uninstall"]);
+      });
+    },
+  );
+
+  Scenario(
+    "A plugin whose synchronous hooks return a value still pipes, while an async hook is refused",
+    ({ Given, When, Then, And }) => {
+      let instance: Schmock.CallableMockInstance;
+
+      Given(
+        "plugins whose install hooks return the instance, an array and a named function's result",
+        () => {
+          expect(valueReturningPlugins).toHaveLength(3);
+          expect(deprecatedAngularOptions.beforeRequest?.({})).toBeUndefined();
+        },
+      );
+
+      When("I pipe them into a mock", () => {
+        instance = schmock();
+        for (const plugin of valueReturningPlugins) instance.pipe(plugin);
+      });
+
+      Then("every route those hooks registered answers", async () => {
+        const answers = await Promise.all(
+          [
+            "/installed-by-expression",
+            "/installed-by-array",
+            "/installed-by-reference",
+          ].map(async (path) => (await instance.handle("GET", path)).body),
+        );
+        expect(answers).toEqual([
+          { installed: 1 },
+          { installed: 2 },
+          { installed: "reference" },
+        ]);
+        instance.reset();
+      });
+
+      And("piping a plugin with an async install is refused", () => {
+        const fresh = schmock();
+        expect(() => fresh.pipe(asyncInstallPlugin)).toThrow(
+          expect.objectContaining({ code: "PLUGIN_ASYNC_INSTALL_UNSUPPORTED" }),
+        );
+        // An async uninstall is only logged: reset() still completes.
+        fresh.pipe(asyncUninstallPlugin);
+        expect(() => fresh.reset()).not.toThrow();
       });
     },
   );

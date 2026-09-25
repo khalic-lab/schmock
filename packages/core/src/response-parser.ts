@@ -39,8 +39,9 @@ function hasContentType(headers: Record<string, string>): boolean {
  * payload. Callers who need to return such a shape as data should nest it or
  * use an explicit `[status, body]` tuple for the envelope. An object whose
  * `headers` is present but not a string record is deliberately NOT an envelope
- * and is delivered whole — plugins that inspect responses must use this same
- * rule (see `@schmock/validation`) or they will judge an undelivered payload.
+ * and is delivered whole — plugins that inspect responses read them through
+ * {@link getResponseParts}, which applies this same rule, or they will judge
+ * an undelivered payload.
  */
 function isResponseObject(value: unknown): value is {
   status: number;

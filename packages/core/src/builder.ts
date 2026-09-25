@@ -16,7 +16,10 @@ import { RequestGenerations } from "./generations.js";
 import { redactHeaders } from "./headers.js";
 import type { RequestHistorySnapshot } from "./history.js";
 import { RequestHistory } from "./history.js";
-import { createFetchInterceptor, ROUTE_PROBE_KEY } from "./interceptor.js";
+import {
+  createFetchInterceptor,
+  NORMALIZED_ADMISSION_KEY,
+} from "./interceptor.js";
 import { NodeServerController } from "./node-server.js";
 import {
   assertValidPlugin,
@@ -28,7 +31,10 @@ import {
   runPluginBeforeRequest,
   runPluginPipeline,
 } from "./plugin-pipeline.js";
-import { normalizeResponse } from "./response-normalizer.js";
+import {
+  buildJsonErrorResponse,
+  normalizeResponse,
+} from "./response-normalizer.js";
 import { parseResponse } from "./response-parser.js";
 import type { CompiledCallableRoute } from "./route-matcher.js";
 import {
@@ -343,7 +349,7 @@ export class CallableMockInstance {
       // admission's own snapshot by the resolver handle() itself uses, so a
       // miss is never a false negative. The interceptor asks it to skip
       // reading the body of a request that will pass through anyway.
-      [ROUTE_PROBE_KEY]: (method: Schmock.HttpMethod, path: string) => {
+      hasRoute: (method: Schmock.HttpMethod, path: string) => {
         try {
           const resolution = this.#resolveRoute(
             method,
@@ -356,6 +362,9 @@ export class CallableMockInstance {
           return true;
         }
       },
+      // handle() above normalizes every response for its method, so the
+      // interceptor may send one on without a second normalizing pass.
+      [NORMALIZED_ADMISSION_KEY]: true,
     };
     return admitted;
   }
@@ -755,17 +764,12 @@ export class CallableMockInstance {
     const responseError =
       error instanceof Error ? error : new Error(errorMessage(error));
     const errorResponse = markResponseException(
-      normalizeResponse(
-        {
-          status: 500,
-          body: {
-            error: responseError.message,
-            code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
-          },
-          headers: { "content-type": "application/json" },
-        },
-        scope.method,
-      ),
+      buildJsonErrorResponse({
+        status: 500,
+        error: responseError.message,
+        code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
+        method: scope.method,
+      }),
       responseError,
     );
 
@@ -889,14 +893,12 @@ export class CallableMockInstance {
 
     const error = new RouteNotFoundError(method, path);
     const response = markRouteNotFound(
-      normalizeResponse(
-        {
-          status: 404,
-          body: { error: error.message, code: error.code },
-          headers: { "content-type": "application/json" },
-        },
+      buildJsonErrorResponse({
+        status: 404,
+        error: error.message,
+        code: error.code,
         method,
-      ),
+      }),
     );
 
     if (this.generations.isCurrent(scope.admission.requestGeneration)) {

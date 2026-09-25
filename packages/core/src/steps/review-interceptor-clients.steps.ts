@@ -383,6 +383,92 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     },
   );
 
+  // ── Cold review: nested leases claim before answering ─────────────────────
+
+  const givenNestedPassthroughLeases =
+    'a mock with a route "POST /api/items" held by an older passthrough-disabled lease and a newer default lease';
+
+  function givenOlderStrictLease(): void {
+    setup();
+    mock("POST /api/items", { stored: true });
+    intercept({ passthrough: false });
+    intercept();
+  }
+
+  async function postJsonTo(path: string, body: string): Promise<void> {
+    response = await fetch(`http://localhost${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+  }
+
+  Scenario(
+    "An older passthrough-false lease leaves an unmocked malformed-JSON request to the network",
+    ({ Given, When, Then, And }) => {
+      Given(givenNestedPassthroughLeases, givenOlderStrictLease);
+
+      When(
+        `I post the JSON body '{bad' to "/unmocked" through the nested leases`,
+        () => postJsonTo("/unmocked", "{bad"),
+      );
+
+      Then(
+        "the network backend should answer the request",
+        expectNetworkAnswer,
+      );
+
+      And(
+        "the mock should report exactly one start, notfound and end event",
+        () => {
+          expect(events).toEqual([
+            "request:start",
+            "request:notfound",
+            "request:end",
+          ]);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "An older passthrough-false lease leaves an unmocked valid-JSON request to the network",
+    ({ Given, When, Then }) => {
+      Given(givenNestedPassthroughLeases, givenOlderStrictLease);
+
+      When(
+        `I post the JSON body '{}' to "/unmocked" through the nested leases`,
+        () => postJsonTo("/unmocked", "{}"),
+      );
+
+      Then(
+        "the network backend should answer the request",
+        expectNetworkAnswer,
+      );
+    },
+  );
+
+  Scenario(
+    "An older passthrough-false lease leaves a non-standard method to the network",
+    ({ Given, When, Then }) => {
+      Given(givenNestedPassthroughLeases, givenOlderStrictLease);
+
+      When(
+        'I fetch "https://dav.example.com/files/" with method "PROPFIND"',
+        async () => {
+          response = await fetch("https://dav.example.com/files/", {
+            method: "PROPFIND",
+          });
+        },
+      );
+
+      Then(
+        "the network backend should answer the request",
+        expectNetworkAnswer,
+      );
+    },
+  );
+
   // ── Finding 51: path-form baseUrl without a leading slash ─────────────────
 
   Scenario(

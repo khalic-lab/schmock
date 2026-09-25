@@ -425,15 +425,36 @@ function withJsonContentType(
   return result;
 }
 
-function internalErrorResponse(method: string): Schmock.Response {
+/**
+ * The JSON error envelope `{ "error": message, "code": code }` every transport
+ * answers a failure with, normalized for `method`. `headers` are added after
+ * the JSON content type (a 405's `allow`). The one constructor of that shape,
+ * so `handle()`, `listen()` and `intercept()` cannot drift apart.
+ */
+export function buildJsonErrorResponse(input: {
+  status: number;
+  error: string;
+  code: string;
+  method: string;
+  headers?: Readonly<Record<string, string>>;
+}): Schmock.Response {
   return normalizeResponse(
     {
-      status: 500,
-      body: { error: "Internal Server Error", code: "INTERNAL_ERROR" },
-      headers: { "content-type": "application/json" },
+      status: input.status,
+      body: { error: input.error, code: input.code },
+      headers: { "content-type": "application/json", ...input.headers },
     },
-    method,
+    input.method,
   );
+}
+
+function internalErrorResponse(method: string): Schmock.Response {
+  return buildJsonErrorResponse({
+    status: 500,
+    error: "Internal Server Error",
+    code: "INTERNAL_ERROR",
+    method,
+  });
 }
 
 /**
