@@ -1,3 +1,4 @@
+import type * as Schmock from "@schmock/core";
 import { ResourceLimitError, SchmockError } from "@schmock/core";
 import type { CrudResource } from "./crud-detector.js";
 import { generateSeedItems } from "./generators.js";
@@ -5,9 +6,25 @@ import { MAX_SEED_ITEMS_PER_RESOURCE, MAX_SEED_ITEMS_TOTAL } from "./limits.js";
 import { readSeedFile } from "./seed-file.js";
 import { isRecord } from "./utils.js";
 
-export type SeedSource = unknown[] | string | { count: number };
+export type SeedSource = Schmock.SeedSource;
 
-export type SeedConfig = Record<string, SeedSource>;
+export type SeedConfig = Schmock.SeedConfig;
+
+/**
+ * A seed entry that cannot be loaded. Same code as the up-front shape checks
+ * in {@link assertValidSeedConfig}: every one of these is a bad `seed` option.
+ */
+function invalidSeedEntry(
+  message: string,
+  resource: string,
+  file?: string,
+): SchmockError {
+  return new SchmockError(message, "OPENAPI_INVALID_OPTION", {
+    option: "seed",
+    resource,
+    ...(file === undefined ? {} : { file }),
+  });
+}
 
 function describeValue(value: unknown): string {
   if (value === null) return "null";
@@ -126,13 +143,17 @@ export async function loadSeed(
       try {
         parsed = JSON.parse(content);
       } catch {
-        throw new Error(
+        throw invalidSeedEntry(
           `Seed file "${source}" for resource "${resourceName}" contains invalid JSON`,
+          resourceName,
+          source,
         );
       }
       if (!Array.isArray(parsed)) {
-        throw new Error(
+        throw invalidSeedEntry(
           `Seed file "${source}" for resource "${resourceName}" must contain a JSON array`,
+          resourceName,
+          source,
         );
       }
       admit(resourceName, parsed.length);
@@ -149,13 +170,15 @@ export async function loadSeed(
         !Number.isInteger(rawCount) ||
         rawCount < 0
       ) {
-        throw new Error(
+        throw invalidSeedEntry(
           `Seed count for "${resourceName}" must be a non-negative integer, got: ${String(rawCount)}`,
+          resourceName,
         );
       }
       if (!resource?.schema) {
-        throw new Error(
+        throw invalidSeedEntry(
           `Cannot auto-generate seed for "${resourceName}": no schema found in spec`,
+          resourceName,
         );
       }
       admit(resourceName, rawCount);

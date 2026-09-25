@@ -1,8 +1,7 @@
 import type * as Schmock from "@schmock/core";
-import { isStatusTuple } from "@schmock/core";
+import { getHeader, getResponseParts } from "@schmock/core";
 import { generateFromSchema } from "@schmock/faker";
 import type { ParsedCallback } from "./parser.js";
-import { getHeader } from "./request-pipeline.js";
 import { isRecord } from "./utils.js";
 
 // Type-safe route config accessor for callbacks
@@ -62,7 +61,7 @@ export async function dispatchCallbacks(
         continue;
       }
     } else {
-      body = getResponseBody(response);
+      body = getResponseParts(response).body;
     }
 
     try {
@@ -163,25 +162,17 @@ function resolveExpression(
       : undefined;
   }
 
-  // $response.body#/path — JSON pointer into response body
+  // $response.body#/path — JSON pointer into the body the client receives.
+  // Core's own envelope rule decides what that is: an object whose `headers`
+  // are not a string record is delivered whole, not unwrapped.
   if (expr.startsWith("response.body#")) {
     const pointer = expr.slice("response.body#".length);
-    return urlSegment(resolveJsonPointer(getResponseBody(response), pointer));
+    return urlSegment(
+      resolveJsonPointer(getResponseParts(response).body, pointer),
+    );
   }
 
   return "";
-}
-
-function getResponseBody(response: unknown): unknown {
-  if (isStatusTuple(response)) return response[1];
-  if (
-    isRecord(response) &&
-    typeof response.status === "number" &&
-    "body" in response
-  ) {
-    return response.body;
-  }
-  return response;
 }
 
 function resolveJsonPointer(obj: unknown, pointer: string): unknown {

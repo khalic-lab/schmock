@@ -6,10 +6,14 @@ export {
   MAX_SEED_MANIFEST_BYTES,
 } from "./limits.js";
 export type {
+  CrudOperationMeta,
   OnSchemaCallback,
+  OnSchemaContext,
   OpenApiCallbackOptions,
   OpenApiCallbackRequest,
   OpenApiOptions,
+  OpenApiRefPolicy,
+  ResourceOverride,
   SeedConfig,
   SeedSource,
 } from "./plugin.js";

@@ -28,23 +28,18 @@ import {
 import { isStatusInRange } from "./response-status.js";
 import type { SeedConfig, SeedSource } from "./seed.js";
 import { assertValidSeedConfig, loadSeed } from "./seed.js";
+import { normalizeMediaType } from "./utils.js";
 
 export type { SeedConfig, SeedSource };
 
-export type OnSchemaCallback = (
-  schema: JSONSchema7,
-  context: {
-    method: string;
-    path: string;
-    params: Record<string, string>;
-    query: Record<string, string>;
-    headers: Record<string, string>;
-  },
-) => JSONSchema7 | undefined;
-
+export type OnSchemaCallback = Schmock.OnSchemaCallback;
+export type OnSchemaContext = Schmock.OnSchemaContext;
 export type OpenApiOptions = Schmock.OpenApiOptions;
+export type OpenApiRefPolicy = Schmock.OpenApiRefPolicy;
 export type OpenApiCallbackOptions = Schmock.OpenApiCallbackOptions;
 export type OpenApiCallbackRequest = Schmock.OpenApiCallbackRequest;
+export type ResourceOverride = Schmock.ResourceOverride;
+export type CrudOperationMeta = Schmock.CrudOperationMeta;
 
 const REQUEST_REJECTED_STATE = "openapi:requestRejected";
 
@@ -433,7 +428,7 @@ function applySchemaOverrides(
  * well would silently reshape a media type the caller never named.
  */
 function isJsonMediaType(mediaType: string): boolean {
-  const base = mediaType.split(";")[0].trim().toLowerCase();
+  const base = normalizeMediaType(mediaType);
   return (
     base === "application/json" || base.endsWith("+json") || base === "*/*"
   );

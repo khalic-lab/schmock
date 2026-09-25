@@ -6,15 +6,11 @@ import {
 } from "@schmock/core";
 import { generateFromSchema } from "@schmock/faker";
 import type { JSONSchema7 } from "json-schema";
-import {
-  matchDeclaredContentType,
-  negotiateContentTypeMatch,
-} from "./content-negotiation.js";
+import { selectResponseMediaType } from "./content-negotiation.js";
 import type { CrudResource, IdKind } from "./crud-detector.js";
 import { MAX_SEED_GENERATED_NODES } from "./limits.js";
 import { type AccessModes, collectAccessModes } from "./normalizer.js";
 import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
-import type { OnSchemaCallback } from "./plugin.js";
 import { findRepresentativeResponse } from "./response-status.js";
 import { collectionStateKey, counterStateKey } from "./state-keys.js";
 import { hasType, isRecord, toJsonSchema } from "./utils.js";
@@ -763,7 +759,7 @@ function mintId(
 /** Plugin-installation generation settings shared by every registered route. */
 export interface GenerationHooks {
   fakerSeed?: number;
-  onSchema?: OnSchemaCallback;
+  onSchema?: Schmock.OnSchemaCallback;
   /** Shared response-header ordinal source for this plugin installation. */
   headerSeed?: HeaderSeed;
 }
@@ -807,7 +803,8 @@ function applyOnSchema(
  * One rule for both the static and the CRUD path: when the operation declares
  * media types with schemas, negotiate among them (falling back to the first
  * declared type when the request states no preference); otherwise use the
- * JSON-ish default the parser already resolved.
+ * JSON-ish default the parser already resolved. The media type comes from
+ * `selectResponseMediaType`, the same rule response validation applies.
  */
 function selectGeneratedSchema(
   source: {
@@ -818,28 +815,21 @@ function selectGeneratedSchema(
   requestHeaders: Record<string, string>,
   responseHeaders: Record<string, string> = {},
 ): JSONSchema7 | undefined {
-  const types = source.contentTypes;
-  if (types?.length && source.byMediaType && source.byMediaType.size > 0) {
-    const explicit = getHeader(responseHeaders, "content-type");
-    if (explicit) {
-      const declared = matchDeclaredContentType(explicit, types);
-      return declared ? source.byMediaType.get(declared) : undefined;
-    }
-    const accept = getHeader(requestHeaders, "accept");
-    const match = negotiateContentTypeMatch(accept ?? "", types);
-    return match ? source.byMediaType.get(match.declared) : undefined;
+  if (
+    source.contentTypes?.length &&
+    source.byMediaType &&
+    source.byMediaType.size > 0
+  ) {
+    const selected = selectResponseMediaType(
+      source,
+      requestHeaders,
+      responseHeaders,
+    );
+    return selected?.declared
+      ? source.byMediaType.get(selected.declared)
+      : undefined;
   }
   return source.fallback;
-}
-
-function getHeader(
-  headers: Record<string, string>,
-  target: string,
-): string | undefined {
-  const normalizedTarget = target.toLowerCase();
-  return Object.entries(headers).find(
-    ([name]) => name.toLowerCase() === normalizedTarget,
-  )?.[1];
 }
 
 /** `selectGeneratedSchema` over a CRUD operation's success contract. */

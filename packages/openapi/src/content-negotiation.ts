@@ -1,3 +1,5 @@
+import { getHeader } from "@schmock/core";
+
 interface ParsedMediaType {
   type: string;
   subtype: string;
@@ -420,7 +422,7 @@ function wireContentType(
  */
 export function negotiateContentTypeMatch(
   accept: string,
-  available: string[],
+  available: readonly string[],
 ): ContentTypeMatch | null {
   const ranges = parseAcceptRanges(accept);
   const hasAccept = accept.trim().length > 0;
@@ -469,9 +471,9 @@ export function negotiateContentTypeMatch(
 }
 
 /** Find the most specific declared key covering an explicit Content-Type. */
-export function matchDeclaredContentType(
+function matchDeclaredContentType(
   contentType: string,
-  available: string[],
+  available: readonly string[],
 ): string | null {
   const parsed = parseMediaType(contentType);
   if (!parsed || !isConcrete(parsed)) return null;
@@ -493,7 +495,45 @@ export function matchDeclaredContentType(
 /** Negotiate the concrete media type to place on the response. */
 export function negotiateContentType(
   accept: string,
-  available: string[],
+  available: readonly string[],
 ): string | null {
   return negotiateContentTypeMatch(accept, available)?.contentType ?? null;
+}
+
+/** The media type a response goes out as, and the declared key covering it. */
+export interface ResponseMediaTypeSelection {
+  /** The concrete media type on the wire. */
+  mediaType: string;
+  /** The OpenAPI content key covering it; absent when none is declared. */
+  declared?: string;
+}
+
+/**
+ * Pick the media type a response is (or will be) sent as.
+ *
+ * An explicit `Content-Type` among the response headers wins and is matched
+ * to the most specific declared key; otherwise the request's `Accept` is
+ * negotiated against the declared types (no `Accept` takes the first). The
+ * single rule behind both body generation and response validation, so the
+ * schema a body is generated from is the one it is validated against.
+ */
+export function selectResponseMediaType(
+  entry: { contentTypes?: readonly string[] },
+  requestHeaders: Readonly<Record<string, string>>,
+  responseHeaders: Readonly<Record<string, string>>,
+): ResponseMediaTypeSelection | undefined {
+  const available = entry.contentTypes ?? [];
+  const explicit = getHeader(responseHeaders, "content-type");
+  if (explicit) {
+    return {
+      mediaType: explicit,
+      declared: matchDeclaredContentType(explicit, available) ?? undefined,
+    };
+  }
+
+  const accept = getHeader(requestHeaders, "accept");
+  const match = negotiateContentTypeMatch(accept ?? "", available);
+  return match
+    ? { mediaType: match.contentType, declared: match.declared }
+    : undefined;
 }

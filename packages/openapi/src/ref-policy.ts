@@ -1,37 +1,15 @@
+import type * as Schmock from "@schmock/core";
 import { isRecord } from "./utils.js";
 
 /**
- * Policy governing `$ref`s that leave the root document.
+ * Policy governing `$ref`s that leave the root document: `OpenApiOptions.refs`.
  *
- * Mirrors `Schmock.OpenApiRefPolicy`. External resolution is OFF by default:
- * a spec is untrusted input on the CLI, and `$ref` is a file-read/network
+ * An alias, not a copy, so a field added to `Schmock.OpenApiRefPolicy` reaches
+ * {@link resolveRefPolicy} typed. External resolution is OFF by default: a
+ * spec is untrusted input on the CLI, and `$ref` is a file-read/network
  * primitive.
  */
-export interface RefPolicy {
-  /** Allow any `$ref` that leaves the root document. Default `false`. */
-  external?: boolean;
-  /** Allow `http(s)` `$ref`s. Requires `external`. Default `false`. */
-  allowHttp?: boolean;
-  /**
-   * Hostnames an `http(s)` `$ref` may target. Empty or omitted means "any
-   * host", still minus the unsafe-address block (loopback, link-local,
-   * private and reserved ranges), which applies to every address a host
-   * resolves to — an allow-listed name that resolves to one is refused too.
-   */
-  allowedHosts?: string[];
-  /** Per-request timeout for http `$ref`s, in ms. Default 5000. */
-  timeoutMs?: number;
-  /**
-   * Redirects to follow for an http `$ref`. Default 0.
-   *
-   * `fetch` has no numeric redirect cap, so this is effectively a boolean:
-   * `0` refuses redirects outright, any positive value follows up to the
-   * platform default. Rely on `allowedHosts` for precision.
-   */
-  redirects?: number;
-  /** Maximum size of a single http `$ref` document, in bytes. Default 1 MB. */
-  maxBytes?: number;
-}
+export type RefPolicy = Schmock.OpenApiRefPolicy;
 
 interface ResolvedRefPolicy {
   external: boolean;

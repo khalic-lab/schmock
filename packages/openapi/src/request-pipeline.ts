@@ -1,14 +1,13 @@
 import type * as Schmock from "@schmock/core";
-import { isBinaryBody, isStatusTuple } from "@schmock/core";
+import { getHeader, getResponseParts, isBinaryBody } from "@schmock/core";
 import { generateFromSchema } from "@schmock/faker";
 import type { ValidateFunction } from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import type { JSONSchema7 } from "json-schema";
 import {
-  matchDeclaredContentType,
   negotiateContentType,
-  negotiateContentTypeMatch,
+  selectResponseMediaType,
 } from "./content-negotiation.js";
 import { asSchemaGenerationError } from "./generators.js";
 import type {
@@ -16,7 +15,6 @@ import type {
   ParsedResponseEntry,
   SecurityScheme,
 } from "./parser.js";
-import type { OnSchemaCallback } from "./plugin.js";
 import { parsePreferHeader } from "./prefer.js";
 import {
   findResponseEntry,
@@ -24,6 +22,12 @@ import {
   type ResponseStatusKey,
 } from "./response-status.js";
 import { isRecord, normalizeMediaType } from "./utils.js";
+
+// Every request header is read through core's case-insensitive `getHeader`:
+// core does not normalize header case at `mock.handle`, so a direct-API caller
+// (unit test, BDD step, callable API with no adapter) still delivers
+// `Accept`/`PREFER` exactly as written. The adapters lowercase, but they are
+// not the only entry point.
 
 // Type-safe route config accessors (avoid `as` casts on `[key: string]: unknown`)
 function getRouteSecurity(route: Schmock.RouteConfig): string[][] | undefined {
@@ -186,27 +190,6 @@ function checkSchemePresence(
   }
 
   return false;
-}
-
-/**
- * Case-insensitive header read — the ONLY way this module should look a request
- * header up.
- *
- * Load-bearing, not a convenience: core does not normalize header case at
- * `mock.handle`, so a direct-API caller (unit test, BDD step, callable API with
- * no adapter) still delivers `Accept`/`PREFER` exactly as written. Do not
- * "simplify" this away on the argument that the adapters already lowercase —
- * they do, but they are not the only entry point.
- */
-export function getHeader(
-  headers: Record<string, string>,
-  name: string,
-): string | undefined {
-  const target = name.toLowerCase();
-  for (const [headerName, value] of Object.entries(headers)) {
-    if (headerName.toLowerCase() === target) return value;
-  }
-  return undefined;
 }
 
 function hasValue(value: string | undefined): boolean {
@@ -445,61 +428,19 @@ function requestValidationError(
   };
 }
 
-interface ResponseParts {
-  status: number;
-  body: unknown;
-  headers: Record<string, string>;
-  kind: "plain" | "tuple" | "object";
-}
-
-function isResponseObject(value: unknown): value is {
-  status: number;
-  body: unknown;
-  headers?: Record<string, string>;
-} {
-  return (
-    isRecord(value) &&
-    typeof value.status === "number" &&
-    "body" in value &&
-    (value.headers === undefined || isStringRecord(value.headers))
-  );
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return (
-    isRecord(value) &&
-    Object.values(value).every((entry) => typeof entry === "string")
-  );
-}
-
-function getResponseParts(response: unknown): ResponseParts {
-  if (isStatusTuple(response)) {
-    return {
-      status: response[0],
-      body: response[1],
-      // isStatusTuple checks only length and status; the third element is
-      // read as headers only when it really is a string record.
-      headers:
-        response.length === 3 && isStringRecord(response[2]) ? response[2] : {},
-      kind: "tuple",
-    };
-  }
-
-  if (isResponseObject(response)) {
-    return {
-      status: response.status,
-      body: response.body,
-      headers: response.headers ?? {},
-      kind: "object",
-    };
-  }
-
-  return {
-    status: response === null || response === undefined ? 204 : 200,
-    body: response === null ? undefined : response,
-    headers: {},
-    kind: "plain",
-  };
+/**
+ * Core's `getResponseParts`, with a plain `null` result read as no body.
+ *
+ * Core carries the element as given (`null` stays `null`). This module has
+ * always validated and re-wrapped a plain `null` as `undefined`, which is also
+ * what core puts on the wire for it; a tuple or envelope carrying `null` keeps
+ * it, as before.
+ */
+function responseParts(response: unknown): Schmock.ResponseParts {
+  const parts = getResponseParts(response);
+  return parts.kind === "plain" && parts.body === null
+    ? { ...parts, body: undefined }
+    : parts;
 }
 
 /**
@@ -507,33 +448,7 @@ function getResponseParts(response: unknown): ResponseParts {
  * (tuple, response object, or a plain body defaulting to 200 / 204 for nullish).
  */
 export function getResponseStatus(response: unknown): number {
-  return getResponseParts(response).status;
-}
-
-interface SelectedResponseMediaType {
-  mediaType: string;
-  declared?: string;
-}
-
-function selectResponseMediaType(
-  context: Schmock.PluginContext,
-  entry: ParsedResponseEntry,
-  headers: Record<string, string>,
-): SelectedResponseMediaType | undefined {
-  const available = entry.contentTypes ?? [];
-  const explicit = getHeader(headers, "content-type");
-  if (explicit) {
-    return {
-      mediaType: explicit,
-      declared: matchDeclaredContentType(explicit, available) ?? undefined,
-    };
-  }
-
-  const accept = getHeader(context.headers, "accept");
-  const match = negotiateContentTypeMatch(accept ?? "", available);
-  return match
-    ? { mediaType: match.contentType, declared: match.declared }
-    : undefined;
+  return responseParts(response).status;
 }
 
 interface AppliedResponseContentType {
@@ -549,7 +464,7 @@ export function applyResponseContentType(
   const responses = getRouteResponses(context.route);
   if (!responses) return { response, rejected: false };
 
-  const parts = getResponseParts(response);
+  const parts = responseParts(response);
   const entry = findResponseEntry(responses, parts.status);
   if (!entry) return { response, rejected: false };
 
@@ -577,7 +492,11 @@ export function applyResponseContentType(
     };
   }
 
-  const selected = selectResponseMediaType(context, entry, parts.headers);
+  const selected = selectResponseMediaType(
+    entry,
+    context.headers,
+    parts.headers,
+  );
   if (!selected || getHeader(parts.headers, "content-type")) {
     return { response, rejected: false };
   }
@@ -604,7 +523,7 @@ export function validateResponse(
   const responses = getRouteResponses(context.route);
   if (!responses) return undefined;
 
-  const parts = getResponseParts(response);
+  const parts = responseParts(response);
   const entry = findResponseEntry(responses, parts.status);
   if (!entry) {
     return responseValidationError(context, parts.status, undefined, [
@@ -617,8 +536,8 @@ export function validateResponse(
   }
 
   const selectedMediaType = selectResponseMediaType(
-    context,
     entry,
+    context.headers,
     parts.headers,
   );
   const mediaType = selectedMediaType?.mediaType;
@@ -720,7 +639,7 @@ export async function processPreferHeader(
   context: Schmock.PluginContext,
   response: unknown,
   fakerSeed?: number,
-  onSchema?: OnSchemaCallback,
+  onSchema?: Schmock.OnSchemaCallback,
 ): Promise<PreferResult> {
   const unchanged: PreferResult = { context, response, applied: false };
   const preferValue = getHeader(context.headers, "prefer");
@@ -805,7 +724,7 @@ function selectResponseSchema(
   context: Schmock.PluginContext,
   entry: ParsedResponseEntry,
 ): JSONSchema7 | undefined {
-  const mediaType = selectResponseMediaType(context, entry, {});
+  const mediaType = selectResponseMediaType(entry, context.headers, {});
   if (entry.content && entry.content.size > 0) {
     return mediaType?.declared
       ? entry.content.get(mediaType.declared)?.schema
@@ -825,7 +744,7 @@ function selectResponseExample(
   name: string,
 ): SelectedResponseExample {
   if (entry.content && entry.content.size > 0) {
-    const mediaType = selectResponseMediaType(context, entry, {});
+    const mediaType = selectResponseMediaType(entry, context.headers, {});
     const examples = mediaType?.declared
       ? entry.content.get(mediaType.declared)?.examples
       : undefined;
@@ -842,7 +761,7 @@ function selectResponseExample(
 interface ResponseBodyGeneration {
   schema: JSONSchema7;
   seed?: number;
-  onSchema?: OnSchemaCallback;
+  onSchema?: Schmock.OnSchemaCallback;
   context: Schmock.PluginContext;
 }
 
