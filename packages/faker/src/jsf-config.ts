@@ -10,7 +10,7 @@ import {
 import { DETERMINISTIC_REF_DATE, JSF_MAX_DEPTH } from "./constants.js";
 import { assertOutputWithinLimits } from "./output-limits.js";
 import { mapSchemaChildren, type SchemaChildSlot } from "./schema-children.js";
-import { isJSONSchema7 } from "./utils.js";
+import { compilePattern, isJSONSchema7 } from "./utils.js";
 
 // Re-exported here because this module owns the seeded-generation contract the
 // constant serves; `constants.ts` is its home.
@@ -343,11 +343,17 @@ export function createSeededRandom(seed: number): () => number {
   };
 }
 
+/** Keywords whose list entries are matched to array items by position. */
+const POSITIONAL_KEYWORDS = new Set(["items", "prefixItems"]);
+
 /**
  * The JSF copy of one child entry. Boolean schemas pass through, schema objects
  * are normalized, and a `dependencies` property list is copied. Any other entry
- * is malformed: it is dropped from a list or map, and a single-schema keyword
- * keeps its raw copy.
+ * is malformed. In a positional list (a tuple `items`, `prefixItems`) it
+ * becomes `true`, so every later position keeps its schema; elsewhere it is
+ * dropped from a list or map, and a single-schema keyword keeps its raw copy.
+ * `validateSchema` rejects malformed positional entries; this keeps the walker
+ * aligned when it is called on its own.
  */
 function normalizeChildForJsf(
   child: unknown,
@@ -358,6 +364,9 @@ function normalizeChildForJsf(
   if (isJSONSchema7(child)) return normalizeSchemaNodeForJsf(child, context);
   if (slot.keyword === "dependencies" && Array.isArray(child)) {
     return [...child];
+  }
+  if (slot.location.form === "array" && POSITIONAL_KEYWORDS.has(slot.keyword)) {
+    return true;
   }
   return undefined;
 }
@@ -507,17 +516,6 @@ function generatePatternKey(pattern: string, seed: number): string | undefined {
     // A pattern JSF cannot generate from gets no invented key.
     return undefined;
   }
-}
-
-function compilePattern(source: string): RegExp | undefined {
-  for (const flags of ["u", ""]) {
-    try {
-      return new RegExp(source, flags);
-    } catch {
-      // Try the next flag set; a pattern neither accepts is skipped.
-    }
-  }
-  return undefined;
 }
 
 /**

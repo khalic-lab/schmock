@@ -3,11 +3,14 @@ import { describe, expect, it } from "vitest";
 import { generateFromSchema } from "./index";
 
 /**
- * Tests for postProcessGenerated behavior.
- * Since postProcessGenerated is not exported, we test it indirectly via generateFromSchema.
+ * Seeded post-generation behaviour, exercised end to end through
+ * generateFromSchema: `applyNullableRolls` (post-process.ts) reintroduces null
+ * on `schmockNullable` nodes after json-schema-faker runs, and the enhancer's
+ * `applyBooleanWeighting` compiles `schmockTrueProbability` into the faker call
+ * before it runs.
  */
 
-describe("postProcessGenerated — schmockNullable", () => {
+describe("applyNullableRolls — schmockNullable", () => {
   it("uses the generation seed for a reproducible nullable distribution", async () => {
     const nullableString: JSONSchema7 & { schmockNullable: boolean } = {
       type: "string",
@@ -42,7 +45,7 @@ describe("postProcessGenerated — schmockNullable", () => {
   });
 });
 
-describe("postProcessGenerated — schmockTrueProbability", () => {
+describe("applyBooleanWeighting — schmockTrueProbability compiled by the enhancer", () => {
   it("uses the generation seed for deterministic weighted booleans", async () => {
     const weightedBoolean: JSONSchema7 & {
       schmockTrueProbability: number;
@@ -113,7 +116,7 @@ describe("postProcessGenerated — schmockTrueProbability", () => {
   });
 });
 
-describe("postProcessGenerated — recursive processing", () => {
+describe("applyBooleanWeighting — nested schemas", () => {
   it("nested object properties are recursively processed", async () => {
     const schema: JSONSchema7 = {
       type: "object",
@@ -168,12 +171,49 @@ describe("postProcessGenerated — recursive processing", () => {
   });
 
   it("non-object data passes through unchanged", async () => {
-    // A string schema should pass through postProcessGenerated without issues
+    // A string schema has nothing to weight or roll and comes out as a string
     const schema: JSONSchema7 = {
       type: "string",
     };
 
     const result = await generateFromSchema({ schema });
     expect(typeof result).toBe("string");
+  });
+});
+
+describe("applyNullableRolls — patternProperties keys", () => {
+  /** Nulls rolled across `seeds` objects whose keys come from `pattern`. */
+  async function nullsAcrossSeeds(pattern: string, seeds: number) {
+    const schema: JSONSchema7 = {
+      type: "object",
+      patternProperties: { [pattern]: { type: ["integer", "null"] } },
+      additionalProperties: false,
+      minProperties: 3,
+    };
+    let nulls = 0;
+    let values = 0;
+    for (let seed = 1; seed <= seeds; seed += 1) {
+      const generated = await generateFromSchema({ schema, seed });
+      if (typeof generated !== "object" || generated === null) {
+        throw new Error("Expected an object");
+      }
+      for (const value of Object.values(generated)) {
+        values += 1;
+        if (value === null) nulls += 1;
+      }
+    }
+    return { nulls, values };
+  }
+
+  it("rolls nulls on keys of a pattern that compiles only without the u flag", async () => {
+    // `\-` is an identity escape: valid in a plain RegExp, a SyntaxError
+    // under the `u` flag. Both spellings describe the same keys.
+    const identityEscape = "^x\\-[a-z]+$";
+    expect(() => new RegExp(identityEscape, "u")).toThrow(SyntaxError);
+    const escaped = await nullsAcrossSeeds(identityEscape, 100);
+    const plain = await nullsAcrossSeeds("^x-[a-z]+$", 100);
+    expect(escaped.values).toBe(300);
+    expect(escaped.nulls).toBeGreaterThan(0);
+    expect(escaped).toEqual(plain);
   });
 });

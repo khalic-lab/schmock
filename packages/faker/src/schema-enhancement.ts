@@ -87,11 +87,11 @@ function unwrapNullUnion(
  *
  * JSF would read either union as a ~50/50 type choice, and it also defeats the
  * `type === "string"` gates in `needsStringFallback`/`findBestMapping`, so on
- * the generation path we strip it and let `postProcessGenerated` reintroduce
- * null at ~5%. An explicit `schmockNullable: false` opts a node out: JSF then
- * generates the union as written.
+ * the generation path we strip it and let `applyNullableRolls` (post-process.ts)
+ * reintroduce null at ~5%. An explicit `schmockNullable: false` opts a node
+ * out: JSF then generates the union as written.
  *
- * The `schmockNullable` marker MUST survive: `postProcessGenerated` walks the
+ * The `schmockNullable` marker MUST survive: `applyNullableRolls` walks the
  * ENHANCED schema, so dropping it here would silently stop nulls entirely.
  *
  * Contract: the caller passes an already-shallow-copied object; this helper may

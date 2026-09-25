@@ -3,15 +3,18 @@ import { isJSONSchema7 } from "./utils.js";
 
 export interface SchemaChild {
   schema: JSONSchema7;
+  /** The `SCHEMA_KEYWORDS` keyword the child sits under. */
+  keyword: string;
   path: string;
   depthCost: 0 | 1;
   frameCost: 0 | 1;
   typedContinuation: boolean;
   /**
    * False for keywords whose subschema never produces a value of its own:
-   * `not` and `if` only test the value, and `definitions`/`$defs` are reached
-   * for generation only through a `$ref`. Resource limits are charged along
-   * generating edges only.
+   * `not` only tests the value, `if` tests it unless a sibling `then` is
+   * present (json-schema-faker then merges `if` into what it generates), and
+   * `definitions`/`$defs` are reached for generation only through a `$ref`.
+   * Resource limits are charged along generating edges only.
    */
   generates: boolean;
 }
@@ -32,6 +35,12 @@ interface SchemaKeyword {
   shape: SchemaKeywordShape;
   /** False when the subschema only tests or defines, never generating itself. */
   generates: boolean;
+  /**
+   * A sibling keyword that makes a non-generating subschema generate: when the
+   * parent also holds it, json-schema-faker merges this subschema into what it
+   * generates (`if` is merged with `then`).
+   */
+  generatesWith?: string;
   costs: ChildCost;
   /** The declared type under which a child continues the typed chain. */
   typedAs?: "array" | "object";
@@ -108,7 +117,13 @@ export const SCHEMA_KEYWORDS: readonly SchemaKeyword[] = [
   },
   { keyword: "contains", shape: "single", generates: true, costs: VALUE_LEVEL },
   { keyword: "not", shape: "single", generates: false, costs: SAME_LEVEL },
-  { keyword: "if", shape: "single", generates: false, costs: SAME_LEVEL },
+  {
+    keyword: "if",
+    shape: "single",
+    generates: false,
+    generatesWith: "then",
+    costs: SAME_LEVEL,
+  },
   { keyword: "then", shape: "single", generates: true, costs: SAME_LEVEL },
   { keyword: "else", shape: "single", generates: true, costs: SAME_LEVEL },
   {
@@ -163,11 +178,12 @@ interface HeldKeyword {
 }
 
 /**
- * The entries a keyword holds, when its value has the keyword's shape. A
- * keyword of the wrong shape (an `allOf` object, a `not` string) holds nothing
- * and is left as it is by every walker. A map accepts any object, arrays
- * included, so a malformed array-valued map is still walked (by index) and
- * validated rather than skipped.
+ * The entries a keyword holds, when its value has the keyword's shape. A list
+ * or map keyword of the wrong shape (an `allOf` object) holds nothing and is
+ * left as it is by every walker; `validateSchema` rejects it (see
+ * `misshapenKeyword`), so only the walkers called directly ever meet one. A
+ * map accepts any object, arrays included, so a malformed array-valued map is
+ * still walked (by index) and validated rather than skipped.
  */
 function readKeyword(
   schema: JSONSchema7,
@@ -207,6 +223,23 @@ function readKeyword(
   };
 }
 
+/**
+ * The first list or map keyword whose value has the wrong shape (an `allOf`
+ * object, a `patternProperties` string). Every walker skips such a keyword,
+ * so validation rejects it rather than let it pass unchecked.
+ */
+export function misshapenKeyword(schema: JSONSchema7): string | undefined {
+  for (const descriptor of SCHEMA_KEYWORDS) {
+    if (
+      Reflect.get(schema, descriptor.keyword) !== undefined &&
+      readKeyword(schema, descriptor) === undefined
+    ) {
+      return descriptor.keyword;
+    }
+  }
+  return undefined;
+}
+
 function* heldKeywords(schema: JSONSchema7): Generator<HeldKeyword> {
   for (const descriptor of SCHEMA_KEYWORDS) {
     const held = readKeyword(schema, descriptor);
@@ -242,15 +275,20 @@ export function collectSchemaChildren(
   for (const { descriptor, entries } of heldKeywords(schema)) {
     const typedContinuation =
       descriptor.typedAs !== undefined && hasType(descriptor.typedAs);
+    const generates =
+      descriptor.generates ||
+      (descriptor.generatesWith !== undefined &&
+        Reflect.get(schema, descriptor.generatesWith) !== undefined);
     for (const { value, location } of entries) {
       if (!isJSONSchema7(value)) continue;
       children.push({
         schema: value,
+        keyword: descriptor.keyword,
         path: `${path}.${descriptor.keyword}${pathSuffix(location)}`,
         depthCost: descriptor.costs.depthCost,
         frameCost: descriptor.costs.frameCost,
         typedContinuation,
-        generates: descriptor.generates,
+        generates,
       });
     }
   }

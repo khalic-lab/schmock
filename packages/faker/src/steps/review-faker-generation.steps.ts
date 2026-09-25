@@ -81,6 +81,111 @@ function nonGeneratingSchema(name: string): JSONSchema7 {
   }
 }
 
+/** An `if` merged into its `then`, whose own bounds nothing caps. */
+function conditionalSchema(name: string): JSONSchema7 {
+  switch (name) {
+    case "if-uncapped-items":
+      return {
+        type: "object",
+        properties: {
+          a: {
+            if: {
+              type: "array",
+              minItems: 3_000_000,
+              maxItems: 3_000_000,
+              items: { type: "integer" },
+            },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { type: "array", items: { type: "integer" } },
+          },
+        },
+      };
+    case "if-uncapped-length":
+      return {
+        type: "object",
+        properties: {
+          a: {
+            if: { type: "string", minLength: 5_000_000 },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { type: "string" },
+          },
+        },
+      };
+    default:
+      throw new Error(`Unknown schema case: ${name}`);
+  }
+}
+
+/**
+ * A schema whose only route to a 3000 x 3000 integer array (9M nodes) is
+ * `keyword`: every per-node limit passes, only the node budget catches it.
+ */
+function nestedArrayThrough(keyword: string): JSONSchema7 {
+  const big: JSONSchema7 = {
+    type: "array",
+    minItems: 3000,
+    maxItems: 3000,
+    items: {
+      type: "array",
+      minItems: 3000,
+      maxItems: 3000,
+      items: { type: "integer" },
+    },
+  };
+  const oneItem: JSONSchema7 = {
+    type: "array",
+    items: { type: "integer" },
+    maxItems: 1,
+  };
+  switch (keyword) {
+    case "prefixItems":
+    case "containsAll":
+      Reflect.set(oneItem, keyword, [big]);
+      return { type: "object", properties: { a: oneItem } };
+    case "contains":
+      return {
+        type: "object",
+        properties: { a: { ...oneItem, contains: big } },
+      };
+    case "dependentSchemas": {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: { a: { type: "string" } },
+        required: ["a"],
+      };
+      Reflect.set(schema, "dependentSchemas", {
+        a: { properties: { b: big }, required: ["b"] },
+      });
+      return schema;
+    }
+    default:
+      throw new Error(`Unknown keyword: ${keyword}`);
+  }
+}
+
+/** The shape each non-generating case must still produce. */
+function expectFitsNonGeneratingCase(name: string, value: unknown): void {
+  switch (name) {
+    case "not-min-length":
+      expect(typeof value).toBe("string");
+      if (typeof value === "string")
+        expect(value.length).toBeLessThanOrEqual(20);
+      return;
+    case "if-min-items":
+      expect(Array.isArray(value)).toBe(true);
+      if (!Array.isArray(value)) return;
+      expect(value.length).toBeLessThanOrEqual(5);
+      for (const item of value) expect(Number.isInteger(item)).toBe(true);
+      return;
+    case "unreferenced-defs":
+      expect(isRecord(value)).toBe(true);
+      if (isRecord(value)) expect(Number.isInteger(value.a)).toBe(true);
+      return;
+    default:
+      throw new Error(`Unknown schema case: ${name}`);
+  }
+}
+
 function expectResourceFailure(
   error: unknown,
   resource: string,
@@ -433,9 +538,9 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       Then("plugin creation succeeds", () => {
         expect(creationError).toBeUndefined();
       });
-      And("the plugin generates a response", async () => {
+      And("the plugin generates a response that fits {string}", async () => {
         await runPlugin();
-        expect(response).toBeDefined();
+        expectFitsNonGeneratingCase(variables.case, response);
       });
     },
   );
@@ -447,6 +552,43 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
         count = undefined;
         schema = nonGeneratingSchema(name);
       });
+      When("I create a faker plugin for it", createPlugin);
+      Then(
+        "plugin creation fails with resource {string}",
+        (_, resource: string) => {
+          expectResourceFailure(creationError, resource);
+        },
+      );
+    },
+  );
+
+  ScenarioOutline(
+    "Limits inside an if beside a then reject the schema at construction",
+    ({ Given, When, Then }, variables) => {
+      Given("the conditional schema {string}", () => {
+        count = undefined;
+        schema = conditionalSchema(variables.case);
+      });
+      When("I create a faker plugin for it", createPlugin);
+      Then(
+        "plugin creation fails with resource {string} at path {string}",
+        (_, _resource: string, path: string) => {
+          expectResourceFailure(creationError, variables.resource, path);
+        },
+      );
+    },
+  );
+
+  ScenarioOutline(
+    "Nested arrays reached through an item keyword count against the node budget",
+    ({ Given, When, Then }, variables) => {
+      Given(
+        "a 3000 by 3000 integer array reached only through {string}",
+        () => {
+          count = undefined;
+          schema = nestedArrayThrough(variables.keyword);
+        },
+      );
       When("I create a faker plugin for it", createPlugin);
       Then(
         "plugin creation fails with resource {string}",

@@ -1,6 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import { NULLABLE_NULL_PROBABILITY } from "./constants.js";
-import { isJSONSchema7, isRecord } from "./utils.js";
+import { compilePattern, isJSONSchema7, isRecord } from "./utils.js";
 
 /**
  * Reintroduce null at ~5% on nodes the enhancer marked `schmockNullable`.
@@ -185,13 +185,9 @@ function resolveRef(
 
 function patternFor(source: string, context: WalkContext): RegExp | undefined {
   if (!context.patterns.has(source)) {
-    let compiled: RegExp | undefined;
-    try {
-      compiled = new RegExp(source, "u");
-    } catch {
-      compiled = undefined;
-    }
-    context.patterns.set(source, compiled);
+    // Compiled as JSF normalization compiles it when inventing keys, so every
+    // invented key is recognised here.
+    context.patterns.set(source, compilePattern(source));
   }
   return context.patterns.get(source);
 }

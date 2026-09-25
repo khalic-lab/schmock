@@ -1,6 +1,7 @@
 import { SchemaValidationError } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
+import { fakerPlugin, generateFromSchema } from "./index";
 import { generateWithJsf, normalizeSchemaForJsf } from "./jsf-config";
 import {
   collectSchemaChildren,
@@ -132,6 +133,25 @@ describe("review R14: one keyword table for the three walkers", () => {
     const enhanced = enhanceSchemaWithSmartMapping(schema);
     expect(Reflect.get(enhanced, "unevaluatedProperties")).toBe(child);
     expect(Reflect.get(enhanced, "unevaluatedItems")).toBe(child);
+  });
+});
+
+describe("review 2026-09-25: an if generates only beside a then", () => {
+  const condition: JSONSchema7 = { type: "string" };
+  const generates = (schema: JSONSchema7): boolean | undefined =>
+    collectSchemaChildren(schema, "$").find((child) => child.keyword === "if")
+      ?.generates;
+
+  it("is generating when a then is present, since JSF merges the two", () => {
+    // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+    expect(generates({ if: condition, then: { type: "string" } })).toBe(true);
+    // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+    expect(generates({ if: condition, then: true })).toBe(true);
+  });
+
+  it("only tests the value without a then", () => {
+    expect(generates({ if: condition })).toBe(false);
+    expect(generates({ if: condition, else: { type: "string" } })).toBe(false);
   });
 });
 
@@ -402,11 +422,14 @@ describe("review R14: seeded JSF normalization is unchanged", () => {
 
 /**
  * Behaviour changes pinned: malformed children now follow one rule in JSF
- * normalization (drop a list/map entry, keep a single keyword's raw copy)
- * where the typed keywords used to throw a TypeError.
+ * normalization (a positional entry becomes `true`, any other list/map entry
+ * is dropped, a single keyword keeps its raw copy) where the typed keywords
+ * used to throw a TypeError. Validation rejects every one of these shapes
+ * first (see "malformed containers fail validation" below), so these pins
+ * cover the internal walkers only.
  */
 describe("review R14: malformed children in JSF normalization", () => {
-  it("drops malformed list and map entries instead of throwing", () => {
+  it("drops malformed list and map entries, keeping positions aligned", () => {
     expect(
       normalizeSchemaForJsf(
         schemaWith({
@@ -420,7 +443,7 @@ describe("review R14: malformed children in JSF normalization", () => {
       type: "object",
       properties: { b: { type: "string" } },
       allOf: [{ type: "string" }],
-      prefixItems: [{ type: "string" }],
+      prefixItems: [true, { type: "string" }],
     });
   });
 
@@ -435,7 +458,7 @@ describe("review R14: malformed children in JSF normalization", () => {
     ).toEqual({ type: "array", items: null });
   });
 
-  it("turns a malformed tuple additionalItems into items: true", () => {
+  it("turns malformed tuple entries and additionalItems into true", () => {
     expect(
       normalizeSchemaForJsf(
         schemaWith({
@@ -447,7 +470,7 @@ describe("review R14: malformed children in JSF normalization", () => {
     ).toEqual({
       type: "array",
       items: true,
-      prefixItems: [{ type: "string" }],
+      prefixItems: [true, { type: "string" }],
     });
   });
 
@@ -469,6 +492,70 @@ describe("review R14: malformed children in JSF normalization", () => {
     expect(enhanceSchemaWithSmartMapping(schemaWith({ allOf }))).toEqual({
       allOf,
     });
+  });
+});
+
+/**
+ * Review 2026-09-25: the walkers skip a container of the wrong shape and JSF
+ * normalization would drop a malformed positional entry, so validation rejects
+ * both before either public entry point generates. A raw TypeError used to
+ * escape from the estimate instead, and a malformed tuple entry shifted every
+ * later position.
+ */
+describe("review 2026-09-25: malformed containers fail validation", () => {
+  it.each(["allOf", "anyOf", "oneOf"])(
+    "rejects an object-valued %s with a SchemaValidationError",
+    (keyword) => {
+      const schema = schemaWith({
+        type: "object",
+        [keyword]: { type: "object" },
+        properties: { a: { type: "string" } },
+      });
+      expect(() => fakerPlugin({ schema })).toThrow(SchemaValidationError);
+      expect(validationFailure(schema).message).toContain(`$.${keyword}`);
+    },
+  );
+
+  it("rejects a map keyword that is not an object", () => {
+    expect(
+      validationFailure(schemaWith({ type: "object", patternProperties: "x" }))
+        .message,
+    ).toContain("$.patternProperties");
+  });
+
+  it.each([
+    ["items", { type: "array", items: [{ type: "string" }, 5] }],
+    [
+      "prefixItems",
+      schemaWith({
+        type: "array",
+        prefixItems: [{ type: "string" }, 5],
+        items: { type: "integer" },
+      }),
+    ],
+  ])(
+    "rejects a non-schema entry in a positional %s list",
+    (keyword, schema) => {
+      expect(validationFailure(schema).message).toContain(`$.${keyword}[1]`);
+    },
+  );
+
+  it("rejects the misaligned tuple instead of generating from it", async () => {
+    await expect(
+      generateFromSchema({
+        schema: schemaWith({
+          type: "array",
+          items: [{ type: "string" }, 5, { type: "integer" }],
+        }),
+        seed: 42,
+      }),
+    ).rejects.toThrow(SchemaValidationError);
+  });
+
+  it("still accepts boolean schemas in a positional list", () => {
+    expect(() =>
+      validateSchema({ type: "array", items: [true, { type: "string" }] }),
+    ).not.toThrow();
   });
 });
 

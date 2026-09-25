@@ -78,7 +78,7 @@ Feature: Faker generation review fixes
     Given the non-generating schema "<case>"
     When I create a faker plugin for it
     Then plugin creation succeeds
-    And the plugin generates a response
+    And the plugin generates a response that fits "<case>"
 
     Examples:
       | case               |
@@ -90,6 +90,30 @@ Feature: Faker generation review fixes
     Given the non-generating schema "referenced-defs"
     When I create a faker plugin for it
     Then plugin creation fails with resource "array_max_items"
+
+  # Review 2026-09-25: json-schema-faker merges an if into its then
+  Scenario Outline: Limits inside an if beside a then reject the schema at construction
+    Given the conditional schema "<case>"
+    When I create a faker plugin for it
+    Then plugin creation fails with resource "<resource>" at path "$.properties.a.if"
+
+    Examples:
+      | case               | resource        |
+      | if-uncapped-items  | array_max_items |
+      | if-uncapped-length | string_length   |
+
+  # Review 2026-09-25: the node budget counts every item json-schema-faker materializes
+  Scenario Outline: Nested arrays reached through an item keyword count against the node budget
+    Given a 3000 by 3000 integer array reached only through "<keyword>"
+    When I create a faker plugin for it
+    Then plugin creation fails with resource "generated_nodes"
+
+    Examples:
+      | keyword          |
+      | prefixItems      |
+      | contains         |
+      | containsAll      |
+      | dependentSchemas |
 
   # Finding 80: resource limit errors carry a path
   Scenario: A nested resource-limit breach names the offending schema path

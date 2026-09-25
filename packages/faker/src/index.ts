@@ -51,9 +51,14 @@ interface PreparedSchema {
   enhanced: JSONSchema7;
 }
 
+/** Pair a schema that already passed `validateSchema` with its enhancement. */
+function enhancePrepared(schema: JSONSchema7): PreparedSchema {
+  return { schema, enhanced: enhanceSchemaWithSmartMapping(schema) };
+}
+
 function prepareSchema(schema: JSONSchema7, count?: number): PreparedSchema {
   validateSchema(schema, "$", count);
-  return { schema, enhanced: enhanceSchemaWithSmartMapping(schema) };
+  return enhancePrepared(schema);
 }
 
 export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
@@ -96,10 +101,7 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
       }
 
       try {
-        prepared ??= {
-          schema,
-          enhanced: enhanceSchemaWithSmartMapping(schema),
-        };
+        prepared ??= enhancePrepared(schema);
         const generatedResponse = await generateFromPrepared(prepared, {
           schema,
           count,

@@ -12,8 +12,12 @@ import {
   MAX_STRING_LENGTH,
 } from "./constants.js";
 import { createFakerInstance } from "./jsf-config.js";
-import { collectSchemaChildren, type SchemaChild } from "./schema-children.js";
-import { isJSONSchema7, isRecord } from "./utils.js";
+import {
+  collectSchemaChildren,
+  misshapenKeyword,
+  type SchemaChild,
+} from "./schema-children.js";
+import { compilePattern, isJSONSchema7, isRecord } from "./utils.js";
 
 let validationFaker: Faker | undefined;
 
@@ -270,14 +274,52 @@ function inspectSchemaGraph(
 }
 
 /**
+ * Upper bounds that a merge imposes on a subschema's own size keywords.
+ * json-schema-faker merges an `if` with its parent and `then`, and the merged
+ * maximum wins over a larger minimum, so `if: {minItems: 20000}` beside
+ * `maxItems: 5` generates five items.
+ */
+interface MergedCaps {
+  maxItems?: number;
+  maxLength?: number;
+  maxProperties?: number;
+}
+
+const NO_CAPS: MergedCaps = {};
+
+/** The smallest of each maximum the given schemas declare. */
+function mergedCaps(...schemas: unknown[]): MergedCaps {
+  const caps: MergedCaps = {};
+  for (const schema of schemas) {
+    if (!isJSONSchema7(schema)) continue;
+    for (const keyword of ["maxItems", "maxLength", "maxProperties"] as const) {
+      const bound = schema[keyword];
+      if (typeof bound !== "number") continue;
+      caps[keyword] = Math.min(caps[keyword] ?? bound, bound);
+    }
+  }
+  return caps;
+}
+
+/** A declared size, held to a merged maximum when there is one. */
+function cappedBy(declared: number, cap: number | undefined): number {
+  return cap === undefined ? declared : Math.min(declared, cap);
+}
+
+/**
  * Record per-node resource limits for every schema that can produce a value.
  *
  * The structural walk visits every subschema, including ones that never
- * generate: `not` and `if` only test the value, and a `$defs` entry is
- * generated only where a `$ref` reaches it. Charging their bounds rejected
- * schemas whose output is tiny, so this pass starts again from the root and
- * follows generating edges only — a definition reached through a `$ref` is
- * still charged, one nothing references is not.
+ * generate: `not` only tests the value, json-schema-faker ignores an `if`
+ * that has no sibling `then`, and a `$defs` entry is generated only where a
+ * `$ref` reaches it. Charging their bounds rejected schemas whose output is
+ * tiny, so this pass starts again from the root and follows generating edges
+ * only — a definition reached through a `$ref` is still charged, one nothing
+ * references is not.
+ *
+ * An `if` beside a `then` does generate: json-schema-faker merges it with its
+ * parent and `then`. Its own size keywords are held to the maximums those two
+ * declare (`MergedCaps`); every schema below it is charged as written.
  */
 function chargeGeneratingSchemas(
   root: JSONSchema7,
@@ -285,23 +327,34 @@ function chargeGeneratingSchemas(
   state: WalkState,
 ): void {
   const charged = new Set<JSONSchema7>();
-  const pending: Array<{ schema: JSONSchema7; path: string }> = [
-    { schema: root, path: rootPath },
-  ];
+  const pending: Array<{
+    schema: JSONSchema7;
+    path: string;
+    caps: MergedCaps;
+  }> = [{ schema: root, path: rootPath, caps: NO_CAPS }];
   while (pending.length > 0) {
     const frame = pending.pop();
     if (!frame || charged.has(frame.schema)) continue;
-    charged.add(frame.schema);
+    // A capped charge is weaker than a plain one, so it does not stand in for
+    // the plain charge a `$ref` to the same schema would still need.
+    if (frame.caps === NO_CAPS) charged.add(frame.schema);
 
-    recordDeclaredArrayLimit(frame.schema, frame.path, state);
-    recordObjectLimit(frame.schema, frame.path, state);
-    recordStringLimit(frame.schema, frame.path, state);
+    recordDeclaredArrayLimit(frame.schema, frame.path, state, frame.caps);
+    recordObjectLimit(frame.schema, frame.path, state, frame.caps);
+    recordStringLimit(frame.schema, frame.path, state, frame.caps);
 
     const edges = state.edges.get(frame.schema) ?? [];
     for (let index = edges.length - 1; index >= 0; index -= 1) {
       const edge = edges[index];
       if (edge.generates && !charged.has(edge.schema)) {
-        pending.push({ schema: edge.schema, path: edge.path });
+        pending.push({
+          schema: edge.schema,
+          path: edge.path,
+          caps:
+            edge.keyword === "if"
+              ? mergedCaps(frame.schema, frame.schema.then)
+              : NO_CAPS,
+        });
       }
     }
   }
@@ -320,6 +373,7 @@ function collectSchemaEdges(
     if (isJSONSchema7(resolved)) {
       edges.unshift({
         schema: resolved,
+        keyword,
         path: `${path}.${keyword}`,
         depthCost: 0,
         frameCost: 1,
@@ -563,7 +617,7 @@ function estimateSchemas(
       estimateSchema(
         schema,
         estimates,
-        state.resolveRef,
+        state,
         schema === root ? { explicitCount } : undefined,
       ),
     );
@@ -571,10 +625,43 @@ function estimateSchemas(
   return estimates;
 }
 
+/**
+ * Keywords that add nothing to the generated value: json-schema-faker does
+ * not generate a string's decoded `contentSchema`, and `propertyNames` only
+ * shapes keys, which the property counts already charge.
+ */
+const NON_VALUE_KEYWORDS: readonly string[] = [
+  "contentSchema",
+  "propertyNames",
+];
+
+const ARRAY_KEYWORDS: readonly string[] = [
+  "items",
+  "additionalItems",
+  "prefixItems",
+  "contains",
+  "containsAll",
+];
+
+const OBJECT_KEYWORDS: readonly string[] = [
+  "properties",
+  "patternProperties",
+  "additionalProperties",
+];
+
+const SAME_VALUE_KEYWORDS: readonly string[] = [
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "if",
+  "then",
+  "else",
+];
+
 function estimateSchema(
   schema: JSONSchema7,
   estimates: Map<JSONSchema7, Estimate>,
-  resolveRef: LocalRefResolver,
+  state: WalkState,
   root: RootSizing | undefined,
 ): Estimate {
   const reference =
@@ -582,7 +669,7 @@ function estimateSchema(
       ? schema.$ref
       : Reflect.get(schema, "$dynamicRef");
   if (typeof reference === "string") {
-    return estimateDefinition(resolveRef(schema, reference), estimates);
+    return estimateDefinition(state.resolveRef(schema, reference), estimates);
   }
 
   let height = 0;
@@ -592,6 +679,11 @@ function estimateSchema(
     schema.type === "string" && typeof schema.minLength === "number"
       ? Math.max(0, schema.minLength)
       : 0;
+  /** Keywords the rules below account for; the rest are charged in full. */
+  const handled = new Set<string>([
+    ...NON_VALUE_KEYWORDS,
+    ...SAME_VALUE_KEYWORDS,
+  ]);
   const value = (definition: unknown): Estimate => {
     const child = estimateDefinition(definition, estimates);
     height = Math.max(height, child.height + 1);
@@ -604,6 +696,7 @@ function estimateSchema(
   };
 
   if (isArrayLike(schema)) {
+    for (const keyword of ARRAY_KEYWORDS) handled.add(keyword);
     const count = root?.explicitCount ?? effectiveArrayCount(schema);
     // json-schema-faker fills a nested array to maxItems, but the root array
     // is resized per request (determineArrayCount) anywhere from minItems up,
@@ -611,38 +704,56 @@ function estimateSchema(
     const certainCount = root
       ? (root.explicitCount ?? schema.minItems ?? 0)
       : count;
+    // A Draft-7 tuple becomes json-schema-faker's `prefixItems`, replacing a
+    // native one (see `jsfTraversalView`), and its `additionalItems` fills
+    // the tail; otherwise a native `prefixItems` leads and `items` fills it.
+    const nativePrefix: unknown = Reflect.get(schema, "prefixItems");
+    const tuple = Array.isArray(schema.items);
+    const positional: unknown[] = Array.isArray(schema.items)
+      ? schema.items
+      : Array.isArray(nativePrefix)
+        ? nativePrefix
+        : [];
     let itemNodes = 0;
     let itemChars = 0;
-    if (Array.isArray(schema.items)) {
-      schema.items.forEach((item, index) => {
-        const child = value(item);
-        if (index < count) itemNodes = capped(itemNodes + child.nodes);
-        if (index < certainCount) itemChars = capped(itemChars + child.chars);
-      });
-      const additional =
-        schema.additionalItems === undefined
-          ? LEAF
-          : value(schema.additionalItems);
-      itemNodes = capped(
-        itemNodes + Math.max(0, count - schema.items.length) * additional.nodes,
+    positional.forEach((item, index) => {
+      const child = value(item);
+      if (index < count) itemNodes = capped(itemNodes + child.nodes);
+      if (index < certainCount) itemChars = capped(itemChars + child.chars);
+    });
+    const tail = tuple ? schema.additionalItems : schema.items;
+    const rest = tail === undefined ? LEAF : value(tail);
+    itemNodes = capped(
+      itemNodes + Math.max(0, count - positional.length) * rest.nodes,
+    );
+    itemChars = capped(
+      itemChars + Math.max(0, certainCount - positional.length) * rest.chars,
+    );
+
+    // json-schema-faker materializes every `containsAll` entry and at least
+    // one `contains` match (up to `minContains` of them), whatever the count.
+    // They take the place of items, so charging them on top overstates the
+    // array a little and never understates it.
+    if (schema.contains !== undefined) {
+      const minContains: unknown = Reflect.get(schema, "minContains");
+      const copies = Math.max(
+        1,
+        Math.min(typeof minContains === "number" ? minContains : 1, count),
       );
-      itemChars = capped(
-        itemChars +
-          Math.max(0, certainCount - schema.items.length) * additional.chars,
-      );
-    } else if (schema.items !== undefined) {
-      const item = value(schema.items);
-      itemNodes = capped(count * item.nodes);
-      itemChars = capped(certainCount * item.chars);
-    } else {
-      itemNodes = count;
+      itemNodes = capped(itemNodes + copies * value(schema.contains).nodes);
     }
-    if (schema.contains !== undefined) value(schema.contains);
+    const containsAll: unknown = Reflect.get(schema, "containsAll");
+    if (Array.isArray(containsAll)) {
+      for (const entry of containsAll) {
+        itemNodes = capped(itemNodes + value(entry).nodes);
+      }
+    }
     nodes = capped(nodes + itemNodes);
     chars = capped(chars + itemChars);
   }
 
   if (isObjectLike(schema)) {
+    for (const keyword of OBJECT_KEYWORDS) handled.add(keyword);
     const propertyNames = new Set(Object.keys(schema.properties ?? {}));
     for (const property of Object.values(schema.properties ?? {})) {
       const estimate = value(property);
@@ -675,14 +786,13 @@ function estimateSchema(
     nodes = capped(nodes + generatedExtras * generatedProperty.nodes);
   }
 
-  if (schema.allOf) {
-    for (const branch of schema.allOf) {
-      const estimate = sibling(branch);
-      nodes = capped(nodes + Math.max(0, estimate.nodes - 1));
-      // A branch may constrain the same string this node does, so only the
-      // largest floor is certain.
-      chars = Math.max(chars, estimate.chars);
-    }
+  // validateNode has already rejected a composition keyword that is not a list.
+  for (const branch of schema.allOf ?? []) {
+    const estimate = sibling(branch);
+    nodes = capped(nodes + Math.max(0, estimate.nodes - 1));
+    // A branch may constrain the same string this node does, so only the
+    // largest floor is certain.
+    chars = Math.max(chars, estimate.chars);
   }
 
   let alternative = 0;
@@ -693,15 +803,30 @@ function estimateSchema(
   }
   nodes = capped(nodes + Math.max(0, alternative));
 
-  if (schema.if !== undefined) sibling(schema.if);
+  // json-schema-faker merges `if` into the `then` branch and ignores it
+  // otherwise, so `then` carries both. Nodes only: the merged maximums can cut
+  // an `if` string short, so its characters are not certain.
+  const condition = schema.if === undefined ? LEAF : sibling(schema.if);
   let conditional = 0;
-  for (const keyword of ["then", "else"] as const) {
-    if (schema[keyword] !== undefined) {
-      conditional = Math.max(conditional, sibling(schema[keyword]).nodes - 1);
-    }
+  if (schema.then !== undefined) {
+    conditional = sibling(schema.then).nodes - 1 + (condition.nodes - 1);
+  }
+  if (schema.else !== undefined) {
+    conditional = Math.max(conditional, sibling(schema.else).nodes - 1);
   }
   nodes = capped(nodes + Math.max(0, conditional));
   if (schema.not !== undefined) sibling(schema.not);
+
+  // Every other generating child (`dependentSchemas`, a schema-valued
+  // `dependencies`, an array or object keyword the declared type leaves out
+  // above) is charged in full, so a keyword added to SCHEMA_KEYWORDS counts
+  // against the node budget before anyone writes a rule for it.
+  for (const edge of state.edges.get(schema) ?? []) {
+    if (!edge.generates || handled.has(edge.keyword)) continue;
+    const nested = edge.depthCost === 1;
+    const estimate = nested ? value(edge.schema) : sibling(edge.schema);
+    nodes = capped(nodes + estimate.nodes - (nested ? 0 : 1));
+  }
 
   // A value that may come out null carries none of its strings for certain.
   const nullable =
@@ -807,6 +932,33 @@ function validateNode(
       "Properties must be an object mapping property names to schemas",
       'Use { "propertyName": { "type": "string" } } format',
     );
+  }
+
+  // Every walker skips a list or map keyword of the wrong shape, so it would
+  // otherwise pass unchecked and reach the estimate below as a raw value.
+  const misshapen = misshapenKeyword(schema);
+  if (misshapen !== undefined) {
+    throw new SchemaValidationError(
+      `${path}.${misshapen}`,
+      `"${misshapen}" has the wrong shape`,
+      "Composition and positional keywords take a list of schemas; property maps take an object",
+    );
+  }
+
+  // A positional list stays aligned only if every entry is a schema: a
+  // dropped entry would shift each later position down one slot.
+  for (const keyword of ["items", "prefixItems"]) {
+    const positional: unknown = Reflect.get(schema, keyword);
+    if (!Array.isArray(positional)) continue;
+    positional.forEach((entry: unknown, index) => {
+      if (typeof entry !== "boolean" && !isJSONSchema7(entry)) {
+        throw new SchemaValidationError(
+          `${path}.${keyword}[${index}]`,
+          "Positional item schemas must be schema objects or booleans",
+          'Use a schema such as { "type": "string" }, or true to allow anything',
+        );
+      }
+    });
   }
 
   if (hasType(schema, "array")) {
@@ -1445,8 +1597,12 @@ function recordDeclaredArrayLimit(
   schema: JSONSchema7,
   path: string,
   state: WalkState,
+  caps: MergedCaps,
 ): void {
-  const declared = Math.max(schema.minItems ?? 0, schema.maxItems ?? 0);
+  const declared = cappedBy(
+    Math.max(schema.minItems ?? 0, schema.maxItems ?? 0),
+    caps.maxItems,
+  );
   if (declared > MAX_ARRAY_SIZE) {
     state.arraySize ??= {
       resource: "array_max_items",
@@ -1461,6 +1617,7 @@ function recordObjectLimit(
   schema: JSONSchema7,
   path: string,
   state: WalkState,
+  caps: MergedCaps,
 ): void {
   if (!isObjectLike(schema)) return;
 
@@ -1469,7 +1626,7 @@ function recordObjectLimit(
     (schema.required ?? []).filter((name) => !properties.has(name)),
   ).size;
   const actual = Math.max(
-    schema.minProperties ?? 0,
+    cappedBy(schema.minProperties ?? 0, caps.maxProperties),
     properties.size + requiredExtras,
   );
   if (actual > MAX_OBJECT_PROPERTIES) {
@@ -1486,15 +1643,21 @@ function recordStringLimit(
   schema: JSONSchema7,
   path: string,
   state: WalkState,
+  caps: MergedCaps,
 ): void {
   if (canGenerateString(schema)) {
     for (const declared of [schema.minLength, schema.maxLength]) {
-      if (declared !== undefined) recordStringViolation(declared, path, state);
+      if (declared !== undefined) {
+        recordStringViolation(cappedBy(declared, caps.maxLength), path, state);
+      }
     }
     // json-schema-faker honours a pattern's explicit repetition floor
     // (`a{70000}`) and caps its upper bounds, so the shortest match is what a
     // pattern forces it to generate.
-    if (typeof schema.pattern === "string" && isValidRegex(schema.pattern)) {
+    if (
+      typeof schema.pattern === "string" &&
+      compilePattern(schema.pattern) !== undefined
+    ) {
       recordStringViolation(regexLengthBounds(schema.pattern).min, path, state);
     }
   }
@@ -1506,15 +1669,6 @@ function recordStringLimit(
     Reflect.get(schema, "template"),
   ]) {
     recordStringViolation(largestStringLength(fixed), path, state);
-  }
-}
-
-function isValidRegex(pattern: string): boolean {
-  try {
-    new RegExp(pattern);
-    return true;
-  } catch {
-    return false;
   }
 }
 
