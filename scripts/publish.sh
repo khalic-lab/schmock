@@ -49,8 +49,10 @@ bash "$GUARDED_SCRIPT" all --preflight
 echo ""
 echo "==> Quality gate (the same commands --execute runs)"
 bun run lint
-bun run test:all
+# Build first: dist-bound suites (dist shape, browser compatibility, entry
+# parity) must test the JS being released, not whatever was built last.
 bun run build
+bun run test:all
 bun run check:publish
 
 if [ -n "$(git status --porcelain)" ]; then

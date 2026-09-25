@@ -39,8 +39,8 @@
     "test:watch": "vitest --watch",
     "pretest:bdd": "rm -f src/*.js src/*.d.ts || true",
     "test:bdd": "vitest run --config vitest.config.bdd.ts",
-    "lint": "biome check src/*.ts",
-    "lint:fix": "biome check --write --unsafe src/*.ts",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write --unsafe src/",
     "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
   "license": "MIT",

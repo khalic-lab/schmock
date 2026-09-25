@@ -15,6 +15,12 @@ export interface ValidationRules {
   };
   response?: {
     body?: JSONSchema7;
+    /**
+     * Response statuses whose bodies `body` validates: `"2xx"` for 200-299, or
+     * an explicit list of statuses. Omitted, every response is validated,
+     * including error tuples and other plugins' request rejections.
+     */
+    statuses?: "2xx" | readonly number[];
   };
 }
 
@@ -62,11 +68,67 @@ function getResponseBody(response: unknown): unknown {
   return response;
 }
 
-function createAjv(): Ajv {
+/**
+ * Mirrors how core's response parser assigns a status: tuples and envelopes
+ * carry their own, a bare `null`/`undefined` becomes 204 and any other bare
+ * body 200.
+ */
+function getResponseStatus(response: unknown): number {
+  if (isStatusTuple(response)) return response[0];
+  if (isStructuredResponse(response)) return response.status;
+  return response === null || response === undefined ? 204 : 200;
+}
+
+type StatusScope = "all" | "2xx" | ReadonlySet<number>;
+
+function statusScopeError(received: unknown): SchmockError {
+  return new SchmockError(
+    'validationPlugin: response.statuses must be "2xx" or a non-empty array of integer statuses from 100 through 599',
+    "VALIDATION_CONFIG_INVALID",
+    { option: "response.statuses", received },
+  );
+}
+
+function snapshotStatusScope(value: unknown): StatusScope {
+  if (value === undefined) return "all";
+  if (value === "2xx") return "2xx";
+  if (!Array.isArray(value) || value.length === 0) {
+    throw statusScopeError(value);
+  }
+  const statuses = new Set<number>();
+  for (const status of value) {
+    if (
+      typeof status !== "number" ||
+      !Number.isInteger(status) ||
+      status < 100 ||
+      status > 599
+    ) {
+      throw statusScopeError(value);
+    }
+    statuses.add(status);
+  }
+  return statuses;
+}
+
+function isStatusInScope(scope: StatusScope, status: number): boolean {
+  if (scope === "all") return true;
+  if (scope === "2xx") return status >= 200 && status <= 299;
+  return scope.has(status);
+}
+
+interface AjvOptions {
+  /**
+   * Query and header values always arrive as strings, so their slots coerce
+   * scalar types (`"2"` satisfies `type: "integer"`). Bodies keep strict types.
+   */
+  coerceTypes: boolean;
+}
+
+function createAjv({ coerceTypes }: AjvOptions = { coerceTypes: false }): Ajv {
   // `ownProperties` keeps validation aligned with the transport: JSON.stringify
   // emits own enumerable properties only, so inherited members must neither
   // satisfy `required` nor trip `additionalProperties`.
-  const ajv = new Ajv({ allErrors: true, ownProperties: true });
+  const ajv = new Ajv({ allErrors: true, ownProperties: true, coerceTypes });
   // Schemas produced by @schmock/openapi carry schmock generation markers.
   // Draft-07 Ajv defaults to strictSchema:true and would throw
   // "strict mode: unknown keyword" at compile time on any of them.
@@ -108,30 +170,68 @@ function normalizeSchemaId(
 }
 
 function pushDefinition(
-  pending: PendingSchema[],
+  children: JSONSchema7[],
   definition: JSONSchema7Definition | undefined,
-  baseId: string,
-  resourceId: string | undefined,
 ): void {
   if (
     typeof definition === "object" &&
     definition !== null &&
     !Array.isArray(definition)
   ) {
-    pending.push({ schema: definition, baseId, resourceId });
+    children.push(definition);
   }
 }
 
 function pushDefinitionMap(
-  pending: PendingSchema[],
+  children: JSONSchema7[],
   definitions: Record<string, JSONSchema7Definition> | undefined,
-  baseId: string,
-  resourceId: string | undefined,
 ): void {
   if (!definitions) return;
   for (const definition of Object.values(definitions)) {
-    pushDefinition(pending, definition, baseId, resourceId);
+    pushDefinition(children, definition);
   }
+}
+
+/** Every subschema directly nested in `schema`, in a stable discovery order. */
+function childSchemas(schema: JSONSchema7): JSONSchema7[] {
+  const children: JSONSchema7[] = [];
+  pushDefinitionMap(children, schema.$defs);
+  pushDefinitionMap(children, schema.definitions);
+  pushDefinitionMap(children, schema.properties);
+  pushDefinitionMap(children, schema.patternProperties);
+
+  if (Array.isArray(schema.items)) {
+    for (const item of schema.items) pushDefinition(children, item);
+  } else {
+    pushDefinition(children, schema.items);
+  }
+
+  for (const definition of [
+    schema.additionalItems,
+    schema.contains,
+    schema.additionalProperties,
+    schema.propertyNames,
+    schema.if,
+    schema.then,
+    schema.else,
+    schema.not,
+  ]) {
+    pushDefinition(children, definition);
+  }
+
+  for (const definition of [
+    ...(schema.allOf ?? []),
+    ...(schema.anyOf ?? []),
+    ...(schema.oneOf ?? []),
+  ]) {
+    pushDefinition(children, definition);
+  }
+
+  for (const dependency of Object.values(schema.dependencies ?? {})) {
+    if (!Array.isArray(dependency)) pushDefinition(children, dependency);
+  }
+
+  return children;
 }
 
 function inventorySchema(
@@ -167,49 +267,8 @@ function inventorySchema(
       }
     }
 
-    pushDefinitionMap(pending, current.schema.$defs, baseId, resourceId);
-    pushDefinitionMap(pending, current.schema.definitions, baseId, resourceId);
-    pushDefinitionMap(pending, current.schema.properties, baseId, resourceId);
-    pushDefinitionMap(
-      pending,
-      current.schema.patternProperties,
-      baseId,
-      resourceId,
-    );
-
-    if (Array.isArray(current.schema.items)) {
-      for (const item of current.schema.items) {
-        pushDefinition(pending, item, baseId, resourceId);
-      }
-    } else {
-      pushDefinition(pending, current.schema.items, baseId, resourceId);
-    }
-
-    for (const definition of [
-      current.schema.additionalItems,
-      current.schema.contains,
-      current.schema.additionalProperties,
-      current.schema.propertyNames,
-      current.schema.if,
-      current.schema.then,
-      current.schema.else,
-      current.schema.not,
-    ]) {
-      pushDefinition(pending, definition, baseId, resourceId);
-    }
-
-    for (const definition of [
-      ...(current.schema.allOf ?? []),
-      ...(current.schema.anyOf ?? []),
-      ...(current.schema.oneOf ?? []),
-    ]) {
-      pushDefinition(pending, definition, baseId, resourceId);
-    }
-
-    for (const dependency of Object.values(current.schema.dependencies ?? {})) {
-      if (!Array.isArray(dependency)) {
-        pushDefinition(pending, dependency, baseId, resourceId);
-      }
+    for (const child of childSchemas(current.schema)) {
+      pending.push({ schema: child, baseId, resourceId });
     }
   }
 
@@ -234,11 +293,17 @@ function blockedResourceIds(
   return blocked;
 }
 
-function compileSchema(
-  target: SchemaInventory,
-  inventories: readonly SchemaInventory[],
-): ValidateFunction {
-  const ajv = createAjv();
+interface CompileSchemaOptions extends AjvOptions {
+  target: SchemaInventory;
+  inventories: readonly SchemaInventory[];
+}
+
+function compileSchema({
+  target,
+  inventories,
+  coerceTypes,
+}: CompileSchemaOptions): ValidateFunction {
+  const ajv = createAjv({ coerceTypes });
   const seenIds = new Set<string>();
   const ambiguousIds = new Set<string>();
 
@@ -413,6 +478,62 @@ function graphEquals(first: unknown, second: unknown): boolean {
   return true;
 }
 
+function headerCaseError(first: string, second: string): SchmockError {
+  return new SchmockError(
+    `validationPlugin: request.headers names "${first}" and "${second}", which are the same case-insensitive header`,
+    "VALIDATION_CONFIG_INVALID",
+    { option: "request.headers", received: [first, second] },
+  );
+}
+
+function stringEntries(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function namesDeclaredBy(schema: JSONSchema7): string[] {
+  const names = [
+    ...Object.keys(schema.properties ?? {}),
+    ...stringEntries(schema.required),
+  ];
+  for (const [name, dependency] of Object.entries(schema.dependencies ?? {})) {
+    names.push(name, ...stringEntries(dependency));
+  }
+  return names;
+}
+
+/**
+ * Header names are case-insensitive and arrive lowercased, while a schema may
+ * spell them `X-Api-Key`. Maps each lowercased name to the schema's own
+ * spelling so incoming headers are keyed the way the schema expects. Header
+ * values are strings, so every declared name anywhere in the schema graph
+ * describes the header record itself.
+ */
+function headerNameSpellings(schema: JSONSchema7): ReadonlyMap<string, string> {
+  const spellings = new Map<string, string>();
+  const visited = new WeakSet<object>();
+  const pending: JSONSchema7[] = [schema];
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+
+    for (const name of namesDeclaredBy(current)) {
+      const folded = name.toLowerCase();
+      const existing = spellings.get(folded);
+      if (existing !== undefined && existing !== name) {
+        throw headerCaseError(existing, name);
+      }
+      spellings.set(folded, name);
+    }
+    pending.push(...childSchemas(current));
+  }
+
+  return spellings;
+}
+
 function isSchema(value: unknown): value is JSONSchema7 {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -440,6 +561,7 @@ export function validationPlugin(
   const requestQuerySchema = cloneSchema(options.request?.query);
   const requestHeadersSchema = cloneSchema(options.request?.headers);
   const responseBodySchema = cloneSchema(options.response?.body);
+  const responseStatusScope = snapshotStatusScope(options.response?.statuses);
   const bodyRequired = options.request?.bodyRequired ?? false;
   const resolver = createAjv().opts.uriResolver;
   const requestBodyInventory = requestBodySchema
@@ -470,20 +592,36 @@ export function validationPlugin(
   } = {};
 
   if (requestBodyInventory) {
-    validators.requestBody = compileSchema(requestBodyInventory, inventories);
+    validators.requestBody = compileSchema({
+      target: requestBodyInventory,
+      inventories,
+      coerceTypes: false,
+    });
   }
   if (requestQueryInventory) {
-    validators.requestQuery = compileSchema(requestQueryInventory, inventories);
+    validators.requestQuery = compileSchema({
+      target: requestQueryInventory,
+      inventories,
+      coerceTypes: true,
+    });
   }
   if (requestHeadersInventory) {
-    validators.requestHeaders = compileSchema(
-      requestHeadersInventory,
+    validators.requestHeaders = compileSchema({
+      target: requestHeadersInventory,
       inventories,
-    );
+      coerceTypes: true,
+    });
   }
   if (responseBodyInventory) {
-    validators.responseBody = compileSchema(responseBodyInventory, inventories);
+    validators.responseBody = compileSchema({
+      target: responseBodyInventory,
+      inventories,
+      coerceTypes: false,
+    });
   }
+  const headerSpellings = requestHeadersSchema
+    ? headerNameSpellings(requestHeadersSchema)
+    : new Map<string, string>();
 
   // Only the original, unchanged rejection bypasses response validation once.
   const requestRejections = new WeakMap<object, unknown>();
@@ -541,9 +679,10 @@ export function validationPlugin(
         }
       }
 
-      // Validate request query parameters
+      // Validate request query parameters. Ajv coerces in place, so a copy
+      // keeps the strings the route and later plugins receive untouched.
       if (validators.requestQuery && context.query) {
-        if (!validators.requestQuery(context.query)) {
+        if (!validators.requestQuery({ ...context.query })) {
           return rejectRequest(
             context,
             "Query parameter validation failed",
@@ -555,17 +694,18 @@ export function validationPlugin(
 
       // Validate request headers
       if (validators.requestHeaders && context.headers) {
-        // Lowercase all header names for comparison. `Object.fromEntries`
-        // defines each key as an own data property, so a header literally named
-        // `__proto__` lands in the record instead of silently hitting
-        // `Object.prototype`'s setter — plain assignment would drop it and let
-        // it escape `additionalProperties: false`. The prototype is retained to
-        // match how core builds `context.headers`.
+        // Header names are case-insensitive: each one is keyed by the
+        // schema's spelling of it, or lowercased when the schema never names
+        // it. `Object.fromEntries` defines each key as an own data property,
+        // so a header literally named `__proto__` lands in the record instead
+        // of silently hitting `Object.prototype`'s setter — plain assignment
+        // would drop it and let it escape `additionalProperties: false`. The
+        // prototype is retained to match how core builds `context.headers`.
         const normalizedHeaders: Record<string, string> = Object.fromEntries(
-          Object.entries(context.headers).map(([key, value]) => [
-            key.toLowerCase(),
-            value,
-          ]),
+          Object.entries(context.headers).map(([key, value]) => {
+            const folded = key.toLowerCase();
+            return [headerSpellings.get(folded) ?? folded, value];
+          }),
         );
         if (!validators.requestHeaders(normalizedHeaders)) {
           return rejectRequest(
@@ -602,7 +742,10 @@ export function validationPlugin(
       // serialized transport payload: core applies content-type conversion
       // (e.g. text/plain stringification) after the pipeline, so a `text/plain`
       // route validated against an object schema is delivered as a string.
-      if (validators.responseBody) {
+      if (
+        validators.responseBody &&
+        isStatusInScope(responseStatusScope, getResponseStatus(response))
+      ) {
         const responseBody = getResponseBody(response);
 
         if (!validators.responseBody(responseBody)) {

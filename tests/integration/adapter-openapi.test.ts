@@ -136,12 +136,22 @@ describe("Express + OpenAPI Integration", () => {
 
     const app = createApp();
 
+    // The collection is empty, so without Prefer the list is `[]`; only the
+    // dynamic branch generates pets from the schema.
+    await request(app).get("/pets").expect(200, []);
+
     // Prefer: dynamic=true
     const res = await request(app)
       .get("/pets")
       .set("Prefer", "dynamic=true")
       .expect(200);
-    expect(res.body).toBeDefined();
+    expect(res.body.length).toBeGreaterThan(0);
+    for (const pet of res.body) {
+      expect(pet).toMatchObject({
+        petId: expect.any(Number),
+        name: expect.any(String),
+      });
+    }
   });
 
   it("Express + custom error formatter", async () => {

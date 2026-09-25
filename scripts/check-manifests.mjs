@@ -13,6 +13,8 @@
  *   - every package carries a LICENSE copy identical to the root one, so the
  *     `license: "MIT"` declaration ships with the terms it names
  *   - every package carries the metadata npm surfaces on the package page
+ *   - every conditional `exports` entry carries a `default` condition equal to
+ *     its `import`, so `require()` resolves every package alike
  *   - the aggregate test scripts stay in sync, differing only in verbosity
  *   - no script references another script that does not exist
  */
@@ -113,6 +115,20 @@ function checkPackage(directory) {
       scope,
       `files must be ${JSON.stringify(expectedFiles)}, found ${JSON.stringify(files)}`,
     );
+  }
+
+  // `import` alone matches only ESM loaders. CommonJS `require()` (Node's
+  // require(esm)) needs `default`: without it, require("@schmock/express")
+  // threw ERR_PACKAGE_PATH_NOT_EXPORTED while require("@schmock/core")
+  // resolved, so the adapters were the only packages CJS code could not load.
+  for (const [subpath, target] of Object.entries(manifest.exports ?? {})) {
+    if (typeof target !== "object" || target === null) continue;
+    if (target.default !== target.import) {
+      fail(
+        scope,
+        `exports["${subpath}"] must carry a "default" condition equal to its "import"`,
+      );
+    }
   }
 
   // A machine-level `~/.npmrc` can set `registry=` to a corporate mirror, and

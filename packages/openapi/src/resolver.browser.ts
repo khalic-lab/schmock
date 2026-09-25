@@ -1,7 +1,6 @@
 import { SchmockError } from "@schmock/core";
 import type { OpenAPI } from "openapi-types";
 import { dereferenceInternal } from "./deref-internal.js";
-import type { RefParserOptions } from "./ref-policy.js";
 import type { DereferenceRequest, SpecResolver } from "./resolver.js";
 
 /**
@@ -55,7 +54,7 @@ export function createResolver(): SpecResolver {
             "Validate the spec in your build or test step and leave strict off at runtime.",
         );
       }
-      if ((options as RefParserOptions).resolve.external) {
+      if (options.resolve.external) {
         throw nodeOnly(
           "refs: { external: true }",
           "External $refs are resolved by swagger-parser, which cannot run in a browser. " +
@@ -63,6 +62,16 @@ export function createResolver(): SpecResolver {
         );
       }
       return dereferenceInternal(document);
+    },
+
+    // Unreachable in practice: `dereference` refuses external refs above, so
+    // no http `$ref` is ever read. Refusing by name keeps it that way.
+    fetchRef: async (url: string): Promise<Response> => {
+      throw nodeOnly(
+        "Fetching an http $ref",
+        `"${url}" would need the Node build's guarded transport. ` +
+          "Bundle a spec whose $refs all point inside itself.",
+      );
     },
 
     // Only ever consulted to attribute a `oneOf` branch that arrived from

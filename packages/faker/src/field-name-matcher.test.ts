@@ -390,10 +390,16 @@ describe("GENERATABLE_FORMATS matches what json-schema-faker generates", () => {
 
       // A random-alphanumeric fallback is [A-Za-z0-9]* and never empty-plus-
       // structured: every real format generator emits either a separator
-      // (-:/.@) or, for `duration`, a leading "P".
+      // (-:/.@) or, for `duration`, a leading "P". `byte` is base64, which
+      // has no separator; the fallback's length is rarely a multiple of four,
+      // so padded base64 on every seed is what tells them apart.
       for (const value of values) {
         expect(value).not.toBe("");
-        expect(value).toMatch(/[-:/.@]|^P/);
+        expect(value).toMatch(
+          format === "byte"
+            ? /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+            : /[-:/.@]|^P/,
+        );
       }
     },
   );

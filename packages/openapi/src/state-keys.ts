@@ -13,6 +13,8 @@
  * - `openapi:collections:/owners/:ownerId/pets|ownerId=7`
  */
 
+import { segmentParamName } from "./path-template.js";
+
 const COLLECTION_PREFIX = "openapi:collections:";
 const COUNTER_PREFIX = "openapi:counter:";
 const SEEDED_PREFIX = "openapi:seeded:";
@@ -28,7 +30,7 @@ export function parentParamNames(basePath: string): string[] {
   return basePath
     .split("/")
     .filter((segment) => segment.startsWith(":"))
-    .map((segment) => segment.slice(1));
+    .map((segment) => segmentParamName(segment) ?? segment.slice(1));
 }
 
 /**

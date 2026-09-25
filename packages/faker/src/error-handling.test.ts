@@ -168,7 +168,8 @@ describe("Schema Error Handling", () => {
         expect.fail("Should have thrown");
       } catch (error: any) {
         expect(error.name).toBe("ResourceLimitError");
-        expect(error.message).toContain("memory");
+        // 200 x 200 x 200 objects is charged against the generated-node budget.
+        expect(error.message).toContain("generated_nodes");
       }
     });
 

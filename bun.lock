@@ -100,12 +100,12 @@
       "dependencies": {
         "@faker-js/faker": "^10.5.0",
         "@types/json-schema": "^7.0.15",
-        "json-schema-faker": "^0.6.2",
-        "json-schema-faker-private": "https://registry.npmjs.org/json-schema-faker/-/json-schema-faker-0.6.3.tgz",
       },
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^7.0.0",
         "@types/node": "^26.1.0",
+        "json-schema-faker": "^0.6.2",
+        "json-schema-faker-private": "npm:json-schema-faker@0.6.3",
         "vitest": "^4.1.9",
       },
       "peerDependencies": {
@@ -953,7 +953,7 @@
 
     "json-schema-faker": ["json-schema-faker@0.6.2", "", { "bin": { "jsf": "dist/bin/cli.js" } }, "sha512-jhOV/bIUxTPM3DiKaa9YDI9UIhO6md1wBnopuIleXATBCwBxnpEfUG0KZqWJS0nTc7nGeWu6ve4vL7Sk7l2BKA=="],
 
-    "json-schema-faker-private": ["json-schema-faker@https://registry.npmjs.org/json-schema-faker/-/json-schema-faker-0.6.3.tgz", { "bin": { "jsf": "./dist/bin/cli.js" } }, "sha512-rsH48E/b5KFpgvKlcFjplB+zwOZk2FhYCQwcM6y09ApZkVl3D7PhcRIrDhpfR+w1AhNOrv0bumJElBz4X++KBA=="],
+    "json-schema-faker-private": ["json-schema-faker@0.6.3", "", { "bin": { "jsf": "dist/bin/cli.js" } }, "sha512-rsH48E/b5KFpgvKlcFjplB+zwOZk2FhYCQwcM6y09ApZkVl3D7PhcRIrDhpfR+w1AhNOrv0bumJElBz4X++KBA=="],
 
     "json-schema-traverse": ["json-schema-traverse@1.0.0", "", {}, "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug=="],
 

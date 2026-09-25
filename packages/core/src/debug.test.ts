@@ -61,6 +61,8 @@ describe("debug functionality", () => {
         enforce: "pre" as const,
         beforeRequest: () => {},
         generate: () => {},
+        // pipe() rejects a plugin without a process hook (PLUGIN_INVALID).
+        process: (ctx: any, response: any) => ({ context: ctx, response }),
       };
 
       const mock = schmock({ debug: true });

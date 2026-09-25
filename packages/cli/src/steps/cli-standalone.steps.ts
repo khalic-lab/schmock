@@ -574,7 +574,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         async (_, path: string) => {
           rawHttpResponse = await sendRawHttpRequest(
             requireServer().port,
-            `OPTIONS ${path} HTTP/1.1\r\n` + "Host: 127.0.0.1\r\n" + "\r\n",
+            `OPTIONS ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`,
           );
         },
       );
@@ -623,7 +623,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         async (_, path: string) => {
           rawHttpResponse = await sendRawHttpRequest(
             requireServer().port,
-            `OPTIONS ${path} HTTP/1.1\r\n` + "Host: 127.0.0.1\r\n" + "\r\n",
+            `OPTIONS ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`,
           );
         },
       );

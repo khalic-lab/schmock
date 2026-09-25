@@ -37,6 +37,12 @@ const EXTERNAL = [
   "ajv",
   "ajv/dist/2020.js",
   "ajv-formats",
+  // Both builds use a browser target, which otherwise swaps a Node built-in
+  // for a bundled browser polyfill (`node:http`, `node:zlib`, `node:stream`
+  // all have one). The Node entry needs the real modules — the guarded `$ref`
+  // transport in `ref-transport.ts` reaches them by dynamic import — and the
+  // browser entry reaches none of them at all.
+  "node:*",
 ];
 
 /** Modules with a `.browser.ts` sibling, by their import specifier stem. */

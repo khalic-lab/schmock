@@ -115,6 +115,29 @@ function assertAllowedFields(value: unknown, option: string): void {
   }
 }
 
+function assertSortingDefaults(sorting: SortingOptions): void {
+  const { allowed, default: defaultField, defaultOrder } = sorting;
+  assertNonEmptyString(defaultField, "sorting.default");
+  if (defaultField !== undefined && !allowed.includes(defaultField)) {
+    throw configError(
+      "sorting.default must be one of sorting.allowed",
+      "sorting.default",
+      defaultField,
+    );
+  }
+  if (
+    defaultOrder !== undefined &&
+    defaultOrder !== "asc" &&
+    defaultOrder !== "desc"
+  ) {
+    throw configError(
+      'sorting.defaultOrder must be "asc" or "desc"',
+      "sorting.defaultOrder",
+      defaultOrder,
+    );
+  }
+}
+
 /**
  * Validates configuration at plugin creation time so misconfiguration surfaces
  * to the developer immediately instead of producing nonsensical responses.
@@ -131,6 +154,7 @@ function validateOptions(options: QueryPluginOptions): void {
 
   if (sorting) {
     assertAllowedFields(sorting.allowed, "sorting.allowed");
+    assertSortingDefaults(sorting);
     assertNonEmptyString(sorting.sortParam, "sorting.sortParam");
     assertNonEmptyString(sorting.orderParam, "sorting.orderParam");
   }
@@ -212,6 +236,17 @@ function getResponseBody(response: unknown): unknown {
   return response;
 }
 
+/**
+ * Error responses — a route's own 4xx/5xx tuple or envelope, or another
+ * plugin's request rejection — are never reshaped: paginating them would hide
+ * all but the first page of error items. Bare bodies are always successes.
+ */
+function isErrorResponse(response: unknown): boolean {
+  if (isStatusTuple(response)) return response[0] >= 400;
+  if (isStructuredResponse(response)) return response.status >= 400;
+  return false;
+}
+
 function replaceResponseBody(response: unknown, body: unknown): unknown {
   if (isStatusTuple(response)) {
     return response.length === 3
@@ -239,7 +274,7 @@ export function queryPlugin(options: QueryPluginOptions = {}): Schmock.Plugin {
       response?: unknown,
     ): Schmock.PluginResult {
       const responseBody = getResponseBody(response);
-      if (!Array.isArray(responseBody)) {
+      if (!Array.isArray(responseBody) || isErrorResponse(response)) {
         return { context, response };
       }
 
@@ -407,7 +442,11 @@ function applySorting(
   const orderParam = options.orderParam ?? "order";
   const sortField = ownValue(query, sortParam) ?? options.default;
   const rawOrder = ownValue(query, orderParam) ?? options.defaultOrder ?? "asc";
-  const sortOrder = rawOrder === "desc" ? "desc" : "asc";
+  // Clients send ORDER=DESC as often as desc; the comparison ignores case.
+  const sortOrder =
+    typeof rawOrder === "string" && rawOrder.toLowerCase() === "desc"
+      ? "desc"
+      : "asc";
 
   if (!sortField) return items;
 

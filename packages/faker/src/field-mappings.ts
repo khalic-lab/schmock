@@ -18,7 +18,7 @@ const identity: FieldMapping[] = [
     format: "email",
   },
   {
-    keywords: ["username", "user_name", "login", "handle"],
+    keywords: ["username", "user_name", "login", "handle", "nickname"],
     fakerMethod: "internet.username",
     schemaType: "string",
     minScore: 0.6,
@@ -492,6 +492,16 @@ const business: FieldMapping[] = [
 ];
 
 // ── Date/Time ───────────────────────────────────────────────────────
+/**
+ * Every `date.*` mapping declares `format: "date-time"`.
+ *
+ * Faker's date methods return `Date` objects, and json-schema-faker turns a
+ * `Date` into a string with `String(date)` — a local-time-zone string that
+ * differs between a developer machine and CI even for a seeded run. With
+ * `date-time` it re-serializes the value with `toISOString()`, which is ISO
+ * 8601 and time-zone independent. `format: "date"` would not do: JSF formats
+ * it with local getters, so a birthday could move a calendar day between zones.
+ */
 const dateTime: FieldMapping[] = [
   {
     keywords: [
@@ -547,24 +557,28 @@ const dateTime: FieldMapping[] = [
     fakerMethod: "date.birthdate",
     schemaType: "string",
     minScore: 0.8,
+    format: "date-time",
   },
   {
     keywords: ["start_date", "begin_date"],
     fakerMethod: "date.past",
     schemaType: "string",
     minScore: 0.8,
+    format: "date-time",
   },
   {
     keywords: ["end_date", "due_date", "deadline"],
     fakerMethod: "date.future",
     schemaType: "string",
     minScore: 0.8,
+    format: "date-time",
   },
   {
     keywords: ["timestamp", "ts"],
     fakerMethod: "date.recent",
     schemaType: "string",
     minScore: 0.8,
+    format: "date-time",
   },
 ];
 

@@ -2020,23 +2020,20 @@ describe("stress: boundary conditions", () => {
     expect((created.body as Record<string, unknown>).petId).toBe(1);
   });
 
-  it("seed for non-existent resource is silently ignored", async () => {
-    const mock = schmock({ state: {} });
-    mock.pipe(
-      await openapi({
+  it("seed for non-existent resource is rejected, naming the real resources", async () => {
+    // Silently ignoring the key turned a typo into an empty collection.
+    await expect(
+      openapi({
         spec: `${fixturesDir}/petstore-swagger2.json`,
         seed: {
           pets: [{ petId: 1, name: "Real" }],
           unicorns: [{ unicornId: 1, name: "Sparkle" }],
         },
       }),
-    );
-
-    // pets work fine
-    expect((await mock.handle("GET", "/pets")).body).toHaveLength(1);
-    // unicorns route doesn't exist
-    const res = await mock.handle("GET", "/unicorns");
-    expect(res.status).toBe(404);
+    ).rejects.toMatchObject({
+      code: "OPENAPI_UNKNOWN_SEED_RESOURCE",
+      context: { key: "unicorns", resources: ["pets"] },
+    });
   });
 
   it("item with deeply nested data survives update cycle", async () => {

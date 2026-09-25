@@ -45,6 +45,46 @@ const specWith404 = {
   },
 };
 
+const itemSchema = {
+  type: "object",
+  required: ["id", "name"],
+  properties: {
+    id: { type: "integer" },
+    name: { type: "string" },
+  },
+};
+
+const specWithStoredItem = {
+  openapi: "3.0.3",
+  info: { title: "Stored item", version: "1.0.0" },
+  paths: {
+    "/items": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { type: "array", items: itemSchema },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/items/{id}": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            content: { "application/json": { schema: itemSchema } },
+          },
+        },
+      },
+    },
+  },
+};
+
 const specWithExamples = {
   openapi: "3.0.3",
   info: { title: "Test", version: "1.0.0" },
@@ -154,25 +194,47 @@ describeFeature(feature, ({ Scenario }) => {
   Scenario(
     "Prefer dynamic regenerates from schema",
     ({ Given, When, Then, And }) => {
-      Given("a mock with an OpenAPI spec with a response schema", async () => {
-        mock = schmock({ state: {} });
-        mock.pipe(await openapi({ spec: specWith404 }));
+      // A stored item is what the route answers without Prefer, so the dynamic
+      // body is distinguishable from the default one: a schema-only spec made
+      // both paths produce the same shape and the scenario could not fail.
+      Given(
+        'a mock with an OpenAPI spec storing one item named "Stored"',
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: specWithStoredItem,
+              seed: { items: [{ id: 1, name: "Stored" }] },
+              fakerSeed: 7,
+            }),
+          );
+        },
+      );
+
+      When("I request the stored item without a Prefer header", async () => {
+        response = await mock.handle("GET", "/items/1");
       });
 
-      When('I request with Prefer header "dynamic=true"', async () => {
-        response = await mock.handle("GET", "/items", {
-          headers: { prefer: "dynamic=true" },
-        });
+      Then('the response body name is "Stored"', () => {
+        expect(response.body).toEqual({ id: 1, name: "Stored" });
       });
+
+      When(
+        'I request the stored item with Prefer header "dynamic=true"',
+        async () => {
+          response = await mock.handle("GET", "/items/1", {
+            headers: { prefer: "dynamic=true" },
+          });
+        },
+      );
 
       Then('the response body "id" is a number', () => {
-        const body = response.body as Record<string, unknown>;
-        expect(typeof body.id).toBe("number");
+        expect(response.body).toMatchObject({ id: expect.any(Number) });
       });
 
-      And('the response body "name" is a string', () => {
-        const body = response.body as Record<string, unknown>;
-        expect(typeof body.name).toBe("string");
+      And('the response body "name" is a string other than "Stored"', () => {
+        expect(response.body).toMatchObject({ name: expect.any(String) });
+        expect(response.body).not.toMatchObject({ name: "Stored" });
       });
     },
   );

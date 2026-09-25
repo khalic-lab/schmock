@@ -439,18 +439,12 @@ describe("Advanced Schema Features", () => {
 
       const results = await generate.samples<any>(schema, 5);
 
-      // json-schema-faker respects defaults
+      // A declared default beats every field-name heuristic ("status" would
+      // otherwise get a lorem word, "count" a random integer).
       results.forEach((result) => {
-        if (result.status === "active") {
-          expect(result.status).toBe("active");
-        }
-        if (result.count === 0) {
-          expect(result.count).toBe(0);
-        }
-        if (Array.isArray(result.tags) && result.tags.length === 2) {
-          expect(result.tags).toContain("default");
-          expect(result.tags).toContain("tag");
-        }
+        expect(result.status).toBe("active");
+        expect(result.count).toBe(0);
+        expect(result.tags).toEqual(["default", "tag"]);
       });
     });
 
@@ -874,7 +868,16 @@ describe("Advanced Schema Features", () => {
   });
 
   describe("Error Cases for Advanced Features", () => {
-    it("handles invalid schema compositions gracefully", async () => {
+    /*
+     * Unsatisfiable schemas are NOT rejected today: validateSchema checks
+     * structure and resource limits, not satisfiability, and json-schema-faker
+     * returns a best-effort value that violates the schema. These two tests pin
+     * that pass-through explicitly — they are not a statement that the output
+     * is valid. Rejecting such schemas with a SchemaValidationError (the M20
+     * fail-loud policy) is an open contract decision; when it is made, flip
+     * both to `rejects.toThrow(SchemaValidationError)`.
+     */
+    it("passes an unsatisfiable allOf through without validating the output", async () => {
       const schema: JSONSchema7 = {
         allOf: [
           { type: "string" },
@@ -882,19 +885,22 @@ describe("Advanced Schema Features", () => {
         ],
       };
 
-      // json-schema-faker might handle this differently
-      await expect(generateFromSchema({ schema })).resolves.not.toThrow();
+      // One branch's type wins; the other branch is violated.
+      const value = await generateFromSchema({ schema });
+      expect(["string", "number"]).toContain(typeof value);
     });
 
-    it("handles conflicting constraints", async () => {
+    it("passes contradictory numeric bounds through without validating the output", async () => {
       const schema: JSONSchema7 = {
         type: "number",
         minimum: 10,
         maximum: 5, // Impossible range
       };
 
-      // Should handle gracefully
-      await expect(generateFromSchema({ schema })).resolves.not.toThrow();
+      // A number comes back, necessarily outside one of the two bounds.
+      const value = await generateFromSchema({ schema });
+      expect(typeof value).toBe("number");
+      expect(Number.isFinite(value)).toBe(true);
     });
 
     it("handles missing references gracefully", async () => {

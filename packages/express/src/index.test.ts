@@ -40,6 +40,7 @@ function createRes() {
   return {
     status: vi.fn().mockReturnThis(),
     set: vi.fn().mockReturnThis(),
+    setHeader: vi.fn().mockReturnThis(),
     json: vi.fn(),
     send: vi.fn(),
     end: vi.fn(),
@@ -131,7 +132,10 @@ describe("toExpress", () => {
       signal: expect.any(AbortSignal),
     });
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.set).toHaveBeenCalledWith("Content-Type", "application/json");
+    expect(res.setHeader).toHaveBeenCalledWith(
+      "Content-Type",
+      "application/json",
+    );
     expect(endedJson(res)).toEqual({ message: "Hello" });
     expect(next).not.toHaveBeenCalled();
   });
@@ -159,7 +163,7 @@ describe("toExpress", () => {
     await toExpress(mock)(createReq(), res, vi.fn());
 
     const sentBody = endedBody(res);
-    expect(res.set).toHaveBeenCalledWith(
+    expect(res.setHeader).toHaveBeenCalledWith(
       "content-type",
       "application/octet-stream",
     );
@@ -177,7 +181,7 @@ describe("toExpress", () => {
       await toExpress(mock)(createReq(), res, vi.fn());
 
       const sentBody = endedBody(res);
-      expect(res.set).toHaveBeenCalledWith(
+      expect(res.setHeader).toHaveBeenCalledWith(
         "content-type",
         "application/octet-stream",
       );
@@ -348,7 +352,7 @@ describe("toExpress", () => {
 
       expect(res.status).toHaveBeenCalledWith(201);
       expect(endedText(res)).toBe("modified");
-      expect(res.set).toHaveBeenCalledWith("x-modified", "true");
+      expect(res.setHeader).toHaveBeenCalledWith("x-modified", "true");
     });
 
     it("drops stale framing when a response hook changes the body", async () => {
@@ -369,7 +373,7 @@ describe("toExpress", () => {
       })(createReq(), res, vi.fn());
 
       expect(endedText(res)).toBe("a longer body");
-      expect(res.set).not.toHaveBeenCalledWith("Content-Length", "1");
+      expect(res.setHeader).not.toHaveBeenCalledWith("Content-Length", "1");
     });
 
     it("suppresses a body added to a 204 response", async () => {
@@ -572,14 +576,15 @@ describe("toExpress", () => {
 
       await toExpress(mock)(req, res, next);
 
+      // A repeated key keeps its LAST value, the rule the CLI follows.
       expect(mock.handle).toHaveBeenCalledWith(
         "GET",
         "/",
-        expect.objectContaining({ query: { tags: "a" } }),
+        expect.objectContaining({ query: { tags: "b" } }),
       );
     });
 
-    it("transforms object query values to string", async () => {
+    it("flattens nested query values into bracket keys", async () => {
       const mock = createMock(() =>
         Promise.resolve({ status: 200, body: "ok", headers: {} }),
       );
@@ -592,7 +597,7 @@ describe("toExpress", () => {
       expect(mock.handle).toHaveBeenCalledWith(
         "GET",
         "/",
-        expect.objectContaining({ query: { nested: "[object Object]" } }),
+        expect.objectContaining({ query: { "nested[a]": "1" } }),
       );
     });
 
@@ -667,7 +672,7 @@ describe("toExpress", () => {
       expect(next).toHaveBeenCalledWith(
         expect.objectContaining({ code: "INVALID_RESPONSE" }),
       );
-      expect(res.set).not.toHaveBeenCalled();
+      expect(res.setHeader).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -686,7 +691,7 @@ describe("toExpress", () => {
         expect.objectContaining({ code: "INVALID_RESPONSE" }),
       );
       expect(res.status).not.toHaveBeenCalled();
-      expect(res.set).not.toHaveBeenCalled();
+      expect(res.setHeader).not.toHaveBeenCalled();
     });
 
     it("does not format a deliberate domain 500 as an exception", async () => {
@@ -741,8 +746,11 @@ describe("toExpress", () => {
         }),
       })(createReq(), res, vi.fn());
 
-      expect(res.set).toHaveBeenCalledWith("retry-after", "30");
-      expect(res.set).toHaveBeenCalledWith("content-type", "application/json");
+      expect(res.setHeader).toHaveBeenCalledWith("retry-after", "30");
+      expect(res.setHeader).toHaveBeenCalledWith(
+        "content-type",
+        "application/json",
+      );
       expect(endedJson(res)).toEqual({ formatted: true });
     });
 
@@ -769,7 +777,7 @@ describe("toExpress", () => {
       expect(res.status).toHaveBeenCalledWith(500);
       expect(endedJson(res)).toEqual({ formatted: true });
       // The retry drops every inherited header, not just the bad one.
-      expect(vi.mocked(res.set).mock.calls).toEqual([
+      expect(vi.mocked(res.setHeader).mock.calls).toEqual([
         ["content-type", "application/json"],
       ]);
     });
@@ -794,7 +802,7 @@ describe("toExpress", () => {
       expect(errorFormatter).toHaveBeenCalledTimes(1);
       expect(res.status).toHaveBeenCalledWith(500);
       expect(endedJson(res)).toEqual({ formatted: true });
-      expect(vi.mocked(res.set).mock.calls).toEqual([
+      expect(vi.mocked(res.setHeader).mock.calls).toEqual([
         ["content-type", "application/json"],
       ]);
     });
@@ -820,7 +828,7 @@ describe("toExpress", () => {
       expect(errorFormatter).toHaveBeenCalledTimes(1);
       expect(res.status).toHaveBeenCalledWith(500);
       expect(endedJson(res)).toEqual({ formatted: true });
-      expect(vi.mocked(res.set).mock.calls).toEqual([
+      expect(vi.mocked(res.setHeader).mock.calls).toEqual([
         ["content-type", "application/json"],
       ]);
     });
@@ -842,7 +850,7 @@ describe("toExpress", () => {
 
       expect(endedJson(res)).toEqual({ formatted: true });
       const contentTypeCalls = vi
-        .mocked(res.set)
+        .mocked(res.setHeader)
         .mock.calls.filter(
           ([name]) => String(name).toLowerCase() === "content-type",
         );
@@ -1160,6 +1168,7 @@ describe("toExpress", () => {
         writableEnded: false,
         status: vi.fn().mockReturnThis(),
         set: vi.fn().mockReturnThis(),
+        setHeader: vi.fn().mockReturnThis(),
         json: vi.fn(),
         send: vi.fn(),
         end: vi.fn(),
@@ -1218,7 +1227,7 @@ describe("toExpress", () => {
 
       expect(mock.handle).toHaveBeenCalled();
       expect(next).not.toHaveBeenCalled();
-      expect(res.set).not.toHaveBeenCalled();
+      expect(res.setHeader).not.toHaveBeenCalled();
       expect(res.end).not.toHaveBeenCalled();
     });
 
@@ -1498,7 +1507,7 @@ describe("toExpress", () => {
 
       expect(next).toHaveBeenCalledWith(error);
       expect(res.end).not.toHaveBeenCalled();
-      expect(res.set).not.toHaveBeenCalled();
+      expect(res.setHeader).not.toHaveBeenCalled();
     });
   });
 });

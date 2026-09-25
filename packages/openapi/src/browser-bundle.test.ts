@@ -31,27 +31,25 @@ const packageRoot = resolve(import.meta.dirname, "..");
 const repoPackages = resolve(packageRoot, "..");
 
 /**
- * Node built-ins a browser bundle may leave unresolved.
+ * Externals the bundle is given: none.
  *
- * A `node:`-prefixed dynamic `import()` on a branch that never runs in a
- * browser is the deliberate pattern in this repo (`seed.ts` for seed files,
- * `core/builder.ts` for `listen()`), and every browser bundler config stubs or
- * externalises the `node:` namespace. What must stay at zero is BARE built-ins
- * — `path`, `util`, `fs`, `url` — because those only ever arrive through a CJS
- * dependency's `require()`, which no bundler config can fix and which is what
- * actually broke.
+ * This used to be `["node:*"]`, on the premise that every browser bundler
+ * config stubs or externalises the `node:` namespace. The Angular application
+ * builder does not — it bundles with `platform: "browser"` and only the app's
+ * own `externalDependencies` — so a `node:` import esbuild tries to resolve
+ * fails `ng build` outright. The bundle has to build with nothing external.
  */
-const ALLOWED_EXTERNALS = ["node:*"];
+const ALLOWED_EXTERNALS: string[] = [];
 
 /**
- * `node:` specifiers that survive into the bundle, pinned so a new one cannot
- * appear without this list moving with it.
+ * `node:` specifiers that survive into the bundle unresolved, pinned so a new
+ * one cannot appear without this list moving with it.
  *
- * They are externalised rather than banned so that a survivor shows up here as
- * a listed import instead of as a build error, which says more. `node:http` is
- * `@schmock/core`'s `listen()`, dynamically imported on a branch a browser
- * never takes. Nothing in `@schmock/openapi` itself reaches a `node:` import
- * any more, and `bun run build` fails outright if `node:fs` reappears in
+ * `node:http` is `@schmock/core`'s `listen()`, a dynamic import on a branch a
+ * browser never takes. esbuild leaves it external without being told to only
+ * because the `import()` expression carries its own rejection handler. Nothing
+ * in `@schmock/openapi` itself reaches a `node:` import any more, and
+ * `bun run build` fails outright if `node:fs` reappears in
  * `dist/index.browser.js`.
  */
 const EXPECTED_NODE_IMPORTS = ["node:http"];

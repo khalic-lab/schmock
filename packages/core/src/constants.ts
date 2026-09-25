@@ -101,6 +101,13 @@ const PATH_ENCODED_ASCII = new Set([
 ]);
 
 const PERCENT_TRIPLET = /^%[0-9A-Fa-f]{2}$/;
+/**
+ * Paths made only of characters the loop below copies unchanged: printable
+ * ASCII minus {@link PATH_ENCODED_ASCII} and minus `%`, which always takes the
+ * loop so a lowercase triplet is still uppercased. `&-;` starts after `%`
+ * (0x25) on purpose.
+ */
+const ALREADY_CANONICAL_PATH = /^[!$&-;=@-\]_a-z|~]*$/;
 /** UTF-8 for U+FFFD, the URL parser's substitute for a lone surrogate. */
 const ENCODED_REPLACEMENT_CHARACTER = "%EF%BF%BD";
 
@@ -118,6 +125,10 @@ const ENCODED_REPLACEMENT_CHARACTER = "%EF%BF%BD";
  * spelling is preferable to silently rewriting the caller's path.
  */
 export function canonicalizePath(path: string): string {
+  // Fast path for the common case, which runs on every request: nothing to
+  // encode and no percent triplet to uppercase.
+  if (ALREADY_CANONICAL_PATH.test(path)) return path;
+
   let result = "";
   for (let index = 0; index < path.length; ) {
     if (
@@ -204,6 +215,12 @@ export function isRouteNotFound(response: {
  * Check if a value is a status tuple: [status, body] or [status, body, headers]
  * Guards against misinterpreting numeric arrays like [1, 2, 3] as tuples.
  *
+ * Only the length and the status are checked, so the third element is typed
+ * `unknown`: a caller that reads it as headers must check it is a string
+ * record first (core's response parser rejects anything else with
+ * INVALID_RESPONSE). Rejecting such a tuple here instead would make the parser
+ * treat `[200, "x", null]` as plain array data and answer 200.
+ *
  * Known ambiguity: a length-2 numeric array whose first element happens to
  * be in the HTTP-status range (e.g. [200, 300] as legitimate data) is
  * indistinguishable from a status tuple by shape alone. Prefer the explicit
@@ -211,7 +228,7 @@ export function isRouteNotFound(response: {
  */
 export function isStatusTuple(
   value: unknown,
-): value is [number, unknown] | [number, unknown, Record<string, string>] {
+): value is [number, unknown] | [number, unknown, unknown] {
   return (
     Array.isArray(value) &&
     (value.length === 2 || value.length === 3) &&

@@ -44,7 +44,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
 
     Then("an error should be thrown with message matching {string}", () => {
       expect(error).not.toBeNull();
-      expect(error!.message).toMatch(variables.error);
+      expect(error?.message).toMatch(variables.error);
     });
   });
 

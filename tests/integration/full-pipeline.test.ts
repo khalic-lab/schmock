@@ -211,7 +211,16 @@ describe("Full Pipeline: schmock → openapi → listen → fetch → close", ()
       headers: { prefer: "dynamic=true" },
     });
     expect(dynamic.status).toBe(200);
-    expect(dynamic.body).toBeDefined();
+    // Without Prefer the empty collection answers `[]`; the dynamic branch
+    // generates pets that match the spec's Pet schema instead.
+    expect(Array.isArray(dynamic.body)).toBe(true);
+    expect(dynamic.body.length).toBeGreaterThan(0);
+    for (const pet of dynamic.body) {
+      expect(pet).toMatchObject({
+        petId: expect.any(Number),
+        name: expect.any(String),
+      });
+    }
   });
 
   it("Security validation via HTTP", async () => {

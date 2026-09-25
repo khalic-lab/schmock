@@ -198,8 +198,8 @@ print_dry_run() {
   echo "DRY RUN: no registry queries, package publication, push, or GitHub calls will run."
   echo "Would validate and build:"
   echo "  bun run lint"
-  echo "  bun run test:all"
   echo "  bun run build"
+  echo "  bun run test:all"
   echo "  bun run check:publish"
   echo "Would verify release access:"
   echo "  npm whoami --registry ${NPM_REGISTRY}"
@@ -403,8 +403,10 @@ esac
 
 echo "Running validation..."
 bun run lint
-bun run test:all
+# Build first: dist-bound suites (dist shape, browser compatibility, entry
+# parity) must test the JS being released, not whatever was built last.
 bun run build
+bun run test:all
 bun run check:publish
 
 if [ -n "$(git status --porcelain)" ]; then

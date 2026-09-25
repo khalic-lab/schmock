@@ -147,13 +147,19 @@ export class SchemaGenerationError extends SchmockError {
 
 /**
  * Error thrown when resource limits are exceeded
+ *
+ * @param path - Optional location of the breach (for example the schema path
+ *   `$.properties.items`). When given it is appended to the message and added
+ *   to the context; without it both keep their original shape.
  */
 export class ResourceLimitError extends SchmockError {
-  constructor(resource: string, limit: number, actual?: number) {
+  constructor(resource: string, limit: number, actual?: number, path?: string) {
     super(
-      `Resource limit exceeded for ${resource}: limit=${limit}${actual ? `, actual=${actual}` : ""}`,
+      `Resource limit exceeded for ${resource}: limit=${limit}${actual ? `, actual=${actual}` : ""}${path === undefined ? "" : ` at ${path}`}`,
       "RESOURCE_LIMIT_ERROR",
-      { resource, limit, actual },
+      path === undefined
+        ? { resource, limit, actual }
+        : { resource, limit, actual, path },
     );
     this.name = "ResourceLimitError";
   }

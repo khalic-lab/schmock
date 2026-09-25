@@ -1,5 +1,5 @@
 import type * as Schmock from "@schmock/core";
-import { isStatusTuple } from "@schmock/core";
+import { isBinaryBody, isStatusTuple } from "@schmock/core";
 import { generateFromSchema } from "@schmock/faker";
 import type { ValidateFunction } from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -43,6 +43,16 @@ function getRouteRequestBody(
 ): JSONSchema7 | undefined {
   const value = route["openapi:requestBody"];
   return isRecord(value) ? value : undefined;
+}
+
+function isBinaryPayload(body: unknown): boolean {
+  return (
+    isBinaryBody(body) || (typeof Blob === "function" && body instanceof Blob)
+  );
+}
+
+function isBinaryStringSchema(schema: JSONSchema7): boolean {
+  return schema.type === "string" && schema.format === "binary";
 }
 
 function isRouteRequestBodyRequired(route: Schmock.RouteConfig): boolean {
@@ -188,7 +198,7 @@ function checkSchemePresence(
  * "simplify" this away on the argument that the adapters already lowercase —
  * they do, but they are not the only entry point.
  */
-function getHeader(
+export function getHeader(
   headers: Record<string, string>,
   name: string,
 ): string | undefined {
@@ -370,6 +380,16 @@ export function validateRequestBody(
     return undefined;
   }
 
+  // `type: string, format: binary` is OpenAPI's raw upload. Every transport
+  // (fetch interceptor, mock.listen(), the CLI) delivers such a body as bytes,
+  // which AJV would reject as "must be string".
+  if (
+    isBinaryPayload(context.body) &&
+    isBinaryStringSchema(requestBodySchema)
+  ) {
+    return undefined;
+  }
+
   let validate = validatorCtx.cache.get(requestBodySchema);
   if (!validate) {
     try {
@@ -457,7 +477,10 @@ function getResponseParts(response: unknown): ResponseParts {
     return {
       status: response[0],
       body: response[1],
-      headers: response.length === 3 ? response[2] : {},
+      // isStatusTuple checks only length and status; the third element is
+      // read as headers only when it really is a string record.
+      headers:
+        response.length === 3 && isStringRecord(response[2]) ? response[2] : {},
       kind: "tuple",
     };
   }
@@ -682,6 +705,15 @@ function responseValidationError(
 }
 
 /**
+ * What `processPreferHeader` produced. `applied` is true when a Prefer
+ * directive replaced the generator's response, so the caller can treat the
+ * request as a simulation (see `settlePendingMutations` in plugin.ts).
+ */
+export interface PreferResult extends Schmock.PluginResult {
+  applied: boolean;
+}
+
+/**
  * Handle Prefer header directives: code=N, example=name, dynamic=true
  */
 export async function processPreferHeader(
@@ -689,18 +721,25 @@ export async function processPreferHeader(
   response: unknown,
   fakerSeed?: number,
   onSchema?: OnSchemaCallback,
-): Promise<Schmock.PluginResult> {
+): Promise<PreferResult> {
+  const unchanged: PreferResult = { context, response, applied: false };
   const preferValue = getHeader(context.headers, "prefer");
   if (!preferValue) {
-    return { context, response };
+    return unchanged;
   }
 
   const prefer = parsePreferHeader(preferValue);
   const responses = getRouteResponses(context.route);
 
   if (!responses) {
-    return { context, response };
+    return unchanged;
   }
+
+  const replaced = (status: number, body: unknown): PreferResult => ({
+    context,
+    response: [status, body],
+    applied: true,
+  });
 
   // Prefer: code=N — return the response for that status code
   if (prefer.code !== undefined) {
@@ -708,11 +747,16 @@ export async function processPreferHeader(
     if (entry) {
       const schema = selectResponseSchema(context, entry);
       const body = schema
-        ? await generateResponseBody(schema, fakerSeed, onSchema, context)
+        ? await generateResponseBody({
+            schema,
+            seed: fakerSeed,
+            onSchema,
+            context,
+          })
         : prefer.code === 204
           ? undefined
           : {};
-      return { context, response: [prefer.code, body] };
+      return replaced(prefer.code, body);
     }
   }
 
@@ -725,33 +769,36 @@ export async function processPreferHeader(
         prefer.example,
       );
       if (typeof code === "number" && selectedExample.found) {
-        return {
-          context,
-          response: [code, selectedExample.value],
-        };
+        return replaced(code, selectedExample.value);
       }
     }
   }
 
   // Prefer: dynamic=true — regenerate from schema
   if (prefer.dynamic) {
-    const success = findSuccessResponse(responses);
+    // A CRUD create records the status it answers with; regenerating must not
+    // move it (a POST declaring 200 and 201 answers 201, see
+    // CREATE_SUCCESS_STATUS_ORDER).
+    const createStatus = context.route["openapi:preflightResponseStatus"];
+    const success = findSuccessResponse(
+      responses,
+      typeof createStatus === "number" ? [createStatus] : undefined,
+    );
     if (success) {
       const [code, entry] = success;
       const schema = selectResponseSchema(context, entry);
-      if (!schema)
-        return { context, response: [code, code === 204 ? undefined : {}] };
-      const body = await generateResponseBody(
+      if (!schema) return replaced(code, code === 204 ? undefined : {});
+      const body = await generateResponseBody({
         schema,
-        fakerSeed,
+        seed: fakerSeed,
         onSchema,
         context,
-      );
-      return { context, response: [code, body] };
+      });
+      return replaced(code, body);
     }
   }
 
-  return { context, response };
+  return unchanged;
 }
 
 function selectResponseSchema(
@@ -792,15 +839,32 @@ function selectResponseExample(
     : { found: false };
 }
 
-async function generateResponseBody(
-  schema: JSONSchema7,
-  seed?: number,
-  onSchema?: OnSchemaCallback,
-  context?: Schmock.PluginContext,
-): Promise<unknown> {
+interface ResponseBodyGeneration {
+  schema: JSONSchema7;
+  seed?: number;
+  onSchema?: OnSchemaCallback;
+  context: Schmock.PluginContext;
+}
+
+async function generateResponseBody({
+  schema,
+  seed,
+  onSchema,
+  context,
+}: ResponseBodyGeneration): Promise<unknown> {
   let finalSchema = schema;
-  if (onSchema && context) {
-    const patched = onSchema(finalSchema, context);
+  if (onSchema) {
+    // The same five-field context, with the same template path, that the
+    // static and CRUD generators hand the hook: one operation must not show
+    // `/pets/:id` on a plain request and `/pets/5` under Prefer.
+    const templatePath = context.route["openapi:path"];
+    const patched = onSchema(finalSchema, {
+      method: context.method,
+      path: typeof templatePath === "string" ? templatePath : context.path,
+      params: context.params,
+      query: context.query,
+      headers: context.headers,
+    });
     if (patched) finalSchema = patched;
   }
   try {
@@ -816,7 +880,7 @@ async function generateResponseBody(
     // unrelated pipeline behaviour.
     throw asSchemaGenerationError(
       error,
-      `${context?.method ?? "GET"} ${context?.path ?? ""}`,
+      `${context.method} ${context.path}`,
       finalSchema,
     );
   }

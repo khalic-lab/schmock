@@ -1,6 +1,7 @@
 import { ResourceLimitError } from "@schmock/core";
 import {
   MAX_ARRAY_SIZE,
+  MAX_GENERATED_CHARS,
   MAX_GENERATED_NODES,
   MAX_OBJECT_PROPERTIES,
   MAX_STRING_LENGTH,
@@ -13,6 +14,17 @@ export function assertOutputWithinLimits(value: unknown): void {
   ];
   const active = new Set<object>();
   let nodes = 0;
+  let chars = 0;
+  const chargeChars = (length: number): void => {
+    chars += length;
+    if (chars > MAX_GENERATED_CHARS) {
+      throw new ResourceLimitError(
+        "generated_chars",
+        MAX_GENERATED_CHARS,
+        chars,
+      );
+    }
+  };
 
   while (pending.length > 0) {
     const frame = pending.pop();
@@ -42,6 +54,7 @@ export function assertOutputWithinLimits(value: unknown): void {
           current.length,
         );
       }
+      chargeChars(current.length);
       continue;
     }
     if (
@@ -76,7 +89,8 @@ export function assertOutputWithinLimits(value: unknown): void {
         entries.length,
       );
     }
-    for (const [, entry] of entries) {
+    for (const [key, entry] of entries) {
+      chargeChars(key.length);
       pending.push({ value: entry, exiting: false });
     }
   }

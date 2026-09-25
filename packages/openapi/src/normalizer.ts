@@ -9,6 +9,92 @@ import { isRecord, toJsonSchema } from "./utils.js";
 const DISCRIMINATOR_VALUES_MARKER = "x-schmock-discriminator-values";
 
 /**
+ * Property names a schema node marked `readOnly` / `writeOnly` before
+ * normalization erased the flags (and, depending on direction, the properties).
+ */
+export interface AccessModes {
+  readonly readOnly: ReadonlySet<string>;
+  readonly writeOnly: ReadonlySet<string>;
+}
+
+/**
+ * Side table from a normalized node to the access modes its `properties`
+ * declared.
+ *
+ * Deliberately not an in-schema keyword: normalized schemas reach Ajv in
+ * `@schmock/validation`, whose fixed vocabulary would reject an unknown key.
+ * Keyed on the exact object `normalizeNode` returns, so the lookup follows the
+ * schema through `$ref` sharing and the parser's per-direction cache, and simply
+ * misses on a copy (an `onSchema` result, an `options.schemas` override).
+ */
+const accessModesByNode = new WeakMap<object, AccessModes>();
+
+const NO_ACCESS_MODES: AccessModes = {
+  readOnly: new Set(),
+  writeOnly: new Set(),
+};
+
+/**
+ * Union the access modes recorded on a normalized schema and its `allOf`
+ * branches — the same flattening `collectSchemaProperties` applies.
+ *
+ * The request direction strips `readOnly` properties and the response direction
+ * strips `writeOnly` ones, so this is the only place either name survives.
+ */
+export function collectAccessModes(
+  schema: JSONSchema7 | undefined,
+): AccessModes {
+  const readOnly = new Set<string>();
+  const writeOnly = new Set<string>();
+  const seen = new Set<object>();
+
+  const visit = (node: unknown): void => {
+    if (!isRecord(node) || seen.has(node)) return;
+    seen.add(node);
+    const recorded = accessModesByNode.get(node);
+    if (recorded) {
+      for (const name of recorded.readOnly) readOnly.add(name);
+      for (const name of recorded.writeOnly) writeOnly.add(name);
+    }
+    if (Array.isArray(node.allOf)) {
+      for (const branch of node.allOf) visit(branch);
+    }
+    // A composition-only nullable wraps its node as `anyOf: [{type:"null"}, node]`.
+    if (node.schmockNullable === true && Array.isArray(node.anyOf)) {
+      for (const branch of node.anyOf) visit(branch);
+    }
+  };
+
+  visit(schema);
+  if (readOnly.size === 0 && writeOnly.size === 0) return NO_ACCESS_MODES;
+  return { readOnly, writeOnly };
+}
+
+/**
+ * Is `node` shaped as an object or array, by its declared type or structure?
+ *
+ * Only a node that is neither gets its `example` promoted to `default`:
+ * json-schema-faker returns an object/array default verbatim, so a partial
+ * object example dropped required properties, cloned every seed row and leaked
+ * `writeOnly` fields the direction had just stripped from `properties`.
+ */
+function isCompositeNode(node: Record<string, unknown>): boolean {
+  const types = Array.isArray(node.type) ? node.type : [node.type];
+  if (types.includes("object") || types.includes("array")) return true;
+  return (
+    node.type === undefined &&
+    (node.properties !== undefined ||
+      node.items !== undefined ||
+      node.allOf !== undefined ||
+      node.additionalProperties !== undefined)
+  );
+}
+
+function isPrimitive(value: unknown): boolean {
+  return value === null || typeof value !== "object";
+}
+
+/**
  * Normalize an OpenAPI schema to pure JSON Schema 7 that json-schema-faker understands.
  *
  * Transforms applied:
@@ -16,8 +102,9 @@ const DISCRIMINATOR_VALUES_MARKER = "x-schmock-discriminator-values";
  *   `anyOf: [{type:"null"}, rest]` for composition-only schemas) plus the
  *   `schmockNullable` marker the faker plugin uses to roll nulls at ~5%
  * - discriminator -> required + enum on branches
- * - readOnly/writeOnly -> strip based on direction
- * - example -> default (if default not set)
+ * - readOnly/writeOnly -> strip based on direction (names recorded, see
+ *   {@link collectAccessModes})
+ * - example -> default (if default not set), on scalar nodes only
  * - exclusiveMinimum/exclusiveMaximum boolean -> number format
  * - x-* extensions -> stripped
  */
@@ -54,13 +141,18 @@ function applyNullability(
     // Composition-only nullable (the standard `allOf: [{$ref}], nullable: true`
     // idiom): the whole node moves into the non-null branch.
     return { anyOf: [{ type: "null" }, node], schmockNullable: true };
-  } else {
-    // Typeless and composition-free — already accepts null.
-    return { ...node, schmockNullable: true };
   }
+  // A typeless, composition-free node accepts null by type — but an `enum` or
+  // `const` still constrains the value regardless of `type`, so it falls
+  // through to the same value fix-up as the typed branches.
 
-  // A union type alone still rejects null when an enum constrains the values.
-  if (Array.isArray(node.enum) && !node.enum.includes(null)) {
+  // A union type alone still rejects null when an enum or const constrains the
+  // values.
+  if ("const" in node) {
+    const value = node.const;
+    delete node.const;
+    node.enum = value === null ? [null] : [value, null];
+  } else if (Array.isArray(node.enum) && !node.enum.includes(null)) {
     node.enum = [...node.enum, null];
   }
 
@@ -93,6 +185,8 @@ function normalizeNode(
 
   const isNullable = node.nullable === true;
   delete node.nullable;
+  const readOnlyNames: string[] = [];
+  const writeOnlyNames: string[] = [];
 
   // Strip x-* extensions
   for (const key of Object.keys(node)) {
@@ -159,6 +253,10 @@ function normalizeNode(
       if (!isRecord(propSchemaRaw)) continue;
       const propSchema = propSchemaRaw;
 
+      // Recorded in both directions: the flags are erased below either way.
+      if (propSchema.readOnly === true) readOnlyNames.push(propName);
+      if (propSchema.writeOnly === true) writeOnlyNames.push(propName);
+
       // readOnly fields: remove from request schemas
       if (direction === "request" && propSchema.readOnly === true) {
         keysToRemove.push(propName);
@@ -196,8 +294,15 @@ function normalizeNode(
     }
   }
 
-  // Handle example -> default
-  if ("example" in node && !("default" in node)) {
+  // Handle example -> default, for scalar values on scalar nodes only. An object
+  // or array default is returned verbatim by json-schema-faker, so promoting a
+  // composite example replaced every generated body with it.
+  if (
+    "example" in node &&
+    !("default" in node) &&
+    isPrimitive(node.example) &&
+    !isCompositeNode(node)
+  ) {
     node.default = node.example;
   }
   delete node.example;
@@ -274,6 +379,12 @@ function normalizeNode(
   }
 
   const out = toJsonSchema(isNullable ? applyNullability(node) : node);
+  if (readOnlyNames.length > 0 || writeOnlyNames.length > 0) {
+    accessModesByNode.set(out, {
+      readOnly: new Set(readOnlyNames),
+      writeOnly: new Set(writeOnlyNames),
+    });
+  }
   stack.delete(node);
   memo.set(node, out);
   return out;

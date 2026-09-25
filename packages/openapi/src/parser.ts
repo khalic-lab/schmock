@@ -2,11 +2,17 @@ import type * as Schmock from "@schmock/core";
 import { SchmockError, toHttpMethod } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import type { OpenAPI } from "openapi-types";
+import { assertNoRefRing } from "./deref-internal.js";
 import { normalizeSchema } from "./normalizer.js";
+import {
+  describePathTemplateProblem,
+  templateToRoutePath,
+} from "./path-template.js";
 import {
   buildRefParserOptions,
   checkRef,
   collectUnresolvedRefs,
+  type RefFetch,
   type RefParserOptions,
   type RefPolicy,
   resolveRefPolicy,
@@ -16,6 +22,7 @@ import {
   parseResponseStatusKey,
   type ResponseStatusKey,
 } from "./response-status.js";
+import { combineRefSiblings, hideLiteralRefs } from "./spec-refs.js";
 import { isRecord, normalizeMediaType } from "./utils.js";
 
 export interface SecurityScheme {
@@ -195,6 +202,39 @@ export interface ParseSpecOptions {
   strict?: boolean;
   /** External `$ref` resolution policy. External refs are off by default. */
   refs?: RefPolicy;
+  /**
+   * Transport for http `$ref`s. Internal: omitted, the resolver's own is used —
+   * in the Node build the guarded one in `ref-transport.ts`. The plugin never
+   * passes it; tests substitute a stub.
+   */
+  fetchRef?: RefFetch;
+}
+
+/**
+ * Refuse, in strict mode, a version the validator cannot validate, with the
+ * same code the validator's own failures carry.
+ *
+ * Non-strict mode tolerates any version on every path: a ref-free document
+ * never reaches swagger-parser, the browser resolver never checks, and the
+ * Node resolver pins a version it accepts for the duration of a dereference.
+ */
+function assertStrictVersion(
+  raw: OpenAPI.Document,
+  source: string | object,
+): void {
+  const field = "swagger" in raw ? "swagger" : "openapi";
+  const version: unknown = Reflect.get(raw, field);
+  const supported =
+    field === "swagger"
+      ? version === "2.0"
+      : typeof version === "string" && /^3\.[01]\.\d+$/.test(version);
+  if (supported) return;
+  throw new SchmockError(
+    `OpenAPI spec declares ${field} ${JSON.stringify(version)}, which strict validation does not support ` +
+      "(Swagger 2.0 and OpenAPI 3.0.x/3.1.x are). Leave strict off to load it without validation.",
+    "OPENAPI_INVALID_SPEC",
+    { spec: typeof source === "string" ? source : undefined },
+  );
 }
 
 /**
@@ -212,12 +252,16 @@ async function loadDocument(
   options: ParseSpecOptions,
 ): Promise<OpenAPI.Document> {
   const policy = resolveRefPolicy(options.refs);
+  const resolver = createResolver();
   // Per call, never module-scoped: parallel `openapi()` calls under
   // `Promise.all` would otherwise read each other's diagnostics.
   const refDiagnostics = new Map<string, string>();
-  const refOptions = buildRefParserOptions(options.refs, refDiagnostics);
+  const refOptions = buildRefParserOptions(
+    options.refs,
+    refDiagnostics,
+    options.fetchRef ?? resolver.fetchRef,
+  );
   const strict = options.strict === true;
-  const resolver = createResolver();
 
   let raw: OpenAPI.Document;
   let baseUrl: string | undefined;
@@ -239,6 +283,11 @@ async function loadDocument(
   // Scanning before the strip would reject specs that parse fine today.
   stripRootExtensions(raw);
   ensurePathsKey(raw);
+  if (strict) assertStrictVersion(raw, source);
+
+  // Before the policy pre-scan, so a `$ref`-shaped example or vendor extension
+  // is neither reported as an external ref nor followed; put back below.
+  const literalRefs = hideLiteralRefs(raw);
 
   const blocked: string[] = [];
   for (const ref of collectUnresolvedRefs(raw)) {
@@ -250,6 +299,9 @@ async function loadDocument(
   // MUST run before dereference: it is the last moment a `oneOf` branch is
   // still a `$ref` string and can be paired with its `mapping` entry.
   markDiscriminatorValues(raw);
+  // After the marker, which reads the `$ref` a sibling rewrite would move.
+  combineRefSiblings(raw);
+  assertNoRefRing(raw);
 
   const api = await dereferenceDocument({
     resolver,
@@ -270,6 +322,9 @@ async function loadDocument(
     if (residual.length > 0) throw externalRefBlocked(residual, source);
   }
 
+  // Dereferencing mutates in place, so the hidden objects are still the ones
+  // in `api` — a merged `$ref` target shares them by identity.
+  literalRefs.restore();
   return api;
 }
 
@@ -619,9 +674,12 @@ async function dereferenceDocument({
     // A browser build refusing a Node-only option is answering the caller's
     // question, not reporting a bad spec. Wrapping it as a validation failure
     // would bury the one sentence that says what to do instead.
+    // Likewise a policy refusal raised mid-resolution (a local file reached
+    // from a remote document): it is a decision, not a validation failure.
     if (
       rawError instanceof SchmockError &&
-      rawError.code === "OPENAPI_NODE_ONLY"
+      (rawError.code === "OPENAPI_NODE_ONLY" ||
+        rawError.code === "OPENAPI_EXTERNAL_REF_BLOCKED")
     ) {
       throw rawError;
     }
@@ -654,12 +712,12 @@ export function enrichResolverError(
   diagnostics: Map<string, string>,
 ): unknown {
   if (diagnostics.size === 0 || !(error instanceof Error)) return error;
-  const carrier = error as Error & { code?: unknown; source?: unknown };
-  if (carrier.code !== "ERESOLVER") return error;
+  if (!("code" in error) || error.code !== "ERESOLVER") return error;
 
   let detail: string | undefined;
-  if (typeof carrier.source === "string") {
-    detail = diagnostics.get(carrier.source);
+  const source = "source" in error ? error.source : undefined;
+  if (typeof source === "string") {
+    detail = diagnostics.get(source);
   }
   if (detail === undefined) {
     for (const [url, message] of diagnostics) {
@@ -820,7 +878,14 @@ export async function parseSpec(
         label,
       );
 
-      // Convert path template: {petId} -> :petId
+      // Convert path template: {petId} -> :petId. A template the route grammar
+      // cannot express is skipped with a warning rather than registered as a
+      // route that answers the wrong requests.
+      const templateProblem = describePathTemplateProblem(pathTemplate);
+      if (templateProblem) {
+        warnings.push(`${label}: ${templateProblem}, skipped`);
+        continue;
+      }
       const expressPath = convertPathTemplate(pathTemplate);
 
       const tags = Array.isArray(operation.tags)
@@ -1231,7 +1296,8 @@ function findJsonContent(
 
 /**
  * Rewrite an OpenAPI path template into the Express form the router uses:
- * `/pets/{petId}` → `/pets/:petId`.
+ * `/pets/{petId}` → `/pets/:petId`, `/jobs/{job}:run` → `/jobs/:job\:run`,
+ * `/users/{user.id}` → `/users/:"user.id"` (see path-template.ts).
  *
  * Exported so `options.schemas` keys can be normalized with the SAME function
  * that produced `ParsedPath.path`. A second copy would be a silent mismatch
@@ -1239,7 +1305,7 @@ function findJsonContent(
  * report "the spec declares no ... operation" about an operation it declares.
  */
 export function convertPathTemplate(path: string): string {
-  return path.replace(/\{([^}]+)\}/g, ":$1");
+  return templateToRoutePath(path, { escapeLiteralColons: true });
 }
 
 function extractSecuritySchemes(

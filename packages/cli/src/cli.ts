@@ -1,7 +1,9 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import type { FSWatcher } from "node:fs";
 import { readFileSync, realpathSync, statSync, watch } from "node:fs";
 import type { Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
+import type { Socket } from "node:net";
 import {
   basename,
   dirname,
@@ -94,7 +96,9 @@ const REDACTED = "[redacted]";
 /**
  * Header names whose values the admin history projection masks. Redaction is
  * deliberately confined to this projection: `mock.history()` is public core API
- * and library users legitimately assert on the raw values.
+ * and library users legitimately assert on the raw values. A recorded request
+ * carries request headers only, so `set-cookie` matters only when a client
+ * sends it; it stays listed so the set never shrinks.
  */
 const SENSITIVE_HEADERS = new Set([
   "authorization",
@@ -105,6 +109,24 @@ const SENSITIVE_HEADERS = new Set([
   "x-auth-token",
   "x-schmock-admin-token",
 ]);
+/**
+ * A header or query parameter named like a credential: exactly `key`, `token`,
+ * `apikey`, `api_key`, `api-key`, `secret` or `password`, or any name ending in
+ * one of those after a `-` or `_` (`X-Pet-Key`, `access_token`,
+ * `client_secret`). The openapi plugin does not expose the apiKey scheme names
+ * a spec declares, so this catches the conventional spellings of them; a name
+ * outside the pattern (`X-Pet-Credential`) is not masked.
+ */
+const CREDENTIAL_NAME = /(?:^|[-_])(?:api[-_]?key|key|token|secret|password)$/;
+
+function isSensitiveHeader(name: string): boolean {
+  const lower = name.toLowerCase();
+  return SENSITIVE_HEADERS.has(lower) || CREDENTIAL_NAME.test(lower);
+}
+
+function isSensitiveQueryKey(name: string): boolean {
+  return CREDENTIAL_NAME.test(name.toLowerCase());
+}
 const REQUEST_ADMISSION = Symbol.for("@schmock/core.request-admission");
 
 type CoreRequestHandler = (
@@ -432,13 +454,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function redactHeaders(headers: unknown): Record<string, unknown> {
-  if (!isRecord(headers)) return {};
+function redactEntries(
+  entries: unknown,
+  isSensitive: (name: string) => boolean,
+): Record<string, unknown> {
+  if (!isRecord(entries)) return {};
   const redacted: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(headers)) {
-    redacted[name] = SENSITIVE_HEADERS.has(name.toLowerCase())
-      ? REDACTED
-      : value;
+  for (const [name, value] of Object.entries(entries)) {
+    redacted[name] = isSensitive(name) ? REDACTED : value;
   }
   return redacted;
 }
@@ -450,7 +473,8 @@ function redactHeaders(headers: unknown): Record<string, unknown> {
 function redactHistory(records: Schmock.RequestRecord[]): unknown[] {
   return records.map((record) => ({
     ...record,
-    headers: redactHeaders(record.headers),
+    query: redactEntries(record.query, isSensitiveQueryKey),
+    headers: redactEntries(record.headers, isSensitiveHeader),
   }));
 }
 
@@ -697,8 +721,21 @@ function boundedDelay(ms: number): Promise<void> {
  * request whose body was only half sent never completes on its own: without
  * the grace timer the close callback would never fire and the process could
  * not exit.
+ *
+ * At the deadline every tracked socket is also destroyed directly. Node's
+ * `closeAllConnections()` alone suffices there, but Bun's `node:http` returns
+ * from it without releasing a connection whose request body is incomplete, so
+ * the close callback never fired and shutdown hung until SIGKILL.
  */
-function closeHttpServer(httpServer: Server, graceMs: number): Promise<void> {
+function closeHttpServer({
+  httpServer,
+  graceMs,
+  sockets,
+}: {
+  httpServer: Server;
+  graceMs: number;
+  sockets: ReadonlySet<Socket>;
+}): Promise<void> {
   return new Promise<void>((resolve) => {
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
     const settle = (): void => {
@@ -724,6 +761,7 @@ function closeHttpServer(httpServer: Server, graceMs: number): Promise<void> {
       } catch {
         // Already torn down by the close above.
       }
+      for (const socket of sockets) socket.destroy();
     }, graceMs);
     // The grace timer must never be the thing holding the event loop open.
     graceTimer.unref();
@@ -764,6 +802,14 @@ function startCliServer(
     void handleCliRequest(req, res, holder.mock, { admin, cors, adminToken });
   });
 
+  // Tracked so the shutdown deadline can release every connection itself
+  // rather than trusting the runtime's closeAllConnections (see closeHttpServer).
+  const sockets = new Set<Socket>();
+  httpServer.on("connection", (socket: Socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+
   const cleanups: Array<() => Promise<void> | void> = [];
   let closing: Promise<void> | undefined;
 
@@ -774,7 +820,7 @@ function startCliServer(
       // Stop accepting before anything else: the settle starts now, so the
       // socket is released within `graceMs` even while a cleanup (a watcher
       // mid-reload) is still draining.
-      const settled = closeHttpServer(httpServer, graceMs);
+      const settled = closeHttpServer({ httpServer, graceMs, sockets });
       const drain = (async () => {
         for (const cleanup of cleanups.splice(0)) await cleanup();
       })();
@@ -840,7 +886,32 @@ function startCliServer(
  */
 function resolveAdminToken(options: CliOptions): string | undefined {
   if (!options.admin) return undefined;
-  return options.adminToken ?? randomUUID();
+  if (options.adminToken === undefined) return randomUUID();
+  // The flag parser checks this too, but `createCliServer` is public: an empty
+  // token is refused by every admin request, and one containing whitespace
+  // (a trailing newline read from a file) can never match a bearer header, so
+  // either would start an admin API nobody can use. Fail fast instead.
+  if (!isUsableAdminToken(options.adminToken)) {
+    throw new Error(
+      "Invalid admin token. The token must be non-empty and contain no whitespace.",
+    );
+  }
+  return options.adminToken;
+}
+
+function isUsableAdminToken(value: string): boolean {
+  return value !== "" && !/\s/.test(value);
+}
+
+/** Bracket an IPv6 literal so `http://${host}:${port}` is a parseable URL. */
+function formatUrlHost(hostname: string): string {
+  return hostname.includes(":") && !hostname.startsWith("[")
+    ? `[${hostname}]`
+    : hostname;
+}
+
+function serverUrl(address: { hostname: string; port: number }): string {
+  return `http://${formatUrlHost(address.hostname)}:${address.port}`;
 }
 
 export async function createCliServer(options: CliOptions): Promise<CliServer> {
@@ -854,7 +925,7 @@ export async function createCliServer(options: CliOptions): Promise<CliServer> {
   if (resolved.watch) {
     let watcher: WatchHandle;
     try {
-      watcher = startWatch(resolved.spec, resolved, holder, server);
+      watcher = startWatch(resolved, holder, server);
     } catch (error) {
       // A watcher that cannot be created must not leave a bound socket behind:
       // the caller gets the failure and the process can still exit.
@@ -867,20 +938,35 @@ export async function createCliServer(options: CliOptions): Promise<CliServer> {
   return server;
 }
 
-/** Loopback binds are `127.0.0.0/8`, `::1` and `localhost`; everything else is reachable off-box. */
+/**
+ * Loopback binds are `127.0.0.0/8` (also IPv4-mapped, `::ffff:127.x.x.x`),
+ * `::1` and `localhost`; everything else is reachable off-box.
+ */
 export function isLoopbackHost(hostname: string): boolean {
   const host = hostname
     .trim()
     .toLowerCase()
-    .replace(/^\[|\]$/g, "");
+    .replace(/^\[|\]$/g, "")
+    .replace(/^::ffff:(?=\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$)/, "");
   if (host === "localhost" || host === "::1" || host === "0:0:0:0:0:0:0:1") {
     return true;
   }
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
+/**
+ * Decimal digits only. Bare `Number()` reads `""` and `" "` as 0 (a random
+ * port) and accepts `0x1F90`, `1e3` and `80.0`, none of which a caller typing
+ * a port means; the other numeric flags follow the same rule.
+ */
+function parseDecimal(value: string, { signed = false } = {}): number {
+  const trimmed = value.trim();
+  const pattern = signed ? /^-?\d+$/ : /^\d+$/;
+  return pattern.test(trimmed) ? Number(trimmed) : Number.NaN;
+}
+
 function validatePort(value: string): number {
-  const port = Number(value);
+  const port = parseDecimal(value);
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new Error(
       `Invalid port "${value}". Port must be an integer between 0 and 65535.`,
@@ -896,7 +982,7 @@ function validatePort(value: string): number {
 function validateHistoryLimit(value: string): number {
   // `Number("")` is 0, so an empty flag would otherwise read as "keep nothing"
   // instead of the typo it is.
-  const limit = value.trim() === "" ? Number.NaN : Number(value);
+  const limit = parseDecimal(value);
   if (!Number.isInteger(limit) || limit < 0) {
     throw new Error(
       `Invalid --admin-history-limit "${value}". It must be a non-negative integer.`,
@@ -912,7 +998,7 @@ function validateHistoryLimit(value: string): number {
  * is an integer and `1.5` was never doing what the caller meant.
  */
 function validateFakerSeed(value: string): number {
-  const seed = value.trim() === "" ? Number.NaN : Number(value);
+  const seed = parseDecimal(value, { signed: true });
   if (!Number.isInteger(seed)) {
     throw new Error(
       `Invalid --seed-random "${value}". It must be a finite integer.`,
@@ -938,7 +1024,7 @@ function validateHostname(value: string | undefined): string | undefined {
 
 function validateAdminToken(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
-  if (value === "" || /\s/.test(value)) {
+  if (!isUsableAdminToken(value)) {
     throw new Error(
       "Invalid --admin-token. The token must be non-empty and contain no whitespace.",
     );
@@ -981,9 +1067,18 @@ export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
 
   const spec = values.spec ?? positionals[0] ?? "";
 
+  // A token alone used to be dropped silently: the admin paths fell through to
+  // the mock and every authenticated call 404'd with no hint why. Implying
+  // --admin instead would quietly switch an API on, so this refuses.
+  if (values["admin-token"] !== undefined && !values.admin) {
+    throw new Error("--admin-token requires --admin.");
+  }
+
   return {
     spec,
-    port: values.port ? validatePort(values.port) : undefined,
+    // `=== undefined`, not truthiness: `--port=` (an unset shell variable) is
+    // a typo to reject, not a request for the 3000 default.
+    port: values.port === undefined ? undefined : validatePort(values.port),
     hostname: validateHostname(values.hostname),
     seed: values.seed,
     cors: values.cors,
@@ -1087,25 +1182,111 @@ async function reloadMock(
 }
 
 /**
- * Watch a spec file and hot-swap the mock behind the live server on changes.
+ * What one directory watch reacts to: the named entries in it, or every entry
+ * (`"any"`) for the spec's directory when `$ref`s may point at sibling files.
+ */
+type WatchMatcher = ReadonlySet<string> | "any";
+
+/**
+ * The file entries a `--seed` manifest names, as `loadSeedFile` resolves them.
+ * A manifest that does not load yields none: the reload reports its own error,
+ * and the manifest itself stays watched so fixing it triggers the next reload.
+ */
+function seedEntryFiles(seedPath: string): string[] {
+  try {
+    return Object.values(loadSeedFile(seedPath)).filter(
+      (source): source is string => typeof source === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function realDirectory(directory: string): string {
+  try {
+    return realpathSync(directory);
+  } catch {
+    return directory;
+  }
+}
+
+/**
+ * Every file a reload reads, grouped by the directory to watch it through:
+ * the spec, the `--seed` manifest and each file entry it names. With
+ * `--refs-external` the spec's whole directory counts, because a `$ref`'d
+ * sibling schema file is part of the contract. A `$ref` target in another
+ * directory is still not watched: the openapi plugin does not report which
+ * files it resolved.
+ */
+function collectWatchTargets(options: CliOptions): Map<string, WatchMatcher> {
+  const targets = new Map<string, Set<string> | "any">();
+  const addFile = (path: string): void => {
+    const directory = dirname(path);
+    const current = targets.get(directory);
+    if (current === "any") return;
+    if (current) current.add(basename(path));
+    else targets.set(directory, new Set([basename(path)]));
+  };
+
+  const resolvedSpec = resolvePath(options.spec);
+  if (options.refsExternal) targets.set(dirname(resolvedSpec), "any");
+  else addFile(resolvedSpec);
+
+  if (options.seed !== undefined) {
+    const manifest = resolvePath(options.seed);
+    const manifestDirectory = dirname(manifest);
+    addFile(manifest);
+    const realManifestDirectory = realDirectory(manifestDirectory);
+    for (const entry of seedEntryFiles(options.seed)) {
+      // Entries come back realpath'd. Re-anchoring them on the manifest
+      // directory as the user named it keeps one directory from being watched
+      // twice under two spellings (macOS `/var` vs `/private/var`).
+      addFile(
+        resolvePath(manifestDirectory, relative(realManifestDirectory, entry)),
+      );
+    }
+  }
+  return targets;
+}
+
+/**
+ * Some platforms report an in-place write under the watched DIRECTORY's own
+ * name rather than the file's, so that spelling counts as ours too. A null
+ * filename is likewise treated as possibly-ours — the debounce absorbs the
+ * duplicate — while a named unrelated sibling is skipped so an unrelated write
+ * in a watched directory does not rebuild the mock.
+ */
+function matchesWatchTarget(
+  matcher: WatchMatcher,
+  directory: string,
+  filename: string | Buffer | null,
+): boolean {
+  if (filename == null || matcher === "any") return true;
+  const name = basename(filename.toString());
+  return matcher.has(name) || name === basename(directory);
+}
+
+/**
+ * Watch the spec (and everything else a reload reads) and hot-swap the mock
+ * behind the live server on changes.
  *
- * The watch is on the spec's DIRECTORY, not the spec itself. `fs.watch` on a
+ * The watch is on each file's DIRECTORY, not the file itself. `fs.watch` on a
  * file follows its inode, so the first atomic editor save — write a sibling
  * temp file, rename it over the target, which is what vim, JetBrains and VS
  * Code all do — leaves the watcher bound to the replaced inode and silently
  * deaf to every later edit. A directory watch sees the rename, keeps seeing
- * later in-place writes, and re-arms for free when a spec is deleted and
- * recreated. It is non-recursive, so a large tree under the spec's directory
- * costs nothing.
+ * later in-place writes, and re-arms for free when a file is deleted and
+ * recreated. It is non-recursive, so a large tree under a watched directory
+ * costs nothing. One watcher serves each directory, and the set is re-derived
+ * after every reload so a seed manifest that names new files is followed.
  *
- * The path is resolved with `resolve`, deliberately NOT `realpathSync`: a
+ * Paths are resolved with `resolve`, deliberately NOT `realpathSync`: a
  * symlinked spec must keep watching the directory the user actually named.
  * (Consequence: an editor saving the symlink's TARGET, in another directory,
  * fires no event. Watching the target instead would break the far commoner
  * case of a linked spec edited in place.)
  */
 function startWatch(
-  specPath: string,
   options: CliOptions,
   holder: MockHolder,
   address: { hostname: string; port: number },
@@ -1113,24 +1294,42 @@ function startWatch(
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
   let reloadQueue = Promise.resolve();
+  let targets = collectWatchTargets(options);
+  const watchers = new Map<string, FSWatcher>();
 
-  const resolvedSpec = resolvePath(specPath);
-  const specDirectory = dirname(resolvedSpec);
-  const specName = basename(resolvedSpec);
-  // Some platforms report an in-place write under the watched DIRECTORY's own
-  // name rather than the file's, so that spelling counts as ours too. A null
-  // filename is likewise treated as possibly-ours — the debounce absorbs the
-  // duplicate — while a named unrelated sibling is skipped so an unrelated
-  // write in the spec's directory does not rebuild the mock.
-  const isSpecEvent = (filename: string | Buffer | null): boolean => {
-    if (filename == null) return true;
-    const name = basename(filename.toString());
-    return name === specName || name === basename(specDirectory);
+  const reportWatchError = (error: unknown): void => {
+    process.stderr.write(
+      `Spec watch error: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
   };
 
-  const watcher = watch(specDirectory, (_event, filename) => {
+  const closeWatchers = (): void => {
+    for (const watcher of watchers.values()) watcher.close();
+    watchers.clear();
+  };
+
+  // Follow a changed file set: drop directories no longer needed and watch
+  // new ones. A directory that cannot be watched is reported, not fatal — the
+  // server keeps serving and the other watches keep working.
+  const rearm = (): void => {
     if (closed) return;
-    if (!isSpecEvent(filename)) return;
+    targets = collectWatchTargets(options);
+    for (const [directory, watcher] of watchers) {
+      if (targets.has(directory)) continue;
+      watcher.close();
+      watchers.delete(directory);
+    }
+    for (const directory of targets.keys()) {
+      if (watchers.has(directory)) continue;
+      try {
+        watchers.set(directory, watchDirectory(directory));
+      } catch (error) {
+        reportWatchError(error);
+      }
+    }
+  };
+
+  const scheduleReload = (): void => {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       reloadQueue = reloadQueue.then(async () => {
@@ -1139,8 +1338,10 @@ function startWatch(
         try {
           await reloadMock(holder, options);
           if (closed) return;
+          // A reload builds a fresh mock, so CRUD rows created since startup
+          // and the admin history are gone; `--seed` data is re-applied.
           process.stderr.write(
-            `Schmock server reloaded on http://${address.hostname}:${address.port}\n`,
+            `Schmock server reloaded on ${serverUrl(address)} (state and request history reset)\n`,
           );
         } catch (err) {
           if (closed) return;
@@ -1148,23 +1349,40 @@ function startWatch(
             `Reload failed: ${err instanceof Error ? err.message : String(err)}\n`,
           );
         }
+        rearm();
       });
     }, WATCH_DEBOUNCE_MS);
-  });
+  };
 
-  // An unhandled 'error' event (the spec's directory unmounted, an unlink race)
-  // would take the whole process down; watching is a convenience, so it is
-  // reported and the server keeps serving the mock it already has.
-  watcher.on("error", (error: unknown) => {
-    process.stderr.write(
-      `Spec watch error: ${error instanceof Error ? error.message : String(error)}\n`,
-    );
-  });
+  function watchDirectory(directory: string): FSWatcher {
+    const watcher = watch(directory, (_event, filename) => {
+      if (closed) return;
+      const matcher = targets.get(directory);
+      if (matcher === undefined) return;
+      if (!matchesWatchTarget(matcher, directory, filename)) return;
+      scheduleReload();
+    });
+    // An unhandled 'error' event (the directory unmounted, an unlink race)
+    // would take the whole process down; watching is a convenience, so it is
+    // reported and the server keeps serving the mock it already has.
+    watcher.on("error", reportWatchError);
+    return watcher;
+  }
+
+  try {
+    for (const directory of targets.keys()) {
+      watchers.set(directory, watchDirectory(directory));
+    }
+  } catch (error) {
+    // The caller releases the socket; the watches already made go too.
+    closeWatchers();
+    throw error;
+  }
 
   return {
     async close() {
       closed = true;
-      watcher.close();
+      closeWatchers();
       if (debounceTimer) clearTimeout(debounceTimer);
       // A reload already parsing must be awaited: otherwise it would swap the
       // mock, or write to stderr, after shutdown has reported itself complete.
@@ -1194,9 +1412,7 @@ export async function run(args: string[]): Promise<void> {
 
   const cliServer = await createCliServer(options);
 
-  process.stderr.write(
-    `Schmock server running on http://${cliServer.hostname}:${cliServer.port}\n`,
-  );
+  process.stderr.write(`Schmock server running on ${serverUrl(cliServer)}\n`);
   process.stderr.write(`Spec: ${options.spec}\n`);
   if (options.cors) {
     process.stderr.write("CORS: enabled\n");
@@ -1210,6 +1426,10 @@ export async function run(args: string[]): Promise<void> {
           "WARNING: anyone who can reach this port and the admin token can read recorded requests and reset the mock.\n",
       );
     }
+  } else if (options.adminHistoryLimit !== undefined) {
+    process.stderr.write(
+      "WARNING: --admin-history-limit has no effect without --admin; no history is retained.\n",
+    );
   }
 
   if (options.watch) {
@@ -1223,12 +1443,24 @@ export async function run(args: string[]): Promise<void> {
   // process mid-drain; the `shuttingDown` guard absorbs it instead. The
   // returned promise settles when shutdown finishes, which is what lets
   // `bin.ts`'s `.catch` cover a failing close.
+  const graceMs = options.shutdownGraceMs ?? SHUTDOWN_GRACE_MS;
   return new Promise<void>((resolveRun, rejectRun) => {
     let shuttingDown = false;
     let repeatReported = false;
+    let forceExitAfter = Number.POSITIVE_INFINITY;
 
     const shutdown = (): void => {
       if (shuttingDown) {
+        // `close()` is bounded by the grace window, so one still running past
+        // it is wedged (a runtime that cannot drop a stalled connection). A
+        // signal then is the user's only way out short of SIGKILL.
+        if (Date.now() >= forceExitAfter) {
+          process.stderr.write(
+            "Shutdown did not finish within the grace window; forcing exit.\n",
+          );
+          process.exit(1);
+          return;
+        }
         // The handlers stay attached on purpose (see above), so a repeat
         // Ctrl-C during the grace window used to vanish with no output at all
         // and no way to tell whether it had been received. Reported once, so
@@ -1236,12 +1468,13 @@ export async function run(args: string[]): Promise<void> {
         if (!repeatReported) {
           repeatReported = true;
           process.stderr.write(
-            "Shutdown already in progress; waiting for in-flight requests...\n",
+            `Shutdown already in progress; waiting for in-flight requests (signal again after ${graceMs} ms to force an exit)...\n`,
           );
         }
         return;
       }
       shuttingDown = true;
+      forceExitAfter = Date.now() + graceMs;
       process.stderr.write("\nShutting down...\n");
       const release = (): void => {
         process.off("SIGINT", shutdown);

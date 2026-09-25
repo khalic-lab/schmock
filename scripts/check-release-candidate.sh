@@ -111,14 +111,14 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "[exports-bun 1/1] Import every candidate entry point with Bun and exercise the CLI"
   echo "[types 1/1] Compile every declaration-bearing entry in isolation"
   echo "[types-ts56 1/1] Compile the Core declaration entry with TypeScript 5.6"
-  echo "[browser 1/2] Bundle the validation candidate for a browser target"
-  echo "[browser 2/2] Bundle the OpenAPI candidate with esbuild for a browser target"
+  echo "[browser 1/2] Bundle the validation candidate with esbuild for a browser target and gate its Node imports"
+  echo "[browser 2/2] Bundle the OpenAPI candidate with esbuild for a browser target and gate its Node imports"
   exit 0
 fi
 
 PUBLINT_BIN="$ROOT_DIR/node_modules/.bin/publint"
 ATTW_BIN="$ROOT_DIR/node_modules/.bin/attw"
-# esbuild, not `bun build`, for the OpenAPI browser stage: bun's browser target
+# esbuild, not `bun build`, for both browser stages: bun's browser target
 # accepts an unresolvable CommonJS `require` and rewrites it into a shim that
 # throws only when called, so it reports success for a bundle that cannot boot.
 # esbuild is what Angular's application builder and Vite actually run.
@@ -319,41 +319,39 @@ echo "[types-ts56 1/1] Compiling the Core declaration entry with TypeScript 5.6"
   node "$ROOT_DIR/scripts/check-typescript-5-6.mjs"
 )
 
-echo "[browser 1/2] Bundling the validation candidate for a browser target"
+# Both browser stages bundle with esbuild, `--platform=browser`, and every
+# `node:*` specifier external, then read the esbuild metafile: each surviving
+# `node:` import is listed there, and the gate fails on any not allowlisted. A
+# BARE built-in (`path`, `util`, `fs`) arrives only through a dependency's
+# CommonJS `require`, which esbuild refuses to resolve, so it fails the bundle.
+#
+# Not `bun build`: Bun's browser target inlines a polyfill for every `node:`
+# built-in, leaving nothing in the output for a text scan or a metafile to see,
+# and turns an unresolvable CommonJS `require` into a shim that throws only when
+# called.
+#
+# `node:http` is allowlisted: it is core's `listen()`, imported lazily on a
+# branch a browser never takes (#395), and pinned the same way by
+# packages/openapi/src/browser-bundle.test.ts.
+BROWSER_NODE_IMPORT_ALLOWLIST=(--allow node:http)
+
+echo "[browser 1/2] Bundling the validation candidate with esbuild for a browser target"
 (
   cd "$FIXTURE_DIR"
-  bun build \
+  "$ESBUILD_BIN" \
     ./browser-consumer.mjs \
-    --target browser \
-    --format esm \
-    --outdir ./browser-dist
+    --bundle \
+    --platform=browser \
+    --format=esm \
+    --external:node:* \
+    --metafile=./browser-dist/meta.json \
+    --outfile=./browser-dist/bundle.js
 )
+node "$ROOT_DIR/scripts/check-browser-node-imports.mjs" \
+  "${BROWSER_NODE_IMPORT_ALLOWLIST[@]}" \
+  "$FIXTURE_DIR/browser-dist/meta.json"
 
-node -e '
-  const { readdirSync, readFileSync, statSync } = require("node:fs");
-  const { join } = require("node:path");
-  const pending = [process.argv[1]];
-  const failures = [];
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (statSync(current).isDirectory()) {
-      for (const entry of readdirSync(current)) pending.push(join(current, entry));
-      continue;
-    }
-    const source = readFileSync(current, "utf8");
-    if (source.includes("\"node:") || source.includes("\x27node:") || source.includes("createRequire")) {
-      failures.push(current);
-    }
-  }
-  if (failures.length > 0) {
-    throw new Error(`Browser bundle contains Node-only imports: ${failures.join(", ")}`);
-  }
-' "$FIXTURE_DIR/browser-dist"
-
-# The stage that would have caught the swagger-parser regression. `node:*` is
-# externalised so a surviving one is reported by the scan above rather than as a
-# resolve error; a BARE built-in — `path`, `util`, `fs` — has no such excuse,
-# arrives only through a dependency's CommonJS `require`, and fails the bundle.
+# The stage that would have caught the swagger-parser regression.
 echo "[browser 2/2] Bundling the OpenAPI candidate with esbuild for a browser target"
 (
   cd "$FIXTURE_DIR"
@@ -363,8 +361,12 @@ echo "[browser 2/2] Bundling the OpenAPI candidate with esbuild for a browser ta
     --platform=browser \
     --format=esm \
     --external:node:* \
+    --metafile=./browser-openapi-dist/meta.json \
     --outfile=./browser-openapi-dist/bundle.js
 )
+node "$ROOT_DIR/scripts/check-browser-node-imports.mjs" \
+  "${BROWSER_NODE_IMPORT_ALLOWLIST[@]}" \
+  "$FIXTURE_DIR/browser-openapi-dist/meta.json"
 
 # Resolving is not running. The reported app compiled once `path` and `fs` were
 # marked external and then died on its first line, so the bundle is executed

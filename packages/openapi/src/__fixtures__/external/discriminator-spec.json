@@ -23,7 +23,9 @@
             "description": "Cats from different documents",
             "content": {
               "application/json": {
-                "schema": { "$ref": "./discriminator-models.json#/CollidingCats" }
+                "schema": {
+                  "$ref": "./discriminator-models.json#/CollidingCats"
+                }
               }
             }
           }

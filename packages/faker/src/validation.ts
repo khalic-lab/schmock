@@ -2,10 +2,9 @@ import type { Faker } from "@faker-js/faker";
 import { ResourceLimitError, SchemaValidationError } from "@schmock/core";
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
 import {
-  DEEP_NESTING_THRESHOLD,
   DEFAULT_ARRAY_COUNT,
-  LARGE_ARRAY_THRESHOLD,
   MAX_ARRAY_SIZE,
+  MAX_GENERATED_CHARS,
   MAX_GENERATED_NODES,
   MAX_NESTING_DEPTH,
   MAX_OBJECT_PROPERTIES,
@@ -47,6 +46,8 @@ interface Violation {
   resource: string;
   limit: number;
   actual: number;
+  /** Schema path of the node that breached the limit. */
+  path: string;
 }
 
 /** What a walked sub-schema contributes to its parent. */
@@ -55,9 +56,16 @@ interface Estimate {
   height: number;
   /** Estimated number of JSON nodes this sub-schema generates. */
   nodes: number;
+  /**
+   * Characters this sub-schema is certain to generate: the `minLength` of
+   * every string it emits, multiplied through array counts. A floor, never an
+   * estimate of the typical size, so charging it cannot reject a schema whose
+   * output would fit.
+   */
+  chars: number;
 }
 
-const LEAF: Estimate = { height: 0, nodes: 1 };
+const LEAF: Estimate = { height: 0, nodes: 1, chars: 0 };
 
 type SchemaEdge = SchemaChild;
 
@@ -73,11 +81,9 @@ interface WalkState {
   edges: Map<JSONSchema7, SchemaEdge[]>;
   postOrder: JSONSchema7[];
   resolveRef: LocalRefResolver;
-  deepArray?: Violation;
   arraySize?: Violation;
   objectSize?: Violation;
   stringLength?: Violation;
-  memory?: Violation;
   composition?: Violation;
 }
 
@@ -131,14 +137,12 @@ export function validateSchema(
     );
   }
 
+  chargeGeneratingSchemas(schema, path, state);
+
   const normalizedCount = normalizeExplicitCount(explicitCount);
   const estimates = estimateSchemas(schema, state, normalizedCount);
   const root = estimates.get(schema) ?? LEAF;
-  const { maxDepth, maxFrames } = analyzeGraphPaths(
-    schema,
-    state,
-    normalizedCount,
-  );
+  const { maxDepth, maxFrames } = analyzeGraphPaths(schema, state);
 
   if (maxDepth > MAX_NESTING_DEPTH) {
     throw new ResourceLimitError(
@@ -153,31 +157,22 @@ export function validateSchema(
       resource: "schema_composition_depth",
       limit: MAX_COMPOSITION_FRAMES,
       actual: maxFrames,
+      path,
     };
-  }
-
-  for (const [node, estimate] of estimates) {
-    recordMemoryEstimate(
-      node,
-      estimate.height,
-      state,
-      node === schema ? normalizedCount : undefined,
-    );
   }
 
   for (const violation of [
     state.composition,
-    state.deepArray,
     state.arraySize,
     state.objectSize,
     state.stringLength,
-    state.memory,
   ]) {
     if (violation) {
       throw new ResourceLimitError(
         violation.resource,
         violation.limit,
         violation.actual,
+        violation.path,
       );
     }
   }
@@ -195,6 +190,14 @@ export function validateSchema(
       "generated_nodes",
       MAX_GENERATED_NODES,
       root.nodes,
+    );
+  }
+
+  if (root.chars > MAX_GENERATED_CHARS) {
+    throw new ResourceLimitError(
+      "generated_chars",
+      MAX_GENERATED_CHARS,
+      root.chars,
     );
   }
 }
@@ -246,9 +249,6 @@ function inspectSchemaGraph(
     }
 
     validateNode(frame.schema, frame.path, frame.typedChain);
-    recordDeclaredArrayLimit(frame.schema, state);
-    recordObjectLimit(frame.schema, state);
-    recordStringLimit(frame.schema, state);
 
     const edges = collectSchemaEdges(
       frame.schema,
@@ -274,6 +274,44 @@ function inspectSchemaGraph(
   }
 }
 
+/**
+ * Record per-node resource limits for every schema that can produce a value.
+ *
+ * The structural walk visits every subschema, including ones that never
+ * generate: `not` and `if` only test the value, and a `$defs` entry is
+ * generated only where a `$ref` reaches it. Charging their bounds rejected
+ * schemas whose output is tiny, so this pass starts again from the root and
+ * follows generating edges only — a definition reached through a `$ref` is
+ * still charged, one nothing references is not.
+ */
+function chargeGeneratingSchemas(
+  root: JSONSchema7,
+  rootPath: string,
+  state: WalkState,
+): void {
+  const charged = new Set<JSONSchema7>();
+  const pending: Array<{ schema: JSONSchema7; path: string }> = [
+    { schema: root, path: rootPath },
+  ];
+  while (pending.length > 0) {
+    const frame = pending.pop();
+    if (!frame || charged.has(frame.schema)) continue;
+    charged.add(frame.schema);
+
+    recordDeclaredArrayLimit(frame.schema, frame.path, state);
+    recordObjectLimit(frame.schema, frame.path, state);
+    recordStringLimit(frame.schema, frame.path, state);
+
+    const edges = state.edges.get(frame.schema) ?? [];
+    for (let index = edges.length - 1; index >= 0; index -= 1) {
+      const edge = edges[index];
+      if (edge.generates && !charged.has(edge.schema)) {
+        pending.push({ schema: edge.schema, path: edge.path });
+      }
+    }
+  }
+}
+
 function collectSchemaEdges(
   schema: JSONSchema7,
   path: string,
@@ -291,6 +329,7 @@ function collectSchemaEdges(
         depthCost: 0,
         frameCost: 1,
         typedContinuation: false,
+        generates: true,
       });
     }
   }
@@ -512,6 +551,11 @@ function resolveJsonPointer(
     : undefined;
 }
 
+/** How the root array is sized, which differs from every nested array. */
+interface RootSizing {
+  explicitCount: number | undefined;
+}
+
 function estimateSchemas(
   root: JSONSchema7,
   state: WalkState,
@@ -525,7 +569,7 @@ function estimateSchemas(
         schema,
         estimates,
         state.resolveRef,
-        schema === root ? explicitCount : undefined,
+        schema === root ? { explicitCount } : undefined,
       ),
     );
   }
@@ -536,7 +580,7 @@ function estimateSchema(
   schema: JSONSchema7,
   estimates: Map<JSONSchema7, Estimate>,
   resolveRef: LocalRefResolver,
-  explicitCount: number | undefined,
+  root: RootSizing | undefined,
 ): Estimate {
   const reference =
     typeof schema.$ref === "string"
@@ -548,6 +592,11 @@ function estimateSchema(
 
   let height = 0;
   let nodes = 1;
+  // Only a schema that can be nothing but a string is certain to emit one.
+  let chars =
+    schema.type === "string" && typeof schema.minLength === "number"
+      ? Math.max(0, schema.minLength)
+      : 0;
   const value = (definition: unknown): Estimate => {
     const child = estimateDefinition(definition, estimates);
     height = Math.max(height, child.height + 1);
@@ -560,12 +609,20 @@ function estimateSchema(
   };
 
   if (isArrayLike(schema)) {
-    const count = explicitCount ?? effectiveArrayCount(schema);
+    const count = root?.explicitCount ?? effectiveArrayCount(schema);
+    // json-schema-faker fills a nested array to maxItems, but the root array
+    // is resized per request (determineArrayCount) anywhere from minItems up,
+    // so only minItems — or the explicit count — is certain there.
+    const certainCount = root
+      ? (root.explicitCount ?? schema.minItems ?? 0)
+      : count;
     let itemNodes = 0;
+    let itemChars = 0;
     if (Array.isArray(schema.items)) {
       schema.items.forEach((item, index) => {
         const child = value(item);
         if (index < count) itemNodes = capped(itemNodes + child.nodes);
+        if (index < certainCount) itemChars = capped(itemChars + child.chars);
       });
       const additional =
         schema.additionalItems === undefined
@@ -574,19 +631,28 @@ function estimateSchema(
       itemNodes = capped(
         itemNodes + Math.max(0, count - schema.items.length) * additional.nodes,
       );
+      itemChars = capped(
+        itemChars +
+          Math.max(0, certainCount - schema.items.length) * additional.chars,
+      );
     } else if (schema.items !== undefined) {
-      itemNodes = capped(count * value(schema.items).nodes);
+      const item = value(schema.items);
+      itemNodes = capped(count * item.nodes);
+      itemChars = capped(certainCount * item.chars);
     } else {
       itemNodes = count;
     }
     if (schema.contains !== undefined) value(schema.contains);
     nodes = capped(nodes + itemNodes);
+    chars = capped(chars + itemChars);
   }
 
   if (isObjectLike(schema)) {
     const propertyNames = new Set(Object.keys(schema.properties ?? {}));
     for (const property of Object.values(schema.properties ?? {})) {
-      nodes = capped(nodes + value(property).nodes);
+      const estimate = value(property);
+      nodes = capped(nodes + estimate.nodes);
+      chars = capped(chars + estimate.chars);
     }
 
     let generatedProperty = LEAF;
@@ -616,7 +682,11 @@ function estimateSchema(
 
   if (schema.allOf) {
     for (const branch of schema.allOf) {
-      nodes = capped(nodes + Math.max(0, sibling(branch).nodes - 1));
+      const estimate = sibling(branch);
+      nodes = capped(nodes + Math.max(0, estimate.nodes - 1));
+      // A branch may constrain the same string this node does, so only the
+      // largest floor is certain.
+      chars = Math.max(chars, estimate.chars);
     }
   }
 
@@ -638,7 +708,10 @@ function estimateSchema(
   nodes = capped(nodes + Math.max(0, conditional));
   if (schema.not !== undefined) sibling(schema.not);
 
-  return { height, nodes };
+  // A value that may come out null carries none of its strings for certain.
+  const nullable =
+    hasType(schema, "null") || Reflect.get(schema, "schmockNullable") === true;
+  return { height, nodes, chars: nullable ? 0 : chars };
 }
 
 function estimateDefinition(
@@ -651,7 +724,6 @@ function estimateDefinition(
 function analyzeGraphPaths(
   root: JSONSchema7,
   state: WalkState,
-  explicitCount: number | undefined,
 ): { maxDepth: number; maxFrames: number } {
   const depths = new Map<JSONSchema7, number>([[root, 0]]);
   const frames = new Map<JSONSchema7, number>([[root, 0]]);
@@ -666,21 +738,6 @@ function analyzeGraphPaths(
 
     maxDepth = Math.max(maxDepth, depth);
     maxFrames = Math.max(maxFrames, frameCount);
-    const count =
-      schema === root && explicitCount !== undefined
-        ? explicitCount
-        : effectiveArrayCount(schema);
-    if (
-      isArrayLike(schema) &&
-      depth >= DEEP_NESTING_THRESHOLD &&
-      count >= LARGE_ARRAY_THRESHOLD
-    ) {
-      state.deepArray ??= {
-        resource: "deep_nesting_memory_risk",
-        limit: DEEP_NESTING_THRESHOLD * LARGE_ARRAY_THRESHOLD,
-        actual: depth * count,
-      };
-    }
 
     for (const edge of state.edges.get(schema) ?? []) {
       const childDepth = depth + edge.depthCost;
@@ -707,7 +764,7 @@ function validateNode(
     throw new SchemaValidationError(path, "Schema cannot be empty");
   }
 
-  const validTypes = [
+  const validTypes: readonly unknown[] = [
     "object",
     "array",
     "string",
@@ -716,15 +773,32 @@ function validateNode(
     "boolean",
     "null",
   ];
-  if (
-    schema.type &&
-    typeof schema.type === "string" &&
-    !validTypes.includes(schema.type)
-  ) {
+  // The union form (`type: ["string", "null"]`, which the OpenAPI normalizer
+  // emits for nullable schemas) is checked member by member, like the string
+  // form, so a typo fails here instead of on every request.
+  const declaredTypes: unknown[] = Array.isArray(schema.type)
+    ? schema.type
+    : schema.type
+      ? [schema.type]
+      : [];
+  for (const type of declaredTypes) {
+    if (!validTypes.includes(type)) {
+      throw new SchemaValidationError(
+        path,
+        `Invalid schema type: ${JSON.stringify(type)}`,
+        "Supported types are: object, array, string, number, integer, boolean, null",
+      );
+    }
+  }
+
+  // json-schema-faker understands a `chance` generator, but Schmock registers
+  // no chance instance: the keyword either fails every request with a
+  // misleading "both faker and chance" error or is silently ignored.
+  if (Reflect.get(schema, "chance") !== undefined) {
     throw new SchemaValidationError(
-      path,
-      `Invalid schema type: "${schema.type}"`,
-      "Supported types are: object, array, string, number, integer, boolean, null",
+      `${path}.chance`,
+      "chance generators are not supported",
+      'Use the faker keyword instead, for example "faker": "lorem.paragraph"',
     );
   }
 
@@ -740,7 +814,7 @@ function validateNode(
     );
   }
 
-  if (schema.type === "array") {
+  if (hasType(schema, "array")) {
     if (schema.items === null || schema.items === undefined) {
       throw new SchemaValidationError(
         `${path}.items`,
@@ -775,6 +849,9 @@ function validateNode(
             suggestion = ctx.suggestion;
         }
         throw new SchemaValidationError(`${path}.faker`, issue, suggestion);
+      }
+      if (error instanceof ResourceLimitError) {
+        throw withResourcePath(error, `${path}.faker`);
       }
       if (error instanceof Error) throw error;
       throw new Error(String(error));
@@ -843,6 +920,26 @@ const ARRAY_LIMIT = {
   resource: "array_size",
   limit: MAX_ARRAY_SIZE,
 } as const;
+
+/**
+ * Word, sentence and paragraph counts are not character counts, so each is
+ * held to MAX_STRING_LENGTH divided by the shortest text faker can emit for
+ * one unit, separator included. A count above the ceiling cannot fit in one
+ * string, and every count that could fit stays below it:
+ *   - a word is at least one letter and a separator ("a "): 2;
+ *   - a sentence is at least three one-letter words and a full stop, plus a
+ *     separator ("A b c. "): 7;
+ *   - a paragraph is at least three such sentences plus a separator: 21.
+ */
+function countLimit(shortestUnit: number) {
+  return {
+    resource: "string_length",
+    limit: Math.floor(MAX_STRING_LENGTH / shortestUnit),
+  } as const;
+}
+const WORD_COUNT = countLimit(2);
+const SENTENCE_COUNT = countLimit(7);
+const PARAGRAPH_COUNT = countLimit(21);
 
 /** Faker 10.5 methods whose arguments directly control allocation size. */
 const FAKER_ALLOCATION_POLICIES: Readonly<
@@ -915,7 +1012,7 @@ const FAKER_ALLOCATION_POLICIES: Readonly<
       argumentIndex: 0,
       direct: true,
       property: "count",
-      ...STRING_LIMIT,
+      ...WORD_COUNT,
     },
   ],
   "lorem.word": [
@@ -926,13 +1023,13 @@ const FAKER_ALLOCATION_POLICIES: Readonly<
       ...STRING_LIMIT,
     },
   ],
-  "lorem.words": [{ argumentIndex: 0, direct: true, ...STRING_LIMIT }],
-  "lorem.sentence": [{ argumentIndex: 0, direct: true, ...STRING_LIMIT }],
-  "lorem.sentences": [{ argumentIndex: 0, direct: true, ...STRING_LIMIT }],
-  "lorem.slug": [{ argumentIndex: 0, direct: true, ...STRING_LIMIT }],
-  "lorem.lines": [{ argumentIndex: 0, direct: true, ...STRING_LIMIT }],
-  "lorem.paragraph": [{ argumentIndex: 0, direct: true, ...STRING_LIMIT }],
-  "lorem.paragraphs": [{ argumentIndex: 0, direct: true, ...STRING_LIMIT }],
+  "lorem.words": [{ argumentIndex: 0, direct: true, ...WORD_COUNT }],
+  "lorem.sentence": [{ argumentIndex: 0, direct: true, ...WORD_COUNT }],
+  "lorem.sentences": [{ argumentIndex: 0, direct: true, ...SENTENCE_COUNT }],
+  "lorem.slug": [{ argumentIndex: 0, direct: true, ...WORD_COUNT }],
+  "lorem.lines": [{ argumentIndex: 0, direct: true, ...SENTENCE_COUNT }],
+  "lorem.paragraph": [{ argumentIndex: 0, direct: true, ...SENTENCE_COUNT }],
+  "lorem.paragraphs": [{ argumentIndex: 0, direct: true, ...PARAGRAPH_COUNT }],
   "lorem.text": [{ argumentIndex: 0, direct: true, ...STRING_LIMIT }],
   "internet.password": [
     {
@@ -979,6 +1076,7 @@ function validateFakerAllocationArguments(
       throw new ResourceLimitError(rule.resource, rule.limit, actual);
     }
   }
+  validateTemplateArguments(method, args);
 
   const pending = [...args];
   const seen = new Set<object>();
@@ -1019,6 +1117,305 @@ function maximumCardinality(value: unknown): number {
   return maximum;
 }
 
+/**
+ * Bound the faker helpers whose output size is set by a template or pattern
+ * rather than by a count, which no entry in FAKER_ALLOCATION_POLICIES covers.
+ */
+function validateTemplateArguments(method: string, args: unknown[]): void {
+  switch (method) {
+    case "helpers.fake":
+      validateFakeTemplates(args[0]);
+      return;
+    case "helpers.mustache":
+      validateMustacheTemplate(args[0], args[1]);
+      return;
+    case "helpers.fromRegExp":
+      if (typeof args[0] === "string") {
+        // faker honours both bounds of `{n,m}`, so the upper one is charged.
+        const { max } = regexLengthBounds(args[0]);
+        if (max > MAX_STRING_LENGTH) {
+          throw new ResourceLimitError("string_length", MAX_STRING_LENGTH, max);
+        }
+      }
+      return;
+    default:
+      return;
+  }
+}
+
+/**
+ * `helpers.fake` evaluates each `{{module.method(args)}}` placeholder with
+ * JSON-parsed arguments, so every placeholder is held to the same allocation
+ * policy as the method called directly.
+ */
+function validateFakeTemplates(templates: unknown): void {
+  const candidates = Array.isArray(templates) ? templates : [templates];
+  for (const template of candidates) {
+    if (typeof template !== "string") continue;
+    for (const match of template.matchAll(/\{\{(.+?)\}\}/g)) {
+      const expression = match[1];
+      const open = expression.indexOf("(");
+      const close = expression.lastIndexOf(")");
+      if (open === -1 || close < open) continue;
+      validateFakerAllocationArguments(
+        expression.slice(0, open).trim(),
+        parseFakeArguments(expression.slice(open + 1, close)),
+      );
+    }
+  }
+}
+
+/** Parse placeholder arguments the way faker does: JSON first, else a string. */
+function parseFakeArguments(text: string): unknown[] {
+  try {
+    const parsed: unknown = JSON.parse(`[${text}]`);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    // faker falls back to passing the raw text as a single string argument.
+  }
+  return [text];
+}
+
+/** `helpers.mustache` repeats each value once per `{{key}}` occurrence. */
+function validateMustacheTemplate(text: unknown, data: unknown): void {
+  if (typeof text !== "string" || !isRecordValue(data)) return;
+  let length = text.length;
+  for (const [key, value] of Object.entries(data)) {
+    const placeholder = `{{${key}}}`;
+    const occurrences = text.split(placeholder).length - 1;
+    if (occurrences === 0) continue;
+    const replacement =
+      typeof value === "string" ? value.length : String(value).length;
+    length = capped(length + occurrences * (replacement - placeholder.length));
+  }
+  if (length > MAX_STRING_LENGTH) {
+    throw new ResourceLimitError("string_length", MAX_STRING_LENGTH, length);
+  }
+}
+
+interface LengthBounds {
+  min: number;
+  max: number;
+}
+
+interface RegexFrame extends LengthBounds {
+  alternatives: LengthBounds[];
+  zeroWidth: boolean;
+}
+
+const EMPTY: LengthBounds = { min: 0, max: 0 };
+const SINGLE: LengthBounds = { min: 1, max: 1 };
+
+/**
+ * Length bounds of the strings a regular expression describes, from the
+ * repetition it states explicitly. `min` is the shortest match; `max` charges
+ * each quantifier's upper bound, and only the lower bound of an unbounded one
+ * (`*`, `+`, `{n,}`), since generators cap open repetition themselves. Anchors
+ * and lookarounds are zero-width and a backreference counts as empty, so `min`
+ * never overstates what a generator must produce.
+ */
+function regexLengthBounds(pattern: string): LengthBounds {
+  const frames: RegexFrame[] = [newRegexFrame(false)];
+  let index = 0;
+  while (index < pattern.length) {
+    const char = pattern[index];
+    const frame = frames[frames.length - 1];
+    if (char === "|") {
+      frame.alternatives.push({ min: frame.min, max: frame.max });
+      frame.min = 0;
+      frame.max = 0;
+      index += 1;
+      continue;
+    }
+    if (char === "(") {
+      const prefix = regexGroupPrefix(pattern, index);
+      frames.push(newRegexFrame(prefix.zeroWidth));
+      index += prefix.length;
+      continue;
+    }
+
+    let atom: LengthBounds;
+    if (char === ")") {
+      const group = frames.length > 1 ? frames.pop() : undefined;
+      atom = group ? closeRegexFrame(group) : SINGLE;
+      index += 1;
+    } else if (char === "[") {
+      index = skipRegexClass(pattern, index);
+      atom = SINGLE;
+    } else if (char === "\\") {
+      const escaped = readRegexEscape(pattern, index);
+      index = escaped.next;
+      atom = escaped.width;
+    } else if (char === "^" || char === "$") {
+      index += 1;
+      atom = EMPTY;
+    } else {
+      index += 1;
+      atom = SINGLE;
+    }
+
+    const quantifier = readRegexQuantifier(pattern, index);
+    if (quantifier) {
+      index = quantifier.next;
+      atom = {
+        min: multiplied(atom.min, quantifier.min),
+        max: multiplied(atom.max, quantifier.max),
+      };
+    }
+    const current = frames[frames.length - 1];
+    current.min = capped(current.min + atom.min);
+    current.max = capped(current.max + atom.max);
+  }
+
+  while (frames.length > 1) {
+    const group = frames.pop();
+    if (!group) break;
+    const bounds = closeRegexFrame(group);
+    const parent = frames[frames.length - 1];
+    parent.min = capped(parent.min + bounds.min);
+    parent.max = capped(parent.max + bounds.max);
+  }
+  return closeRegexFrame(frames[0]);
+}
+
+function newRegexFrame(zeroWidth: boolean): RegexFrame {
+  return { min: 0, max: 0, alternatives: [], zeroWidth };
+}
+
+function closeRegexFrame(frame: RegexFrame): LengthBounds {
+  if (frame.zeroWidth) return EMPTY;
+  let min = frame.min;
+  let max = frame.max;
+  for (const alternative of frame.alternatives) {
+    min = Math.min(min, alternative.min);
+    max = Math.max(max, alternative.max);
+  }
+  return { min, max };
+}
+
+function regexGroupPrefix(
+  pattern: string,
+  index: number,
+): { length: number; zeroWidth: boolean } {
+  for (const lookaround of ["(?<=", "(?<!", "(?=", "(?!"]) {
+    if (pattern.startsWith(lookaround, index)) {
+      return { length: lookaround.length, zeroWidth: true };
+    }
+  }
+  if (pattern.startsWith("(?<", index)) {
+    const end = pattern.indexOf(">", index);
+    return { length: end === -1 ? 3 : end - index + 1, zeroWidth: false };
+  }
+  if (pattern.startsWith("(?:", index)) return { length: 3, zeroWidth: false };
+  return { length: 1, zeroWidth: false };
+}
+
+function skipRegexClass(pattern: string, index: number): number {
+  let cursor = index + 1;
+  while (cursor < pattern.length) {
+    if (pattern[cursor] === "\\") {
+      cursor += 2;
+    } else if (pattern[cursor] === "]") {
+      return cursor + 1;
+    } else {
+      cursor += 1;
+    }
+  }
+  return pattern.length;
+}
+
+function readRegexEscape(
+  pattern: string,
+  index: number,
+): { next: number; width: LengthBounds } {
+  const escaped = pattern[index + 1];
+  const skipTo = (terminator: string, fallback: number): number => {
+    const end = pattern.indexOf(terminator, index + 2);
+    return end === -1 ? fallback : end + 1;
+  };
+  switch (escaped) {
+    case undefined:
+      return { next: index + 1, width: SINGLE };
+    case "b":
+    case "B":
+      return { next: index + 2, width: EMPTY };
+    case "k":
+      return pattern[index + 2] === "<"
+        ? { next: skipTo(">", index + 2), width: EMPTY }
+        : { next: index + 2, width: SINGLE };
+    case "u":
+      return pattern[index + 2] === "{"
+        ? { next: skipTo("}", index + 2), width: SINGLE }
+        : { next: index + 6, width: SINGLE };
+    case "x":
+      return { next: index + 4, width: SINGLE };
+    case "c":
+      return { next: index + 3, width: SINGLE };
+    case "p":
+    case "P":
+      return pattern[index + 2] === "{"
+        ? { next: skipTo("}", index + 2), width: SINGLE }
+        : { next: index + 2, width: SINGLE };
+    default:
+      if (escaped >= "1" && escaped <= "9") {
+        let next = index + 2;
+        while (next < pattern.length && /\d/.test(pattern[next])) next += 1;
+        return { next, width: EMPTY };
+      }
+      return { next: index + 2, width: SINGLE };
+  }
+}
+
+function readRegexQuantifier(
+  pattern: string,
+  index: number,
+): { min: number; max: number; next: number } | undefined {
+  const char = pattern[index];
+  let quantifier: { min: number; max: number; next: number } | undefined;
+  if (char === "*") quantifier = { min: 0, max: 0, next: index + 1 };
+  else if (char === "+") quantifier = { min: 1, max: 1, next: index + 1 };
+  else if (char === "?") quantifier = { min: 0, max: 1, next: index + 1 };
+  else if (char === "{") {
+    const counted = /\{(\d+)(,(\d*))?\}/y;
+    counted.lastIndex = index;
+    const match = counted.exec(pattern);
+    if (match) {
+      const min = Number(match[1]);
+      const max =
+        match[2] === undefined || match[3] === "" ? min : Number(match[3]);
+      quantifier = {
+        min,
+        max: Math.max(min, max),
+        next: index + match[0].length,
+      };
+    }
+  }
+  // A trailing `?` makes the quantifier lazy without changing its bounds.
+  if (quantifier && pattern[quantifier.next] === "?") quantifier.next += 1;
+  return quantifier;
+}
+
+function multiplied(left: number, right: number): number {
+  return left === 0 || right === 0 ? 0 : capped(left * right);
+}
+
+/** Re-throw a resource-limit breach at the schema path that caused it. */
+function withResourcePath(
+  error: ResourceLimitError,
+  path: string,
+): ResourceLimitError {
+  const context = error.context;
+  if (!isRecordValue(context)) return error;
+  const { resource, limit, actual } = context;
+  if (typeof resource !== "string" || typeof limit !== "number") return error;
+  return new ResourceLimitError(
+    resource,
+    limit,
+    typeof actual === "number" ? actual : undefined,
+    path,
+  );
+}
+
 function isArrayLike(schema: JSONSchema7): boolean {
   return (
     hasType(schema, "array") ||
@@ -1053,18 +1450,27 @@ function normalizeExplicitCount(count: number | undefined): number | undefined {
  * a floor json-schema-faker has to reach, so a large one is exactly as
  * expensive.
  */
-function recordDeclaredArrayLimit(schema: JSONSchema7, state: WalkState): void {
+function recordDeclaredArrayLimit(
+  schema: JSONSchema7,
+  path: string,
+  state: WalkState,
+): void {
   const declared = Math.max(schema.minItems ?? 0, schema.maxItems ?? 0);
   if (declared > MAX_ARRAY_SIZE) {
     state.arraySize ??= {
       resource: "array_max_items",
       limit: MAX_ARRAY_SIZE,
       actual: declared,
+      path,
     };
   }
 }
 
-function recordObjectLimit(schema: JSONSchema7, state: WalkState): void {
+function recordObjectLimit(
+  schema: JSONSchema7,
+  path: string,
+  state: WalkState,
+): void {
   if (!isObjectLike(schema)) return;
 
   const properties = new Set(Object.keys(schema.properties ?? {}));
@@ -1080,14 +1486,25 @@ function recordObjectLimit(schema: JSONSchema7, state: WalkState): void {
       resource: "object_properties",
       limit: MAX_OBJECT_PROPERTIES,
       actual,
+      path,
     };
   }
 }
 
-function recordStringLimit(schema: JSONSchema7, state: WalkState): void {
+function recordStringLimit(
+  schema: JSONSchema7,
+  path: string,
+  state: WalkState,
+): void {
   if (canGenerateString(schema)) {
     for (const declared of [schema.minLength, schema.maxLength]) {
-      if (declared !== undefined) recordStringViolation(declared, state);
+      if (declared !== undefined) recordStringViolation(declared, path, state);
+    }
+    // json-schema-faker honours a pattern's explicit repetition floor
+    // (`a{70000}`) and caps its upper bounds, so the shortest match is what a
+    // pattern forces it to generate.
+    if (typeof schema.pattern === "string" && isValidRegex(schema.pattern)) {
+      recordStringViolation(regexLengthBounds(schema.pattern).min, path, state);
     }
   }
 
@@ -1097,7 +1514,16 @@ function recordStringLimit(schema: JSONSchema7, state: WalkState): void {
     schema.enum,
     Reflect.get(schema, "template"),
   ]) {
-    recordStringViolation(largestStringLength(fixed), state);
+    recordStringViolation(largestStringLength(fixed), path, state);
+  }
+}
+
+function isValidRegex(pattern: string): boolean {
+  try {
+    new RegExp(pattern);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -1111,7 +1537,11 @@ function canGenerateString(schema: JSONSchema7): boolean {
   return true;
 }
 
-function recordStringViolation(actual: number, state: WalkState): void {
+function recordStringViolation(
+  actual: number,
+  path: string,
+  state: WalkState,
+): void {
   if (
     actual > MAX_STRING_LENGTH &&
     (!state.stringLength || actual > state.stringLength.actual)
@@ -1120,6 +1550,7 @@ function recordStringViolation(actual: number, state: WalkState): void {
       resource: "string_length",
       limit: MAX_STRING_LENGTH,
       actual,
+      path,
     };
   }
 }
@@ -1155,25 +1586,6 @@ function isObjectLike(schema: JSONSchema7): boolean {
   );
 }
 
-/** Deep sub-trees combined with large arrays are a memory risk. */
-function recordMemoryEstimate(
-  schema: JSONSchema7,
-  height: number,
-  state: WalkState,
-  explicitCount?: number,
-): void {
-  if (!isArrayLike(schema)) return;
-
-  const count = explicitCount ?? effectiveArrayCount(schema);
-  if (height > DEEP_NESTING_THRESHOLD && count > LARGE_ARRAY_THRESHOLD) {
-    state.memory ??= {
-      resource: "memory_estimation",
-      limit: DEEP_NESTING_THRESHOLD * LARGE_ARRAY_THRESHOLD,
-      actual: height * count,
-    };
-  }
-}
-
 /** Keep node estimates finite and comparable on pathological schemas. */
 function capped(value: number): number {
   return Math.min(value, Number.MAX_SAFE_INTEGER);
@@ -1203,7 +1615,18 @@ export function validateFakerMethod(fakerMethod: string): void {
   const faker = validationFaker;
   let current: unknown = faker;
   for (const part of parts) {
-    if (current && typeof current === "object" && part in current) {
+    // `in` walks the prototype chain, so without this guard `person.toString`
+    // or `helpers.hasOwnProperty` would resolve to Object.prototype and pass.
+    // Faker's own methods live on its module classes, never on
+    // Object.prototype, and none of its public API starts with `_`.
+    const inherited =
+      Object.hasOwn(Object.prototype, part) || part.startsWith("_");
+    if (
+      current &&
+      typeof current === "object" &&
+      !inherited &&
+      part in current
+    ) {
       current = Reflect.get(current, part);
     } else {
       throw new SchemaValidationError(

@@ -3,7 +3,9 @@ import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
 import {
   type GenerateOptions,
   generate,
+  generateSync,
   type JsonSchema,
+  type Random,
 } from "json-schema-faker-private";
 import { DETERMINISTIC_REF_DATE, JSF_MAX_DEPTH } from "./constants.js";
 import { assertOutputWithinLimits } from "./output-limits.js";
@@ -14,6 +16,65 @@ export { DETERMINISTIC_REF_DATE };
 
 const MAX_GENERATION_SEED = 2_147_483_647;
 type JsfObjectSchema = Exclude<JsonSchema, boolean>;
+
+/**
+ * State shared by one normalization pass. `patternKeySeed` is set only when
+ * normalizing for generation: it seeds the keys invented for
+ * `patternProperties`, so without it no keys are invented and the output
+ * depends on the schema alone.
+ */
+interface NormalizeContext {
+  normalizedSchemas: Map<JSONSchema7, JsfObjectSchema>;
+  patternKeySeed?: number;
+  patternKeyCount: number;
+}
+
+export interface NormalizeSchemaOptions {
+  /** Seed for the keys generated to satisfy `patternProperties`. */
+  patternKeySeed?: number;
+}
+
+/**
+ * json-schema-faker draws numbers from [-1000, 1000] and replaces only the side
+ * a schema declares, so a lone `minimum: 1900` becomes the inverted range
+ * [1900, 1000] and every value lands below the minimum.
+ */
+const JSF_DEFAULT_NUMBER_BOUND = 1000;
+
+const BASE64_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/**
+ * json-schema-faker has no generator for OpenAPI's `byte` format and emits a
+ * word whose length is rarely a multiple of four, which ajv-formats rejects.
+ * Encode 1-48 seeded random bytes as padded base64 instead.
+ */
+function generateBase64(random: Random): string {
+  const bytes = Array.from({ length: random.int(1, 48) }, () =>
+    random.int(0, 255),
+  );
+  let encoded = "";
+  for (let index = 0; index < bytes.length; index += 3) {
+    const remaining = bytes.length - index;
+    const chunk =
+      (bytes[index] << 16) |
+      ((remaining > 1 ? bytes[index + 1] : 0) << 8) |
+      (remaining > 2 ? bytes[index + 2] : 0);
+    encoded += BASE64_ALPHABET[(chunk >> 18) & 63];
+    encoded += BASE64_ALPHABET[(chunk >> 12) & 63];
+    encoded += remaining > 1 ? BASE64_ALPHABET[(chunk >> 6) & 63] : "=";
+    encoded += remaining > 2 ? BASE64_ALPHABET[chunk & 63] : "=";
+  }
+  return encoded;
+}
+
+/**
+ * Formats Schmock generates itself, passed per call so json-schema-faker's
+ * module-global registry is never touched.
+ */
+const SCHMOCK_FORMATS: Readonly<Record<string, (random: Random) => string>> = {
+  byte: generateBase64,
+};
 
 /**
  * Keywords Schmock deliberately hands to json-schema-faker. Unknown keywords
@@ -282,20 +343,20 @@ export function createSeededRandom(seed: number): () => number {
 
 function normalizeDefinitionForJsf(
   definition: JSONSchema7Definition,
-  normalizedSchemas: Map<JSONSchema7, JsfObjectSchema>,
+  context: NormalizeContext,
 ): JsonSchema {
   return typeof definition === "boolean"
     ? definition
-    : normalizeSchemaNodeForJsf(definition, normalizedSchemas);
+    : normalizeSchemaNodeForJsf(definition, context);
 }
 
 function normalizeUnknownDefinitionForJsf(
   definition: unknown,
-  normalizedSchemas: Map<JSONSchema7, JsfObjectSchema>,
+  context: NormalizeContext,
 ): JsonSchema | undefined {
   if (typeof definition === "boolean") return definition;
   return isSchemaObject(definition)
-    ? normalizeSchemaNodeForJsf(definition, normalizedSchemas)
+    ? normalizeSchemaNodeForJsf(definition, context)
     : undefined;
 }
 
@@ -305,12 +366,12 @@ function isSchemaObject(value: unknown): value is JSONSchema7 {
 
 function normalizeDefinitionMap(
   definitions: Record<string, JSONSchema7Definition>,
-  normalizedSchemas: Map<JSONSchema7, JsfObjectSchema>,
+  context: NormalizeContext,
 ): Record<string, JsonSchema> {
   return Object.fromEntries(
     Object.entries(definitions).map(([key, definition]) => [
       key,
-      normalizeDefinitionForJsf(definition, normalizedSchemas),
+      normalizeDefinitionForJsf(definition, context),
     ]),
   );
 }
@@ -319,68 +380,72 @@ function normalizeDefinitionMap(
  * json-schema-faker consumes tuple schemas through the 2020-12 `prefixItems`
  * keyword. Convert Draft 7 tuple `items` recursively at the library boundary.
  */
-export function normalizeSchemaForJsf(schema: JSONSchema7): JsfObjectSchema {
-  return normalizeSchemaNodeForJsf(schema, new Map());
+export function normalizeSchemaForJsf(
+  schema: JSONSchema7,
+  options: NormalizeSchemaOptions = {},
+): JsfObjectSchema {
+  return normalizeSchemaNodeForJsf(schema, {
+    normalizedSchemas: new Map(),
+    patternKeySeed: options.patternKeySeed,
+    patternKeyCount: 0,
+  });
 }
 
 function normalizeSchemaNodeForJsf(
   schema: JSONSchema7,
-  normalizedSchemas: Map<JSONSchema7, JsfObjectSchema>,
+  context: NormalizeContext,
 ): JsfObjectSchema {
-  const existing = normalizedSchemas.get(schema);
+  const existing = context.normalizedSchemas.get(schema);
   if (existing) return existing;
 
   const normalized: JsfObjectSchema = {};
-  normalizedSchemas.set(schema, normalized);
+  context.normalizedSchemas.set(schema, normalized);
   for (const [key, value] of Object.entries(schema)) {
     if (JSF_SCHEMA_KEYWORDS.has(key)) {
       normalized[key] = value;
     }
   }
+  closeLoneNumericBound(schema, normalized);
 
   if (schema.properties) {
-    normalized.properties = normalizeDefinitionMap(
-      schema.properties,
-      normalizedSchemas,
-    );
+    normalized.properties = normalizeDefinitionMap(schema.properties, context);
   }
 
   if (schema.definitions) {
     normalized.definitions = normalizeDefinitionMap(
       schema.definitions,
-      normalizedSchemas,
+      context,
     );
   }
 
   if (schema.$defs) {
-    normalized.$defs = normalizeDefinitionMap(schema.$defs, normalizedSchemas);
+    normalized.$defs = normalizeDefinitionMap(schema.$defs, context);
   }
 
   if (schema.patternProperties) {
-    normalized.patternProperties = normalizeDefinitionMap(
+    const patternProperties = normalizeDefinitionMap(
       schema.patternProperties,
-      normalizedSchemas,
+      context,
     );
+    normalized.patternProperties = patternProperties;
+    addPatternPropertyKeys({ schema, normalized, patternProperties, context });
   }
 
   if (Array.isArray(schema.items)) {
     normalized.prefixItems = schema.items.map((definition) =>
-      normalizeDefinitionForJsf(definition, normalizedSchemas),
+      normalizeDefinitionForJsf(definition, context),
     );
     normalized.items =
       schema.additionalItems === undefined
         ? true
-        : normalizeDefinitionForJsf(schema.additionalItems, normalizedSchemas);
+        : normalizeDefinitionForJsf(schema.additionalItems, context);
     delete normalized.additionalItems;
   } else if (schema.items !== undefined) {
-    normalized.items = normalizeDefinitionForJsf(
-      schema.items,
-      normalizedSchemas,
-    );
+    normalized.items = normalizeDefinitionForJsf(schema.items, context);
     if (schema.additionalItems !== undefined) {
       normalized.additionalItems = normalizeDefinitionForJsf(
         schema.additionalItems,
-        normalizedSchemas,
+        context,
       );
     }
   }
@@ -390,7 +455,7 @@ function normalizeSchemaNodeForJsf(
     normalized.prefixItems = prefixItems.flatMap((definition) => {
       const normalizedDefinition = normalizeUnknownDefinitionForJsf(
         definition,
-        normalizedSchemas,
+        context,
       );
       return normalizedDefinition === undefined ? [] : [normalizedDefinition];
     });
@@ -400,7 +465,7 @@ function normalizeSchemaNodeForJsf(
     const definitions = schema[keyword];
     if (definitions) {
       normalized[keyword] = definitions.map((definition) =>
-        normalizeDefinitionForJsf(definition, normalizedSchemas),
+        normalizeDefinitionForJsf(definition, context),
       );
     }
   }
@@ -408,7 +473,7 @@ function normalizeSchemaNodeForJsf(
   if (schema.additionalProperties !== undefined) {
     normalized.additionalProperties = normalizeDefinitionForJsf(
       schema.additionalProperties,
-      normalizedSchemas,
+      context,
     );
   }
 
@@ -422,10 +487,7 @@ function normalizeSchemaNodeForJsf(
   ] as const) {
     const definition = schema[keyword];
     if (definition !== undefined) {
-      normalized[keyword] = normalizeDefinitionForJsf(
-        definition,
-        normalizedSchemas,
-      );
+      normalized[keyword] = normalizeDefinitionForJsf(definition, context);
     }
   }
 
@@ -435,14 +497,14 @@ function normalizeSchemaNodeForJsf(
         key,
         Array.isArray(dependency)
           ? [...dependency]
-          : normalizeDefinitionForJsf(dependency, normalizedSchemas),
+          : normalizeDefinitionForJsf(dependency, context),
       ]),
     );
   }
 
   const contentSchema = normalizeUnknownDefinitionForJsf(
     Reflect.get(schema, "contentSchema"),
-    normalizedSchemas,
+    context,
   );
   if (contentSchema !== undefined) normalized.contentSchema = contentSchema;
 
@@ -456,7 +518,7 @@ function normalizeSchemaNodeForJsf(
       Object.entries(dependentSchemas).flatMap(([key, definition]) => {
         const normalizedDefinition = normalizeUnknownDefinitionForJsf(
           definition,
-          normalizedSchemas,
+          context,
         );
         return normalizedDefinition === undefined
           ? []
@@ -470,13 +532,155 @@ function normalizeSchemaNodeForJsf(
     normalized.containsAll = containsAll.flatMap((definition) => {
       const normalizedDefinition = normalizeUnknownDefinitionForJsf(
         definition,
-        normalizedSchemas,
+        context,
       );
       return normalizedDefinition === undefined ? [] : [normalizedDefinition];
     });
   }
 
   return normalized;
+}
+
+/** Lower and upper numeric bounds, from the inclusive or numeric exclusive form. */
+function numericBound(
+  inclusive: unknown,
+  exclusive: unknown,
+  pick: (left: number, right: number) => number,
+): number | undefined {
+  const bounds = [inclusive, exclusive].filter(
+    (bound): bound is number => typeof bound === "number",
+  );
+  if (bounds.length === 0) return undefined;
+  return bounds.reduce(pick);
+}
+
+/**
+ * Give a lone bound past json-schema-faker's default range a finite partner, so
+ * the range it draws from is not inverted. Only the JSF copy changes; schemas
+ * with `multipleOf` take a separate JSF path that already honours the bound.
+ */
+function closeLoneNumericBound(
+  schema: JSONSchema7,
+  normalized: JsfObjectSchema,
+): void {
+  if (schema.multipleOf !== undefined) return;
+  const lower = numericBound(schema.minimum, schema.exclusiveMinimum, Math.max);
+  const upper = numericBound(schema.maximum, schema.exclusiveMaximum, Math.min);
+  if (
+    lower !== undefined &&
+    upper === undefined &&
+    lower >= JSF_DEFAULT_NUMBER_BOUND
+  ) {
+    normalized.maximum = lower + JSF_DEFAULT_NUMBER_BOUND;
+  } else if (
+    upper !== undefined &&
+    lower === undefined &&
+    upper <= -JSF_DEFAULT_NUMBER_BOUND
+  ) {
+    normalized.minimum = upper - JSF_DEFAULT_NUMBER_BOUND;
+  }
+}
+
+interface PatternKeyRequest {
+  schema: JSONSchema7;
+  normalized: JsfObjectSchema;
+  patternProperties: Record<string, JsonSchema>;
+  context: NormalizeContext;
+}
+
+/** Tries per invented key before a pattern is given up on. */
+const PATTERN_KEY_ATTEMPTS = 8;
+
+/** A string matching `pattern` from JSF's own regex generator, if it can. */
+function generatePatternKey(pattern: string, seed: number): string | undefined {
+  try {
+    const generated = generateSync({ type: "string", pattern }, { seed });
+    return typeof generated === "string" ? generated : undefined;
+  } catch {
+    // A pattern JSF cannot generate from gets no invented key.
+    return undefined;
+  }
+}
+
+function compilePattern(source: string): RegExp | undefined {
+  for (const flags of ["u", ""]) {
+    try {
+      return new RegExp(source, flags);
+    } catch {
+      // Try the next flag set; a pattern neither accepts is skipped.
+    }
+  }
+  return undefined;
+}
+
+/**
+ * json-schema-faker never emits a key that matches `patternProperties`: a
+ * pattern-keyed map comes out empty, and when `minProperties` forces extra keys
+ * it invents ones that match no pattern, which `additionalProperties: false`
+ * then forbids. Declare seeded keys that match exactly one pattern as ordinary
+ * properties, enough to reach `minProperties` (at least one) without passing
+ * `maxProperties`, so JSF generates each value from its pattern's schema.
+ */
+function addPatternPropertyKeys(request: PatternKeyRequest): void {
+  const { schema, normalized, patternProperties, context } = request;
+  const seed = context.patternKeySeed;
+  if (seed === undefined) return;
+
+  const patterns = Object.keys(patternProperties).flatMap((source) => {
+    const regex = compilePattern(source);
+    return regex ? [{ source, regex }] : [];
+  });
+  if (patterns.length === 0) return;
+
+  const properties: Record<string, JsonSchema> = {
+    ...(isSchemaObject(normalized.properties) ? normalized.properties : {}),
+  };
+  const declared = Object.keys(properties).length;
+  const wanted = Math.max(1, (schema.minProperties ?? 0) - declared);
+  const room =
+    schema.maxProperties === undefined
+      ? wanted
+      : Math.max(0, schema.maxProperties - declared);
+  const target = Math.min(wanted, room);
+
+  const added: string[] = [];
+  for (let slot = 0; slot < target; slot += 1) {
+    const { source } = patterns[slot % patterns.length];
+    for (let attempt = 0; attempt < PATTERN_KEY_ATTEMPTS; attempt += 1) {
+      context.patternKeyCount += 1;
+      const generated = generatePatternKey(
+        source,
+        (seed + context.patternKeyCount * 7919) % MAX_GENERATION_SEED,
+      );
+      if (generated === undefined) break;
+      // A pattern with no end anchor ("^x_") yields one string; a suffix keeps
+      // later keys distinct while still matching.
+      const key = attempt === 0 ? generated : `${generated}${attempt}`;
+      const matching = patterns.filter((pattern) => pattern.regex.test(key));
+      if (
+        Object.hasOwn(properties, key) ||
+        matching.length !== 1 ||
+        matching[0].source !== source
+      ) {
+        continue;
+      }
+      Object.defineProperty(properties, key, {
+        value: patternProperties[source],
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      added.push(key);
+      break;
+    }
+  }
+  if (added.length === 0) return;
+
+  normalized.properties = properties;
+  normalized.required = [
+    ...(Array.isArray(normalized.required) ? normalized.required : []),
+    ...added,
+  ];
 }
 
 /**
@@ -502,17 +706,20 @@ export async function generateWithJsf(
     alwaysFakeOptionals: true,
     useDefaultValue: true,
     failOnInvalidTypes: false,
-    // Start from the built-in formats only: json-schema-faker's format
-    // registry is module-global, so a consumer's own registration would
-    // otherwise change Schmock's generation.
-    formats: {},
+    // Start from the built-in formats plus Schmock's own: json-schema-faker's
+    // format registry is module-global, so a consumer's own registration
+    // would otherwise change Schmock's generation.
+    formats: { ...SCHMOCK_FORMATS },
     extensions: { faker: createFakerInstance(seed, refDate) },
   };
 
   // Cloned on the way out so nothing generated stays aliased to the schema, to
   // json-schema-faker's internals, or to a sibling item built from the same
   // sub-schema.
-  const generated = await generate(normalizeSchemaForJsf(schema), options);
+  const generated = await generate(
+    normalizeSchemaForJsf(schema, { patternKeySeed: seed }),
+    options,
+  );
   assertOutputWithinLimits(generated);
   return cloneOwned(generated);
 }

@@ -196,7 +196,7 @@ describe("SchmockProvider", () => {
     expect(globalThis.fetch).toBe(savedFetch);
   });
 
-  it("does not mutate fetch when provider rendering is abandoned", () => {
+  it("restores fetch when provider rendering is abandoned", async () => {
     const mock = schmock();
     const savedFetch = globalThis.fetch;
 
@@ -211,6 +211,9 @@ describe("SchmockProvider", () => {
         </SchmockProvider>,
       ),
     ).toThrow("render failed");
+    // The lease is taken while rendering, so render-phase fetches are
+    // intercepted; a render that never commits releases it a microtask later.
+    await Promise.resolve();
     expect(globalThis.fetch).toBe(savedFetch);
   });
 });

@@ -40,17 +40,16 @@ if ! run_check "Tests & TypeCheck" "bun run test:all:quiet"; then
     echo "${RED}💡 Debug with: bun run test (faster) or bun run typecheck${NC}"
 fi
 
-# Run stress tests (throughput benchmarks)
-if ! run_check "Benchmarks" "bun run bench"; then
-    FAILED=1
-    echo "${RED}💡 Debug with: bun run bench${NC}"
-fi
+# The throughput benchmark (`bun run bench`) is not run here: it has no
+# thresholds, so it could only add latency without enforcing anything.
 
-# Check if any changes need to be staged after linting
+# The checks above ran against the working tree, not the index. Refuse when the
+# two differ, because what passed is then not what is being committed. (Lint
+# runs `biome check` without --write, so these changes are the developer's own.)
 if [ $FAILED -eq 0 ]; then
     if ! git diff --quiet; then
-        echo "${YELLOW}⚠️  Linting may have fixed some files. Please review and stage any changes.${NC}"
-        echo "${YELLOW}   Run: git add . && git commit${NC}"
+        echo "${YELLOW}⚠️  You have unstaged changes. The checks ran against them, but they are not part of this commit.${NC}"
+        echo "${YELLOW}   Stage them (git add) or stash them, then commit again.${NC}"
         exit 1
     fi
 fi

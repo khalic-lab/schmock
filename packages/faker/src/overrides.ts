@@ -73,69 +73,129 @@ export function applyOverrides(
 
   const result = structuredClone(data);
 
+  applyOverridesInto(result, overrides, { params, state, query });
+  return result;
+}
+
+function applyOverridesInto(
+  container: Container,
+  overrides: Record<string, unknown>,
+  context: TemplateContext,
+): void {
   for (const [key, value] of Object.entries(overrides)) {
     if (DANGEROUS_KEYS.has(key)) continue;
     // Handle nested paths like "data.id" or "pagination.page"
     if (key.includes(".")) {
-      setNestedProperty(result, key, value, { params, state, query });
+      setNestedProperty(container, key, value, context);
     } else {
-      // Handle flat keys and nested objects
-      if (isRecord(value)) {
-        // Recursively apply nested overrides
-        if (isRecord(result[key])) {
-          result[key] = applyOverrides(
-            result[key],
-            value,
-            params,
-            state,
-            query,
-          );
-        } else {
-          result[key] = applyOverrides({}, value, params, state, query);
-        }
-      } else if (typeof value === "string" && value.includes("{{")) {
-        // Template processing
-        result[key] = processTemplate(value, { params, state, query });
-      } else {
-        result[key] = cloneOwned(value);
-      }
+      applyOverrideEntry(container, key, value, context);
     }
   }
+}
 
-  return result;
+/** A generated container an override path can step into. */
+type Container = Record<string, unknown> | unknown[];
+
+/** A canonical, in-bounds array index: "0", "12" — never "01", "-1" or "1.5". */
+function arrayIndex(items: unknown[], segment: string): number | undefined {
+  if (!/^(0|[1-9]\d*)$/.test(segment)) return undefined;
+  const index = Number(segment);
+  return index < items.length ? index : undefined;
+}
+
+/**
+ * Resolve the slot `segment` names in `container`, or undefined when the
+ * override cannot address it: an array only takes an existing index, so an
+ * override never grows, holes or re-types a generated array.
+ */
+function slotOf(
+  container: Container,
+  segment: string,
+): { read: () => unknown; write: (value: unknown) => void } | undefined {
+  if (DANGEROUS_KEYS.has(segment)) return undefined;
+  if (Array.isArray(container)) {
+    const index = arrayIndex(container, segment);
+    if (index === undefined) return undefined;
+    return {
+      read: () => container[index],
+      write: (value) => {
+        container[index] = value;
+      },
+    };
+  }
+  return {
+    read: () => container[segment],
+    write: (value) => {
+      container[segment] = value;
+    },
+  };
+}
+
+function resolveLeaf(value: unknown, context: TemplateContext): unknown {
+  if (typeof value === "string" && value.includes("{{")) {
+    return processTemplate(value, context);
+  }
+  return cloneOwned(value);
+}
+
+/**
+ * Apply one flat-key override. An object value is merged into the generated
+ * value it names: a generated object key by key, a generated array index by
+ * index. A missing (or null) value becomes a new object; a generated primitive
+ * is left alone rather than replaced by an object.
+ */
+function applyOverrideEntry(
+  container: Container,
+  key: string,
+  value: unknown,
+  context: TemplateContext,
+): void {
+  const slot = slotOf(container, key);
+  if (!slot) return;
+  if (!isRecord(value)) {
+    slot.write(resolveLeaf(value, context));
+    return;
+  }
+  const existing = slot.read();
+  if (isRecord(existing) || Array.isArray(existing)) {
+    applyOverridesInto(existing, value, context);
+  } else if (existing === undefined || existing === null) {
+    const created: Record<string, unknown> = {};
+    applyOverridesInto(created, value, context);
+    slot.write(created);
+  }
 }
 
 function setNestedProperty(
-  obj: Record<string, unknown>,
+  container: Container,
   path: string,
   value: unknown,
   context: TemplateContext,
 ): void {
   const parts = path.split(".");
-  let current: Record<string, unknown> = obj;
+  let current: Container = container;
 
-  // Navigate to the parent of the target property
+  // Navigate to the parent of the target property. Arrays are entered by
+  // index; a missing step becomes an object; a primitive (or an index the
+  // array does not have) stops the override instead of re-typing the value.
   for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i];
-    if (DANGEROUS_KEYS.has(part)) return;
-    const next = current[part];
-    if (isRecord(next)) {
+    const slot = slotOf(current, parts[i]);
+    if (!slot) return;
+    const next = slot.read();
+    if (isRecord(next) || Array.isArray(next)) {
       current = next;
-    } else {
+    } else if (next === undefined || next === null) {
       const nested: Record<string, unknown> = {};
-      current[part] = nested;
+      slot.write(nested);
       current = nested;
+    } else {
+      return;
     }
   }
 
   // Set the final property
-  const finalKey = parts[parts.length - 1];
-  if (DANGEROUS_KEYS.has(finalKey)) return;
-  if (typeof value === "string" && value.includes("{{")) {
-    current[finalKey] = processTemplate(value, context);
-  } else {
-    current[finalKey] = cloneOwned(value);
-  }
+  const slot = slotOf(current, parts[parts.length - 1]);
+  if (slot) slot.write(resolveLeaf(value, context));
 }
 
 interface TemplateContext {

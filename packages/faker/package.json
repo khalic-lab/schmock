@@ -37,16 +37,14 @@
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "test:bdd": "vitest run --config vitest.config.bdd.ts",
-    "lint": "biome check src/*.ts",
-    "lint:fix": "biome check --write --unsafe src/*.ts",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write --unsafe src/",
     "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
   },
   "license": "MIT",
   "dependencies": {
     "@types/json-schema": "^7.0.15",
-    "@faker-js/faker": "^10.5.0",
-    "json-schema-faker": "^0.6.2",
-    "json-schema-faker-private": "https://registry.npmjs.org/json-schema-faker/-/json-schema-faker-0.6.3.tgz"
+    "@faker-js/faker": "^10.5.0"
   },
   "peerDependencies": {
     "@schmock/core": "^2.4.1"
@@ -54,6 +52,8 @@
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",
     "@types/node": "^26.1.0",
+    "json-schema-faker": "^0.6.2",
+    "json-schema-faker-private": "npm:json-schema-faker@0.6.3",
     "vitest": "^4.1.9"
   }
 }

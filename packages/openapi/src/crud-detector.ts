@@ -1,9 +1,13 @@
 import type * as Schmock from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { collectSchemaProperties, findArrayProperty } from "./generators.js";
+import { type AccessModes, collectAccessModes } from "./normalizer.js";
 import type { ParsedPath } from "./parser.js";
-import { findSuccessResponse } from "./response-status.js";
-import { hasType, isRecord, toJsonSchema } from "./utils.js";
+import { segmentParamName } from "./path-template.js";
+import {
+  CREATE_SUCCESS_STATUS_ORDER,
+  findSuccessResponse,
+} from "./response-status.js";
 
 export type CrudOperation = "list" | "create" | "read" | "update" | "delete";
 
@@ -54,6 +58,18 @@ export interface CrudResource {
   routes: CrudRouteDescriptor[];
   /** Response schema for the resource item */
   schema?: JSONSchema7;
+  /**
+   * Property names the item schemas marked `readOnly` / `writeOnly` before
+   * normalization erased the flags. Create and update ignore request values
+   * for both, and never store or return a `writeOnly` one.
+   */
+  accessModes?: AccessModes;
+  /**
+   * A lone item GET: nothing is declared on the collection path and the item
+   * path offers nothing but a read, so no request can ever add a row. Served
+   * from stored rows when the scope has any, from the schema otherwise.
+   */
+  lookupOnly?: boolean;
 }
 
 interface DetectionResult {
@@ -138,8 +154,10 @@ interface BuildResourceResult {
 function itemIdParam(basePath: string, path: string): string | undefined {
   if (!path.startsWith(basePath)) return undefined;
   const segments = path.slice(basePath.length).split("/").filter(Boolean);
-  if (segments.length !== 1 || !segments[0].startsWith(":")) return undefined;
-  return segments[0].slice(1);
+  if (segments.length !== 1) return undefined;
+  // Exactly one parameter: `:job\:cancel` (a custom method) is not an item
+  // path, and a quoted `:"user.id"` is keyed by the name inside the quotes.
+  return segmentParamName(segments[0]);
 }
 
 function buildResource(
@@ -159,11 +177,15 @@ function buildResource(
     }
   }
 
-  // Pass 2 — classify each declared method, preserving iteration order so the
-  // `schema = schema ?? …` fallback chain resolves exactly as it did before.
+  // Pass 2 — classify each declared method. The list GET's item schema and the
+  // item GET's schema are both collected; whichever path is declared first
+  // supplies the resource schema, exactly as the historical
+  // `schema = schema ?? …` chain resolved it.
   const routes: CrudRouteDescriptor[] = [];
   const leftovers: ParsedPath[] = [];
-  let schema: JSONSchema7 | undefined;
+  let listSchema: JSONSchema7 | undefined;
+  let readSchema: JSONSchema7 | undefined;
+  let listFirst = false;
 
   const classify = (p: ParsedPath, op: CrudOperation) => {
     routes.push({
@@ -171,29 +193,15 @@ function buildResource(
       method: p.method,
       path: p.path,
       parsed: p,
-      meta: buildOperationMeta(p),
+      meta: buildOperationMeta(p, op),
     });
   };
 
   for (const p of paths) {
     if (p.path === basePath) {
       if (p.method === "GET") {
-        const listSchema = getSuccessResponseSchema(p);
-        if (listSchema) {
-          // Extract item schema from both flat arrays and wrapped lists
-          const arrayInfo = findArrayProperty(listSchema);
-          if (arrayInfo.itemSchema) {
-            schema = schema ?? arrayInfo.itemSchema;
-          } else if (hasType(listSchema, "array") && listSchema.items) {
-            // Fallback: direct flat array
-            const items = Array.isArray(listSchema.items)
-              ? listSchema.items[0]
-              : listSchema.items;
-            if (isRecord(items)) {
-              schema = schema ?? toJsonSchema(items);
-            }
-          }
-        }
+        listSchema = getSuccessResponseSchema(p);
+        listFirst = !routes.some((r) => r.op === "read");
         classify(p, "list");
       } else if (p.method === "POST") {
         classify(p, "create");
@@ -212,7 +220,7 @@ function buildResource(
     }
 
     if (p.method === "GET") {
-      schema = schema ?? getSuccessResponseSchema(p);
+      readSchema = getSuccessResponseSchema(p);
       classify(p, "read");
     } else if (p.method === "PUT" || p.method === "PATCH") {
       classify(p, "update");
@@ -236,6 +244,7 @@ function buildResource(
   );
   const hasList = operations.includes("list");
   const hasCreate = operations.includes("create");
+  const hasRead = operations.includes("read");
   if (!hasItemOps && !(hasList && hasCreate)) return { leftovers: paths };
 
   // If we only have collection operations, infer item path
@@ -248,23 +257,62 @@ function buildResource(
     itemPath = `${basePath}/:${idParam}`;
   }
 
-  const name = basePath.split("/").filter(Boolean).pop() ?? basePath;
+  // The list envelope's arrays are ranked with what the item GET already says
+  // about the resource, so an `errors`/`links` array declared first cannot
+  // become the resource schema.
+  const listItemSchema = listSchema
+    ? findArrayProperty(listSchema, {
+        idProperties: [idParam, "id"].filter((key) => key.length > 0),
+        itemSchema: readSchema,
+      }).itemSchema
+    : undefined;
+  const schema = listFirst
+    ? (listItemSchema ?? readSchema)
+    : (readSchema ?? listItemSchema);
+
+  const name = deriveResourceName(basePath);
   const { idProperty, idKind } = resolveIdentifier(schema, idParam);
 
-  return {
-    resource: {
-      name,
-      basePath,
-      itemPath,
-      idParam,
-      idProperty,
-      idKind,
-      operations,
-      routes,
-      schema,
-    },
-    leftovers,
+  const resource: CrudResource = {
+    name,
+    basePath,
+    itemPath,
+    idParam,
+    idProperty,
+    idKind,
+    operations,
+    routes,
+    schema,
   };
+
+  const accessModes = collectAccessModes({
+    allOf: [schema, readSchema, listItemSchema].filter(
+      (s): s is JSONSchema7 => s !== undefined,
+    ),
+  });
+  if (accessModes.readOnly.size > 0 || accessModes.writeOnly.size > 0) {
+    resource.accessModes = accessModes;
+  }
+  if (!hasList && !hasCreate && operations.length === 1 && hasRead) {
+    // Only a read survives: a lone `GET /users/{username}` lookup.
+    resource.lookupOnly = true;
+  }
+
+  return { resource, leftovers };
+}
+
+/**
+ * Name a resource after the last literal segment of its collection path.
+ *
+ * A collection path only ends in a parameter when the group holds nothing but
+ * `/a/:x/:y` item paths (`/repos/{owner}/{repo}` groups under `/repos/:owner`);
+ * the raw last segment named that resource `":owner"`, so seeds and overrides
+ * had to be keyed by a parameter token. Every other resource keeps its name.
+ */
+function deriveResourceName(basePath: string): string {
+  const segments = basePath.split("/").filter(Boolean);
+  const literal = segments.filter((segment) => !segment.startsWith(":"));
+  return literal.pop() ?? segments.pop() ?? basePath;
 }
 
 /**
@@ -295,10 +343,16 @@ function resolveIdentifier(
   };
 }
 
-function buildOperationMeta(p: ParsedPath): Schmock.CrudOperationMeta {
+function buildOperationMeta(
+  p: ParsedPath,
+  op: CrudOperation,
+): Schmock.CrudOperationMeta {
   const meta: Schmock.CrudOperationMeta = {};
 
-  const successResponse = findSuccessResponse(p.responses);
+  const successResponse = findSuccessResponse(
+    p.responses,
+    successStatusOrder(op),
+  );
   if (successResponse) {
     const [status, response] = successResponse;
     meta.responseStatus = status;
@@ -333,6 +387,17 @@ function buildOperationMeta(p: ParsedPath): Schmock.CrudOperationMeta {
   }
 
   return meta;
+}
+
+/**
+ * The exact success statuses an operation tries first. Only a create differs:
+ * it prefers 201 over 200, so an upsert contract declaring both answers a fresh
+ * create with 201.
+ */
+export function successStatusOrder(
+  op: CrudOperation,
+): readonly number[] | undefined {
+  return op === "create" ? CREATE_SUCCESS_STATUS_ORDER : undefined;
 }
 
 function getSuccessResponseSchema(p: ParsedPath): JSONSchema7 | undefined {

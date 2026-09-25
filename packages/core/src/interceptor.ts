@@ -5,8 +5,8 @@ import { isBinaryBody } from "./binary.js";
 import {
   canonicalizePath,
   getResponseException,
+  isHttpMethod,
   isRouteNotFound,
-  toHttpMethod,
 } from "./constants.js";
 import {
   normalizeResponse,
@@ -14,13 +14,19 @@ import {
 } from "./response-normalizer.js";
 
 const PASSTHROUGH = Symbol("schmock.fetch.passthrough");
-// A lease whose baseUrl filter rejected the request never reached its handler.
-// It is distinct from PASSTHROUGH so the dispatch loop can tell "this owner
-// already ran" from "this lease was not interested in the request at all".
+// A lease whose baseUrl filter rejected the request never reached its handler:
+// it was not interested in the request at all, and claimed nothing.
 const FILTERED = Symbol("schmock.fetch.filtered");
+// A newer lease of the same mock already asked it this exact request, so
+// asking again would only repeat the answer and its lifecycle events.
+const ALREADY_CONSULTED = Symbol("schmock.fetch.already-consulted");
 const RELATIVE_REQUEST_BASE = "http://schmock.invalid/";
 
-type InterceptorResult = Response | typeof PASSTHROUGH | typeof FILTERED;
+type InterceptorResult =
+  | Response
+  | typeof PASSTHROUGH
+  | typeof FILTERED
+  | typeof ALREADY_CONSULTED;
 
 interface NormalizedFetchRequest {
   request: Request;
@@ -38,17 +44,38 @@ type InterceptRequestHandler = (
   requestOptions?: Schmock.RequestOptions,
 ) => Promise<Schmock.Response>;
 
+interface InterceptDispatch {
+  request: NormalizedFetchRequest;
+  /**
+   * Claim the owner's consultation for one effective request (method and
+   * path after the lease's own filter and beforeRequest). Returns false when
+   * a newer lease of the same mock already asked it exactly this.
+   */
+  claim(requestKey: string): boolean;
+}
+
 interface RegisteredInterceptor {
   token: symbol;
-  // Identifies the mock behind the lease. Leases sharing an owner share one
-  // consultation per request; undefined means the lease stands alone.
+  // Identifies the mock behind the lease. Leases sharing an owner ask it each
+  // distinct effective request once; undefined means the lease stands alone.
   owner?: symbol;
-  intercept: (request: NormalizedFetchRequest) => Promise<InterceptorResult>;
+  intercept: (dispatch: InterceptDispatch) => Promise<InterceptorResult>;
 }
 
 interface InterceptRequestAdmission {
+  /**
+   * The mock's own handle(), bound to the admission snapshot. Its responses
+   * are already normalized for the method they were produced for.
+   */
   handle: InterceptRequestHandler;
   release(): void;
+}
+
+interface FetchResponseContext {
+  /** The request method, used for HEAD body stripping. */
+  method: string;
+  /** The request URL without its fragment, as real fetch reports it. */
+  url: string;
 }
 
 interface InterceptorSession {
@@ -166,34 +193,48 @@ function createInterceptorSession(): InterceptorSession {
     const normalizedRequest = normalizeFetchRequest(input, init);
     throwIfAborted(normalizedRequest.request.signal);
 
-    // A mock is consulted at most once per request, however many leases it
-    // holds: without this, nested providers on one mock would run handle()
-    // — and emit request:start/notfound/end — once per lease.
-    const consultedOwners = new Set<symbol>();
+    // A mock is asked each distinct effective request at most once, however
+    // many leases it holds: without this, nested providers on one mock would
+    // run handle() — and emit request:start/notfound/end — once per lease.
+    // The key is the request each lease would issue after its own baseUrl
+    // filter and beforeRequest, so an older lease whose hook rewrites the
+    // request (an outer provider stripping "/api") still gets its turn.
+    const consultedRequests = new Map<symbol, Set<string>>();
+    const claimFor =
+      (owner: symbol | undefined) =>
+      (requestKey: string): boolean => {
+        if (owner === undefined) return true;
+        let keys = consultedRequests.get(owner);
+        if (keys === undefined) {
+          keys = new Set();
+          consultedRequests.set(owner, keys);
+        }
+        if (keys.has(requestKey)) return false;
+        keys.add(requestKey);
+        return true;
+      };
 
     for (let index = snapshot.length - 1; index >= 0; index -= 1) {
       const registered = snapshot[index];
-      const { owner } = registered;
-      if (owner !== undefined && consultedOwners.has(owner)) {
-        continue;
-      }
-
       const result = await awaitWithAbort(
-        registered.intercept(normalizedRequest),
+        registered.intercept({
+          request: normalizedRequest,
+          claim: claimFor(registered.owner),
+        }),
         normalizedRequest.request.signal,
       );
       throwIfAborted(normalizedRequest.request.signal);
-      // The lease filtered the request out before admission, so its owner
-      // keeps its turn — a sibling lease may carry a matching baseUrl.
-      if (result === FILTERED) {
+      // FILTERED: this lease was not interested, so a sibling lease may be.
+      // ALREADY_CONSULTED: the mock already answered this exact request.
+      // PASSTHROUGH: the mock has no route for it. All three move on.
+      if (
+        result === FILTERED ||
+        result === ALREADY_CONSULTED ||
+        result === PASSTHROUGH
+      ) {
         continue;
       }
-      if (result !== PASSTHROUGH) {
-        return result;
-      }
-      if (owner !== undefined) {
-        consultedOwners.add(owner);
-      }
+      return result;
     }
 
     return awaitWithAbort(
@@ -280,7 +321,10 @@ function parseBaseUrl(baseUrl: string): {
       // Fall through to path-only handling
     }
   }
-  const canonicalPath = canonicalizePath(baseUrl);
+  // Request pathnames always start with "/", so a base written as "api"
+  // would match nothing and silently send every request to the network.
+  const rootedBase = baseUrl.startsWith("/") ? baseUrl : `/${baseUrl}`;
+  const canonicalPath = canonicalizePath(rootedBase);
   const path = canonicalPath === "/" ? "" : canonicalPath.replace(/\/$/, "");
   return { origin: null, path };
 }
@@ -301,19 +345,33 @@ function normalizeMediaType(contentType: string | null): string {
   return contentType?.split(";", 1)[0].trim().toLowerCase() ?? "";
 }
 
-async function extractBody(request: Request): Promise<unknown> {
-  if (request.body === null) return undefined;
+interface ExtractedBody {
+  value: unknown;
+  /** The body claims a JSON media type but does not parse; `value` is its text. */
+  malformedJson: boolean;
+}
 
+async function extractBody(request: Request): Promise<ExtractedBody> {
+  if (request.body === null) return { value: undefined, malformedJson: false };
+
+  const mediaType = normalizeMediaType(request.headers.get("content-type"));
+  if (mediaType !== "application/json" && !mediaType.endsWith("+json")) {
+    return { value: await extractNonJsonBody(request), malformedJson: false };
+  }
+
+  const text = await request.clone().text();
+  // An empty JSON body is no body at all, as the Node ingress reads it.
+  if (text === "") return { value: undefined, malformedJson: false };
+  try {
+    return { value: JSON.parse(text), malformedJson: false };
+  } catch {
+    return { value: text, malformedJson: true };
+  }
+}
+
+async function extractNonJsonBody(request: Request): Promise<unknown> {
   const body = request.clone();
   const mediaType = normalizeMediaType(request.headers.get("content-type"));
-  if (mediaType === "application/json" || mediaType.endsWith("+json")) {
-    const text = await body.text();
-    try {
-      return JSON.parse(text);
-    } catch {
-      return text;
-    }
-  }
   if (mediaType === "application/x-www-form-urlencoded") {
     return Object.fromEntries(new URLSearchParams(await body.text()));
   }
@@ -335,10 +393,7 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
-function toFetchResponse(
-  response: Schmock.Response,
-  method: Schmock.HttpMethod,
-): Response {
+function withDefaultContentType(response: Schmock.Response): Schmock.Response {
   const headers = { ...response.headers };
   const hasContentType = Object.keys(headers).some(
     (name) => name.toLowerCase() === "content-type",
@@ -355,10 +410,66 @@ function toFetchResponse(
     }
   }
 
-  const normalized = normalizeResponse({ ...response, headers }, method);
-  return new Response(serializeResponseBody(normalized) ?? null, {
+  return { status: response.status, body: response.body, headers };
+}
+
+/**
+ * Build the fetch Response from an already-normalized Schmock response.
+ */
+function createFetchResponse(
+  normalized: Schmock.Response,
+  context: FetchResponseContext,
+): Response {
+  const response = new Response(serializeResponseBody(normalized) ?? null, {
     status: normalized.status,
     headers: normalized.headers,
+  });
+  // A constructed Response has an empty url. Real fetch reports the request
+  // URL, and code resolving links with `new URL(next, res.url)` needs it.
+  Object.defineProperty(response, "url", { value: context.url });
+  return response;
+}
+
+function toFetchResponse(
+  response: Schmock.Response,
+  context: FetchResponseContext,
+): Response {
+  return createFetchResponse(
+    normalizeResponse(withDefaultContentType(response), context.method),
+    context,
+  );
+}
+
+function jsonErrorResponse(input: {
+  status: number;
+  error: string;
+  code: string;
+  context: FetchResponseContext;
+}): Response {
+  return toFetchResponse(
+    {
+      status: input.status,
+      body: { error: input.error, code: input.code },
+      headers: { "content-type": "application/json" },
+    },
+    input.context,
+  );
+}
+
+/**
+ * A request this lease owns but cannot route: pass it on, or answer the same
+ * 404 a route miss gets when passthrough is off.
+ */
+function unroutedResult(
+  passthrough: boolean,
+  context: FetchResponseContext,
+): InterceptorResult {
+  if (passthrough) return PASSTHROUGH;
+  return jsonErrorResponse({
+    status: 404,
+    error: "No matching mock route found",
+    code: "ROUTE_NOT_FOUND",
+    context,
   });
 }
 
@@ -380,6 +491,59 @@ function withJsonContentType(
   return result;
 }
 
+function internalErrorResponse(context: FetchResponseContext): Response {
+  return jsonErrorResponse({
+    status: 500,
+    error: "Internal Server Error",
+    code: "INTERNAL_ERROR",
+    context,
+  });
+}
+
+/**
+ * Build the 500 response for an errorFormatter result. TOTAL — it never
+ * throws.
+ *
+ * `responseHeaders` carries the (post-hook) headers of the response being
+ * replaced so metadata such as `retry-after` survives. There are two distinct
+ * fallbacks. When the inherited headers are untransportable, the send is
+ * retried once with the fixed JSON header set and the SAME formatted body —
+ * nothing is on the wire yet, and losing the body would silently change the
+ * user's error contract. Only a body the transport cannot serialize reaches
+ * the minimal fallback, which deliberately inherits nothing.
+ */
+function formattedErrorResponse(input: {
+  formatted: unknown;
+  responseHeaders?: Record<string, string>;
+  context: FetchResponseContext;
+}): Response {
+  const { formatted, responseHeaders, context } = input;
+  try {
+    return toFetchResponse(
+      {
+        status: 500,
+        body: formatted,
+        headers: withJsonContentType(responseHeaders),
+      },
+      context,
+    );
+  } catch {
+    // `formatted` is reused, so the formatter still fires exactly once.
+  }
+  try {
+    return toFetchResponse(
+      {
+        status: 500,
+        body: formatted,
+        headers: { "content-type": "application/json" },
+      },
+      context,
+    );
+  } catch {
+    return internalErrorResponse(context);
+  }
+}
+
 /**
  * Invoke the errorFormatter for a core-marked exception and build its
  * response, falling back to a minimal safe body when the formatter throws or
@@ -389,61 +553,44 @@ function withJsonContentType(
  * `try`, so an escaping error would land in the catch below and invoke the
  * formatter a second time; the re-entrancy is exactly the defect the Express
  * adapter's `sendFormattedError` was shaped to avoid.
- *
- * `responseHeaders` carries the (post-hook) headers of the response being
- * replaced so metadata such as `retry-after` survives. There are two distinct
- * fallbacks. When the inherited headers are untransportable, the send is
- * retried once with the fixed JSON header set and the SAME formatted body —
- * nothing is on the wire yet, and losing the body would silently change the
- * user's error contract. Only a failure of the formatter itself, or of its
- * body, reaches the minimal fallback, which deliberately inherits nothing.
  */
-function formatInterceptedError(
-  errorFormatter: (error: Error) => unknown,
-  error: Error,
-  responseHeaders: Record<string, string> | undefined,
-  method: Schmock.HttpMethod,
-): Response {
+function formatInterceptedError(input: {
+  errorFormatter: (error: Error) => unknown;
+  error: Error;
+  responseHeaders: Record<string, string> | undefined;
+  context: FetchResponseContext;
+}): Response {
+  let formatted: unknown;
   try {
-    const formatted = errorFormatter(error);
-    try {
-      return toFetchResponse(
-        {
-          status: 500,
-          body: formatted,
-          headers: withJsonContentType(responseHeaders),
-        },
-        method,
-      );
-    } catch {
-      // `formatted` is reused, so the formatter still fires exactly once.
-      return toFetchResponse(
-        {
-          status: 500,
-          body: formatted,
-          headers: { "content-type": "application/json" },
-        },
-        method,
-      );
-    }
+    formatted = input.errorFormatter(input.error);
   } catch {
-    return toFetchResponse(
-      {
-        status: 500,
-        body: { error: "Internal Server Error", code: "INTERNAL_ERROR" },
-        headers: { "content-type": "application/json" },
-      },
-      method,
-    );
+    return internalErrorResponse(input.context);
   }
+  return formattedErrorResponse({
+    formatted,
+    responseHeaders: input.responseHeaders,
+    context: input.context,
+  });
+}
+
+/** Fetch reports the request URL without its fragment. */
+function responseUrlOf(url: URL): string {
+  const responseUrl = new URL(url.href);
+  responseUrl.hash = "";
+  return responseUrl.href;
+}
+
+function effectiveRequestKey(method: string, path: string): string {
+  return `${method} ${canonicalizePath(path)}`;
 }
 
 /**
  * Create a fetch interceptor that routes requests through mock.handle().
  *
- * `owner` identifies the mock behind the lease. Leases sharing an owner are
- * consulted at most once per request, so a mock held by several leases runs
- * its handler — and emits its lifecycle events — once per network request.
+ * `owner` identifies the mock behind the lease. Leases sharing an owner ask it
+ * each distinct effective request (method and path after the lease's own
+ * beforeRequest) at most once, so a mock held by several leases runs its
+ * handler — and emits its lifecycle events — once per request it is asked.
  */
 export function createFetchInterceptor(
   handle: InterceptRequestHandler,
@@ -458,7 +605,10 @@ export function createFetchInterceptor(
   let currentOptions: Schmock.InterceptOptions = options;
 
   return registerInterceptor(
-    async ({ request, url, origin }): Promise<InterceptorResult> => {
+    async ({
+      request: { request, url, origin },
+      claim,
+    }): Promise<InterceptorResult> => {
       const {
         baseUrl,
         passthrough = true,
@@ -488,20 +638,42 @@ export function createFetchInterceptor(
       }
 
       throwIfAborted(request.signal);
-      const initialMethod = toHttpMethod(request.method);
+      const context: FetchResponseContext = {
+        method: request.method,
+        url: responseUrlOf(url),
+      };
+      // No route can ever match a method outside the supported set (WebDAV's
+      // PROPFIND, a CDN PURGE), so it is a miss like any other rather than a
+      // rejected fetch. Checked before admission, which it never needs.
+      const initialMethod = request.method.toUpperCase();
+      if (!isHttpMethod(initialMethod)) {
+        return unroutedResult(passthrough, context);
+      }
+      context.method = initialMethod;
       const admission = admitRequest?.();
       const admittedHandle = admission?.handle ?? handle;
-      let effectiveMethod = initialMethod;
 
       try {
         const body = await awaitWithAbort(extractBody(request), request.signal);
         throwIfAborted(request.signal);
 
+        // With passthrough off the lease owns every request that reaches it,
+        // as the Node server does, so a JSON body that does not parse gets
+        // the server's 400 before any route runs or history records it.
+        if (body.malformedJson && !passthrough) {
+          return jsonErrorResponse({
+            status: 400,
+            error: "Malformed JSON request body",
+            code: "MALFORMED_JSON",
+            context,
+          });
+        }
+
         let adapterRequest: Schmock.AdapterRequest = {
           method: request.method,
           path,
           headers: extractHeaders(request),
-          body,
+          body: body.value,
           query: extractQuery(url),
         };
 
@@ -519,13 +691,24 @@ export function createFetchInterceptor(
         }
 
         throwIfAborted(request.signal);
+        // A hook may produce a method no route can match; that is a miss
+        // too, as the Angular adapter treats it.
+        const effectiveMethod = adapterRequest.method.toUpperCase();
+        if (!isHttpMethod(effectiveMethod)) {
+          return unroutedResult(passthrough, context);
+        }
+        context.method = effectiveMethod;
+
+        if (!claim(effectiveRequestKey(effectiveMethod, adapterRequest.path))) {
+          return ALREADY_CONSULTED;
+        }
+
         const requestOptions: InterceptorRequestOptions = {
           headers: adapterRequest.headers,
           body: adapterRequest.body,
           query: adapterRequest.query,
           signal: request.signal,
         };
-        effectiveMethod = toHttpMethod(adapterRequest.method);
         const schmockResponse = await awaitWithAbort(
           admittedHandle(effectiveMethod, adapterRequest.path, requestOptions),
           request.signal,
@@ -541,20 +724,7 @@ export function createFetchInterceptor(
 
         // Route not found — passthrough or 404
         if (isRouteNotFound(schmockResponse)) {
-          if (passthrough) {
-            return PASSTHROUGH;
-          }
-          return toFetchResponse(
-            {
-              status: 404,
-              body: {
-                error: "No matching mock route found",
-                code: "ROUTE_NOT_FOUND",
-              },
-              headers: { "content-type": "application/json" },
-            },
-            effectiveMethod,
-          );
+          return unroutedResult(passthrough, context);
         }
 
         // Apply beforeResponse hook
@@ -577,33 +747,38 @@ export function createFetchInterceptor(
         // Angular): a beforeResponse that rewrites an exception into a 503 or
         // a 200 is honoured instead of being forced back to a formatted 500.
         if (errorFormatter && internalError && response.status === 500) {
-          return formatInterceptedError(
+          return formatInterceptedError({
             errorFormatter,
-            internalError,
-            response.headers,
-            effectiveMethod,
-          );
+            error: internalError,
+            responseHeaders: response.headers,
+            context,
+          });
         }
 
-        return toFetchResponse(response, effectiveMethod);
+        // An admission's handle() already normalized its own output for this
+        // method; with no hook to replace or mutate it, a second pass would
+        // only re-validate the same tree. Anything else is re-normalized.
+        if (admission !== undefined && beforeResponse === undefined) {
+          return createFetchResponse(
+            withDefaultContentType(schmockResponse),
+            context,
+          );
+        }
+        return toFetchResponse(response, context);
       } catch (error) {
         throwIfAborted(request.signal);
         if (isAbortError(error)) {
           throw error;
         }
         if (errorFormatter) {
+          // A formatter that throws here propagates and rejects the fetch; a
+          // body it returns that cannot be serialized falls back to the same
+          // INTERNAL_ERROR body the core-marked path uses.
           const formatted = errorFormatter(
             error instanceof Error ? error : new Error(String(error)),
           );
           throwIfAborted(request.signal);
-          return toFetchResponse(
-            {
-              status: 500,
-              body: formatted,
-              headers: { "content-type": "application/json" },
-            },
-            effectiveMethod,
-          );
+          return formattedErrorResponse({ formatted, context });
         }
         throw error;
       } finally {

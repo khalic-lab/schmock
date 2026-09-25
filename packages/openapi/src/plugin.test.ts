@@ -718,8 +718,8 @@ describe("schema override key validation", () => {
   // with "the spec declares no ... operation" was a false statement.
   describe("parameterized paths", () => {
     // A report summary rather than an item route: `/pets/{petId}` alone is
-    // detected as a CRUD read and 404s on an empty collection, which would hide
-    // whether the override landed.
+    // detected as a lookup-only CRUD read, whose answer depends on whether its
+    // scope was seeded — noise when the point is whether the override landed.
     const reportsSpec = {
       openapi: "3.0.3",
       info: { title: "Reports", version: "1.0.0" },

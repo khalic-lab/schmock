@@ -494,9 +494,13 @@ describe("mock.intercept()", () => {
     const handle = mock.intercept({ passthrough: false });
 
     try {
-      await expect(
-        fetch("http://localhost/resource", { method: "PROPFIND" }),
-      ).rejects.toThrow('Invalid HTTP method: "PROPFIND"');
+      // No route can match an unsupported method: it is a plain miss, and
+      // with passthrough off that is the usual 404.
+      const response = await fetch("http://localhost/resource", {
+        method: "PROPFIND",
+      });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: "ROUTE_NOT_FOUND" });
       mock.reset();
       expect(uninstall).toHaveBeenCalledOnce();
     } finally {

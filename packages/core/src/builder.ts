@@ -3,10 +3,11 @@ import { awaitWithAbort, throwIfAborted } from "./abort.js";
 import { isBinaryBody } from "./binary.js";
 import {
   canonicalizePath,
+  HTTP_METHODS,
+  isHttpMethod,
   markResponseException,
   markRouteNotFound,
   normalizePath,
-  toHttpMethod,
 } from "./constants.js";
 import {
   errorMessage,
@@ -214,6 +215,225 @@ function snapshotHistoryValue(value: unknown): unknown {
 }
 
 /**
+ * Snapshot a body that already went through `normalizeResponse`.
+ *
+ * A normalized body is a string, a `JSON.parse` tree or a fresh byte copy, so
+ * it can never hold shared memory: the `removeSharedMemory` walk that caller
+ * supplied values need would only re-visit every node for nothing.
+ */
+function snapshotNormalizedBody(value: unknown): unknown {
+  try {
+    return structuredClone(value);
+  } catch {
+    return unavailableHistoryValue(value);
+  }
+}
+
+/**
+ * A per-request copy of a route's config for the plugin context.
+ *
+ * Shallow on purpose: plugin metadata under `openapi:*` keys is shared,
+ * read-only structure (and some of it is keyed by identity in WeakMaps), but a
+ * plugin that assigns `context.route.contentType` or edits the delay tuple must
+ * not change every later request.
+ */
+function copyRouteConfig(config: Schmock.RouteConfig): Schmock.RouteConfig {
+  const copy: Schmock.RouteConfig = { ...config };
+  if (Array.isArray(config.delay)) {
+    copy.delay = [config.delay[0], config.delay[1]];
+  }
+  return copy;
+}
+
+function isPlainObject(value: object): boolean {
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Deep-copy the plain data (arrays and plain objects) of a static generator so
+ * plugins can edit their response in place without changing the route.
+ *
+ * Anything else — dates, binary values, class instances with a prototype
+ * `toJSON` — is passed by reference: `structuredClone` would strip those
+ * prototypes (a Buffer would come back as a bare Uint8Array) and change what
+ * the response serializes to. Enumerable symbol keys are kept so the response
+ * normalizer still sees, and rejects, them.
+ */
+function copyStaticData(
+  value: unknown,
+  copies = new Map<object, unknown>(),
+): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  const existing = copies.get(value);
+  if (existing !== undefined) return existing;
+
+  if (Array.isArray(value)) {
+    const copy: unknown[] = new Array(value.length);
+    copies.set(value, copy);
+    for (let index = 0; index < value.length; index += 1) {
+      if (index in value) copy[index] = copyStaticData(value[index], copies);
+    }
+    for (const key of Object.getOwnPropertySymbols(value)) {
+      if (!Object.getOwnPropertyDescriptor(value, key)?.enumerable) continue;
+      Reflect.set(copy, key, copyStaticData(Reflect.get(value, key), copies));
+    }
+    return copy;
+  }
+  if (!isPlainObject(value)) return value;
+
+  const copy: Record<PropertyKey, unknown> =
+    Object.getPrototypeOf(value) === null ? Object.create(null) : {};
+  copies.set(value, copy);
+  for (const key of Reflect.ownKeys(value)) {
+    if (!Object.getOwnPropertyDescriptor(value, key)?.enumerable) continue;
+    copy[key] = copyStaticData(Reflect.get(value, key), copies);
+  }
+  return copy;
+}
+
+interface CanonicalNamespace {
+  readonly raw: string;
+  readonly prefix: string;
+  readonly root: string;
+}
+
+/** What history records about the request, captured before any hook runs. */
+interface RequestHistorySnapshot {
+  readonly query: Record<string, string>;
+  readonly headers: Record<string, string>;
+  readonly body: unknown;
+}
+
+type PluginHook = "install" | "uninstall";
+
+const PLUGIN_HOOK_ERROR_CODES = {
+  install: {
+    expired: "PLUGIN_INSTALL_SCOPE_EXPIRED",
+    unsupported: "PLUGIN_INSTALL_OPERATION_UNSUPPORTED",
+  },
+  uninstall: {
+    expired: "PLUGIN_UNINSTALL_SCOPE_EXPIRED",
+    unsupported: "PLUGIN_UNINSTALL_OPERATION_UNSUPPORTED",
+  },
+} as const satisfies Record<
+  PluginHook,
+  { expired: string; unsupported: string }
+>;
+
+/**
+ * Optional hooks that break the plugin when set to a truthy non-function:
+ * `install` threw a TypeError from pipe() and `beforeRequest` failed every
+ * matched request. Falsy values (`onError: null`, `install: false`) are how
+ * callers switch a hook off and keep working; `onError`/`uninstall` failures
+ * only ever surfaced on paths that already fail or log, so they are left alone.
+ */
+const EAGER_PLUGIN_HOOKS = ["install", "beforeRequest"] as const;
+
+function describeInvalidPlugin(plugin: unknown): string | undefined {
+  if (
+    (typeof plugin !== "object" && typeof plugin !== "function") ||
+    plugin === null
+  ) {
+    return "expected a plugin object";
+  }
+  if (typeof Reflect.get(plugin, "process") !== "function") {
+    return "process must be a function";
+  }
+  for (const hook of EAGER_PLUGIN_HOOKS) {
+    const value: unknown = Reflect.get(plugin, hook);
+    if (value && typeof value !== "function") {
+      return `${hook} must be a function when set`;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Reject, when it is piped, a plugin that could never work: one without a
+ * `process` function answered every matched request with a 500 instead.
+ * Only shapes that already failed are rejected, so no working setup breaks.
+ */
+function assertValidPlugin(plugin: unknown): asserts plugin is Schmock.Plugin {
+  const reason = describeInvalidPlugin(plugin);
+  if (reason === undefined) return;
+  const name: unknown =
+    typeof plugin === "object" && plugin !== null
+      ? Reflect.get(plugin, "name")
+      : undefined;
+  const label = typeof name === "string" && name.length > 0 ? ` "${name}"` : "";
+  throw new SchmockError(
+    `Invalid plugin${label}: ${reason}`,
+    "PLUGIN_INVALID",
+    {
+      plugin: typeof name === "string" ? name : undefined,
+      reason,
+    },
+  );
+}
+
+/** `request:end` status for a request its caller cancelled. */
+const ABORTED_REQUEST_STATUS = 499;
+
+/** Placeholder origin for origin-form request targets; never contacted. */
+const REQUEST_TARGET_ORIGIN = "http://schmock.invalid";
+const ALLOWED_METHODS_HEADER = HTTP_METHODS.join(", ");
+
+/**
+ * A client error the built-in server answers itself, before the mock sees the
+ * request: 400 for a request it cannot parse, 405 for a verb Schmock does not
+ * route. Mirrors the CLI server's answers for the same requests.
+ */
+class ServerRequestError extends SchmockError {
+  constructor(
+    readonly status: 400 | 405,
+    code: "BAD_REQUEST" | "METHOD_NOT_ALLOWED",
+    message: string,
+    readonly headers: Readonly<Record<string, string>> = {},
+  ) {
+    super(message, code);
+    this.name = "ServerRequestError";
+  }
+}
+
+/**
+ * Parse a Node request target into a URL without letting it pick the host.
+ *
+ * Resolving an origin-form target (`/path?q`) against a base reads a leading
+ * `//` as a protocol-relative URL: `//users` would become host "users" with
+ * path "/" and be served by `GET /`. Appending it to a fixed origin keeps the
+ * whole target as the path. The asterisk-form (`OPTIONS *`) keeps the `/*`
+ * path it always resolved to; any other target must be an absolute URL.
+ */
+function parseRequestTarget(target: string): URL {
+  try {
+    if (target.startsWith("/"))
+      return new URL(`${REQUEST_TARGET_ORIGIN}${target}`);
+    if (target === "*") return new URL(`${REQUEST_TARGET_ORIGIN}/*`);
+    return new URL(target);
+  } catch {
+    throw new ServerRequestError(
+      400,
+      "BAD_REQUEST",
+      "Malformed request target",
+    );
+  }
+}
+
+function parseRequestMethod(method: string | undefined): Schmock.HttpMethod {
+  const upper = (method ?? "GET").toUpperCase();
+  if (!isHttpMethod(upper)) {
+    throw new ServerRequestError(
+      405,
+      "METHOD_NOT_ALLOWED",
+      `Unsupported HTTP method: ${upper}`,
+      { allow: ALLOWED_METHODS_HEADER },
+    );
+  }
+  return upper;
+}
+
+/**
  * Debug logger that respects debug mode configuration
  */
 class DebugLogger {
@@ -265,6 +485,15 @@ export class CallableMockInstance {
   private globalConfig: InternalGlobalConfig;
   // biome-ignore lint/complexity/noBannedTypes: internal storage for event listeners with varying signatures
   private listeners = new Map<string, Set<Function>>();
+  private namespaceCache: CanonicalNamespace | undefined;
+  /**
+   * True once an admission holds `routes`/`staticRoutes` by reference: the
+   * next registration copies them first (copy-on-write) instead of every
+   * request copying the whole route table.
+   */
+  private routesShared = false;
+  /** Retired generations whose uninstall waits for in-flight requests. */
+  private retiredGenerations = new Set<RequestGeneration>();
 
   constructor(globalConfig: Schmock.GlobalConfig = {}) {
     assertValidHistoryLimit(globalConfig.maxHistorySize);
@@ -332,17 +561,23 @@ export class CallableMockInstance {
     const parsed = parseRouteKey(route);
 
     // FIX 2.2: normalize paths before duplicate check so /users and /users/ are
-    // treated as the same route (consistent with the static-route Map key below)
+    // treated as the same route (consistent with the static-route Map key below).
+    // Routes that differ only in parameter names (`/users/:id` and
+    // `/users/:userId`) compile to the same pattern and match the same
+    // requests, so the later one would be unreachable: it is a duplicate too.
     const normalizedParsedPath = normalizePath(parsed.path);
     const existing = this.routes.find(
       (r) =>
         r.method === parsed.method &&
-        normalizePath(r.path) === normalizedParsedPath,
+        (normalizePath(r.path) === normalizedParsedPath ||
+          r.pattern.source === parsed.pattern.source),
     );
     if (existing) {
       this.logger.log(
         "warning",
-        `Duplicate route: ${route} — first registration wins`,
+        normalizePath(existing.path) === normalizedParsedPath
+          ? `Duplicate route: ${route} — first registration wins`
+          : `Duplicate route: ${route} matches the same requests as ${existing.method} ${existing.path} — first registration wins`,
       );
       return this;
     }
@@ -357,6 +592,7 @@ export class CallableMockInstance {
       config: routeConfig,
     };
 
+    this.#writableRoutes();
     this.routes.push(compiledRoute);
 
     // Store static routes (no params) in Map for O(1) lookup
@@ -374,79 +610,54 @@ export class CallableMockInstance {
     return this;
   }
 
+  /**
+   * Copy-on-write for the route tables. An admitted request routes with the
+   * containers it captured, by reference; the first registration after that
+   * copies them so the in-flight snapshot never changes underneath it.
+   */
+  #writableRoutes(): void {
+    if (!this.routesShared) return;
+    this.routes = this.routes.slice();
+    this.staticRoutes = new Map(this.staticRoutes);
+    this.routesShared = false;
+  }
+
   setCallableRef(ref: Schmock.CallableMockInstance): void {
     this.callableRef = ref;
   }
 
   pipe(plugin: Schmock.Plugin): this {
+    assertValidPlugin(plugin);
+    if (this.plugins.includes(plugin)) {
+      // Piping one object twice used to run install() twice and process()
+      // twice per request. It is a no-op rather than an error because the
+      // pattern is common and was silently accepted: `.pipe(p)` chained after
+      // every route definition, or a beforeEach that pipes without a reset.
+      // Distinct objects that share a name (two openapi() specs) still stack.
+      this.logger.log(
+        "warning",
+        `Plugin ${plugin.name} is already piped into this mock — ignored`,
+      );
+      return this;
+    }
+    this.#uninstallRetiredInstallation(plugin);
+
     if (plugin.install && this.callableRef) {
       const previousRoutes = this.routes;
       const previousStaticRoutes = this.staticRoutes;
+      const previousRoutesShared = this.routesShared;
       this.routes = previousRoutes.slice();
       this.staticRoutes = new Map(previousStaticRoutes);
+      this.routesShared = false;
 
       let installActive = true;
-      let installFacade: Schmock.CallableMockInstance;
-      const requireInstallScope = () => {
-        if (installActive) return;
-        throw new SchmockError(
-          `Plugin "${plugin.name}" used its install instance outside install()`,
-          "PLUGIN_INSTALL_SCOPE_EXPIRED",
-          { plugin: plugin.name },
-        );
-      };
-      const rejectInstallOperation = (operation: string): never => {
-        requireInstallScope();
-        throw new SchmockError(
-          `Plugin "${plugin.name}" cannot call ${operation} during install()`,
-          "PLUGIN_INSTALL_OPERATION_UNSUPPORTED",
-          { operation, plugin: plugin.name },
-        );
-      };
-      const registerRoute = (
-        route: Schmock.RouteKey,
-        generator: Schmock.Generator,
-        config: Schmock.RouteConfig = {},
-      ) => {
-        requireInstallScope();
-        this.defineRoute(route, generator, config);
-        return installFacade;
-      };
-      installFacade = Object.assign(registerRoute, {
-        pipe: () => rejectInstallOperation("pipe()"),
-        handle: () => rejectInstallOperation("handle()"),
-        history: (method?: Schmock.HttpMethod, path?: string) => {
-          requireInstallScope();
-          return this.history(method, path);
+      const installFacade = this.#createHookFacade({
+        plugin,
+        hook: "install",
+        isActive: () => installActive,
+        registerRoute: (route, generator, config) => {
+          this.defineRoute(route, generator, config);
         },
-        called: (method?: Schmock.HttpMethod, path?: string) => {
-          requireInstallScope();
-          return this.called(method, path);
-        },
-        callCount: (method?: Schmock.HttpMethod, path?: string) => {
-          requireInstallScope();
-          return this.callCount(method, path);
-        },
-        lastRequest: (method?: Schmock.HttpMethod, path?: string) => {
-          requireInstallScope();
-          return this.lastRequest(method, path);
-        },
-        reset: () => rejectInstallOperation("reset()"),
-        resetHistory: () => rejectInstallOperation("resetHistory()"),
-        resetState: () => rejectInstallOperation("resetState()"),
-        on: () => rejectInstallOperation("on()"),
-        off: () => rejectInstallOperation("off()"),
-        getRoutes: () => {
-          requireInstallScope();
-          return this.getRoutes();
-        },
-        getState: () => {
-          requireInstallScope();
-          return this.getState();
-        },
-        listen: () => rejectInstallOperation("listen()"),
-        close: () => rejectInstallOperation("close()"),
-        intercept: () => rejectInstallOperation("intercept()"),
       });
 
       try {
@@ -468,13 +679,15 @@ export class CallableMockInstance {
       } catch (error) {
         this.routes = previousRoutes;
         this.staticRoutes = previousStaticRoutes;
+        this.routesShared = previousRoutesShared;
         throw error;
       } finally {
         installActive = false;
       }
     }
 
-    this.plugins.push(plugin);
+    // Replaced, never pushed into: in-flight admissions hold the old array.
+    this.plugins = [...this.plugins, plugin];
     this.logger.log(
       "plugin",
       `Registered plugin: ${plugin.name}@${plugin.version || "unknown"}`,
@@ -488,13 +701,123 @@ export class CallableMockInstance {
     return this;
   }
 
+  /**
+   * The instance a plugin hook receives. Reads are live; route registration is
+   * allowed only when the hook passes `registerRoute` (install does, uninstall
+   * does not); every other operation is rejected. `isActive` expires the
+   * facade when the hook returns, so a retained reference cannot act later.
+   */
+  #createHookFacade(input: {
+    plugin: Schmock.Plugin;
+    hook: PluginHook;
+    isActive: () => boolean;
+    registerRoute?: (
+      route: Schmock.RouteKey,
+      generator: Schmock.Generator,
+      config: Schmock.RouteConfig,
+    ) => void;
+  }): Schmock.CallableMockInstance {
+    const { plugin, hook, isActive, registerRoute } = input;
+    const codes = PLUGIN_HOOK_ERROR_CODES[hook];
+    const requireScope = () => {
+      if (isActive()) return;
+      throw new SchmockError(
+        `Plugin "${plugin.name}" used its ${hook} instance outside ${hook}()`,
+        codes.expired,
+        { plugin: plugin.name },
+      );
+    };
+    const reject = (operation: string): never => {
+      requireScope();
+      throw new SchmockError(
+        `Plugin "${plugin.name}" cannot call ${operation} during ${hook}()`,
+        codes.unsupported,
+        { operation, plugin: plugin.name },
+      );
+    };
+    let facade: Schmock.CallableMockInstance;
+    const defineRoute = (
+      route: Schmock.RouteKey,
+      generator: Schmock.Generator,
+      config: Schmock.RouteConfig = {},
+    ): Schmock.CallableMockInstance => {
+      if (!registerRoute) return reject("route registration");
+      requireScope();
+      registerRoute(route, generator, config);
+      return facade;
+    };
+    facade = Object.assign(defineRoute, {
+      pipe: () => reject("pipe()"),
+      handle: () => reject("handle()"),
+      history: (method?: Schmock.HttpMethod, path?: string) => {
+        requireScope();
+        return this.history(method, path);
+      },
+      called: (method?: Schmock.HttpMethod, path?: string) => {
+        requireScope();
+        return this.called(method, path);
+      },
+      callCount: (method?: Schmock.HttpMethod, path?: string) => {
+        requireScope();
+        return this.callCount(method, path);
+      },
+      lastRequest: (method?: Schmock.HttpMethod, path?: string) => {
+        requireScope();
+        return this.lastRequest(method, path);
+      },
+      reset: () => reject("reset()"),
+      resetHistory: () => reject("resetHistory()"),
+      resetState: () => reject("resetState()"),
+      on: () => reject("on()"),
+      off: () => reject("off()"),
+      getRoutes: () => {
+        requireScope();
+        return this.getRoutes();
+      },
+      getState: () => {
+        requireScope();
+        return this.getState();
+      },
+      listen: () => reject("listen()"),
+      close: () => reject("close()"),
+      intercept: () => reject("intercept()"),
+    });
+    return facade;
+  }
+
+  /**
+   * Run the uninstall a retired generation still owes this plugin object, now,
+   * before it is installed again. Left to the retired generation, it would run
+   * when that generation's last request settles — after the new install() —
+   * and tear down the live installation.
+   */
+  #uninstallRetiredInstallation(plugin: Schmock.Plugin): void {
+    for (const generation of this.retiredGenerations) {
+      const pending = generation.retiredPlugins;
+      if (!pending?.includes(plugin)) continue;
+      generation.retiredPlugins = pending.filter(
+        (retired) => retired !== plugin,
+      );
+      this.uninstallPlugins([plugin]);
+    }
+  }
+
   private uninstallPlugins(plugins: readonly Schmock.Plugin[]): void {
     for (let index = plugins.length - 1; index >= 0; index -= 1) {
       const plugin = plugins[index];
       if (!plugin.uninstall || !this.callableRef) continue;
 
+      // Cleanup gets a read-only, expiring instance: through the live one a
+      // plugin could pipe plugins or register routes into the mock that
+      // reset() just cleared.
+      let uninstallActive = true;
+      const uninstallFacade = this.#createHookFacade({
+        plugin,
+        hook: "uninstall",
+        isActive: () => uninstallActive,
+      });
       try {
-        const uninstallResult: unknown = plugin.uninstall(this.callableRef);
+        const uninstallResult: unknown = plugin.uninstall(uninstallFacade);
         if (isThenable(uninstallResult)) {
           void Promise.resolve(uninstallResult).catch((error) => {
             this.logger.log(
@@ -512,6 +835,8 @@ export class CallableMockInstance {
           "plugin",
           `Plugin ${plugin.name} uninstall failed: ${errorMessage(error)}`,
         );
+      } finally {
+        uninstallActive = false;
       }
     }
   }
@@ -529,7 +854,7 @@ export class CallableMockInstance {
       timestamp: r.timestamp,
       response: {
         status: r.response.status,
-        body: snapshotHistoryValue(r.response.body),
+        body: snapshotNormalizedBody(r.response.body),
       },
     };
   }
@@ -676,8 +1001,11 @@ export class CallableMockInstance {
     const installedPlugins = this.plugins;
     this.plugins = [];
     this.#retireRequestGeneration(retiredGeneration, installedPlugins);
+    // Replaced, never cleared in place: in-flight admissions still route with
+    // the old containers.
     this.routes = [];
-    this.staticRoutes.clear();
+    this.staticRoutes = new Map();
+    this.routesShared = false;
     this.requestHistory = [];
     this.listeners.clear();
     this.globalConfig.state = {};
@@ -698,12 +1026,15 @@ export class CallableMockInstance {
   #captureRequestAdmission(): RequestAdmission {
     const requestGeneration = this.requestGeneration;
     requestGeneration.activeAdmissions += 1;
+    // O(1) snapshot: the containers are captured by reference. `plugins` is
+    // only ever replaced, and the route tables are copy-on-write.
+    this.routesShared = true;
     return {
       requestGeneration,
       historyGeneration: this.historyGeneration,
-      plugins: this.plugins.slice(),
-      routes: this.routes.slice(),
-      staticRoutes: new Map(this.staticRoutes),
+      plugins: this.plugins,
+      routes: this.routes,
+      staticRoutes: this.staticRoutes,
       state: this.globalConfig.state,
       namespace: this.globalConfig.namespace,
       globalDelay: this.globalConfig.delay,
@@ -724,6 +1055,7 @@ export class CallableMockInstance {
     ) {
       const plugins = generation.retiredPlugins;
       generation.retiredPlugins = undefined;
+      this.retiredGenerations.delete(generation);
       this.uninstallPlugins(plugins);
     }
   }
@@ -736,7 +1068,9 @@ export class CallableMockInstance {
     if (generation.activeAdmissions === 0) {
       generation.retiredPlugins = undefined;
       this.uninstallPlugins(plugins);
+      return;
     }
+    this.retiredGenerations.add(generation);
   }
 
   createRequestAdmission() {
@@ -779,8 +1113,17 @@ export class CallableMockInstance {
 
     const closeBarrier = this.serverCloseBarrier ?? Promise.resolve();
     void closeBarrier
-      // Lazy-load node:http so browser bundles never pull it in. See issue #395.
-      .then(() => import("node:http"))
+      // Lazy-load node:http so browser bundles never pull it in (issue #395).
+      // The rejection handler must sit on the import() expression itself:
+      // esbuild (and so the Angular application builder) leaves a dynamic
+      // import unresolved only when that expression handles its own failure,
+      // and the outer .catch() below does not count. Without it a
+      // `platform: "browser"` build fails with `Could not resolve "node:http"`.
+      .then(() =>
+        import("node:http").catch((error: unknown) => {
+          throw error;
+        }),
+      )
       .then(({ createServer }) => {
         if (!this.#ownsServerStart(operation)) return;
         this.#startHttpServer(operation, createServer);
@@ -810,8 +1153,18 @@ export class CallableMockInstance {
         req.method?.toUpperCase() === "HEAD" ? "HEAD" : "GET";
       const handleRequest = async () => {
         try {
-          const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-          const method = toHttpMethod(req.method ?? "GET");
+          // Client errors are answered as such, in the CLI server's order:
+          // the target first, then the verb. Only the target's path and
+          // query are used, so Host is required but never parsed.
+          if (!req.headers.host) {
+            throw new ServerRequestError(
+              400,
+              "BAD_REQUEST",
+              "Missing Host header",
+            );
+          }
+          const url = parseRequestTarget(req.url ?? "/");
+          const method = parseRequestMethod(req.method);
           requestMethod = method;
           const path = url.pathname;
           const headers = parseNodeHeaders(req);
@@ -838,8 +1191,11 @@ export class CallableMockInstance {
         try {
           const ingressError =
             error instanceof HttpIngressError ? error : undefined;
-          const status = ingressError?.status ?? 500;
-          const code = ingressError?.code ?? "SERVER_ERROR";
+          const requestError =
+            error instanceof ServerRequestError ? error : undefined;
+          const status = ingressError?.status ?? requestError?.status ?? 500;
+          const code =
+            ingressError?.code ?? requestError?.code ?? "SERVER_ERROR";
           if (!res.headersSent && !res.writableEnded) {
             if (ingressError) res.shouldKeepAlive = false;
             // `shouldKeepAlive = false` alone emits no Connection header when
@@ -860,7 +1216,10 @@ export class CallableMockInstance {
                       : "Internal Server Error",
                   code,
                 },
-                headers: { "content-type": "application/json" },
+                headers: {
+                  "content-type": "application/json",
+                  ...requestError?.headers,
+                },
               },
               requestMethod,
             );
@@ -890,8 +1249,18 @@ export class CallableMockInstance {
     };
     httpServer.once("error", handleStartupError);
 
+    // Once listening, a server-level 'error' (an accept failure such as
+    // EMFILE) must still have a listener: with none, Node rethrows it as an
+    // uncaught exception and takes the whole test runner down.
+    const reportServerError = (error: Error) => {
+      this.logger.log("server", `Server error: ${errorMessage(error)}`);
+    };
+
     try {
       httpServer.listen(operation.port, operation.hostname, () => {
+        // Attach the permanent reporter BEFORE dropping the startup handler:
+        // the other order leaves a window with no 'error' listener at all.
+        httpServer.on("error", reportServerError);
         httpServer.off("error", handleStartupError);
         if (!this.#ownsServerStart(operation)) {
           this.#beginServerClose(httpServer);
@@ -1089,22 +1458,27 @@ export class CallableMockInstance {
     // the success path does — same delay override, same history record.
     let requestPath = path;
     let matchedRoute: CompiledCallableRoute | undefined;
+    let routeConfig: Schmock.RouteConfig | undefined;
     let params: Record<string, string> = {};
+    let historyParams: Record<string, string> = {};
+    let historySnapshot: RequestHistorySnapshot | undefined;
 
     try {
       // Apply namespace if configured
       if (namespace && namespace !== "/") {
-        const normalizedNamespace = canonicalizePath(
-          namespace.startsWith("/") ? namespace : `/${namespace}`,
-        );
+        const { prefix: normalizedNamespace, root: namespaceRoot } =
+          this.#canonicalNamespace(namespace);
 
         const pathToCheck = path.startsWith("/") ? path : `/${path}`;
 
         // Check if path starts with namespace
         // handle both "/api/users" (starts with /api) and "/api" (exact match)
-        // but NOT "/apiv2" (prefix match but wrong segment)
+        // but NOT "/apiv2" (prefix match but wrong segment). The bare root
+        // matches whether or not the namespace was configured with a trailing
+        // slash: "/api/" serves "/api" exactly as "/api" does.
         const isMatch =
           pathToCheck === normalizedNamespace ||
+          pathToCheck === namespaceRoot ||
           pathToCheck.startsWith(
             normalizedNamespace.endsWith("/")
               ? normalizedNamespace
@@ -1166,6 +1540,19 @@ export class CallableMockInstance {
 
       // Extract parameters from the matched route
       params = extractParams(matchedRoute, requestPath);
+      // History reports what the CLIENT sent, so it is captured here, before
+      // any plugin or the generator gets the live objects and can edit them.
+      historyParams = { ...params };
+      if (maxHistorySize !== 0) {
+        historySnapshot = {
+          query: { ...reqQuery },
+          headers: { ...reqHeaders },
+          body: snapshotHistoryValue(requestBody),
+        };
+      }
+      // A per-request copy: a plugin that edits `context.route` in place
+      // changes this request only, never the registered route.
+      routeConfig = copyRouteConfig(matchedRoute.config);
 
       if (this.requestGeneration === requestGeneration) {
         this.emit("request:match", {
@@ -1183,7 +1570,7 @@ export class CallableMockInstance {
       // invalid or unauthorized requests without triggering side effects.
       let pluginContext: Schmock.PluginContext = {
         path: requestPath,
-        route: matchedRoute.config,
+        route: routeConfig,
         method,
         params,
         query: reqQuery,
@@ -1229,7 +1616,13 @@ export class CallableMockInstance {
               signal,
             );
           } else {
-            result = matchedRoute.generator;
+            // Static data is one object shared by every request; plugins get
+            // their own copy so an in-place edit cannot leak into the next
+            // response (or back into the caller's object).
+            result =
+              requestPlugins.length > 0
+                ? copyStaticData(matchedRoute.generator)
+                : matchedRoute.generator;
           }
           throwIfAborted(signal);
         } catch (error) {
@@ -1277,7 +1670,7 @@ export class CallableMockInstance {
 
       // Parse and prepare response
       const response = normalizeResponse(
-        parseResponse(result, matchedRoute.config),
+        parseResponse(result, routeConfig),
         method,
       );
 
@@ -1285,12 +1678,10 @@ export class CallableMockInstance {
         method,
         path,
         requestPath,
-        params,
-        reqQuery,
-        reqHeaders,
-        requestBody,
+        params: historyParams,
+        historySnapshot,
         response,
-        routeDelay: matchedRoute.config.delay,
+        routeDelay: routeConfig.delay,
         globalDelay,
         record: true,
         signal,
@@ -1303,7 +1694,15 @@ export class CallableMockInstance {
 
       return response;
     } catch (error) {
-      throwIfAborted(signal);
+      // Every exit after `request:start` ends with exactly one `request:end`;
+      // a cancelled request reports 499 (client closed request) before its
+      // abort reason propagates.
+      this.#throwIfRequestAborted(signal, {
+        method,
+        path,
+        handleStart,
+        requestGeneration,
+      });
       this.logger.log(
         "error",
         `[${requestId}] Error processing request: ${errorMessage(error)}`,
@@ -1331,25 +1730,34 @@ export class CallableMockInstance {
 
       // A request that matched a route did happen: it is finalized exactly like
       // a successful one — its own delay override, and a history record.
-      await this.#finalizeMatchedRequest({
-        method,
-        path,
-        requestPath,
-        params,
-        reqQuery,
-        reqHeaders,
-        requestBody,
-        response: errorResponse,
-        routeDelay: matchedRoute?.config.delay,
-        globalDelay,
-        record: matchedRoute !== undefined,
-        signal,
-        requestGeneration,
-        historyGeneration,
-        maxHistorySize,
-        requestId,
-        handleStart,
-      });
+      try {
+        await this.#finalizeMatchedRequest({
+          method,
+          path,
+          requestPath,
+          params: historyParams,
+          historySnapshot,
+          response: errorResponse,
+          routeDelay: routeConfig?.delay,
+          globalDelay,
+          record: matchedRoute !== undefined,
+          signal,
+          requestGeneration,
+          historyGeneration,
+          maxHistorySize,
+          requestId,
+          handleStart,
+        });
+      } catch (finalizeError) {
+        // Only the delay can reject here, and only with the abort reason.
+        this.#throwIfRequestAborted(signal, {
+          method,
+          path,
+          handleStart,
+          requestGeneration,
+        });
+        throw finalizeError;
+      }
 
       return errorResponse;
     }
@@ -1366,9 +1774,7 @@ export class CallableMockInstance {
     path: string;
     requestPath: string;
     params: Record<string, string>;
-    reqQuery: Record<string, string>;
-    reqHeaders: Record<string, string>;
-    requestBody: unknown;
+    historySnapshot: RequestHistorySnapshot | undefined;
     response: Schmock.Response;
     routeDelay?: number | [number, number];
     globalDelay?: number | [number, number];
@@ -1380,7 +1786,7 @@ export class CallableMockInstance {
     requestId: string;
     handleStart: number;
   }): Promise<void> {
-    const { response, maxHistorySize } = input;
+    const { response, maxHistorySize, historySnapshot } = input;
 
     // Apply delay (route-level overrides global)
     await this.applyDelay(input.routeDelay, input.globalDelay, input.signal);
@@ -1389,6 +1795,7 @@ export class CallableMockInstance {
     // Record request in history (FIFO-bounded when maxHistorySize is set)
     if (
       input.record &&
+      historySnapshot !== undefined &&
       this.requestGeneration === input.requestGeneration &&
       this.historyGeneration === input.historyGeneration &&
       maxHistorySize !== 0
@@ -1397,13 +1804,13 @@ export class CallableMockInstance {
         method: input.method,
         path: input.requestPath,
         params: { ...input.params },
-        query: { ...input.reqQuery },
-        headers: { ...input.reqHeaders },
-        body: snapshotHistoryValue(input.requestBody),
+        query: historySnapshot.query,
+        headers: historySnapshot.headers,
+        body: historySnapshot.body,
         timestamp: Date.now(),
         response: {
           status: response.status,
-          body: snapshotHistoryValue(response.body),
+          body: snapshotNormalizedBody(response.body),
         },
       });
       // The constructor already rejected a limit that is not a non-negative
@@ -1438,6 +1845,50 @@ export class CallableMockInstance {
       },
     );
     this.logger.timeEnd(`request-${input.requestId}`);
+  }
+
+  /**
+   * Rethrow a cancellation after reporting it as the request's terminal
+   * event, so a `request:start` listener always sees exactly one
+   * `request:end`. 499 is the de facto "client closed request" status.
+   */
+  #throwIfRequestAborted(
+    signal: AbortSignal | undefined,
+    request: {
+      method: Schmock.HttpMethod;
+      path: string;
+      handleStart: number;
+      requestGeneration: RequestGeneration;
+    },
+  ): void {
+    if (!signal?.aborted) return;
+    if (this.requestGeneration === request.requestGeneration) {
+      this.emit("request:end", {
+        method: request.method,
+        path: request.path,
+        status: ABORTED_REQUEST_STATUS,
+        duration: performance.now() - request.handleStart,
+      });
+    }
+    throwIfAborted(signal);
+  }
+
+  /**
+   * The namespace in the canonical form request paths are compared in:
+   * `prefix` is percent-encoded with a leading slash and keeps a configured
+   * trailing slash (which strips one more slash, so `"/api/"` serves
+   * `/api//users`), while `root` drops it so the bare `/api` matches either
+   * way. Cached per namespace string instead of re-encoded per request.
+   */
+  #canonicalNamespace(namespace: string): CanonicalNamespace {
+    const cached = this.namespaceCache;
+    if (cached?.raw === namespace) return cached;
+    const prefix = canonicalizePath(
+      namespace.startsWith("/") ? namespace : `/${namespace}`,
+    );
+    const canonical = { raw: namespace, prefix, root: normalizePath(prefix) };
+    this.namespaceCache = canonical;
+    return canonical;
   }
 
   /**

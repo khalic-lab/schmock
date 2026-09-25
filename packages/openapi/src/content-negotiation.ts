@@ -22,7 +22,7 @@ export interface ContentTypeMatch {
 }
 
 /** Split a header list without treating delimiters inside quoted strings as syntax. */
-function splitOutsideQuotes(value: string, delimiter: string): string[] {
+export function splitOutsideQuotes(value: string, delimiter: string): string[] {
   const parts: string[] = [];
   let start = 0;
   let quoted = false;
@@ -52,7 +52,8 @@ function splitOutsideQuotes(value: string, delimiter: string): string[] {
   return parts;
 }
 
-function parameterValue(value: string): string {
+/** Trim a header parameter value and unquote it when it is an RFC 9110 quoted-string. */
+export function parameterValue(value: string): string {
   const trimmed = value.trim();
   if (
     trimmed.length < 2 ||

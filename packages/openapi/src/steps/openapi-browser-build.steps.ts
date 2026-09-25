@@ -16,7 +16,10 @@ const feature = await loadFeature(
  * this file. Importing the source instead would test the Node resolver and
  * report success for a browser build that cannot boot.
  */
-const browserEntry = resolve(import.meta.dirname, "../../dist/index.browser.js");
+const browserEntry = resolve(
+  import.meta.dirname,
+  "../../dist/index.browser.js",
+);
 
 type OpenApiFn = (options: Record<string, unknown>) => Promise<unknown>;
 
@@ -54,6 +57,41 @@ function specWithInternalRef(): Record<string, unknown> {
   };
 }
 
+/**
+ * The same spec plus a create, so `/pets` is a CRUD resource: a seed key that
+ * names no resource is rejected before any seed file is read.
+ */
+function crudSpecWithInternalRef(): Record<string, unknown> {
+  const petRef = { $ref: "#/components/schemas/Pet" };
+  return {
+    ...specWithInternalRef(),
+    paths: {
+      "/pets": {
+        get: {
+          responses: {
+            "200": {
+              description: "OK",
+              content: {
+                "application/json": {
+                  schema: { type: "array", items: petRef },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          responses: {
+            "201": {
+              description: "Created",
+              content: { "application/json": { schema: petRef } },
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
 describeFeature(feature, ({ Scenario }) => {
   let openapi: OpenApiFn;
   let response: { status: number; body: unknown } | undefined;
@@ -86,9 +124,12 @@ describeFeature(feature, ({ Scenario }) => {
       Given("the browser build of the OpenAPI plugin", async () => {
         ({ openapi } = (await import(browserEntry)) as { openapi: OpenApiFn });
       });
-      When("I create a mock from an inline spec with an internal reference", async () => {
-        await build({ spec: specWithInternalRef() });
-      });
+      When(
+        "I create a mock from an inline spec with an internal reference",
+        async () => {
+          await build({ spec: specWithInternalRef() });
+        },
+      );
       Then("the browser mock answers the route with 200", () => {
         expect(failure).toBeUndefined();
         expect(response?.status).toBe(200);
@@ -110,27 +151,30 @@ describeFeature(feature, ({ Scenario }) => {
       Given("the browser build of the OpenAPI plugin", async () => {
         ({ openapi } = (await import(browserEntry)) as { openapi: OpenApiFn });
       });
-      When("I create a mock from an inline spec reusing one component twice", async () => {
-        const spec = specWithInternalRef();
-        (spec.paths as Record<string, unknown>)["/favourites"] = {
-          get: {
-            responses: {
-              "200": {
-                description: "OK",
-                content: {
-                  "application/json": {
-                    schema: {
-                      type: "array",
-                      items: { $ref: "#/components/schemas/Pet" },
+      When(
+        "I create a mock from an inline spec reusing one component twice",
+        async () => {
+          const spec = specWithInternalRef();
+          (spec.paths as Record<string, unknown>)["/favourites"] = {
+            get: {
+              responses: {
+                "200": {
+                  description: "OK",
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "array",
+                        items: { $ref: "#/components/schemas/Pet" },
+                      },
                     },
                   },
                 },
               },
             },
-          },
-        };
-        await build({ spec }, "/favourites");
-      });
+          };
+          await build({ spec }, "/favourites");
+        },
+      );
       Then("the browser mock answers the route with 200", () => {
         expect(failure).toBeUndefined();
         expect(response?.status).toBe(200);
@@ -168,9 +212,12 @@ describeFeature(feature, ({ Scenario }) => {
       Given("the browser build of the OpenAPI plugin", async () => {
         ({ openapi } = (await import(browserEntry)) as { openapi: OpenApiFn });
       });
-      When("I create a mock from an inline spec with strict validation", async () => {
-        await build({ spec: specWithInternalRef(), strict: true });
-      });
+      When(
+        "I create a mock from an inline spec with strict validation",
+        async () => {
+          await build({ spec: specWithInternalRef(), strict: true });
+        },
+      );
       Then("creating the mock fails with code OPENAPI_NODE_ONLY", () => {
         expect(failureWith().code).toBe("OPENAPI_NODE_ONLY");
       });
@@ -212,7 +259,7 @@ describeFeature(feature, ({ Scenario }) => {
       });
       When("I create a mock seeded from a file path", async () => {
         await build({
-          spec: specWithInternalRef(),
+          spec: crudSpecWithInternalRef(),
           seed: { pets: "./pets.json" },
         });
       });
@@ -246,9 +293,12 @@ describeFeature(feature, ({ Scenario }) => {
       // resolve, so a browser gets the same verdict Node gives, for the same
       // reason. Moving the seam ahead of the policy would replace an actionable
       // "enable external refs" message with "not available in a browser".
-      Then("creating the mock fails with code OPENAPI_EXTERNAL_REF_BLOCKED", () => {
-        expect(failureWith().code).toBe("OPENAPI_EXTERNAL_REF_BLOCKED");
-      });
+      Then(
+        "creating the mock fails with code OPENAPI_EXTERNAL_REF_BLOCKED",
+        () => {
+          expect(failureWith().code).toBe("OPENAPI_EXTERNAL_REF_BLOCKED");
+        },
+      );
     },
   );
 

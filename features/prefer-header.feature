@@ -14,10 +14,12 @@ Feature: Prefer Header
     Then the response body name is "Buddy"
 
   Scenario: Prefer dynamic regenerates from schema
-    Given a mock with an OpenAPI spec with a response schema
-    When I request with Prefer header "dynamic=true"
+    Given a mock with an OpenAPI spec storing one item named "Stored"
+    When I request the stored item without a Prefer header
+    Then the response body name is "Stored"
+    When I request the stored item with Prefer header "dynamic=true"
     Then the response body "id" is a number
-    And the response body "name" is a string
+    And the response body "name" is a string other than "Stored"
 
   Scenario: Prefer example selects from the negotiated media type
     Given a mock with media-specific named examples

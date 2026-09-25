@@ -21,7 +21,11 @@ interface ResponseWritable {
   end(body?: string | Uint8Array): this;
 }
 
-export type HttpIngressErrorCode = "MALFORMED_JSON" | "PAYLOAD_TOO_LARGE";
+export type HttpIngressErrorCode =
+  | "MALFORMED_JSON"
+  | "JSON_TOO_DEEP"
+  | "MALFORMED_MULTIPART"
+  | "PAYLOAD_TOO_LARGE";
 
 /** An HTTP client error raised while collecting an incoming request body. */
 export class HttpIngressError extends Error {
@@ -54,6 +58,7 @@ export function parseNodeHeaders(
 
 /**
  * Extract query parameters from a URL as a flat Record<string, string>.
+ * A repeated key resolves to its LAST value; every adapter follows this rule.
  */
 export function parseNodeQuery(url: URL): Record<string, string> {
   // Own-property definition for the same reason as parseNodeHeaders, and it
@@ -79,18 +84,128 @@ function requestAbortedError(): Error {
   return error;
 }
 
-function isJsonMediaType(contentType: string): boolean {
-  const baseMediaType =
-    contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  return (
-    baseMediaType === "application/json" || baseMediaType.endsWith("+json")
-  );
+/**
+ * Deepest JSON nesting a request body may carry. A body nested far deeper
+ * parses fine but cannot be serialized back (JSON.stringify overflows the
+ * stack), so a handler that stores it poisons every later response that
+ * includes it. Rejecting it at ingress keeps that from ever happening.
+ */
+const MAX_JSON_BODY_DEPTH = 256;
+
+function baseMediaTypeOf(contentType: string): string {
+  return contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+}
+
+function isJsonMediaType(mediaType: string): boolean {
+  return mediaType === "application/json" || mediaType.endsWith("+json");
+}
+
+/** Whether a parsed JSON value nests deeper than `maxDepth` containers. */
+function exceedsJsonDepth(value: unknown, maxDepth: number): boolean {
+  const pending: Array<{ value: unknown; depth: number }> = [
+    { value, depth: 0 },
+  ];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (typeof next.value !== "object" || next.value === null) continue;
+    const depth = next.depth + 1;
+    if (depth > maxDepth) return true;
+    for (const child of Object.values(next.value)) {
+      pending.push({ value: child, depth });
+    }
+  }
+  return false;
+}
+
+function parseJsonBody(text: string): unknown {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new HttpIngressError(
+      400,
+      "MALFORMED_JSON",
+      "Malformed JSON request body",
+    );
+  }
+  if (exceedsJsonDepth(parsed, MAX_JSON_BODY_DEPTH)) {
+    throw new HttpIngressError(
+      400,
+      "JSON_TOO_DEEP",
+      `JSON request body nests deeper than ${MAX_JSON_BODY_DEPTH} levels`,
+    );
+  }
+  return parsed;
+}
+
+async function parseMultipartBody(
+  bytes: Uint8Array<ArrayBuffer>,
+  contentType: string,
+): Promise<FormData> {
+  try {
+    return await new Response(bytes, {
+      headers: { "content-type": contentType },
+    }).formData();
+  } catch {
+    throw new HttpIngressError(
+      400,
+      "MALFORMED_MULTIPART",
+      "Malformed multipart request body",
+    );
+  }
+}
+
+/**
+ * Turn the collected bytes into the body shape the fetch interceptor gives
+ * the same request, so `mock.listen()`, the CLI and `mock.intercept()` hand a
+ * handler the same value:
+ *
+ * - `application/json` and `+json`: the parsed value
+ * - `application/x-www-form-urlencoded`: a flat object, last duplicate wins
+ * - `text/*`: a UTF-8 string
+ * - `multipart/*`: `FormData`
+ * - anything else, including no content type: an `ArrayBuffer`
+ */
+function decodeRequestBody(
+  bytes: Uint8Array<ArrayBuffer>,
+  contentType: string,
+): unknown {
+  const mediaType = baseMediaTypeOf(contentType);
+  if (isJsonMediaType(mediaType)) {
+    return parseJsonBody(new TextDecoder().decode(bytes));
+  }
+  if (mediaType === "application/x-www-form-urlencoded") {
+    return Object.fromEntries(
+      new URLSearchParams(new TextDecoder().decode(bytes)),
+    );
+  }
+  if (mediaType.startsWith("text/")) {
+    return new TextDecoder().decode(bytes);
+  }
+  if (mediaType.startsWith("multipart/")) {
+    return parseMultipartBody(bytes, contentType);
+  }
+  return bytes.buffer;
+}
+
+/** Copy the chunks into one buffer that the body exclusively owns. */
+function concatChunks(
+  chunks: readonly Uint8Array[],
+  totalSize: number,
+): Uint8Array<ArrayBuffer> {
+  const bytes = new Uint8Array(totalSize);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 /**
  * Collect and parse the request body from a Node.js IncomingMessage.
- * Returns parsed JSON for application/json and +json media types, otherwise the
- * raw string.
+ * The body takes the shape the fetch interceptor gives it: parsed JSON for
+ * application/json and +json, an object for urlencoded forms, a string for
+ * text/*, FormData for multipart/*, and an ArrayBuffer for anything else.
  * Returns undefined for empty bodies.
  * @param req - Node.js IncomingMessage
  * @param headers - Parsed request headers
@@ -148,26 +263,18 @@ export function collectBody(
     req.on("end", () => {
       if (settled) return;
 
-      const raw = Buffer.concat(chunks).toString();
-      if (!raw) {
+      if (totalSize === 0) {
         resolveOnce(undefined);
         return;
       }
-      const contentType = headers["content-type"] ?? "";
-      if (isJsonMediaType(contentType)) {
-        try {
-          resolveOnce(JSON.parse(raw));
-        } catch {
-          rejectOnce(
-            new HttpIngressError(
-              400,
-              "MALFORMED_JSON",
-              "Malformed JSON request body",
-            ),
-          );
-        }
-      } else {
-        resolveOnce(raw);
+      const bytes = concatChunks(chunks, totalSize);
+      try {
+        // A multipart body decodes asynchronously. Resolving with that promise
+        // settles collection now, so the `close` Node emits right after `end`
+        // cannot pre-empt the parse as an abort.
+        resolveOnce(decodeRequestBody(bytes, headers["content-type"] ?? ""));
+      } catch (error) {
+        rejectOnce(error instanceof Error ? error : new Error(String(error)));
       }
     });
   });
@@ -230,6 +337,16 @@ function prepareWriteableResponse(
     ...response,
     headers: responseHeaders,
   });
+
+  // Declare the length up front: writeHead() commits the header block before
+  // end() sees the body, so without it Node frames every response as chunked,
+  // unlike Express's res.end(buffer).
+  const hasContentLength = Object.keys(responseHeaders).some(
+    (header) => header.toLowerCase() === "content-length",
+  );
+  if (body !== undefined && !hasContentLength) {
+    responseHeaders["content-length"] = String(body.byteLength);
+  }
 
   return { headers: responseHeaders, body };
 }

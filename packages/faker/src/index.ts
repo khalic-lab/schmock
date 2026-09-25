@@ -8,9 +8,11 @@ import type { JSONSchema7 } from "json-schema";
 import { version as packageVersion } from "../package.json";
 import {
   MAX_ARRAY_SIZE,
+  MAX_GENERATED_NODES,
+  MAX_NESTING_DEPTH,
   MAX_OBJECT_PROPERTIES,
+  MAX_SCHEMA_NODES,
   MAX_STRING_LENGTH,
-  NULLABLE_NULL_PROBABILITY,
 } from "./constants.js";
 import {
   createSeededRandom,
@@ -21,6 +23,7 @@ import {
 } from "./jsf-config.js";
 import { assertOutputWithinLimits } from "./output-limits.js";
 import { applyOverrides, determineArrayCount } from "./overrides.js";
+import { applyNullableRolls } from "./post-process.js";
 import { enhanceSchemaWithSmartMapping } from "./schema-enhancement.js";
 import { hasType, isJSONSchema7, validateSchema } from "./validation.js";
 
@@ -28,10 +31,32 @@ export type SchemaGenerationContext = Schmock.SchemaGenerationContext;
 
 export type FakerPluginOptions = Schmock.FakerPluginOptions;
 
-export { MAX_OBJECT_PROPERTIES, MAX_STRING_LENGTH };
+/**
+ * Every generation ceiling, so callers can pre-check their input. A breach is
+ * reported as a `ResourceLimitError` naming the exceeded `resource`.
+ */
+export {
+  MAX_ARRAY_SIZE,
+  MAX_GENERATED_NODES,
+  MAX_NESTING_DEPTH,
+  MAX_OBJECT_PROPERTIES,
+  MAX_SCHEMA_NODES,
+  MAX_STRING_LENGTH,
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A schema that passed `validateSchema`, with its smart-mapping enhancement. */
+interface PreparedSchema {
+  schema: JSONSchema7;
+  enhanced: JSONSchema7;
+}
+
+function prepareSchema(schema: JSONSchema7, count?: number): PreparedSchema {
+  validateSchema(schema, "$", count);
+  return { schema, enhanced: enhanceSchemaWithSmartMapping(schema) };
 }
 
 export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
@@ -59,6 +84,10 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
   // Validate schema immediately when plugin is created (fail-fast)
   validateSchema(schema, "$", count);
 
+  // The snapshot is private and never mutated, so the validation above holds
+  // for every request; only the enhancement is deferred to the first one.
+  let prepared: PreparedSchema | undefined;
+
   return {
     name: "faker",
     version: packageVersion,
@@ -70,7 +99,11 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
       }
 
       try {
-        const generatedResponse = await generateFromSchema({
+        prepared ??= {
+          schema,
+          enhanced: enhanceSchemaWithSmartMapping(schema),
+        };
+        const generatedResponse = await generateFromPrepared(prepared, {
           schema,
           count,
           overrides,
@@ -104,17 +137,34 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
   };
 }
 
+/**
+ * Generate a value from a JSON Schema.
+ *
+ * The schema is validated on every call: the caller owns it and may change it
+ * between calls (an OpenAPI `onSchema` hook can edit a schema in place), so a
+ * cached verdict could be stale. `fakerPlugin` validates its private snapshot
+ * once instead.
+ */
 export async function generateFromSchema(
   options: SchemaGenerationContext,
 ): Promise<unknown> {
-  const { schema, count, overrides, params, state, query, seed } = options;
+  return generateFromPrepared(
+    prepareSchema(options.schema, options.count),
+    options,
+  );
+}
 
-  validateSchema(schema, "$", count);
+async function generateFromPrepared(
+  prepared: PreparedSchema,
+  options: SchemaGenerationContext,
+): Promise<unknown> {
+  const { count, overrides, params, state, query, seed } = options;
+  const { schema } = prepared;
 
   const generationSeed = resolveGenerationSeed(seed);
   const random = createSeededRandom(generationSeed);
 
-  let enhancedSchema = enhanceSchemaWithSmartMapping(schema);
+  let enhancedSchema = prepared.enhanced;
 
   // Resolve the top-level array size once, then let JSF generate the complete
   // array so tuple positions, uniqueness, and a seeded sequence are preserved.
@@ -140,7 +190,7 @@ export async function generateFromSchema(
     generationSeed,
     seed !== undefined ? DETERMINISTIC_REF_DATE : undefined,
   );
-  generated = postProcessGenerated(generated, enhancedSchema, random);
+  generated = applyNullableRolls(generated, enhancedSchema, random);
 
   if (Array.isArray(generated)) {
     const result = generated.map((item) =>
@@ -153,70 +203,4 @@ export async function generateFromSchema(
   generated = applyOverrides(generated, overrides, params, state, query);
   assertOutputWithinLimits(generated);
   return generated;
-}
-
-/**
- * Post-process generated data to apply nullable probability and boolean weighting.
- * Walks the schema and generated data in parallel, applying:
- * - schmockNullable: ~5% chance of null
- * - schmockTrueProbability: weighted boolean generation
- */
-function postProcessGenerated(
-  data: unknown,
-  schema: JSONSchema7,
-  random: () => number,
-): unknown {
-  if (
-    data === null ||
-    data === undefined ||
-    !schema ||
-    typeof schema !== "object"
-  ) {
-    return data;
-  }
-
-  // Apply nullable probability at this level
-  if ("schmockNullable" in schema && schema.schmockNullable === true) {
-    if (random() < NULLABLE_NULL_PROBABILITY) {
-      return null;
-    }
-  }
-
-  // Apply boolean weighting at this level
-  if (
-    schema.type === "boolean" &&
-    "schmockTrueProbability" in schema &&
-    typeof schema.schmockTrueProbability === "number"
-  ) {
-    return random() < schema.schmockTrueProbability;
-  }
-
-  // Recurse into object properties
-  if (isRecord(data) && schema.properties) {
-    for (const [key, propSchema] of Object.entries(schema.properties)) {
-      if (key in data && isJSONSchema7(propSchema)) {
-        data[key] = postProcessGenerated(data[key], propSchema, random);
-      }
-    }
-  }
-
-  // Recurse into array items
-  if (Array.isArray(data) && Array.isArray(schema.items)) {
-    for (let index = 0; index < data.length; index++) {
-      const itemSchema = schema.items[index];
-      if (itemSchema && isJSONSchema7(itemSchema)) {
-        data[index] = postProcessGenerated(data[index], itemSchema, random);
-      }
-    }
-  } else if (
-    Array.isArray(data) &&
-    schema.items &&
-    isJSONSchema7(schema.items)
-  ) {
-    for (let index = 0; index < data.length; index++) {
-      data[index] = postProcessGenerated(data[index], schema.items, random);
-    }
-  }
-
-  return data;
 }

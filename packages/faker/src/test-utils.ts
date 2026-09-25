@@ -269,8 +269,15 @@ export const stats = {
 
 // Schema Validation Test Helpers
 export const schemaTests = {
-  expectValid: async (schema: JSONSchema7): Promise<void> => {
-    await expect(generateFromSchema({ schema })).resolves.not.toThrow();
+  /**
+   * Generate from `schema`, assert that something came back, and return it so
+   * the caller can assert its shape. (`resolves.not.toThrow()` passed for any
+   * resolved value, `{}` included.)
+   */
+  expectValid: async (schema: JSONSchema7): Promise<unknown> => {
+    const value = await generateFromSchema({ schema });
+    expect(value).not.toBeUndefined();
+    return value;
   },
 
   expectInvalid: async (

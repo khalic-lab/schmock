@@ -1,0 +1,294 @@
+import { schmock } from "@schmock/core";
+import { describe, expect, it } from "vitest";
+import { type ValidationPluginOptions, validationPlugin } from "./index";
+
+function context(
+  overrides: Partial<Schmock.PluginContext> = {},
+): Schmock.PluginContext {
+  return {
+    path: "/test",
+    route: {},
+    method: "GET",
+    params: {},
+    query: {},
+    headers: {},
+    state: new Map(),
+    ...overrides,
+  };
+}
+
+async function runBeforeRequest(
+  plugin: Schmock.Plugin,
+  pluginContext: Schmock.PluginContext,
+): Promise<Schmock.PluginResult> {
+  if (!plugin.beforeRequest) {
+    throw new Error("Expected validation plugin to define beforeRequest");
+  }
+  const result = await plugin.beforeRequest(pluginContext);
+  if (!result) {
+    throw new Error("Expected beforeRequest to return a plugin result");
+  }
+  return result;
+}
+
+function creationError(options: ValidationPluginOptions): unknown {
+  try {
+    validationPlugin(options);
+  } catch (error) {
+    return error;
+  }
+  return undefined;
+}
+
+type ResponseRules = NonNullable<ValidationPluginOptions["response"]>;
+
+const idSchema: ResponseRules["body"] = {
+  type: "object",
+  required: ["id"],
+  properties: { id: { type: "integer" } },
+};
+
+describe("validationPlugin response.statuses", () => {
+  it("validates every status when statuses is omitted", async () => {
+    const plugin = validationPlugin({ response: { body: idSchema } });
+    const result = await plugin.process(
+      context({ requestShortCircuited: true }),
+      [403, { error: "forbidden" }],
+    );
+    expect(result.response).toMatchObject({
+      status: 500,
+      body: { code: "RESPONSE_VALIDATION_ERROR" },
+    });
+  });
+
+  it("passes a short-circuited 4xx envelope through under 2xx scope", async () => {
+    const plugin = validationPlugin({
+      response: { body: idSchema, statuses: "2xx" },
+    });
+    const rejection = { status: 403, body: { code: "FORBIDDEN" } };
+    const result = await plugin.process(
+      context({ requestShortCircuited: true }),
+      rejection,
+    );
+    expect(result.response).toBe(rejection);
+  });
+
+  it("treats a plain body as 200 and an absent body as 204", async () => {
+    const only204 = validationPlugin({
+      response: { body: { type: "null" }, statuses: [204] },
+    });
+    const plain = await only204.process(context(), { anything: true });
+    expect(plain.response).toEqual({ anything: true });
+    const absent = await only204.process(context(), undefined);
+    expect(absent.response).toMatchObject({
+      status: 500,
+      body: { code: "RESPONSE_VALIDATION_ERROR" },
+    });
+  });
+
+  it("uses the tuple status even when the tuple body is absent", async () => {
+    const plugin = validationPlugin({
+      response: { body: idSchema, statuses: "2xx" },
+    });
+    const result = await plugin.process(context(), [500, undefined]);
+    expect(result.response).toEqual([500, undefined]);
+  });
+
+  it("snapshots the status list when the plugin is created", async () => {
+    const statuses = [201];
+    const plugin = validationPlugin({
+      response: { body: idSchema, statuses },
+    });
+    statuses.push(200);
+    const result = await plugin.process(context(), { id: "x" });
+    expect(result.response).toEqual({ id: "x" });
+  });
+
+  it.each([
+    ["an empty list", []],
+    ["a status below 100", [99]],
+    ["a status above 599", [600]],
+    ["a fractional status", [200.5]],
+    ["a non-numeric entry", ["200"]],
+    ["an unknown keyword", "4xx"],
+    ["null", null],
+  ])("rejects %s at creation time", (_, statuses) => {
+    const responseRules: ResponseRules = { body: idSchema };
+    Reflect.set(responseRules, "statuses", statuses);
+    expect(creationError({ response: responseRules })).toMatchObject({
+      code: "VALIDATION_CONFIG_INVALID",
+      context: { option: "response.statuses" },
+    });
+  });
+});
+
+describe("validationPlugin header name case", () => {
+  it("applies a capitalized dependencies entry to the lowercased header", async () => {
+    const plugin = validationPlugin({
+      request: {
+        headers: {
+          type: "object",
+          dependencies: { "X-Api-Key": ["X-Client-Id"] },
+        },
+      },
+    });
+    const missing = await runBeforeRequest(
+      plugin,
+      context({ headers: { "x-api-key": "abcdefghij" } }),
+    );
+    expect(missing.response).toMatchObject({
+      status: 400,
+      body: { code: "HEADER_VALIDATION_ERROR" },
+    });
+    const present = await runBeforeRequest(
+      plugin,
+      context({
+        headers: { "x-api-key": "abcdefghij", "x-client-id": "client" },
+      }),
+    );
+    expect(present.response).toBeUndefined();
+  });
+
+  it("matches capitalized names declared behind a local $ref", async () => {
+    const plugin = validationPlugin({
+      request: {
+        headers: {
+          $ref: "#/definitions/Headers",
+          definitions: {
+            Headers: {
+              type: "object",
+              properties: { "X-Api-Key": { type: "string", minLength: 8 } },
+              required: ["X-Api-Key"],
+            },
+          },
+        },
+      },
+    });
+    const valid = await runBeforeRequest(
+      plugin,
+      context({ headers: { "X-API-KEY": "abcdefghij" } }),
+    );
+    expect(valid.response).toBeUndefined();
+    const short = await runBeforeRequest(
+      plugin,
+      context({ headers: { "x-api-key": "short" } }),
+    );
+    expect(short.response).toMatchObject({ status: 400 });
+  });
+
+  it("accepts a capitalized property under additionalProperties false", async () => {
+    const plugin = validationPlugin({
+      request: {
+        headers: {
+          type: "object",
+          properties: { "Content-Type": { const: "application/json" } },
+          additionalProperties: false,
+        },
+      },
+    });
+    const result = await runBeforeRequest(
+      plugin,
+      context({ headers: { "content-type": "application/json" } }),
+    );
+    expect(result.response).toBeUndefined();
+  });
+
+  it("rejects a required name that differs only by case from a property", () => {
+    expect(
+      creationError({
+        request: {
+          headers: {
+            type: "object",
+            properties: { "x-api-key": { type: "string" } },
+            required: ["X-Api-Key"],
+          },
+        },
+      }),
+    ).toMatchObject({
+      code: "VALIDATION_CONFIG_INVALID",
+      context: { option: "request.headers" },
+    });
+  });
+
+  it("does not rewrite the caller's header schema", () => {
+    const headers = {
+      type: "object" as const,
+      properties: { "X-Api-Key": { type: "string" as const } },
+      required: ["X-Api-Key"],
+    };
+    validationPlugin({ request: { headers } });
+    expect(Object.keys(headers.properties)).toEqual(["X-Api-Key"]);
+    expect(headers.required).toEqual(["X-Api-Key"]);
+  });
+});
+
+describe("validationPlugin query and header coercion", () => {
+  it("does not mutate the request query while coercing", async () => {
+    const plugin = validationPlugin({
+      request: {
+        query: {
+          type: "object",
+          properties: {
+            page: { type: "integer" },
+            active: { type: "boolean" },
+          },
+        },
+      },
+    });
+    const query = { page: "2", active: "true" };
+    const result = await runBeforeRequest(plugin, context({ query }));
+    expect(result.response).toBeUndefined();
+    expect(query).toEqual({ page: "2", active: "true" });
+    expect(result.context.query).toEqual({ page: "2", active: "true" });
+  });
+
+  it("applies numeric range keywords to query values", async () => {
+    const mock = schmock();
+    mock("GET /items", [{ id: 1 }]).pipe(
+      validationPlugin({
+        request: {
+          query: {
+            type: "object",
+            properties: { limit: { type: "number", maximum: 50 } },
+          },
+        },
+      }),
+    );
+    const accepted = await mock.handle("GET", "/items", {
+      query: { limit: "25" },
+    });
+    const rejected = await mock.handle("GET", "/items", {
+      query: { limit: "51" },
+    });
+    expect(accepted.status).toBe(200);
+    expect(rejected.status).toBe(400);
+  });
+
+  it("keeps request bodies strictly typed", async () => {
+    const plugin = validationPlugin({
+      request: {
+        body: {
+          type: "object",
+          properties: { count: { type: "integer" } },
+        },
+      },
+    });
+    const result = await runBeforeRequest(
+      plugin,
+      context({ method: "POST", body: { count: "3" } }),
+    );
+    expect(result.response).toMatchObject({
+      status: 400,
+      body: { code: "REQUEST_VALIDATION_ERROR" },
+    });
+  });
+
+  it("keeps response bodies strictly typed", async () => {
+    const plugin = validationPlugin({ response: { body: idSchema } });
+    const result = await plugin.process(context(), { id: "1" });
+    expect(result.response).toMatchObject({
+      status: 500,
+      body: { code: "RESPONSE_VALIDATION_ERROR" },
+    });
+  });
+});

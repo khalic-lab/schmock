@@ -49,7 +49,10 @@ describe("collectBody", () => {
       await expect(
         collectBody(
           bodyStream(body),
-          { "content-length": String(body.length) },
+          {
+            "content-length": String(body.length),
+            "content-type": "text/plain",
+          },
           body.length,
         ),
       ).resolves.toBe("12345");
@@ -75,7 +78,7 @@ describe("collectBody", () => {
         await expect(
           collectBody(
             bodyStream(body),
-            { "content-length": contentLength },
+            { "content-length": contentLength, "content-type": "text/plain" },
             body.length,
           ),
         ).resolves.toBe("12345");
@@ -162,17 +165,26 @@ describe("collectBody", () => {
       ).resolves.toEqual({ title: "invalid" });
     });
 
-    it.each(["text/json", "application/notjson", "application/json-seq"])(
+    // Not JSON, so each keeps the interceptor's shape for its media type:
+    // a string for text/*, raw bytes for everything else.
+    it.each([
+      ["text/json", "string"],
+      ["application/notjson", "bytes"],
+      ["application/json-seq", "bytes"],
+    ])(
       "does not parse the non-JSON media type %s",
-      async (contentType) => {
+      async (contentType, shape) => {
         const body = Buffer.from('{"raw":true}');
-        await expect(
-          collectBody(
-            bodyStream(body),
-            { "content-type": contentType },
-            body.length,
-          ),
-        ).resolves.toBe('{"raw":true}');
+        const collected = await collectBody(
+          bodyStream(body),
+          { "content-type": contentType },
+          body.length,
+        );
+        if (shape === "string") {
+          expect(collected).toBe('{"raw":true}');
+        } else {
+          expect(collected).toBeInstanceOf(ArrayBuffer);
+        }
       },
     );
 
@@ -261,6 +273,9 @@ describe("writeSchmockResponse", () => {
       { "access-control-allow-origin": "*" },
     );
 
-    expect(writtenHeaders).toEqual({ "access-control-allow-origin": "*" });
+    expect(writtenHeaders).toEqual({
+      "access-control-allow-origin": "*",
+      "content-length": "2",
+    });
   });
 });

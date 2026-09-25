@@ -285,6 +285,9 @@ describe("Schema Generator", () => {
       });
 
       it("prevents memory exhaustion from deep nesting with large arrays", async () => {
+        // Depth alone is no longer charged: the generated-node budget bounds
+        // depth times width, so nested arrays are refused once their product
+        // passes it (1000 x 1001 strings here).
         const schema = {
           type: "object",
           properties: {
@@ -299,7 +302,11 @@ describe("Schema Generator", () => {
                       properties: {
                         level4: {
                           type: "array",
-                          items: { type: "string" },
+                          items: {
+                            type: "array",
+                            items: { type: "string" },
+                            maxItems: 1001,
+                          },
                           maxItems: 1000,
                         },
                       },
@@ -312,7 +319,7 @@ describe("Schema Generator", () => {
         };
 
         await expect(generateFromSchema({ schema })).rejects.toThrow(
-          /memory|deep_nesting/,
+          /generated_nodes/,
         );
       });
     });

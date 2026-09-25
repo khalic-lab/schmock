@@ -6,16 +6,21 @@ import type {
   CrudResource,
   CrudRouteDescriptor,
 } from "./crud-detector.js";
+import { successStatusOrder } from "./crud-detector.js";
 import type { CrudGenerationHooks, GenerationHooks } from "./generators.js";
 import {
+  arrayPropertyPath,
+  collectSchemaProperties,
   createCreateGenerator,
   createDeleteGenerator,
   createListGenerator,
+  createLookupGenerator,
   createReadGenerator,
   createStaticGenerator,
   createUpdateGenerator,
   findArrayProperty,
   idCounter,
+  listArrayHints,
 } from "./generators.js";
 import { OWNER_KEY } from "./owner.js";
 import type { ParsedPath } from "./parser.js";
@@ -28,7 +33,7 @@ import {
   counterStateKey,
   seededStateKey,
 } from "./state-keys.js";
-import { isRecord } from "./utils.js";
+import { hasType, isRecord } from "./utils.js";
 
 /**
  * Build the common `openapi:*` route metadata carried by every registered route.
@@ -67,7 +72,10 @@ function buildRouteConfig(
 function registrationMeta(
   route: CrudRouteDescriptor,
 ): Schmock.CrudOperationMeta {
-  const successResponse = findSuccessResponse(route.parsed.responses);
+  const successResponse = findSuccessResponse(
+    route.parsed.responses,
+    successStatusOrder(route.op),
+  );
   return successResponse
     ? { ...route.meta, responseStatus: successResponse[0] }
     : route.meta;
@@ -89,7 +97,14 @@ export function registerCrudRoutes(
       path: route.parsed.path,
       ...hooks,
     };
-    const gen = createCrudGenerator(route.op, resource, routeMeta, genHooks);
+    let gen = createCrudGenerator(route.op, resource, routeMeta, genHooks);
+    if (route.op === "read" && resource.lookupOnly) {
+      gen = createLookupGenerator(
+        resource,
+        gen,
+        createStaticGenerator(route.parsed, hooks),
+      );
+    }
 
     const config = buildRouteConfig(route.parsed, ownerToken);
     if (route.op === "create" && routeMeta.responseStatus !== undefined) {
@@ -240,12 +255,24 @@ export function applyOverrides(
       if (override.listFlat) {
         delete listMeta.responseSchema;
       } else if (override.listWrapProperty && listMeta.responseSchema) {
-        const arrayInfo = findArrayProperty(listMeta.responseSchema);
-        if (
-          !arrayInfo.property ||
-          arrayInfo.property !== override.listWrapProperty
-        ) {
-          const itemSchema = arrayInfo.itemSchema ?? resource.schema ?? {};
+        const arrayInfo = findArrayProperty(
+          listMeta.responseSchema,
+          listArrayHints(resource),
+        );
+        const detectedPath = arrayPropertyPath(arrayInfo);
+        if (detectedPath?.join(".") !== override.listWrapProperty) {
+          // Items come from the property the override names when the spec
+          // declares it as an array. Otherwise a flat list keeps its own items,
+          // while a detected wrapper the override is correcting is not trusted
+          // for them — the resource schema is.
+          const itemSchema =
+            declaredArrayItems(
+              listMeta.responseSchema,
+              override.listWrapProperty,
+            ) ??
+            (detectedPath ? resource.schema : arrayInfo.itemSchema) ??
+            resource.schema ??
+            {};
           listMeta.responseSchema = {
             type: "object",
             properties: {
@@ -289,6 +316,16 @@ export function applyOverrides(
   }
 }
 
+/** Items schema of a top-level array property the list contract declares. */
+function declaredArrayItems(
+  schema: JSONSchema7,
+  property: string,
+): JSONSchema7 | undefined {
+  const declared = collectSchemaProperties(schema)[property];
+  if (!declared || !hasType(declared, "array")) return undefined;
+  return findArrayProperty(declared).itemSchema;
+}
+
 /**
  * Forget an operation's per-media-type success contracts so `responseSchema`
  * becomes the effective one again.
@@ -308,10 +345,14 @@ export function logResourceDetection(
   const listMeta = resource.routes.find((r) => r.op === "list")?.meta;
   let listFormat = "flat";
   if (listMeta?.responseSchema) {
-    const arrayInfo = findArrayProperty(listMeta.responseSchema);
-    if (arrayInfo.property) {
+    const arrayInfo = findArrayProperty(
+      listMeta.responseSchema,
+      listArrayHints(resource),
+    );
+    const path = arrayPropertyPath(arrayInfo);
+    if (path) {
       const hasAllOf = "allOf" in (listMeta.responseSchema ?? {});
-      listFormat = `wrapped("${arrayInfo.property}"${hasAllOf ? " via allOf" : ""})`;
+      listFormat = `wrapped("${path.join(".")}"${hasAllOf ? " via allOf" : ""})`;
     }
   }
 

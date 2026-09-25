@@ -4,6 +4,7 @@ import {
   isBinaryBody,
   isRouteNotFound,
   normalizeResponse,
+  parseNodeQuery,
   SchmockError,
   serializeResponseBody,
   toHttpMethod,
@@ -181,8 +182,11 @@ function schmockToExpressResponse(
 
   const response = normalizeResponse({ ...schmockResponse, headers }, method);
   res.status(response.status);
+  // Node's raw setter, not Express's res.set(): the latter appends a
+  // mime-types charset to content-type, rewriting a header the route set
+  // explicitly (the CLI and the fetch interceptor send it verbatim).
   for (const [name, value] of Object.entries(response.headers)) {
-    res.set(name, value);
+    res.setHeader(name, value);
   }
   const body = serializeResponseBody(response);
   res.end(body === undefined ? undefined : Buffer.from(body));
@@ -246,7 +250,7 @@ function sendFormattedError(
   } catch {
     if (!res.headersSent) {
       res.status(500);
-      res.set("content-type", "application/json");
+      res.setHeader("content-type", "application/json");
     }
     if (!res.writableEnded) {
       // Once headers are on the wire, appending the fallback JSON would
@@ -281,22 +285,57 @@ function defaultTransformHeaders(
 }
 
 /**
- * Default query transformer
+ * Flatten one parsed query value into `result`, restoring the bracket keys a
+ * nested parser (qs "extended") folded away: `{filter: {name: "rex"}}` becomes
+ * `filter[name]=rex`. A repeated key keeps its last value, as in the CLI.
+ */
+function flattenQueryValue(
+  result: Record<string, string>,
+  key: string,
+  value: unknown,
+): void {
+  if (Array.isArray(value)) {
+    if (value.length === 0) result[key] = "";
+    for (const item of value) flattenQueryValue(result, key, item);
+  } else if (typeof value === "object" && value !== null) {
+    for (const [childKey, child] of Object.entries(value)) {
+      flattenQueryValue(result, `${key}[${childKey}]`, child);
+    }
+  } else if (value !== null && value !== undefined) {
+    result[key] = String(value);
+  }
+}
+
+/**
+ * Fallback query transformer, used only when the request carries no URL to
+ * re-read (hand-built request objects).
  */
 function defaultTransformQuery(
   query: Request["query"],
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(query)) {
-    if (typeof value === "string") {
-      result[key] = value;
-    } else if (Array.isArray(value)) {
-      result[key] = value[0] ? String(value[0]) : "";
-    } else if (value != null) {
-      result[key] = String(value);
-    }
+    flattenQueryValue(result, key, value);
   }
   return result;
+}
+
+/**
+ * Default query: re-read the raw URL with the CLI's own parser, so the mock
+ * sees the same record whatever `query parser` the Express app configures.
+ * `req.query` is shaped by that setting: qs "extended" (Express 4's default)
+ * nests `filter[name]` and strips `sort[]` down to `sort`.
+ */
+function defaultQuery(req: Request): Record<string, string> {
+  const rawUrl: unknown = req.originalUrl ?? req.url;
+  if (typeof rawUrl === "string") {
+    try {
+      return parseNodeQuery(new URL(rawUrl, "http://localhost"));
+    } catch {
+      // An unparseable URL falls back to Express's own parse.
+    }
+  }
+  return defaultTransformQuery(req.query ?? {});
 }
 
 /**
@@ -310,7 +349,7 @@ export function toExpress(
     errorFormatter,
     passErrorsToNext = true,
     transformHeaders = defaultTransformHeaders,
-    transformQuery = defaultTransformQuery,
+    transformQuery,
     beforeRequest,
     beforeResponse,
   } = options;
@@ -355,7 +394,7 @@ export function toExpress(
         path: req.path,
         headers: transformHeaders(req.headers),
         body: req.body,
-        query: transformQuery(req.query),
+        query: transformQuery ? transformQuery(req.query) : defaultQuery(req),
       };
 
       if (beforeRequest) {

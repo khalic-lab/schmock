@@ -1,45 +1,49 @@
 /// <reference path="../schmock.d.ts" />
 
+// Each helper returns its literal status (`[404, object]`, not
+// `[number, object]`), as docs/api.md documents: a literal tuple is still
+// assignable to `[number, object]`, and callers can destructure a typed status.
+
 export function notFound(
   message: string | object = "Not Found",
-): [number, object] {
+): [404, object] {
   const body = typeof message === "string" ? { message } : message;
   return [404, body];
 }
 
 export function badRequest(
   message: string | object = "Bad Request",
-): [number, object] {
+): [400, object] {
   const body = typeof message === "string" ? { message } : message;
   return [400, body];
 }
 
 export function unauthorized(
   message: string | object = "Unauthorized",
-): [number, object] {
+): [401, object] {
   const body = typeof message === "string" ? { message } : message;
   return [401, body];
 }
 
 export function forbidden(
   message: string | object = "Forbidden",
-): [number, object] {
+): [403, object] {
   const body = typeof message === "string" ? { message } : message;
   return [403, body];
 }
 
 export function serverError(
   message: string | object = "Internal Server Error",
-): [number, object] {
+): [500, object] {
   const body = typeof message === "string" ? { message } : message;
   return [500, body];
 }
 
-export function created(body: object): [number, object] {
+export function created(body: object): [201, object] {
   return [201, body];
 }
 
-export function noContent(): [number, null] {
+export function noContent(): [204, null] {
   return [204, null];
 }
 
@@ -59,10 +63,10 @@ function positiveInteger(value: number | undefined, fallback: number): number {
  * page 1 and a page size of 10) so a fractional, negative, NaN or infinite
  * option can never produce a nonsensical slice or a negative `totalPages`. The
  * returned envelope always echoes the NORMALIZED values, so it is internally
- * consistent with `data`.
+ * consistent with `data`. `items` is only read, so a readonly array is fine.
  */
 export function paginate<T>(
-  items: T[],
+  items: readonly T[],
   options: Schmock.PaginateOptions = {},
 ): Schmock.PaginatedResponse<T> {
   const page = positiveInteger(options.page, 1);

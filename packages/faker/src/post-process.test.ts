@@ -106,8 +106,10 @@ describe("postProcessGenerated — schmockTrueProbability", () => {
       }
       return item.flag;
     });
-    expect(flags.filter((flag) => flag === true)).toHaveLength(162);
-    expect(flags.filter((flag) => flag === false)).toHaveLength(38);
+    // The weight is applied through faker's seeded `datatype.boolean`, so the
+    // exact split is pinned to the seed.
+    expect(flags.filter((flag) => flag === true)).toHaveLength(158);
+    expect(flags.filter((flag) => flag === false)).toHaveLength(42);
   });
 });
 

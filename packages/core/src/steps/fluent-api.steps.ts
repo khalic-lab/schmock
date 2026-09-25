@@ -11,12 +11,15 @@ describeFeature(feature, ({ Scenario }) => {
   let responses: any[] = [];
 
   Scenario("Simple route with generator function", ({ Given, When, Then }) => {
-    Given("I create a mock with a JSON generator at {string}", (_, route: string) => {
-      mock = schmock({});
-      mock(route as Schmock.RouteKey, () => [{ id: 1, name: "John" }], {
-        contentType: "application/json",
-      });
-    });
+    Given(
+      "I create a mock with a JSON generator at {string}",
+      (_, route: string) => {
+        mock = schmock({});
+        mock(route as Schmock.RouteKey, () => [{ id: 1, name: "John" }], {
+          contentType: "application/json",
+        });
+      },
+    );
 
     When("I request {string}", async (_, request: string) => {
       const [method, path] = request.split(" ");
@@ -65,12 +68,19 @@ describeFeature(feature, ({ Scenario }) => {
   );
 
   Scenario("Route with parameters", ({ Given, When, Then }) => {
-    Given("I create a mock with a parameterized route {string}", (_, route: string) => {
-      mock = schmock({});
-      mock(route as Schmock.RouteKey, ({ params }) => ({ userId: params.id }), {
-        contentType: "application/json",
-      });
-    });
+    Given(
+      "I create a mock with a parameterized route {string}",
+      (_, route: string) => {
+        mock = schmock({});
+        mock(
+          route as Schmock.RouteKey,
+          ({ params }) => ({ userId: params.id }),
+          {
+            contentType: "application/json",
+          },
+        );
+      },
+    );
 
     When("I request {string}", async (_, request: string) => {
       const [method, path] = request.split(" ");
@@ -84,15 +94,22 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Response with custom status code", ({ Given, When, Then, And }) => {
-    Given("I create a mock returning status {int} for {string}", (_, _status: number, route: string) => {
-      mock = schmock({});
-      mock(route as Schmock.RouteKey, ({ body }) => {
-        const b = body as Record<string, unknown>;
-        return [201, { id: 1, ...b }];
-      }, {
-        contentType: "application/json",
-      });
-    });
+    Given(
+      "I create a mock returning status {int} for {string}",
+      (_, _status: number, route: string) => {
+        mock = schmock({});
+        mock(
+          route as Schmock.RouteKey,
+          ({ body }) => {
+            const b = body as Record<string, unknown>;
+            return [201, { id: 1, ...b }];
+          },
+          {
+            contentType: "application/json",
+          },
+        );
+      },
+    );
 
     When(
       "I request {string} with body:",
@@ -114,12 +131,19 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Static data response", ({ Given, When, Then }) => {
-    Given("I create a mock with static config data at {string}", (_, route: string) => {
-      mock = schmock({});
-      mock(route as Schmock.RouteKey, { version: "1.0.0", features: ["auth"] }, {
-        contentType: "application/json",
-      });
-    });
+    Given(
+      "I create a mock with static config data at {string}",
+      (_, route: string) => {
+        mock = schmock({});
+        mock(
+          route as Schmock.RouteKey,
+          { version: "1.0.0", features: ["auth"] },
+          {
+            contentType: "application/json",
+          },
+        );
+      },
+    );
 
     When("I request {string}", async (_, request: string) => {
       const [method, path] = request.split(" ");
@@ -135,7 +159,9 @@ describeFeature(feature, ({ Scenario }) => {
   Scenario("404 for undefined routes", ({ Given, When, Then }) => {
     Given("I create a mock with only a {string} route", (_, route: string) => {
       mock = schmock({});
-      mock(route as Schmock.RouteKey, () => [], { contentType: "application/json" });
+      mock(route as Schmock.RouteKey, () => [], {
+        contentType: "application/json",
+      });
     });
 
     When("I request {string}", async (_, request: string) => {
@@ -149,17 +175,20 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Query parameters", ({ Given, When, Then }) => {
-    Given("I create a mock that reads query parameters at {string}", (_, route: string) => {
-      mock = schmock({});
-      mock(
-        route as Schmock.RouteKey,
-        ({ query }) => ({
-          results: [],
-          query: query.q,
-        }),
-        { contentType: "application/json" },
-      );
-    });
+    Given(
+      "I create a mock that reads query parameters at {string}",
+      (_, route: string) => {
+        mock = schmock({});
+        mock(
+          route as Schmock.RouteKey,
+          ({ query }) => ({
+            results: [],
+            query: query.q,
+          }),
+          { contentType: "application/json" },
+        );
+      },
+    );
 
     When("I request {string}", async (_, request: string) => {
       const [method, fullPath] = request.split(" ");
@@ -183,16 +212,19 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("Request headers access", ({ Given, When, Then }) => {
-    Given("I create a mock that reads headers at {string}", (_, route: string) => {
-      mock = schmock({});
-      mock(
-        route as Schmock.RouteKey,
-        ({ headers }) => ({
-          authenticated: headers.authorization === "Bearer token123",
-        }),
-        { contentType: "application/json" },
-      );
-    });
+    Given(
+      "I create a mock that reads headers at {string}",
+      (_, route: string) => {
+        mock = schmock({});
+        mock(
+          route as Schmock.RouteKey,
+          ({ headers }) => ({
+            authenticated: headers.authorization === "Bearer token123",
+          }),
+          { contentType: "application/json" },
+        );
+      },
+    );
 
     When(
       "I request {string} with headers:",

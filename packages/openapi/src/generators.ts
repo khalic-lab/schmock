@@ -12,6 +12,7 @@ import {
 } from "./content-negotiation.js";
 import type { CrudResource, IdKind } from "./crud-detector.js";
 import { MAX_SEED_GENERATED_NODES } from "./limits.js";
+import { type AccessModes, collectAccessModes } from "./normalizer.js";
 import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
 import type { OnSchemaCallback } from "./plugin.js";
 import { findRepresentativeResponse } from "./response-status.js";
@@ -41,52 +42,123 @@ export function asSchemaGenerationError(
 
 /**
  * Result of finding the array property in a response schema.
- * If property is undefined, the schema is a flat array (or unknown).
+ * If `property` is undefined, the schema is a flat array (or unknown).
  */
 interface ArrayPropertyInfo {
-  /** Property name holding the array (e.g. "data"), undefined for flat arrays */
+  /**
+   * Top-level property holding (or, for a nested envelope, containing) the
+   * array — `"data"` for `{data:[…]}`, `"page"` for `{page:{items:[…]}}`.
+   * Undefined for flat arrays.
+   */
   property?: string;
-  /** Schema for the array items */
+  /** For a nested envelope, the property inside `property` holding the array. */
+  innerProperty?: string;
+  /**
+   * Schema for the array items — the declared object itself, not a copy, so
+   * identity-keyed lookups (`collectAccessModes`) still find it.
+   */
   itemSchema?: JSONSchema7;
+}
+
+/** Path to the array a wrapper carries (`["data"]`, `["page", "items"]`), if any. */
+export function arrayPropertyPath(
+  info: ArrayPropertyInfo,
+): string[] | undefined {
+  if (info.property === undefined) return undefined;
+  return info.innerProperty === undefined
+    ? [info.property]
+    : [info.property, info.innerProperty];
+}
+
+/**
+ * What is already known about the resource a list envelope carries, used to
+ * pick the right array when the envelope declares more than one.
+ */
+export interface ArrayPropertyHints {
+  /** Property names that identify the resource's primary key, most specific first. */
+  idProperties?: readonly string[];
+  /** The resource's item schema, when already known. */
+  itemSchema?: JSONSchema7;
+}
+
+/** Envelope keys conventionally holding a page of items. */
+const CONVENTIONAL_LIST_KEYS = new Set([
+  "data",
+  "items",
+  "results",
+  "result",
+  "content",
+  "value",
+  "values",
+  "records",
+  "entries",
+  "list",
+]);
+
+const PRIMITIVE_TYPES = ["string", "number", "integer", "boolean", "null"];
+
+/**
+ * Object-shaped by declaration: `type: object` (alone or in a union), or no
+ * `type` at all with `properties`/`allOf`. The same rule `generateContractBase`
+ * uses — a wrapper that omits `type` is still an object envelope.
+ */
+function isObjectShaped(schema: JSONSchema7): boolean {
+  if (hasType(schema, "object")) return true;
+  return (
+    schema.type === undefined &&
+    (isRecord(schema.properties) || Array.isArray(schema.allOf))
+  );
+}
+
+/** First items schema of an array, as declared (no copy). */
+function arrayItemSchema(schema: JSONSchema7): JSONSchema7 | undefined {
+  const items = Array.isArray(schema.items) ? schema.items[0] : schema.items;
+  return typeof items === "object" && items !== null ? items : undefined;
+}
+
+/** Resource-derived hints for {@link findArrayProperty} on a list route. */
+export function listArrayHints(
+  resource: Pick<CrudResource, "idProperty" | "idParam" | "schema">,
+): ArrayPropertyHints {
+  const idProperties = [
+    ...new Set([resource.idProperty, resource.idParam, "id"]),
+  ].filter((name) => name.length > 0);
+  return { idProperties, itemSchema: resource.schema };
 }
 
 /**
  * Find which property in a response schema holds the array of items.
- * Handles flat arrays, object wrappers (Stripe), and allOf compositions (Scalar Galaxy).
+ * Handles flat arrays, object wrappers (Stripe), typeless wrappers, allOf
+ * compositions (Scalar Galaxy) and one level of nesting (`{page:{items}}`,
+ * HAL `_embedded`).
+ *
+ * When the envelope declares several arrays (`errors`, `links`, `warnings`
+ * next to the items), they are ranked rather than taken in declaration order:
+ * see {@link rankArrayCandidates}.
  */
-export function findArrayProperty(schema: JSONSchema7): ArrayPropertyInfo {
+export function findArrayProperty(
+  schema: JSONSchema7,
+  hints: ArrayPropertyHints = {},
+): ArrayPropertyInfo {
   if (!schema || typeof schema === "boolean") return {};
 
   // Case 1: flat array
   if (hasType(schema, "array")) {
-    const items = Array.isArray(schema.items) ? schema.items[0] : schema.items;
-    const itemSchema = isRecord(items) ? toJsonSchema(items) : undefined;
-    return { itemSchema };
+    return { itemSchema: arrayItemSchema(schema) };
   }
 
-  // Case 2: object with properties — scan for the array property
-  if (hasType(schema, "object") && isRecord(schema.properties)) {
-    return findArrayInProperties(schema.properties);
-  }
-
-  // Case 3: allOf — merge branches into one virtual object, then scan
-  if (Array.isArray(schema.allOf)) {
-    const merged: Record<string, JSONSchema7> = {};
-    for (const branch of schema.allOf) {
-      if (isRecord(branch) && isRecord(branch.properties)) {
-        for (const [key, value] of Object.entries(branch.properties)) {
-          if (isRecord(value)) {
-            merged[key] = toJsonSchema(value);
-          }
-        }
-      }
-    }
-    if (Object.keys(merged).length > 0) {
-      return findArrayInProperties(merged);
+  // Case 2: object envelope — typed or not, with or without allOf
+  if (isObjectShaped(schema)) {
+    const best = rankArrayCandidates(collectArrayCandidates(schema), hints);
+    if (best) {
+      const [property, innerProperty] = best.path;
+      return innerProperty === undefined
+        ? { property, itemSchema: best.itemSchema }
+        : { property, innerProperty, itemSchema: best.itemSchema };
     }
   }
 
-  // Case 4: anyOf/oneOf — try the first meaningful branch. The normalizer wraps
+  // Case 3: anyOf/oneOf — try the first meaningful branch. The normalizer wraps
   // a composition-only `nullable: true` as `anyOf: [{type:"null"}, rest]`, so a
   // bare null branch must be skipped rather than read as the shape.
   for (const keyword of ["anyOf", "oneOf"] as const) {
@@ -96,7 +168,7 @@ export function findArrayProperty(schema: JSONSchema7): ArrayPropertyInfo {
         if (!isRecord(branch)) continue;
         if (branch.type === "null" && Object.keys(branch).length === 1)
           continue;
-        return findArrayProperty(toJsonSchema(branch));
+        return findArrayProperty(toJsonSchema(branch), hints);
       }
     }
   }
@@ -135,19 +207,156 @@ export function collectSchemaProperties(
   return out;
 }
 
-function findArrayInProperties(
-  properties: Record<string, unknown>,
-): ArrayPropertyInfo {
-  for (const [key, value] of Object.entries(properties)) {
-    if (!isRecord(value)) continue;
-    const prop = toJsonSchema(value);
-    if (hasType(prop, "array") && prop.items) {
-      const items = Array.isArray(prop.items) ? prop.items[0] : prop.items;
-      const itemSchema = isRecord(items) ? toJsonSchema(items) : undefined;
-      return { property: key, itemSchema };
+interface ArrayCandidate {
+  path: string[];
+  itemSchema?: JSONSchema7;
+}
+
+/**
+ * Every declaration of every property of an object schema: its own
+ * `properties`, then its `allOf` branches, recursively. A key declared in
+ * several branches yields one entry per declaration — a generic
+ * `Wrapper-Collection` declaring `data: object[]` next to the operation's own
+ * `data: Booking[]` — so the ranking, not a merge order, decides between them.
+ */
+function propertyDeclarations(
+  schema: JSONSchema7,
+): Array<[string, JSONSchema7]> {
+  const out: Array<[string, JSONSchema7]> = [];
+  const seen = new Set<object>();
+  const visit = (node: JSONSchema7): void => {
+    if (seen.has(node)) return;
+    seen.add(node);
+    if (node.properties && typeof node.properties === "object") {
+      for (const [key, value] of Object.entries(node.properties)) {
+        if (typeof value === "object") out.push([key, value]);
+      }
+    }
+    if (Array.isArray(node.allOf)) {
+      for (const branch of node.allOf) {
+        if (typeof branch === "object") visit(branch);
+      }
+    }
+  };
+  visit(schema);
+  return out;
+}
+
+/**
+ * Every array property of an object envelope: its own (and its `allOf`
+ * branches') properties first, then one level down inside object-shaped
+ * properties. Declaration order is preserved within each level.
+ */
+function collectArrayCandidates(schema: JSONSchema7): ArrayCandidate[] {
+  const top: ArrayCandidate[] = [];
+  const nested: ArrayCandidate[] = [];
+  for (const [key, prop] of propertyDeclarations(schema)) {
+    if (hasType(prop, "array")) {
+      if (prop.items) {
+        top.push({ path: [key], itemSchema: arrayItemSchema(prop) });
+      }
+      continue;
+    }
+    if (!isObjectShaped(prop)) continue;
+    for (const [inner, innerProp] of propertyDeclarations(prop)) {
+      if (hasType(innerProp, "array") && innerProp.items) {
+        nested.push({
+          path: [key, inner],
+          itemSchema: arrayItemSchema(innerProp),
+        });
+      }
     }
   }
-  return {};
+  return [...top, ...nested];
+}
+
+/**
+ * Parent keys that mark a nested level as a list envelope (`_embedded` for
+ * HAL, `page`/`data`/`result` for paged APIs).
+ */
+const NESTED_ENVELOPE_KEYS = new Set([
+  "_embedded",
+  "embedded",
+  "page",
+  "data",
+  "result",
+  "results",
+  "response",
+  "payload",
+]);
+
+/**
+ * Pick the array most likely to carry the resource, by, in order:
+ *
+ * 1. being the very items object the resource schema came from;
+ * 2. declaring the resource's id property (most specific hint first) — the
+ *    rule `findResourceWrapper` already uses for create envelopes;
+ * 3. sharing the most property names with the known item schema;
+ * 4. holding objects rather than primitives (`warnings: string[]`);
+ * 5. a conventional name (`data`, `items`, `results`, …);
+ * 6. sitting at the top level rather than one level down;
+ * 7. declaration order.
+ *
+ * Taking the first array in declaration order injected the collection into an
+ * `errors`/`links` array declared before the real one and derived the resource
+ * schema from it.
+ *
+ * A nested array only competes with evidence that it is the list — one of
+ * signals 1-3, or an envelope parent key — so an ordinary object that happens
+ * to hold an array (`card_issuing.status_details`) is not read as a wrapper.
+ */
+function rankArrayCandidates(
+  candidates: ArrayCandidate[],
+  hints: ArrayPropertyHints,
+): ArrayCandidate | undefined {
+  const idNames = hints.idProperties?.length ? hints.idProperties : ["id"];
+  const reference = new Set(
+    Object.keys(collectSchemaProperties(hints.itemSchema)),
+  );
+
+  const score = (candidate: ArrayCandidate): number[] => {
+    const items = candidate.itemSchema;
+    const props = collectSchemaProperties(items);
+    const idRank = idNames.findIndex((name) => name in props);
+    let overlap = 0;
+    for (const name of Object.keys(props)) {
+      if (reference.has(name)) overlap++;
+    }
+    const primitive =
+      items !== undefined &&
+      !isObjectShaped(items) &&
+      PRIMITIVE_TYPES.some((type) => hasType(items, type));
+    const leaf = candidate.path[candidate.path.length - 1];
+    return [
+      items !== undefined && items === hints.itemSchema ? 0 : 1,
+      idRank === -1 ? idNames.length : idRank,
+      -overlap,
+      primitive ? 1 : 0,
+      CONVENTIONAL_LIST_KEYS.has(leaf) ? 0 : 1,
+      candidate.path.length,
+    ];
+  };
+
+  const admitted = candidates.filter((candidate) => {
+    if (candidate.path.length === 1) return true;
+    if (NESTED_ENVELOPE_KEYS.has(candidate.path[0])) return true;
+    const [identity, idRank, negOverlap] = score(candidate);
+    return identity === 0 || idRank < idNames.length || negOverlap < 0;
+  });
+  if (admitted.length <= 1) return admitted[0];
+
+  let best = admitted[0];
+  let bestScore = score(best);
+  for (const candidate of admitted.slice(1)) {
+    const candidateScore = score(candidate);
+    const diff = candidateScore.findIndex((v, i) => v !== bestScore[i]);
+    // Strictly better only: ties keep the earlier declaration.
+    if (diff !== -1 && candidateScore[diff] < bestScore[diff]) {
+      best = candidate;
+      bestScore = candidateScore;
+    }
+  }
+  return best;
 }
 
 /**
@@ -277,13 +486,17 @@ function generateSingleHeaderValue(
 ): string | undefined {
   if (!schema || typeof schema === "boolean") return undefined;
 
-  // Has enum → first value
-  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
-    return String(schema.enum[0]);
+  // Has enum → first non-null scalar value (a nullable enum carries `null`)
+  if (Array.isArray(schema.enum)) {
+    const value = schema.enum.find(isHeaderScalar);
+    if (value !== undefined) return String(value);
   }
 
-  // Has default (from example → default normalization)
-  if ("default" in schema && schema.default !== undefined) {
+  // Has default (from example → default normalization). Only a scalar has one
+  // obvious wire form; an object or array default falls through, exactly like
+  // an array-typed or untyped schema below, instead of emitting
+  // "[object Object]".
+  if (isHeaderScalar(schema.default)) {
     return String(schema.default);
   }
 
@@ -301,22 +514,80 @@ function generateSingleHeaderValue(
       : new Date().toISOString();
   }
 
-  // Type-based fallback
-  if (schema.type === "integer" || schema.type === "number") {
-    return "0";
+  // Type-based fallback. `hasType`, not `===`: the normalizer turns a 3.0
+  // `nullable: true` header into `type: [T, "null"]`, which must still emit.
+  if (hasType(schema, "integer")) {
+    return numericHeaderValue(schema, true);
   }
-  if (schema.type === "string") {
-    return "";
+  if (hasType(schema, "number")) {
+    return numericHeaderValue(schema, false);
   }
-  if (schema.type === "boolean") {
+  if (hasType(schema, "string")) {
+    return "x".repeat(
+      typeof schema.minLength === "number" ? schema.minLength : 0,
+    );
+  }
+  if (hasType(schema, "boolean")) {
     return "false";
   }
 
-  // Deliberate drop: `array` and untyped header schemas have no single obvious
-  // wire form (comma-joined? repeated header? JSON?), and guessing one would be
-  // worse than omitting the header. Not an oversight — do not "fix" it without
-  // deciding the serialization first.
+  // Deliberate drop: `array`, `object` and untyped header schemas have no
+  // single obvious wire form (comma-joined? repeated header? JSON?), and
+  // guessing one would be worse than omitting the header. Not an oversight —
+  // do not "fix" it without deciding the serialization first.
   return undefined;
+}
+
+function isHeaderScalar(value: unknown): value is string | number | boolean {
+  return (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
+}
+
+/**
+ * The placeholder for a numeric header: 0 when the bounds allow it, otherwise
+ * the nearest whole number inside them, otherwise (a fractional `number` range)
+ * its midpoint. A flat "0" broke `minimum: 1` on the header's own schema.
+ */
+function numericHeaderValue(schema: JSONSchema7, integer: boolean): string {
+  const min = typeof schema.minimum === "number" ? schema.minimum : undefined;
+  const exMin =
+    typeof schema.exclusiveMinimum === "number"
+      ? schema.exclusiveMinimum
+      : undefined;
+  const max = typeof schema.maximum === "number" ? schema.maximum : undefined;
+  const exMax =
+    typeof schema.exclusiveMaximum === "number"
+      ? schema.exclusiveMaximum
+      : undefined;
+
+  const fits = (value: number): boolean =>
+    (min === undefined || value >= min) &&
+    (exMin === undefined || value > exMin) &&
+    (max === undefined || value <= max) &&
+    (exMax === undefined || value < exMax);
+
+  const candidates = [
+    0,
+    min === undefined ? undefined : Math.ceil(min),
+    exMin === undefined ? undefined : Math.floor(exMin) + 1,
+    max === undefined ? undefined : Math.floor(max),
+    exMax === undefined ? undefined : Math.ceil(exMax) - 1,
+  ];
+  for (const candidate of candidates) {
+    if (candidate !== undefined && fits(candidate)) return String(candidate);
+  }
+
+  const low = exMin ?? min;
+  const high = exMax ?? max;
+  if (!integer && low !== undefined && high !== undefined) {
+    const midpoint = (low + high) / 2;
+    if (fits(midpoint)) return String(midpoint);
+  }
+  // Unsatisfiable bounds: nothing fits, keep the historical placeholder.
+  return "0";
 }
 
 /**
@@ -509,8 +780,10 @@ export interface CrudGenerationHooks extends GenerationHooks {
  * Give `options.onSchema` a chance to rewrite a schema before generation.
  *
  * Fires only where a body is actually generated: the create response contract,
- * the list wrapper skeleton, and CRUD error bodies. Read/update/delete replay
- * stored state, so they only reach it on their 404 path.
+ * the list wrapper skeleton (or a list's declared object body when it carries
+ * no array), and CRUD error bodies. Read/update/delete replay stored state, so
+ * they only reach it on their 404 path — or, for a lookup-only read with no
+ * stored scope, through the static generator it falls back to.
  */
 function applyOnSchema(
   schema: JSONSchema7 | undefined,
@@ -586,6 +859,27 @@ function metaSchema(
   );
 }
 
+/**
+ * The resource's `readOnly`/`writeOnly` property names, plus any the
+ * operation's own contract declares (a create or update response built from a
+ * different component than the item GET).
+ */
+function accessModesFor(
+  resource: CrudResource,
+  schema: JSONSchema7 | undefined,
+): AccessModes {
+  const own = collectAccessModes(schema);
+  const shared = resource.accessModes;
+  if (!shared || (shared.readOnly.size === 0 && shared.writeOnly.size === 0)) {
+    return own;
+  }
+  if (own.readOnly.size === 0 && own.writeOnly.size === 0) return shared;
+  return {
+    readOnly: new Set([...shared.readOnly, ...own.readOnly]),
+    writeOnly: new Set([...shared.writeOnly, ...own.writeOnly]),
+  };
+}
+
 /** Key under which `RequestContext.pluginState` holds this request's staged mutations. */
 export const PENDING_MUTATIONS_KEY = "openapi:pendingMutations";
 
@@ -631,8 +925,10 @@ export function createListGenerator(
   // resolved per request. Memoized per schema object: without `onSchema` the
   // keys are the route's declared media-type schemas, a bounded set. A hook
   // that returns a fresh object per request simply misses the memo — a WeakMap
-  // keeps that from accumulating.
+  // keeps that from accumulating. The hints are fixed per resource, so they
+  // cannot invalidate an entry.
   const wrapperMemo = new WeakMap<object, ArrayPropertyInfo>();
+  const hints = listArrayHints(resource);
 
   return async (ctx: Schmock.RequestContext) => {
     const headers = generateHeaderValues(headerDefs, headerSeed);
@@ -648,20 +944,44 @@ export function createListGenerator(
     });
     if (!schema) return flat;
 
-    // If no wrapper detected or flat array, return items directly — and do not
-    // call `onSchema`, since nothing is generated on that path.
-    if (!resolveWrapperInfo(schema, wrapperMemo).property) return flat;
+    // A flat-array (or unknown) contract returns the items directly — and does
+    // not call `onSchema`, since nothing is generated on that path.
+    if (
+      !resolveWrapperInfo(schema, wrapperMemo, hints).property &&
+      !isObjectShaped(schema)
+    ) {
+      return flat;
+    }
 
     // The hook can reshape the wrapper, so the injection point is re-derived
     // from whatever it returned.
     const effective = applyOnSchema(schema, hooks, ctx) ?? schema;
-    const wrapperInfo = resolveWrapperInfo(effective, wrapperMemo);
-    if (!wrapperInfo.property) return flat;
+    const wrapperPath = arrayPropertyPath(
+      resolveWrapperInfo(effective, wrapperMemo, hints),
+    );
+    if (!wrapperPath) {
+      if (!isObjectShaped(effective)) return flat;
+      // An object contract with no array to carry the collection (a singleton
+      // such as `/settings` grouped as a list): a bare array is a shape the
+      // contract forbids, so answer with the declared body, as a static route
+      // would.
+      return buildResponse({
+        status: responseStatus,
+        body: await generateDeclaredBody(effective, hooks, resource),
+        headers,
+      });
+    }
 
-    // Generate the full wrapper skeleton from schema, then inject live data
-    const skeleton = await generateWrapperSkeleton(effective, hooks?.fakerSeed);
+    // Generate the wrapper's decoration without the array property — the live
+    // items replace it anyway, and fabricating them first pushed tall item
+    // schemas over the nesting limit and cost DEFAULT_ARRAY_COUNT throwaway
+    // items per request.
+    const skeleton = await generateWrapperSkeleton(
+      withoutPath(effective, wrapperPath),
+      hooks?.fakerSeed,
+    );
     if (isRecord(skeleton)) {
-      skeleton[wrapperInfo.property] = items;
+      setAtPath(skeleton, wrapperPath, items);
       return buildResponse({
         status: responseStatus,
         body: skeleton,
@@ -676,15 +996,56 @@ export function createListGenerator(
 function resolveWrapperInfo(
   schema: JSONSchema7,
   memo: WeakMap<object, ArrayPropertyInfo>,
+  hints: ArrayPropertyHints,
 ): ArrayPropertyInfo {
   if (typeof schema !== "object" || schema === null) {
-    return findArrayProperty(schema);
+    return findArrayProperty(schema, hints);
   }
   const cached = memo.get(schema);
   if (cached) return cached;
-  const info = findArrayProperty(schema);
+  const info = findArrayProperty(schema, hints);
   memo.set(schema, info);
   return info;
+}
+
+/**
+ * Generate a list route's declared object body when it carries no array.
+ * Throws like `createStaticGenerator` does: core renders a structured 500.
+ */
+async function generateDeclaredBody(
+  schema: JSONSchema7,
+  hooks: CrudGenerationHooks | undefined,
+  resource: CrudResource,
+): Promise<unknown> {
+  try {
+    return await generateFromSchema({ schema, seed: hooks?.fakerSeed });
+  } catch (error) {
+    throw asSchemaGenerationError(
+      error,
+      `${hooks?.method ?? "GET"} ${hooks?.path ?? resource.basePath}`,
+      schema,
+    );
+  }
+}
+
+/** Write `value` at `path`, creating intermediate objects the skeleton lacks. */
+function setAtPath(
+  target: Record<string, unknown>,
+  path: readonly string[],
+  value: unknown,
+): void {
+  let node = target;
+  for (const key of path.slice(0, -1)) {
+    const next = node[key];
+    if (isRecord(next)) {
+      node = next;
+    } else {
+      const created: Record<string, unknown> = {};
+      node[key] = created;
+      node = created;
+    }
+  }
+  node[path[path.length - 1]] = value;
 }
 
 /**
@@ -712,19 +1073,40 @@ function findResourceWrapper(
 }
 
 /**
- * Shallow copy of `schema` with one property removed from `properties` and
- * `required`. Used to generate an envelope's outer shell without re-fabricating
- * the resource that is about to be injected into the wrapper slot.
+ * Copy of `schema` with the property at `path` removed from `properties` and
+ * `required` — through `allOf`/`anyOf`/`oneOf` branches and into a nested
+ * envelope level. Used to generate an envelope's outer shell without
+ * re-fabricating the resource (or the list of them) about to be injected into
+ * the wrapper slot. Only the nodes along the path are copied.
  */
-function withoutProperty(schema: JSONSchema7, property: string): JSONSchema7 {
-  if (!isRecord(schema.properties) || !(property in schema.properties)) {
-    return schema;
+function withoutPath(
+  schema: JSONSchema7,
+  path: readonly string[],
+): JSONSchema7 {
+  const [head, ...rest] = path;
+  if (head === undefined) return schema;
+  const clone: JSONSchema7 = { ...schema };
+
+  if (isRecord(schema.properties) && head in schema.properties) {
+    const properties = { ...schema.properties };
+    const child = properties[head];
+    if (rest.length === 0) {
+      delete properties[head];
+    } else if (typeof child === "object") {
+      properties[head] = withoutPath(child, rest);
+    }
+    clone.properties = properties;
   }
-  const properties = { ...schema.properties };
-  delete properties[property];
-  const clone: JSONSchema7 = { ...schema, properties };
-  if (Array.isArray(schema.required)) {
-    clone.required = schema.required.filter((name) => name !== property);
+  if (rest.length === 0 && Array.isArray(schema.required)) {
+    clone.required = schema.required.filter((name) => name !== head);
+  }
+  for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
+    const branches = schema[keyword];
+    if (Array.isArray(branches)) {
+      clone[keyword] = branches.map((branch) =>
+        typeof branch === "object" ? withoutPath(branch, path) : branch,
+      );
+    }
   }
   return clone;
 }
@@ -772,6 +1154,7 @@ export function createCreateGenerator(
       effective,
       hooks?.fakerSeed,
     );
+    const modes = accessModesFor(resource, effective);
 
     if (isRecord(ctx.body)) {
       const declared = collectSchemaProperties(effective);
@@ -779,11 +1162,18 @@ export function createCreateGenerator(
       const open = effective?.additionalProperties !== false;
       for (const [property, value] of Object.entries(ctx.body)) {
         if (value === undefined || property === resource.idProperty) continue;
+        // A readOnly value is the server's to assign and a writeOnly one is
+        // never returned — the response normalizer strips it from `declared`,
+        // so on an open contract it used to be copied through as "undeclared".
+        if (modes.readOnly.has(property) || modes.writeOnly.has(property)) {
+          continue;
+        }
         if (property in declared || noContract || open) {
           item[property] = value;
         }
       }
     }
+    for (const property of modes.writeOnly) delete item[property];
 
     // The id is allocated eagerly: staging the counter too would let two
     // in-flight creates peek the same id and commit duplicates. A rejected
@@ -800,7 +1190,7 @@ export function createCreateGenerator(
     let body: unknown = item;
     if (wrapper.property && responseSchema) {
       const shell = await generateContractBase(
-        withoutProperty(responseSchema, wrapper.property),
+        withoutPath(responseSchema, [wrapper.property]),
         hooks?.fakerSeed,
       );
       shell[wrapper.property] = item;
@@ -876,6 +1266,26 @@ export function createReadGenerator(
   };
 }
 
+/**
+ * Serve a lookup-only resource — a lone item GET, with no list or create to
+ * ever add a row.
+ *
+ * When the request's scope holds a collection (seeded, or pre-loaded through
+ * `schmock({ state })`), it behaves as a CRUD read: stored rows by id, 404 for
+ * the rest. Otherwise nothing could ever be found, so it answers from the
+ * declared schema like any static route instead of 404ing forever.
+ */
+export function createLookupGenerator(
+  resource: CrudResource,
+  read: Schmock.GeneratorFunction,
+  generate: Schmock.GeneratorFunction,
+): Schmock.GeneratorFunction {
+  return (ctx: Schmock.RequestContext) => {
+    const key = collectionStateKey(resource.basePath, ctx.params);
+    return Array.isArray(ctx.state[key]) ? read(ctx) : generate(ctx);
+  };
+}
+
 export function createUpdateGenerator(
   resource: CrudResource,
   meta?: Schmock.CrudOperationMeta,
@@ -896,25 +1306,45 @@ export function createUpdateGenerator(
       return await generateErrorResponse(404, meta, hooks, ctx);
     }
 
-    const existingRaw = collection[index];
-    const existing = isRecord(existingRaw) ? existingRaw : {};
+    const modes = accessModesFor(
+      resource,
+      metaSchema(meta, ctx.headers, headers),
+    );
     const updates = isRecord(ctx.body)
       ? Object.fromEntries(
-          Object.entries(ctx.body).filter(([, value]) => value !== undefined),
+          Object.entries(ctx.body).filter(
+            ([property, value]) =>
+              value !== undefined &&
+              !modes.readOnly.has(property) &&
+              !modes.writeOnly.has(property),
+          ),
         )
       : {};
-    const updated = {
-      ...existing,
-      ...updates,
-      [resource.idProperty]: existing[resource.idProperty], // Preserve ID
+    const merge = (row: unknown): Record<string, unknown> => {
+      const base = isRecord(row) ? row : {};
+      const merged: Record<string, unknown> = {
+        ...base,
+        ...updates,
+        [resource.idProperty]: base[resource.idProperty], // Preserve ID
+      };
+      for (const property of modes.writeOnly) delete merged[property];
+      return merged;
     };
-    // Re-read the collection and re-find the item at commit time: the seeder can
-    // replace the array object, and another request can shift indices between
-    // generation and commit.
+    const updated = merge(collection[index]);
+    // Re-read the collection, re-find the item AND re-merge at commit time: the
+    // seeder can replace the array object, another request can shift indices,
+    // and a concurrent update can commit between this generator and its
+    // commit — writing the merge taken above would erase that update. The
+    // response object is rebuilt in place, so the body the client receives is
+    // the row that was actually stored.
     stageMutation(ctx, () => {
       const live = getCollection(ctx.state, key);
       const liveIndex = findIndexById(live, resource.idProperty, idValue);
-      if (liveIndex !== -1) live[liveIndex] = updated;
+      if (liveIndex === -1) return;
+      const committed = merge(live[liveIndex]);
+      for (const property of Object.keys(updated)) delete updated[property];
+      Object.assign(updated, committed);
+      live[liveIndex] = updated;
     });
     return buildResponse({
       status: responseStatus,
@@ -1148,13 +1578,13 @@ async function generateErrorResponse(
  * Used to create wrapper objects (e.g. { data: [], has_more: false, object: "list" })
  *
  * Deliberately NOT symmetric with `createStaticGenerator`, which throws: only
- * the wrapper's *decoration* is generated here, and the caller immediately
- * overwrites the array property with the live collection. Degrading to `{}`
+ * the wrapper's *decoration* is generated here — the caller strips the array
+ * property first and injects the live collection afterwards. Degrading to `{}`
  * still returns the real items under the declared wrapper key, so a failure
  * here costs sibling metadata (`has_more`, `object`) rather than the response.
- * Large real-world specs rely on this — Stripe's list wrappers exceed faker's
- * nesting-depth limit, and throwing would turn a correct `200 {data:[…]}` into
- * a 500.
+ * Large real-world specs rely on this — a Stripe wrapper whose decoration alone
+ * exceeds faker's nesting-depth limit must not turn a correct `200 {data:[…]}`
+ * into a 500.
  */
 async function generateWrapperSkeleton(
   schema: JSONSchema7,

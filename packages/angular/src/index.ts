@@ -17,6 +17,7 @@ import {
   isHttpMethod,
   isRouteNotFound,
   normalizeResponse,
+  schmock,
   serializeResponseBody,
 } from "@schmock/core";
 import { Observable } from "rxjs";
@@ -280,36 +281,32 @@ export interface AngularAdapterOptions {
 }
 
 /**
- * Extract query parameters from Angular HttpRequest
- * Uses Angular's built-in params which are already parsed
+ * Extract query parameters from an Angular HttpRequest: the query already in
+ * the URL string, then Angular's HttpParams. That is the order Angular writes
+ * them into `urlWithParams`, so a key repeated anywhere resolves to its LAST
+ * value on the wire, the rule the CLI, Express and the fetch interceptor
+ * follow. HttpParams are read directly rather than re-parsed from
+ * `urlWithParams`, so a custom parameter codec cannot skew the values.
  */
 function extractQueryParams(
   request: HttpRequest<unknown>,
 ): Record<string, string> {
-  const result: Record<string, string> = {};
-
-  // Use Angular's HttpParams which are already parsed
-  request.params.keys().forEach((key) => {
-    const value = request.params.get(key);
-    if (value !== null) {
-      result[key] = value;
-    }
-  });
-
-  // Also check URL for query params (fallback for params in URL string)
   const url = request.url;
   const queryStart = url.indexOf("?");
-  if (queryStart !== -1) {
-    const urlParams = new URLSearchParams(url.slice(queryStart + 1));
-    urlParams.forEach((value, key) => {
-      // Don't overwrite params from Angular's HttpParams
-      if (!(key in result)) {
-        result[key] = value;
-      }
-    });
+  const entries: Array<[string, string]> =
+    queryStart === -1
+      ? []
+      : [...new URLSearchParams(url.slice(queryStart + 1))];
+
+  for (const key of request.params.keys()) {
+    const values = request.params.getAll(key);
+    if (values !== null && values.length > 0) {
+      entries.push([key, values[values.length - 1]]);
+    }
   }
 
-  return result;
+  // Own-property definition, so a `__proto__` key stays an ordinary entry.
+  return Object.fromEntries(entries);
 }
 
 /**
@@ -376,15 +373,69 @@ function parseBaseUrl(baseUrl: string): {
 }
 
 /**
+ * Replace every case variant of content-type with a JSON one: a formatted
+ * error body is always JSON, whatever the failing route declared.
+ */
+function withJsonContentType(
+  headers: Record<string, string>,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() !== "content-type") result[name] = value;
+  }
+  result["content-type"] = "application/json";
+  return result;
+}
+
+/**
+ * Run an in-band errorFormatter and normalize its output exactly like any
+ * other response, so a HEAD request drops the body and Date values arrive as
+ * JSON strings, matching the out-of-band path and the Express adapter. The
+ * route's other headers (e.g. retry-after) are kept. A throwing formatter, or
+ * a body the normalizer rejects (an embedded Error), falls back to a minimal
+ * body; the formatter is still invoked exactly once.
+ */
+function formatInBandError(input: {
+  format: () => unknown;
+  headers: Record<string, string>;
+  method: Schmock.HttpMethod;
+}): Schmock.Response {
+  try {
+    return normalizeResponse(
+      {
+        status: 500,
+        body: input.format(),
+        headers: withJsonContentType(input.headers),
+      },
+      input.method,
+    );
+  } catch {
+    return normalizeResponse(
+      {
+        status: 500,
+        body: { error: "Internal Server Error", code: "INTERNAL_ERROR" },
+        headers: { "content-type": "application/json" },
+      },
+      input.method,
+    );
+  }
+}
+
+/**
  * Convert Angular headers to plain object.
  *
  * A repeated header is combined into one field value with ", " (RFC 9110
- * field-list combining) rather than reduced to its first value: that is what
- * `HttpHeaders.get()` would return, and what the other adapters already
- * deliver — the fetch interceptor reads through `Headers`, which comma-joins
- * repeats, and Node comma-joins repeated request headers before Express sees
- * them. `set-cookie` is a response header and never reaches this function, so
- * the join is safe here.
+ * field-list combining) rather than reduced to its first value. That is what
+ * the browser puts on the wire: XHR and fetch both fold repeated request
+ * headers into one comma-joined line, and the fetch interceptor reads through
+ * `Headers`, which does the same. Node-based transports (Express, the CLI,
+ * `mock.listen()`) only differ when a raw client sends a header as separate
+ * lines: Node then keeps the FIRST value of its single-value headers
+ * (authorization, content-type, host, user-agent and the rest of its discard
+ * list), joins `cookie` with "; ", and comma-joins everything else. A browser
+ * never sends those separate lines, so no Angular request reaches that case.
+ * `set-cookie` is a response header and never reaches this function, so the
+ * join is safe here.
  *
  * Casing is deliberately NOT folded here: it is folded once at the
  * `mock.handle()` call site so a `transformHeaders` override sees the same
@@ -646,41 +697,30 @@ export function createSchmockInterceptor(
 
               // Angular treats only final 2xx responses as successful emissions.
               if (status < 200 || status >= 300) {
-                let errorBody = response.body;
-
                 // Format only core-marked exceptions, not domain 500 bodies.
-                // A throwing formatter must not propagate into .catch, where
-                // it would be invoked a second time with its own exception.
-                if (status === 500 && errorFormatter && internalError) {
-                  try {
-                    errorBody = errorFormatter(internalError, req);
-                  } catch {
-                    errorBody = {
-                      error: "Internal Server Error",
-                      code: "INTERNAL_ERROR",
-                    };
-                  }
-                }
+                const errorResponse =
+                  status === 500 && errorFormatter && internalError
+                    ? formatInBandError({
+                        format: () => errorFormatter(internalError, req),
+                        headers,
+                        method: requestData.method,
+                      })
+                    : { ...response, headers };
 
                 observer.error(
                   new HttpErrorResponse({
                     // Shape the formatter's output too — the error channel
                     // obeys the same responseType law as the success one.
-                    // Once the formatter has replaced the body the response's
-                    // own content-type no longer describes it, so a Blob would
-                    // otherwise be labelled with the route's media type.
                     error: applyResponseType(
-                      errorBody,
+                      errorResponse.body,
                       status,
-                      errorBody === response.body
-                        ? headers
-                        : { "content-type": "application/json" },
+                      errorResponse.headers,
                       req.responseType,
                     ),
                     status,
                     statusText: getStatusText(status),
                     url: req.urlWithParams,
-                    headers: new HttpHeaders(headers),
+                    headers: new HttpHeaders(errorResponse.headers),
                   }),
                 );
               } else {
@@ -738,6 +778,35 @@ export function provideSchmockInterceptor(
   };
 }
 
+type OpenapiFactory = (
+  options: Schmock.OpenApiOptions,
+) => Promise<Schmock.Plugin>;
+
+/**
+ * Load the optional `@schmock/openapi` peer at call time.
+ *
+ * The specifier is assembled at runtime on purpose. A string constant is not
+ * enough: `bun build --minify` folds `const m = "@schmock/openapi";
+ * import(m)` into a literal `import("@schmock/openapi")`, and a consumer's
+ * bundler (esbuild in `ng build`) then fails to resolve the peer even for an
+ * app that never calls the spec helpers. A computed specifier is left alone,
+ * and TypeScript does not try to resolve it either.
+ */
+async function loadOptionalOpenapi(): Promise<OpenapiFactory> {
+  const specifier = ["@schmock", "openapi"].join("/");
+  const mod: unknown = await import(/* @vite-ignore */ specifier);
+  if (
+    typeof mod === "object" &&
+    mod !== null &&
+    "openapi" in mod &&
+    typeof mod.openapi === "function"
+  ) {
+    const factory = mod.openapi;
+    return (options) => factory(options);
+  }
+  throw new Error("@schmock/openapi does not export an openapi() factory");
+}
+
 /**
  * Create an Angular HTTP interceptor from an OpenAPI spec.
  * Auto-registers all routes from the spec with full CRUD support.
@@ -756,16 +825,7 @@ export async function createSchmockInterceptorFromSpec(
   openapiOptions: Schmock.OpenApiOptions,
   adapterOptions?: AngularAdapterOptions,
 ): Promise<new () => HttpInterceptor> {
-  // Dynamic imports keep @schmock/openapi optional — string indirection
-  // prevents TypeScript from resolving the module at build time.
-  const coreMod = "@schmock/core";
-  const openapiMod = "@schmock/openapi";
-  const coreImport: Promise<typeof import("@schmock/core")> = import(coreMod);
-  const openapiImport: Promise<{
-    openapi: (opts: Schmock.OpenApiOptions) => Promise<Schmock.Plugin>;
-  }> = import(openapiMod);
-  const { schmock } = await coreImport;
-  const { openapi } = await openapiImport;
+  const openapi = await loadOptionalOpenapi();
   const mock = schmock({ debug: openapiOptions.debug, state: {} });
   mock.pipe(await openapi(openapiOptions));
   return createSchmockInterceptor(mock, adapterOptions);

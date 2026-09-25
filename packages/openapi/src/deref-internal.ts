@@ -17,6 +17,14 @@ import { SchmockError } from "@schmock/core";
  * and asserts the results are indistinguishable, so a divergence fails the
  * build instead of reaching a browser.
  *
+ * Two departures are deliberate, and the Node path makes the same ones so the
+ * resolvers still agree: a `$ref`'s siblings win over its target even when the
+ * target was cached by an earlier bare `$ref` (ref-parser lets the target win
+ * there, so the result depended on document order; `resolver.ts` re-applies
+ * the siblings through `onDereference`), and a ring of `$ref`s that never
+ * reaches a value is a coded error rather than a stack overflow
+ * ({@link assertNoRefRing} runs before either resolver).
+ *
  * External refs are out of scope by construction: `parseSpec` rules on them
  * through the ref policy before dereferencing starts, and the browser resolver
  * refuses them outright.
@@ -48,13 +56,20 @@ interface Dereferenced {
 const NULL_TARGET = Symbol("null");
 
 /**
- * Ceiling on `$ref`-to-`$ref` hops.
+ * Ceiling on `$ref`-to-`$ref` hops within one pointer's resolution.
  *
- * ref-parser counts indirections without bounding them and hangs on a ring of
- * refs that never reaches a value. Failing loudly is the better answer, and the
- * limit is far above any real document.
+ * ref-parser counts indirections without bounding them; on a ring of refs that
+ * never reaches a value it silently leaves the `$ref` in place. Failing loudly
+ * is the better answer, and the limit is far above any real document. The
+ * count is shared across the recursive resolutions a chain triggers, so a ring
+ * trips it instead of recursing until the stack gives out.
  */
 const MAX_REF_HOPS = 100;
+
+/** Hops taken so far while resolving one pointer, across recursion. */
+interface HopBudget {
+  hops: number;
+}
 
 function isRefObject(value: unknown): value is RefObject {
   return (
@@ -154,12 +169,15 @@ function mergeExtendedRef(ref: RefObject, target: unknown): unknown {
  * A `$ref` naming its own location ends the walk and reports `circular`
  * rather than looping.
  */
-function resolvePointer(document: unknown, refPath: string): Resolved {
+function resolvePointer(
+  document: unknown,
+  refPath: string,
+  budget: HopBudget = { hops: 0 },
+): Resolved {
   const tokens = parseTokens(refPath);
   let value: unknown = document;
   let path = refPath;
   let circular = false;
-  let hops = 0;
 
   /**
    * Follow `value` while it is itself a `$ref`. Reports whether the resolution
@@ -169,7 +187,7 @@ function resolvePointer(document: unknown, refPath: string): Resolved {
   const followRefs = (atRoot: boolean): boolean => {
     let moved = false;
     while (isInternalRef(value)) {
-      if (++hops > MAX_REF_HOPS) {
+      if (++budget.hops > MAX_REF_HOPS) {
         throw refError(
           `$ref "${refPath}" chains through more than ${MAX_REF_HOPS} references`,
           refPath,
@@ -182,7 +200,7 @@ function resolvePointer(document: unknown, refPath: string): Resolved {
         circular = true;
         return moved;
       }
-      const next = resolvePointer(document, target);
+      const next = resolvePointer(document, target, budget);
       if (isExtendedRef(value)) {
         // The siblings derive a new object, so the path does NOT move: only
         // the value changes.
@@ -279,18 +297,18 @@ export function dereferenceInternal<T>(document: T): T {
     if (cached !== undefined) {
       if (cached.circular || Object.keys(ref).length === 1) return cached;
       // Siblings alongside a cached target still have to be merged, and that
-      // merge produces a fresh object every time.
-      const extra: Record<string, unknown> = {};
+      // merge produces a fresh object every time. They win over the target,
+      // as on the uncached path: ref-parser copies only the siblings the
+      // target lacks here, which made the result depend on whether a bare
+      // `$ref` to the same target happened to be crawled first.
+      const siblings: Record<string, unknown> = {};
       for (const key of Object.keys(ref)) {
-        if (key === "$ref") continue;
-        if (!isWalkable(cached.value) || !(key in cached.value)) {
-          extra[key] = ref[key];
-        }
+        if (key !== "$ref") siblings[key] = ref[key];
       }
       return {
         circular: false,
         value: isWalkable(cached.value)
-          ? Object.assign({}, cached.value, extra)
+          ? Object.assign({}, cached.value, siblings)
           : cached.value,
       };
     }
@@ -377,4 +395,79 @@ export function dereferenceInternal<T>(document: T): T {
   // with values drawn from the same document, leaving `T`'s shape intact.
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   return crawl(document, "#", "#").value as T;
+}
+
+/**
+ * The value a pointer names in the document AS WRITTEN, or `undefined` when a
+ * token is missing or the walk would have to pass through a `$ref` first —
+ * cases the resolvers report themselves.
+ */
+function literalTarget(document: unknown, pointer: string): unknown {
+  let value: unknown = document;
+  for (const token of parseTokens(pointer)) {
+    if (!isWalkable(value) || isRefObject(value)) return undefined;
+    value = value[token];
+  }
+  return value;
+}
+
+/** One spelling per pointer, so `%41` and `A` are recognised as the same hop. */
+function canonicalPointer(pointer: string): string {
+  return joinPointer("#", parseTokens(pointer));
+}
+
+/**
+ * Refuse a document holding a ring of internal `$ref`s that never reaches a
+ * value (`A: {$ref: B}`, `B: {$ref: A}`).
+ *
+ * Runs before EITHER resolver, because they disagreed: this module used to
+ * recurse until the stack overflowed, and ref-parser silently leaves the
+ * `$ref` in the output, from where it reached AJV and the faker generator as a
+ * schema. A `$ref` naming its own location is not a ring — both resolvers keep
+ * it on purpose — and neither is a cycle through real schema content, which
+ * dereferences to an object cycle.
+ */
+export function assertNoRefRing(document: unknown): void {
+  const refs = new Set<string>();
+  const seen = new WeakSet<object>();
+  const stack: unknown[] = [document];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!isWalkable(node) || seen.has(node)) continue;
+    seen.add(node);
+    if (isInternalRef(node)) refs.add(node.$ref);
+    for (const child of Object.values(node)) stack.push(child);
+  }
+
+  /** Pointers already known to end in a value, a self-reference or a miss. */
+  const settled = new Set<string>();
+  for (const start of refs) {
+    const chain: string[] = [];
+    let current: string;
+    try {
+      current = canonicalPointer(start);
+    } catch {
+      continue;
+    }
+    while (!settled.has(current)) {
+      if (chain.includes(current) || chain.length > MAX_REF_HOPS) {
+        throw refError(
+          `$ref "${start}" never reaches a value: ${[...chain, current].join(" -> ")}`,
+          start,
+        );
+      }
+      chain.push(current);
+      const target = literalTarget(document, current);
+      if (!isInternalRef(target)) break;
+      let next: string;
+      try {
+        next = canonicalPointer(target.$ref);
+      } catch {
+        break;
+      }
+      if (next === current) break;
+      current = next;
+    }
+    for (const pointer of chain) settled.add(pointer);
+  }
 }

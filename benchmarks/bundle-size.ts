@@ -1,38 +1,110 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 
-const root = join(import.meta.dirname, "..");
-const packagesDir = join(root, "packages");
-const packages = discoverPackages();
-const packageColumnWidth = Math.max(
-  "Package".length,
-  ...packages.map((pkg) => pkg.name.length),
-);
+/**
+ * Bundle size report (`bun run bench:size`).
+ *
+ * Columns:
+ * - Dist JS: bytes of the runtime JavaScript in dist/ as built. Declarations
+ *   (.d.ts), declaration maps and source maps are left out.
+ * - Min+gz: the package's main entry re-bundled with `bun build --minify`,
+ *   every bare import external, then gzipped. core ships unminified tsc output
+ *   while most packages ship minified bundles, so this is the only column that
+ *   compares packages with each other.
+ * - Source: .ts/.tsx under src/, without tests, step files and test utilities.
+ */
 
-console.log("Schmock bundle size analysis\n");
-console.log(
-  `${"Package".padEnd(packageColumnWidth)} | Dist Size | Source Size`,
-);
-console.log(`${"-".repeat(packageColumnWidth)}-|-----------|------------`);
-
-for (const pkg of packages) {
-  const distDir = join(packagesDir, pkg.directory, "dist");
-  const srcDir = join(packagesDir, pkg.directory, "src");
-
-  const distSize = existsSync(distDir) ? getDirSize(distDir) : 0;
-  const srcSize = existsSync(srcDir) ? getDirSize(srcDir) : 0;
-
-  console.log(
-    `${pkg.name.padEnd(packageColumnWidth)} | ${formatSize(distSize).padStart(9)} | ${formatSize(srcSize).padStart(10)}`,
-  );
-}
+const SHIPPED_JS = /\.(?:js|mjs|cjs)$/;
+const TEST_SOURCE =
+  /(?:\.test|\.spec|\.steps)\.tsx?$|(?:^|\/)(?:steps|__tests__|__fixtures__)\//;
 
 interface WorkspacePackage {
   directory: string;
   name: string;
+  entry: string | undefined;
 }
 
-function discoverPackages(): WorkspacePackage[] {
+function walkFiles(dir: string, prefix = ""): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      files.push(...walkFiles(join(dir, entry.name), relative));
+    } else if (entry.isFile()) {
+      files.push(relative);
+    }
+  }
+  return files;
+}
+
+/** Bytes of runtime JavaScript under `dir`; declarations and maps excluded. */
+export function distJsSize(dir: string): number {
+  if (!existsSync(dir)) return 0;
+  let size = 0;
+  for (const file of walkFiles(dir)) {
+    if (SHIPPED_JS.test(file)) size += statSync(join(dir, file)).size;
+  }
+  return size;
+}
+
+/** Bytes of hand-written source under `dir`, without tests and steps. */
+function sourceSize(dir: string): number {
+  if (!existsSync(dir)) return 0;
+  let size = 0;
+  for (const file of walkFiles(dir)) {
+    if (
+      /\.tsx?$/.test(file) &&
+      !file.endsWith(".d.ts") &&
+      !TEST_SOURCE.test(file)
+    ) {
+      size += statSync(join(dir, file)).size;
+    }
+  }
+  return size;
+}
+
+function readManifest(path: string): Record<string, unknown> {
+  const manifest: unknown = JSON.parse(readFileSync(path, "utf8"));
+  if (
+    typeof manifest !== "object" ||
+    manifest === null ||
+    Array.isArray(manifest)
+  ) {
+    throw new Error(`${path} is not a JSON object`);
+  }
+  return Object.fromEntries(Object.entries(manifest));
+}
+
+/** The built file behind the `.` export's import condition, if any. */
+function mainEntry(manifest: Record<string, unknown>): string | undefined {
+  const exportsField = manifest.exports;
+  if (typeof exportsField === "string") return exportsField;
+  if (typeof exportsField !== "object" || exportsField === null) {
+    return typeof manifest.main === "string" ? manifest.main : undefined;
+  }
+  const root: unknown = Reflect.get(exportsField, ".");
+  if (typeof root === "string") return root;
+  if (typeof root !== "object" || root === null) return undefined;
+  for (const condition of ["browser", "import", "default"]) {
+    const target: unknown = Reflect.get(root, condition);
+    if (typeof target === "string") return target;
+  }
+  return undefined;
+}
+
+function discoverPackages(packagesDir: string): WorkspacePackage[] {
   const discovered: WorkspacePackage[] = [];
 
   for (const entry of readdirSync(packagesDir, { withFileTypes: true })) {
@@ -41,17 +113,16 @@ function discoverPackages(): WorkspacePackage[] {
     const manifestPath = join(packagesDir, entry.name, "package.json");
     if (!existsSync(manifestPath)) continue;
 
-    const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
-    if (
-      typeof manifest !== "object" ||
-      manifest === null ||
-      !("name" in manifest) ||
-      typeof manifest.name !== "string" ||
-      !manifest.name.startsWith("@schmock/")
-    ) {
+    const manifest = readManifest(manifestPath);
+    const name = manifest.name;
+    if (typeof name !== "string" || !name.startsWith("@schmock/")) {
       throw new Error(`${manifestPath} has no valid @schmock/* package name`);
     }
-    discovered.push({ directory: entry.name, name: manifest.name });
+    discovered.push({
+      directory: entry.name,
+      name,
+      entry: mainEntry(manifest),
+    });
   }
 
   if (discovered.length === 0) {
@@ -60,23 +131,77 @@ function discoverPackages(): WorkspacePackage[] {
   return discovered.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function getDirSize(dir: string): number {
-  let size = 0;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const fullPath = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      size += getDirSize(fullPath);
-      continue;
+/** Minified, gzipped size of `entryPath` with every bare import external. */
+function minifiedGzipSize(entryPath: string): number {
+  if (!existsSync(entryPath)) return 0;
+  const outDir = mkdtempSync(join(tmpdir(), "schmock-bundle-size-"));
+  try {
+    const outfile = join(outDir, "bundle.js");
+    const result = spawnSync(
+      "bun",
+      [
+        "build",
+        entryPath,
+        "--minify",
+        "--target=browser",
+        "--format=esm",
+        "--packages=external",
+        `--outfile=${outfile}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (result.status !== 0 || !existsSync(outfile)) {
+      throw new Error(`bun build failed for ${entryPath}:\n${result.stderr}`);
     }
-    if (entry.isFile()) {
-      size += statSync(fullPath).size;
-    }
+    return gzipSync(readFileSync(outfile)).length;
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
   }
-  return size;
 }
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return "N/A";
   if (bytes < 1024) return `${bytes} B`;
   return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+function report(): void {
+  const root = join(import.meta.dirname, "..");
+  const packagesDir = join(root, "packages");
+  const packages = discoverPackages(packagesDir);
+  const width = Math.max(
+    "Package".length,
+    ...packages.map((pkg) => pkg.name.length),
+  );
+
+  console.log("Schmock bundle size analysis\n");
+  console.log(
+    `${"Package".padEnd(width)} |   Dist JS |    Min+gz |     Source`,
+  );
+  console.log(`${"-".repeat(width)}-|-----------|-----------|-----------`);
+
+  for (const pkg of packages) {
+    const pkgDir = join(packagesDir, pkg.directory);
+    const distJs = distJsSize(join(pkgDir, "dist"));
+    const minGz = pkg.entry ? minifiedGzipSize(join(pkgDir, pkg.entry)) : 0;
+    const src = sourceSize(join(pkgDir, "src"));
+
+    console.log(
+      `${pkg.name.padEnd(width)} | ${formatSize(distJs).padStart(9)} | ${formatSize(minGz).padStart(9)} | ${formatSize(src).padStart(10)}`,
+    );
+  }
+}
+
+function isEntryPoint(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) {
+  report();
 }

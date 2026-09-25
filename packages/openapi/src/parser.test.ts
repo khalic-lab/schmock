@@ -451,6 +451,9 @@ describe("parseSpec", () => {
             allowHttp: true,
             allowedHosts: ["schemas.example.test"],
           },
+          // The Node resolver's own transport resolves hosts itself and never
+          // calls global fetch; route this read through the stub instead.
+          fetchRef: globalThis.fetch,
         },
       );
 
@@ -1015,9 +1018,9 @@ describe("external $ref failure diagnostics", () => {
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => new Response("nope", { status: 503 }));
     try {
-      await expect(parseSpec(externalRefSpec, { refs })).rejects.toThrow(
-        /responded with 503/,
-      );
+      await expect(
+        parseSpec(externalRefSpec, { refs, fetchRef: globalThis.fetch }),
+      ).rejects.toThrow(/responded with 503/);
     } finally {
       fetchMock.mockRestore();
     }
@@ -1028,9 +1031,9 @@ describe("external $ref failure diagnostics", () => {
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => new Response("x".repeat(200)));
     try {
-      await expect(parseSpec(externalRefSpec, { refs })).rejects.toThrow(
-        /above the 32 byte limit/,
-      );
+      await expect(
+        parseSpec(externalRefSpec, { refs, fetchRef: globalThis.fetch }),
+      ).rejects.toThrow(/above the 32 byte limit/);
     } finally {
       fetchMock.mockRestore();
     }

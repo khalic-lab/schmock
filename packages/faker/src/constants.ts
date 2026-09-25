@@ -1,8 +1,6 @@
 // Resource limits for safety
 export const MAX_ARRAY_SIZE = 10000;
 export const DEFAULT_ARRAY_COUNT = 3; // Default items to generate when not specified
-export const DEEP_NESTING_THRESHOLD = 3; // Depth at which to check for memory risks
-export const LARGE_ARRAY_THRESHOLD = 100; // Array size considered "large"
 
 /**
  * How deep a schema may nest before generation is refused.
@@ -82,6 +80,19 @@ export const MAX_OBJECT_PROPERTIES = 10_000;
  * lengths large enough for one field to become an accidental bulk payload.
  */
 export const MAX_STRING_LENGTH = 65_536;
+
+/**
+ * Maximum number of UTF-16 code units one generated response may carry across
+ * all of its strings and object keys.
+ *
+ * The per-value limits alone multiply: 10,000 items of a 64 KiB string pass
+ * every one of them and still add up to 655M characters. 256 maximal strings
+ * (16M code units, about 32 MB in memory) is far past any realistic mock body
+ * and far short of what exhausts a process. Validation charges each string's
+ * `minLength` against it, so a schema that can only overshoot is refused when
+ * the plugin is created; the generated value is checked against it too.
+ */
+export const MAX_GENERATED_CHARS = MAX_STRING_LENGTH * 256;
 
 /**
  * Reference date used when generation must be reproducible.

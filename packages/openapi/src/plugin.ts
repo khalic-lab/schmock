@@ -14,6 +14,7 @@ import { createHeaderSeed, PENDING_MUTATIONS_KEY } from "./generators.js";
 import { createOwnerToken, isOwnedRoute } from "./owner.js";
 import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
 import { convertPathTemplate, parseSpec } from "./parser.js";
+import { templateToRoutePath } from "./path-template.js";
 import {
   applyResponseContentType,
   createBodyValidatorContext,
@@ -26,7 +27,7 @@ import {
 } from "./request-pipeline.js";
 import { isStatusInRange } from "./response-status.js";
 import type { SeedConfig, SeedSource } from "./seed.js";
-import { loadSeed } from "./seed.js";
+import { assertValidSeedConfig, loadSeed } from "./seed.js";
 
 export type { SeedConfig, SeedSource };
 
@@ -97,9 +98,15 @@ export async function openapi(
   }
 
   const { resources, nonCrudPaths } = detectCrudResources(spec.paths);
-  const seedData = options.seed
-    ? await loadSeed(options.seed, resources, options.fakerSeed)
-    : new Map<string, unknown[]>();
+  // `null` is read as "no seed" like `undefined`; anything else goes through
+  // validation, so a JS caller's `seed: 42` (meant as `fakerSeed`) or a typo'd
+  // resource key fails here instead of silently leaving collections empty.
+  const seedOption: unknown = options.seed;
+  let seedData = new Map<string, unknown[]>();
+  if (seedOption !== undefined && seedOption !== null) {
+    assertValidSeedConfig(seedOption, resources);
+    seedData = await loadSeed(seedOption, resources, options.fakerSeed);
+  }
 
   // Security scheme lookup
   const securitySchemes = spec.securitySchemes;
@@ -218,6 +225,13 @@ export async function openapi(
         options.fakerSeed,
         options.onSchema,
       );
+      if (result.applied) {
+        // A Prefer response is a pure simulation: its body was generated or
+        // taken from an example, not from the write the generator staged, so
+        // committing that write would store an item the client never saw and
+        // hand the client an id that does not exist.
+        discardPendingMutations(context);
+      }
       const negotiated = applyResponseContentType(context, result.response);
       const response = negotiated.response;
       if (negotiated.rejected) {
@@ -250,6 +264,7 @@ export async function openapi(
             context,
             response,
             options.fakerSeed,
+            options.debug === true,
           );
         }
       }
@@ -259,6 +274,11 @@ export async function openapi(
   };
 }
 
+/** Drop the mutations a CRUD generator staged for this request, unapplied. */
+function discardPendingMutations(context: Schmock.PluginContext): void {
+  context.state.delete(PENDING_MUTATIONS_KEY);
+}
+
 /**
  * Apply or discard the mutations a CRUD generator staged for this request.
  *
@@ -266,7 +286,9 @@ export async function openapi(
  * later in the pipe cannot re-commit it. The queue is then applied only when the
  * response the plugin is about to return is a success: a `Prefer: code=400`, a
  * `Prefer: example=<4xx>`, a 406 from response content negotiation and a 500
- * from response validation all leave the collection untouched.
+ * from response validation all leave the collection untouched. Any applied
+ * Prefer directive has already discarded the queue (see `process()`), so a
+ * `Prefer: code=201` on a create stores nothing either.
  *
  * Not called on the not-owned early return: clearing another instance's queue
  * there would drop a mutation its owner still has to commit.
@@ -276,7 +298,7 @@ function settlePendingMutations(
   response: unknown,
 ): void {
   const pending = context.state.get(PENDING_MUTATIONS_KEY);
-  context.state.delete(PENDING_MUTATIONS_KEY);
+  discardPendingMutations(context);
   if (!Array.isArray(pending) || pending.length === 0) return;
   if (getResponseStatus(response) >= 400) return;
   for (const commit of pending) {
@@ -352,8 +374,12 @@ function applySchemaOverrides(
     // out of the spec (`GET /pets/{petId}`) has to go through the parser's own
     // rewrite before the lookup. Both spellings therefore name one operation;
     // the parameter NAME still matters, because it is part of the route key.
+    // The parser escapes literal colons (`{job}:run` → `:job\:run`), but an
+    // Express-form key already uses `:` for its parameters, so the unescaped
+    // rewrite is tried first and keeps every key that resolved before working.
+    const legacyKey = `${method} ${templateToRoutePath(path, { escapeLiteralColons: false })}`;
     const routeKey = `${method} ${convertPathTemplate(path)}`;
-    const parsedPath = paths.get(routeKey);
+    const parsedPath = paths.get(legacyKey) ?? paths.get(routeKey);
     if (!parsedPath) {
       // When the key used `{param}`, say which form was actually looked up —
       // otherwise the message reads as a claim about the spelling the author

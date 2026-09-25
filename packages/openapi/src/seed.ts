@@ -1,12 +1,72 @@
-import { ResourceLimitError } from "@schmock/core";
+import { ResourceLimitError, SchmockError } from "@schmock/core";
 import type { CrudResource } from "./crud-detector.js";
 import { generateSeedItems } from "./generators.js";
 import { MAX_SEED_ITEMS_PER_RESOURCE, MAX_SEED_ITEMS_TOTAL } from "./limits.js";
 import { readSeedFile } from "./seed-file.js";
+import { isRecord } from "./utils.js";
 
 export type SeedSource = unknown[] | string | { count: number };
 
 export type SeedConfig = Record<string, SeedSource>;
+
+function describeValue(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  return typeof value;
+}
+
+function isSeedSource(value: unknown): value is SeedSource {
+  return (
+    Array.isArray(value) ||
+    typeof value === "string" ||
+    (isRecord(value) && "count" in value)
+  );
+}
+
+/**
+ * Validate the `seed` option before anything is loaded.
+ *
+ * Every mistake here used to be silent: a number (an RNG seed, which
+ * `@schmock/faker` calls `seed` but openapi calls `fakerSeed`) iterated as no
+ * entries, an entry
+ * of no known shape fell through the source branches, and a key naming no
+ * resource was stored under a name nothing reads. Each now throws a coded
+ * `SchmockError`, and the key check runs before any seed file is read.
+ */
+export function assertValidSeedConfig(
+  config: unknown,
+  resources: readonly CrudResource[],
+): asserts config is SeedConfig {
+  if (!isRecord(config)) {
+    throw new SchmockError(
+      `OpenAPI option "seed" must be an object mapping resource names to seed sources, got ${describeValue(config)}. To make generated data deterministic, use "fakerSeed" instead.`,
+      "OPENAPI_INVALID_OPTION",
+      { option: "seed" },
+    );
+  }
+
+  const resourceNames = resources.map((resource) => resource.name);
+  for (const [key, source] of Object.entries(config)) {
+    if (!resourceNames.includes(key)) {
+      const detected =
+        resourceNames.length > 0
+          ? resourceNames.map((name) => `"${name}"`).join(", ")
+          : "none";
+      throw new SchmockError(
+        `Seed key "${key}" matches no CRUD resource in the spec. Detected resources: ${detected}.`,
+        "OPENAPI_UNKNOWN_SEED_RESOURCE",
+        { key, resources: resourceNames },
+      );
+    }
+    if (!isSeedSource(source)) {
+      throw new SchmockError(
+        `Seed entry "${key}" must be an array, a file path, or { count: <number> }, got ${describeValue(source)}.`,
+        "OPENAPI_INVALID_OPTION",
+        { option: "seed", resource: key },
+      );
+    }
+  }
+}
 
 /**
  * Load seed data for CRUD resources.

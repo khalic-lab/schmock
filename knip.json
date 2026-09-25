@@ -9,7 +9,7 @@
     ".": {
       "entry": [
         "benchmarks/*.ts",
-        "scripts/*.{js,ts}"
+        "scripts/*.{js,mjs,ts}"
       ],
       "ignoreDependencies": [
         "@angular/common",
