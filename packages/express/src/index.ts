@@ -44,8 +44,20 @@ export interface ExpressAdapterOptions {
   transformHeaders?: (headers: Request["headers"]) => Record<string, string>;
 
   /**
-   * Custom query transformation
-   * @param query - Express query
+   * Custom query transformation.
+   *
+   * Without it, the adapter ignores `req.query` and re-reads the query string
+   * of `req.url` (the URL `req.path` comes from, so a rewrite by earlier
+   * middleware moves path and query together) with the CLI's parser: keys
+   * stay literal (`filter[name]`, `sort[]`), a repeated key resolves to its
+   * last value, and a `req.query` that earlier middleware assigned or
+   * redefined is ignored.
+   *
+   * Supplying `transformQuery` switches that default off: it receives
+   * `req.query` as Express parsed it (qs-nested values under the "extended"
+   * parser, plus any change earlier middleware made), and its return value
+   * is the query the mock sees.
+   * @param query - `req.query` as Express, or earlier middleware, left it
    * @returns Transformed query for Schmock
    */
   transformQuery?: (query: Request["query"]) => Record<string, string>;
@@ -211,9 +223,15 @@ function defaultTransformQuery(
  * sees the same record whatever `query parser` the Express app configures.
  * `req.query` is shaped by that setting: qs "extended" (Express 4's default)
  * nests `filter[name]` and strips `sort[]` down to `sort`.
+ *
+ * It reads `req.url`, not `req.originalUrl`: `req.path` is derived from
+ * `req.url`, so a middleware that rewrites the URL moves path and query
+ * together. A router mount point strips only the path prefix, never the query
+ * string. A `req.query` that middleware replaced is ignored; `transformQuery`
+ * is the way to honour it.
  */
 function defaultQuery(req: Request): Record<string, string> {
-  const rawUrl: unknown = req.originalUrl ?? req.url;
+  const rawUrl: unknown = req.url ?? req.originalUrl;
   if (typeof rawUrl === "string") {
     try {
       return parseNodeQuery(new URL(rawUrl, "http://localhost"));

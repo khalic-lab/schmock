@@ -93,6 +93,71 @@ describe("Express default query transform matches the CLI", () => {
   });
 });
 
+describe("Express default query follows the URL req.path comes from", () => {
+  function echoMock(): CallableMockInstance {
+    const mock = schmock();
+    mock("GET /echo", ({ query }) => ({ query }));
+    return mock;
+  }
+
+  it("reads the query of a URL rewritten by earlier middleware", async () => {
+    const app = express();
+    app.use((req, _res, next) => {
+      if (req.url.startsWith("/legacy")) req.url = "/echo?limit=5";
+      next();
+    });
+    app.use(toExpress(echoMock()));
+
+    const response = await request(app).get("/legacy?page=2");
+
+    expect(response.status).toBe(200);
+    expect(response.body.query).toEqual({ limit: "5" });
+  });
+
+  it("keeps the query under a mounted router", async () => {
+    const router = express.Router();
+    router.use(toExpress(echoMock()));
+    const app = express();
+    app.use("/api", router);
+
+    const response = await request(app).get("/api/echo?page=2&tag[]=x");
+
+    expect(response.status).toBe(200);
+    expect(response.body.query).toEqual({ page: "2", "tag[]": "x" });
+  });
+
+  it("ignores a req.query replaced by earlier middleware unless transformQuery is given", async () => {
+    // Express 5 exposes req.query as a prototype getter, so middleware that
+    // replaces it has to redefine the property on the request.
+    const replaceQuery: express.RequestHandler = (req, _res, next) => {
+      Object.defineProperty(req, "query", {
+        value: { page: "9" },
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+      next();
+    };
+
+    const byDefault = express();
+    byDefault.use(replaceQuery);
+    byDefault.use(toExpress(echoMock()));
+    const defaultResponse = await request(byDefault).get("/echo?page=1");
+    expect(defaultResponse.body.query).toEqual({ page: "1" });
+
+    const withTransform = express();
+    withTransform.use(replaceQuery);
+    withTransform.use(
+      toExpress(echoMock(), {
+        transformQuery: (query) => ({ page: String(query.page) }),
+      }),
+    );
+    const transformedResponse =
+      await request(withTransform).get("/echo?page=1");
+    expect(transformedResponse.body.query).toEqual({ page: "9" });
+  });
+});
+
 describe("Express sends route headers verbatim", () => {
   it.each([
     ["application/json", { a: 1 }],
