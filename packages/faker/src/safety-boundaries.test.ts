@@ -826,6 +826,11 @@ describe("Faker safety boundaries", () => {
     });
   });
 
+  // The "consumer" copy below is the public `json-schema-faker` devDependency,
+  // pinned to an exact version that differs from the `json-schema-faker-private`
+  // alias on purpose: with equal versions bun dedupes both names onto one
+  // directory, the two imports become one module instance, and these tests
+  // could only pass vacuously.
   describe("json-schema-faker registry isolation", () => {
     it("ignores a consumer define extension without clearing its registration", async () => {
       const extensionName = "schmockUnitContaminationProbe";

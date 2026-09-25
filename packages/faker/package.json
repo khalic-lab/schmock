@@ -52,7 +52,7 @@
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",
     "@types/node": "^26.1.0",
-    "json-schema-faker": "^0.6.2",
+    "json-schema-faker": "0.6.2",
     "json-schema-faker-private": "npm:json-schema-faker@0.6.3",
     "vitest": "^4.1.9"
   }
