@@ -1,5 +1,5 @@
 import type * as Schmock from "@schmock/core";
-import { isStatusTuple, SchmockError } from "@schmock/core";
+import { getResponseParts, SchmockError } from "@schmock/core";
 import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
@@ -29,54 +29,6 @@ export interface ValidationPluginOptions extends ValidationRules {
   requestErrorStatus?: number;
   /** Custom status code for response validation failures (default: 500) */
   responseErrorStatus?: number;
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.values(value).every((entry) => typeof entry === "string")
-  );
-}
-
-/**
- * Mirrors `isResponseObject` in `@schmock/core`'s response parser. The two
- * guards must agree exactly: whenever core refuses to unwrap an envelope it
- * delivers the whole object as the body, so a looser guard here would validate
- * a payload that never reaches the transport.
- */
-function isStructuredResponse(
-  value: unknown,
-): value is { status: number; body: unknown } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    "status" in value &&
-    typeof value.status === "number" &&
-    "body" in value &&
-    (!("headers" in value) ||
-      value.headers === undefined ||
-      isStringRecord(value.headers))
-  );
-}
-
-function getResponseBody(response: unknown): unknown {
-  if (isStatusTuple(response)) return response[1];
-  if (isStructuredResponse(response)) return response.body;
-  return response;
-}
-
-/**
- * Mirrors how core's response parser assigns a status: tuples and envelopes
- * carry their own, a bare `null`/`undefined` becomes 204 and any other bare
- * body 200.
- */
-function getResponseStatus(response: unknown): number {
-  if (isStatusTuple(response)) return response[0];
-  if (isStructuredResponse(response)) return response.status;
-  return response === null || response === undefined ? 204 : 200;
 }
 
 type StatusScope = "all" | "2xx" | ReadonlySet<number>;
@@ -742,13 +694,18 @@ export function validationPlugin(
       // serialized transport payload: core applies content-type conversion
       // (e.g. text/plain stringification) after the pipeline, so a `text/plain`
       // route validated against an object schema is delivered as a string.
-      if (
-        validators.responseBody &&
-        isStatusInScope(responseStatusScope, getResponseStatus(response))
-      ) {
-        const responseBody = getResponseBody(response);
+      //
+      // Status and body come from core's own `getResponseParts`, so the
+      // envelope rules are the ones delivery applies: an object whose headers
+      // are not a string record is not an envelope and is validated whole, and
+      // a bare `null`/`undefined` answers 204.
+      if (validators.responseBody) {
+        const { status, body } = getResponseParts(response);
 
-        if (!validators.responseBody(responseBody)) {
+        if (
+          isStatusInScope(responseStatusScope, status) &&
+          !validators.responseBody(body)
+        ) {
           return {
             context,
             response: {

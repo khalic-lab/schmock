@@ -1,5 +1,9 @@
 import type * as Schmock from "@schmock/core";
-import { isStatusTuple, SchmockError } from "@schmock/core";
+import {
+  getResponseParts,
+  replaceResponseBody,
+  SchmockError,
+} from "@schmock/core";
 import { version as packageVersion } from "../package.json";
 
 export interface PaginationOptions {
@@ -42,7 +46,12 @@ export interface QueryPluginOptions {
 /** Field names that would reach up the prototype chain if honoured. */
 const RESERVED_FIELDS = new Set(["__proto__", "constructor", "prototype"]);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+/**
+ * Any non-null object, arrays included (an array item filters and sorts by its
+ * own index keys). Named apart from the array-rejecting `isRecord` guards
+ * elsewhere in the repo so the two meanings are never swapped by accident.
+ */
+function isObjectLike(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
@@ -208,57 +217,14 @@ function snapshotOptions(options: QueryPluginOptions): QueryPluginOptions {
   };
 }
 
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return (
-    isRecord(value) &&
-    !Array.isArray(value) &&
-    Object.values(value).every((entry) => typeof entry === "string")
-  );
-}
-
-function isStructuredResponse(value: unknown): value is {
-  status: number;
-  body: unknown;
-  headers?: Record<string, string>;
-} {
-  return (
-    isRecord(value) &&
-    !Array.isArray(value) &&
-    typeof value.status === "number" &&
-    "body" in value &&
-    (value.headers === undefined || isStringRecord(value.headers))
-  );
-}
-
-function getResponseBody(response: unknown): unknown {
-  if (isStatusTuple(response)) return response[1];
-  if (isStructuredResponse(response)) return response.body;
-  return response;
-}
-
 /**
  * Error responses — a route's own 4xx/5xx tuple or envelope, or another
  * plugin's request rejection — are never reshaped: paginating them would hide
- * all but the first page of error items. Bare bodies are always successes.
+ * all but the first page of error items. Bare bodies are always successes
+ * (core answers them 200, or 204 when nullish).
  */
-function isErrorResponse(response: unknown): boolean {
-  if (isStatusTuple(response)) return response[0] >= 400;
-  if (isStructuredResponse(response)) return response.status >= 400;
-  return false;
-}
-
-function replaceResponseBody(response: unknown, body: unknown): unknown {
-  if (isStatusTuple(response)) {
-    return response.length === 3
-      ? [response[0], body, response[2]]
-      : [response[0], body];
-  }
-  if (isStructuredResponse(response)) {
-    return response.headers === undefined
-      ? { status: response.status, body }
-      : { status: response.status, body, headers: response.headers };
-  }
-  return body;
+function isErrorResponse(parts: Schmock.ResponseParts): boolean {
+  return parts.kind !== "plain" && parts.status >= 400;
 }
 
 export function queryPlugin(options: QueryPluginOptions = {}): Schmock.Plugin {
@@ -273,8 +239,12 @@ export function queryPlugin(options: QueryPluginOptions = {}): Schmock.Plugin {
       context: Schmock.PluginContext,
       response?: unknown,
     ): Schmock.PluginResult {
-      const responseBody = getResponseBody(response);
-      if (!Array.isArray(responseBody) || isErrorResponse(response)) {
+      // Core's own decomposition, so only a body core would deliver is
+      // reshaped: an object whose headers are not a string record is not an
+      // envelope, and its (non-array) whole is left alone.
+      const parts = getResponseParts(response);
+      const responseBody = parts.body;
+      if (!Array.isArray(responseBody) || isErrorResponse(parts)) {
         return { context, response };
       }
 
@@ -323,7 +293,7 @@ function applyFiltering(
 
     if (value !== undefined) {
       result = result.filter((item) => {
-        if (!isRecord(item)) return false;
+        if (!isObjectLike(item)) return false;
         const itemValue = ownValue(item, field);
         if (itemValue === undefined) return false;
         try {
@@ -457,7 +427,7 @@ function applySorting(
     .map((item) => ({
       item,
       key: createSortKey(
-        isRecord(item) ? ownValue(item, sortField) : undefined,
+        isObjectLike(item) ? ownValue(item, sortField) : undefined,
       ),
     }))
     .sort((a, b) => compareSortKeys(a.key, b.key, sortOrder))
