@@ -54,7 +54,7 @@ vi.mock("@schmock/openapi", async (importOriginal) => {
   return { ...actual, openapi };
 });
 
-const { createCliServer } = await import("./cli");
+const { createCliServer } = await import("./server");
 
 const PETSTORE_SPEC = resolve(
   __dirname,

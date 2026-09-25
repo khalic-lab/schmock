@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { ResourceLimitError } from "@schmock/core";
 import { MAX_SEED_MANIFEST_BYTES } from "@schmock/openapi";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadSeedFile } from "./cli";
+import { loadSeedFile } from "./seed-manifest";
 
 const created: string[] = [];
 
