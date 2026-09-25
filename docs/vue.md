@@ -89,6 +89,10 @@ app.use(schmockPlugin, {
 })
 ```
 
+`options` is accepted as an alias of `interceptOptions`, the name React's
+`SchmockProvider` uses, so `app.use(schmockPlugin, { mock, options: { baseUrl: '/api' } })`
+works too. When both are given, `interceptOptions` wins.
+
 ### `passthrough`
 
 When `true` (default), requests that don't match any Schmock route are forwarded to the real `fetch`. Set to `false` to return errors for unmatched requests — useful in tests to catch unexpected API calls.
@@ -103,11 +107,16 @@ adapter's `baseUrl` strips the prefix instead.
 
 ### `errorFormatter`
 
-`errorFormatter(error)` formats core-marked internal exceptions — an error
-thrown by a route generator or a plugin — and errors thrown by the
+`errorFormatter(error, request)` formats core-marked internal exceptions — an
+error thrown by a route generator or a plugin — and errors thrown by the
 `beforeRequest`/`beforeResponse` hooks, matching the Express and Angular
 adapters. It does not reinterpret an ordinary user-defined 500 route response
 such as `[500, { error: 'domain failure' }]`.
+
+The second argument is the request as routed: the `AdapterRequest` after
+`beforeRequest` once that hook has returned, the pre-hook request when the hook
+threw, and the incoming request without a body when the body could not be
+read. A one-argument formatter still works.
 
 On the core-marked exception path, provenance is captured before
 `beforeResponse` runs, so a hook that clones the response with
@@ -200,6 +209,14 @@ describe('UserList', () => {
   })
 })
 ```
+
+### OpenAPI specs in jsdom and happy-dom
+
+A file-path `spec` passed to `@schmock/openapi` (`'./petstore.yaml'`), and any
+relative external `$ref`s it has with `refs: { external: true }`, is read from
+disk in jsdom and happy-dom test environments too, not fetched relative to
+`window.location`. See
+[OpenAPI-Based Tests](./testing.md#openapi-based-tests).
 
 ## Stateful Mocking
 

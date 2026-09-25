@@ -67,6 +67,15 @@ something else:
 - Exactly one spec path. `schmock a.json b.json` is an error instead of silently
   serving `a.json`. (`--spec` still wins over a single positional.)
 
+Each of these is a `SchmockError` with code `INVALID_CONFIG`; the messages are
+the ones quoted above. From `parseCliArgs`, the error's `context` is
+`{ flag, value }`. `--admin-token` errors carry `{ flag }` only, so the token
+never lands in a log, and an extra spec path carries `{ flag: '<spec>' }`. From
+`createCliServer`, a blank hostname carries `{ option: 'hostname', value }` and
+an unusable admin token `{ option: 'adminToken' }`. The binary still prints
+`Schmock failed: <message>`, but `err.name` (and so `String(err)`) is now
+`SchmockError` rather than `Error`.
+
 ### Shutting down
 
 `SIGINT`/`SIGTERM` starts a graceful shutdown bounded by `shutdownGraceMs`
@@ -165,6 +174,13 @@ raises `RESOURCE_LIMIT_ERROR` before the server starts. Malformed JSON is
 reported as `Seed file "…" contains invalid JSON` instead of a raw
 `SyntaxError`.
 
+Manifest mistakes (invalid JSON, a manifest that is not an object, an entry of
+the wrong shape, a missing file, an entry that escapes the directory) are
+`SchmockError` with code `OPENAPI_INVALID_OPTION` and context
+`{ option: 'seed', resource? }`: the code the openapi plugin raises for the
+same mistakes in its `seed` option. The same code, with `file` in the context,
+covers a referenced seed file that is not valid JSON or not a JSON array.
+
 ### CORS for frontend development
 
 ```sh
@@ -177,6 +193,8 @@ answered by the server itself with `204`, echoing whatever
 `Access-Control-Request-Headers` asked for so a custom header such as
 `x-my-token` is not rejected. Any other `OPTIONS` request is routed normally: a
 spec-declared `options` operation answers it, and an unknown path answers `404`.
+
+A preflight is answered 204 without reading any request body it carries.
 
 This is a dev-server convenience, not a configurable policy — the origin is
 always `*`, credentials are never allowed, and `/schmock-admin/*` never receives
@@ -213,10 +231,13 @@ not seen.
 Besides the spec, the `--seed` manifest and every file entry it names are
 watched, each through its own directory. The watched set is re-derived after
 every reload, so an entry added to the manifest is followed. With
-`--refs-external`, any change in the spec's directory reloads, because a sibling
-`$ref`'d schema file is part of the contract. A `$ref` target in a different
-directory is not watched; touch the root spec to reload after editing it. Writes
-to other files in watched directories are ignored.
+`--refs-external`, a reload is also triggered by any non-hidden `.json`,
+`.yaml` or `.yml` sibling of the spec, because a `$ref`'d schema file is part
+of the contract. A `$ref` target in a different directory is not watched; touch
+the root spec to reload after editing it. Writes to other files in watched
+directories are ignored: log files (so output redirected there cannot feed a
+reload loop), text files, `.DS_Store`, and editor swap or backup files
+(`*.swp`, `*~`, `.#*`).
 
 A reload builds a fresh mock: CRUD rows created since startup and the admin
 request history are discarded, and `--seed` data is applied again. The reload
@@ -262,6 +283,11 @@ the paths are not special-cased at all and fall through to the mock, so they
 answer `404`. An unauthenticated caller can therefore tell from `401` vs `404`
 that `--admin` is on; the token is what protects the data, not the obscurity.
 
+The Origin 403 and token 401 checks, and the endpoint answer itself, run
+before the request body is read. An oversized, malformed, badly encoded or
+stalled body therefore never turns a refusal into a 413 or 400 and never delays
+it. The admin endpoints ignore any request body.
+
 The token survives a `--watch` reload, so a live admin client keeps working
 across spec saves. A token passed as `--admin-token` is visible in `ps` output
 on a shared host; prefer the generated one there.
@@ -288,9 +314,15 @@ Request history exists only to serve `GET /schmock-admin/history`:
   non-negative integer). Passing it without `--admin` has no effect and prints a
   `WARNING` line on stderr.
 
+`--admin-history-limit` (`adminHistoryLimit` programmatically) is core's
+`maxHistorySize` under the admin API's name. It defaults to 500 where core's
+default is unbounded, and it applies only with `--admin`.
+
 In the admin projection the values of `authorization`, `proxy-authorization`,
 `cookie`, `set-cookie`, `x-api-key`, `x-auth-token` and `x-schmock-admin-token`
-read `"[redacted]"`. In addition, any header or query parameter whose name,
+read `"[redacted]"`. These seven are core's `SENSITIVE_HEADER_NAMES`, the set
+its debug log masks. A request `set-cookie` header reaches the server as an
+array and is not recorded at all. In addition, any header or query parameter whose name,
 compared case-insensitively, is exactly `key`, `token`, `apikey`, `api_key`,
 `api-key`, `secret` or `password`, or ends in one of those after a `-` or `_`
 (for example `X-Pet-Key`, `access_token`, `client_secret`), is masked the same
@@ -312,10 +344,33 @@ same.
 
 ## Request Handling
 
-Request bodies are limited to 10 MiB using both declared `Content-Length` and
-the bytes actually received. Oversized requests return structured 413
-`PAYLOAD_TOO_LARGE`, close that connection, and do not execute routes or enter
-history. Media-type matching is case-insensitive.
+Every request, admin and preflight included, is served through core's
+`serveNodeRequest`, the same bridge as `mock.listen()`, so both answer client
+errors alike:
+
+- a missing `Host` header gets 400 `BAD_REQUEST` `Missing Host header`, and a
+  malformed one 400 `BAD_REQUEST` `Malformed Host header` (previously
+  `Malformed request target`);
+- a malformed request target gets 400 `BAD_REQUEST`;
+- a method outside `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD` and
+  `OPTIONS` gets 405 `METHOD_NOT_ALLOWED` with an `Allow` header;
+- a target starting with `//` is a path, never a host: `GET //users` is looked
+  up as `//users`. It used to be read as host `users` and path `/`, and reach
+  the `GET /` route.
+
+After those checks, the admin API and a CORS preflight are answered without
+reading the body. For every other request the body is read and checked before
+the route runs. Request bodies are limited to 10 MiB, core's default,
+using both declared `Content-Length` and the bytes actually received.
+Oversized requests return structured 413 `PAYLOAD_TOO_LARGE` and do not execute
+routes or enter history. Every body failure (400 `MALFORMED_JSON`,
+`JSON_TOO_DEEP` or `MALFORMED_MULTIPART`, and 413) sends `connection: close` and
+closes a kept-alive connection. Only a 413 used to close it. Media-type
+matching is case-insensitive.
+
+A mock whose request admission is broken answers its routes with 500
+`SERVER_ERROR` `Schmock returned an invalid request admission`, after the body
+has been read. The admin API keeps answering.
 
 The handler receives the body in the same shape the fetch interceptor gives it.
 The same rules apply to `mock.listen()`:
@@ -329,7 +384,8 @@ The same rules apply to `mock.listen()`:
 | Anything else, including no content type | An `ArrayBuffer` |
 | Empty body | `undefined` |
 
-Every response with a body carries `Content-Length` rather than chunked framing.
+Every response with a body carries `Content-Length` rather than chunked framing,
+`/schmock-admin/*` answers included.
 
 If a client disconnects, the CLI aborts pending plugin hooks, delays, and route
 generators while keeping the server available for later requests.

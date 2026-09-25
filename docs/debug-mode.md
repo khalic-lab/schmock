@@ -89,11 +89,16 @@ present; only the value is replaced with `[redacted]`:
 ```
 
 Redaction affects logs only — plugins, generators and `history()` still receive
-the real header values. There is no opt-out.
+the real header values. There is no opt-out. The set is exported from
+`@schmock/core` as `SENSITIVE_HEADER_NAMES`, and `redactHeaders()` applies the
+same masking; see [Header helpers](./api.md#header-helpers).
 
 `bodyType` reports the type of the request body whenever one was supplied, so an
 empty string, `0` or `false` show as `string` / `number` / `boolean`; `none`
 means no body was passed at all.
+
+An intercepted fetch that no route matches (passthrough on, no `beforeRequest`
+hook) also logs `bodyType: 'none'`, because its body is never read.
 
 ## Filtering
 

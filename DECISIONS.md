@@ -227,3 +227,9 @@ Also decided in the same review: the query and header validators coerce scalar t
 Status: proposed for the owner to accept or reject; not implemented. Raised by review finding 57 (dot-segment parity).
 
 The CLI, core `mock.listen()` and the fetch interceptor already resolve `.`, `..` and `%2e%2e` path segments through `new URL(...).pathname`. Express is the outlier: it matches the raw `req.path`, so `GET /a/../pets` routes differently there. The proposal is to make Express use `new URL(req.originalUrl, base).pathname` with the mount prefix stripped, and to add a raw-socket parity test for `GET /a/../pets` across transports. The "never resolves `.`/`..`" comment on `canonicalizePath` covers only strings passed directly to `handle()`, which stay unresolved.
+
+### D43: One path-prefix rule for namespace and baseUrl (2026-09-25)
+
+`parsePathPrefix` and `matchPathPrefix` in `@schmock/core` are the single prefix rule for the mock's `namespace`, the fetch interceptor's `baseUrl` and the Angular adapter's `baseUrl`. The prefix is canonicalized like a request path, a missing leading slash is implied, and one trailing slash is dropped, so `'/api/'` and `'/api'` are the same prefix. Under `namespace: '/api/'`, `/api//users` is now 404; it used to be served. Matching is on a segment boundary and compares the path only.
+
+The Angular adapter still strips the prefix before routing, but no longer with `path.slice(baseUrl.length)` as D25 describes. After a canonical match it removes as many leading segments as the prefix has from the raw path, so `'/café'` also strips `/caf%C3%A9/menu`, and the remainder keeps the request's spelling. This supersedes D25's description of the strip.

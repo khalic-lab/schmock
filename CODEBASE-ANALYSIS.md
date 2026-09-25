@@ -62,6 +62,8 @@ Phases 1 and 2 were implemented in the post-review worktree on 2026-08-09. A par
 | B2 | Implemented and verified | Downstream declarations bind `Schmock.*` through explicit type-only imports from Core. Missing Core type exports were added, and Node helper/ambient CLI types use browser-safe structural protocols; the exact CLI `Server` type remains exported by `@schmock/cli`. Twelve public entries compile independently with `skipLibCheck: false`; non-Node entries use `types: []`, and all nine non-Node declaration trees are scanned for Node-only references. |
 | B3 | Implemented and verified | The React testing bundle preserves its `./index.js` import instead of inlining a second context. The packed consumer renders a main-entry `useSchmock()` consumer through `@schmock/react/testing` under both Node and Bun and verifies object identity. |
 
+> **Status note (2026-09-25 refactor):** the remaining B2 type-export gap is closed. `@schmock/core` exports every shared type by name, including `PaginateOptions`, `PaginatedResponse`, the four request event types, `SchmockEvent`, `SchmockEventMap`, `OpenApiRefPolicy`, `OnSchemaCallback` and `OnSchemaContext`, and `@schmock/openapi` re-exports its option types as aliases of them.
+
 Phase 2 establishes one request-admission, lifecycle, response, and transport contract:
 
 | Finding | Local status | Repair and regression coverage |
@@ -126,6 +128,8 @@ Refuted (no action needed): the claim that `reset()` retaining the interception 
 Open minor observations from the second pass, left for later phases: cancelling a non-awaited `listen()` can surface an unhandled rejection; plugin `uninstall()` observes pre- or post-wipe state depending on in-flight requests; interceptor passthrough reconstructs the request rather than forwarding the caller's original arguments; `assertDeclaredTargets` skips the CLI `bin` entry; a failed watcher reload still leaves `cliServer` pointing at a closed server (already tracked under M28/Phase 4); and the async-listener isolation test asserts only weakly.
 
 > **Status note (2026-09-25 review):** `uninstall()` now receives a read-only, expiring facade, so it can no longer pipe plugins or register routes into the new generation, and re-piping a plugin after `reset()` runs its pending uninstall before the new install. What `uninstall()` reads still depends on timing. The M3/M7 admission snapshot is now copy-on-write (O(1) per request instead of copying the route tables), and `reset()` replaces the route containers instead of clearing them in place.
+
+> **Status note (2026-09-25 refactor):** the M3 type side is closed too. `Plugin.install()` and `Plugin.uninstall()` return `void | undefined`, so an async hook of either kind is a compile error while every synchronous hook, annotated or not, still compiles. An async `uninstall()` used to compile and was ignored at runtime.
 
 ### Review of the repairs themselves
 
@@ -224,6 +228,8 @@ Phase 5 was implemented in this worktree on 2026-08-10 and closes the remainder 
 | M22 | Implemented (breaking) | Query options are validated at plugin creation and throw, rather than degrading at request time; integer parsing is strict with no trimming; `queryPlugin()` with no options is an explicit pass-through. Both the query side and the item side read own properties only, which breaks class instances exposing values through prototype getters. The plain-key filter fallback is removed and bucket totals have a defined sort order. |
 | M23 | Implemented | The plugin validates the body it actually delivers: `ownProperties` is enabled, each slot gets its own AJV instance, and the envelope guard matches core's. The semantic-body definition is fixed without reordering the pipeline. Regex safety is documented rather than screened — screening user regexes was rejected as more likely to reject valid schemas than to prevent a stall. |
 
+> **Status note (2026-09-25 refactor):** the two rewriting walkers are unified with the validating one. `SCHEMA_KEYWORDS` in `packages/faker/src/schema-children.ts` drives `collectSchemaChildren` (validation) and `mapSchemaChildren`, which smart mapping (`schema-enhancement.ts`) and JSF normalization (`jsf-config.ts`) both use. The table order is load-bearing: it fixes the order seeded `patternProperties` keys are drawn in. `unevaluatedProperties` and `unevaluatedItems` remain outside the table and are stripped before generation.
+
 The same waves closed every remaining minor finding across core, OpenAPI, the adapters and the CLI; reversed both Phase 3 deferrals (per-parent CRUD state, `$ref` diagnostics); removed the dead `ResponseGenerationError`, `jsr.json` and `tsconfig.build.json`; narrowed the published `files` set and completed package metadata; wired the smoke and consumer runners into CI and made `test:all` fail loudly instead of silently; and reconciled the documentation-drift rows, including a typed break removing the `JSONSchema7` arm from `Generator`. Documentation snippets in `docs/getting-started.md` are now executable: fences opt in with a `docs-run=<group>` info-string word, run as a concatenated module in the integration suite, and every untagged fence is reported as an explicitly skipped test naming its line range. The harness paid for itself on its first run by failing on a documented generator example that used state its instance never created.
 
 An adversarial review of the Phase 5 diff (Claude, 2026-08-10) put it through eight dimension reviewers with per-finding refutation: 25 findings were verified, 20 confirmed and 5 refuted. Nineteen were fixed in this worktree.
@@ -267,6 +273,8 @@ Two consequences are worth carrying forward. The diagnostic got less useful: twe
 `GET /v1/setup_attempts` is now pinned in the OpenAPI stress suite as a structured `RESOURCE_LIMIT_ERROR` 500. The absence of exactly this coverage — the fixture was used only for parser and CRUD tests, never for a schema-generated response — is what let the regression ship through a green gate suite. The test exists to be flipped by whoever implements graceful truncation.
 
 Deferred to a later phase, deliberately: graceful truncation of an over-budget subtree instead of refusing the whole response, which is the only affordable path to restoring those routes; `schema_nodes` counting traversals rather than distinct nodes; `$ref`-pointer cycle detection in the walker, so a `$defs` cycle is rejected like `$ref: "#"`; OpenAPI per-parent state still growing on the write path; `docs/coding-standards.md`'s stale synchronous `generateFromSchema` signature, its vacuous `.not.toThrow()` example and its now-wrong `MAX_NESTING_DEPTH` illustration; the snippet harness not typechecking and not inspecting status codes; the faker prose gaps (the seeded reference date and the loss of `registerFormat` support are not described in narrative docs); `--spec a.json b.json` resolving with `--spec` winning rather than erroring; package READMEs having no gate at all, which is how four of these findings survived; AJV silently dropping a `properties` rule keyed `__proto__` from its generated validator; and the Express catch-path guard now dropping an error thrown after the middleware itself committed a response, with no debug-level trace of it.
+
+> **Status note (2026-09-25 review):** the three `docs/coding-standards.md` items in that list are fixed: it shows `generateFromSchema` as async, asserts with `await expect(...).resolves`, and uses the current `MAX_NESTING_DEPTH` of 15.
 
 ## What The Project Does
 
@@ -1021,11 +1029,11 @@ Locations and drift descriptions refer to the reviewed baseline. The final colum
 |---|---|---|
 | `docs/angular.md:16-24` | Registers `/api/users` while `baseUrl: "/api"` strips the prefix and routes to `/users`. | Resolved: the guide registers `/users`. |
 | `docs/testing.md:203-215` | Repeats the Angular path mismatch and uses the unsupported runtime-generated `useClass` setup. | Resolved: `docs/testing.md:204-236` registers the route without the `/api` prefix, provides the interceptor with `useFactory`, and warns that `useClass` fails with NG0204. |
-| `docs/api.md:502-510` | Documents `useClass` even though implementation deliberately returns `useFactory`. | Resolved: `docs/api.md:815-826` documents the `useFactory` provider and the NG0204 reason. |
+| `docs/api.md:502-510` | Documents `useClass` even though implementation deliberately returns `useFactory`. | Resolved: `docs/api.md`, section "Angular Adapter" › `provideSchmockInterceptor(mock, options?)`, documents the `useFactory` provider and the NG0204 reason. |
 | `docs/getting-started.md:145`, `docs/api.md:102` | Say `resetState()` restores initial values; implementation clears to `{}`. | Resolved: both guides document replacement with `{}` and caller-state preservation. |
-| `docs/api.md:244-250` | Documents synchronous `generateFromSchema`; implementation returns a Promise. | Resolved: `docs/api.md:426-434` documents it as async, returning `Promise<unknown>`, with a `.rejects` note. |
-| `docs/api.md:355-363` | Documents optional Query options; implementation requires them and returns a plugin 500 when omitted on arrays. | Resolved: `queryPlugin()` with no options is an explicit pass-through, and `docs/api.md:626-657` documents `queryPlugin(options?)` with every section optional. |
-| `docs/api.md:300-311` | Documents custom Faker schema keywords that are absent from public schema types and rejected by ordinary strict AJV. | Resolved: `docs/api.md:508-525` introduces the `Schmock.Schema` type carrying the three keywords. |
+| `docs/api.md:244-250` | Documents synchronous `generateFromSchema`; implementation returns a Promise. | Resolved: `docs/api.md`, section "Faker Plugin" › `generateFromSchema(options)`, documents it as async, returning `Promise<unknown>`, with a `.rejects` note. |
+| `docs/api.md:355-363` | Documents optional Query options; implementation requires them and returns a plugin 500 when omitted on arrays. | Resolved: `queryPlugin()` with no options is an explicit pass-through, and `docs/api.md`, section "Query Plugin" › `queryPlugin(options?)`, documents it with every section optional. |
+| `docs/api.md:300-311` | Documents custom Faker schema keywords that are absent from public schema types and rejected by ordinary strict AJV. | Resolved: `docs/api.md`, section "Faker Plugin" › "Schema extensions", introduces the `Schmock.Schema` type carrying the three keywords. |
 | `docs/react.md:28`, `docs/vue.md:25` | Claim axios or any HTTP library is intercepted; only libraries using `globalThis.fetch` are covered. | Resolved: both guides limit interception to clients using `globalThis.fetch`. |
 | `docs/vue.md:109-130` | Registers the same route twice; first-registration-wins means the empty-state example still returns Alice. | Resolved: each test registers exactly one route on a fresh mock. |
 | `examples/debug-example.ts:71-83` | Calls the route API without the required generator and expects Faker to synthesize one. | Resolved: `examples/debug-example.ts` pipes `fakerPlugin` and comments the generator-less route as faker-filled. |
@@ -1034,6 +1042,8 @@ Locations and drift descriptions refer to the reviewed baseline. The final colum
 | `README.md:28-40` | Package table omits React, Vue, and the aggregate package. | Resolved: all 11 workspaces are listed. |
 
 All thirteen baseline drift rows are resolved (the last seven reconciled against the tree on 2026-09-25). The ambient `Generator` type issue below is separate and also resolved.
+
+> **Status note (2026-09-25 refactor):** the faker-keyword row is also resolved on the core side. `FakerPluginOptions.schema` and `SchemaGenerationContext.schema` are typed `Schmock.Schema`, so an inline literal using `faker`, `schmockNullable` or `schmockTrueProbability` compiles without a separate annotation.
 
 The ambient `Generator` type included `JSONSchema7`, but core treated schema objects as ordinary static data. Combined with the broken debug example, this was an API promise without an implementation. Resolved: the schema arm was removed, and `packages/core/schmock.d.ts` now declares `type Generator = GeneratorFunction | StaticData`.
 
@@ -1092,6 +1102,8 @@ Status: partially started for public documentation only. Six of 13 baseline drif
 4. Typecheck test and example code in suitable positive/negative projects.
 5. Finish the remaining public-doc corrections and execute getting-started snippets as tests.
 6. Remove dead fields, exports, dependencies, and package payload.
+
+> **Status note (2026-09-25 refactor):** item 1 is done. One keyword table (`SCHEMA_KEYWORDS`) now drives the validating walker, smart mapping and JSF normalization.
 
 ## Verification Notes
 

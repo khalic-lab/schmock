@@ -304,6 +304,11 @@ that path ends in a parameter (`/repos/{owner}/{repo}` is grouped under
 `repos`, not `:owner`. As with `/users` and `/admins/users`, two resources can
 share a name and then share its seed entry.
 
+Earlier releases named such a group after the parameter (`:owner`). A `seed`
+or `resources` key that still uses the old name no longer applies silently: it
+throws `OPENAPI_UNKNOWN_SEED_RESOURCE` or `OPENAPI_UNKNOWN_RESOURCE_OVERRIDE`,
+and the message names the key to use.
+
 ### Identifiers
 
 The plugin picks one **id property** per resource, resolved once from the item
@@ -397,11 +402,15 @@ the items), the collection goes into the first one that wins, in order:
 A nested array is only considered when it has an id, shared properties, or an
 envelope parent key (`_embedded`, `embedded`, `page`, `data`, `result`,
 `results`, `response`, `payload`). The same array supplies the resource schema
-used for seeds.
+used for seeds. The collection array is also found when composition makes it
+nullable (`anyOf: [{ type: array }, { type: null }]`, or 3.0 `allOf` with
+`nullable: true`), when it is a `oneOf` of array or object, and when it is
+`{ type: array }` without `items`. The envelope keeps its declared key order.
 
 A list operation whose success schema is an object with no array (for example
 `GET /settings` next to `POST /settings`) answers with a body generated from
-that schema instead of a bare array.
+that schema instead of a bare array. When that object cannot be generated, the
+route serves the bare collection and logs a warning instead of answering 500.
 
 ### Collection scoping
 
@@ -526,6 +535,17 @@ rejected with `OPENAPI_INVALID_OPTION`:
   it `seed`;
 - an entry that is not an array, a file path or `{ count: n }` (for example
   `{ counts: 3 }`), with context `{ option: 'seed', resource }`.
+
+Seed loading runs after those checks and raises the same code, with context
+`{ option: 'seed', resource, file? }` (`file` for the two seed-file cases), for:
+
+- a seed file that is not valid JSON;
+- a seed file that does not contain a JSON array;
+- a `{ count }` that is not a non-negative integer;
+- a `{ count }` for a resource whose spec has no schema to generate from.
+
+These four used to be plain `Error`s; the messages are unchanged, and
+`openapi()` rejects with the error.
 
 `seed: null` is treated as no seed.
 
@@ -869,6 +889,15 @@ callback is skipped rather than sent to a partial URL. The skip is logged with
 `console.warn` only when `debug: true`, because the usual cause is a client that
 sent no `callbackUrl`. `$url`, `$method` and `$statusCode` are not implemented
 and resolve to an empty string.
+
+`$response.body#/…` and the fallback payload below read the body the client
+actually receives. A `{ status, body, headers }` object is unwrapped only when
+`headers` is absent or a record of strings, the rule core applies. Otherwise
+core delivers the whole object as the body, so `{$response.body#/id}` resolves
+against that object: a generator returning
+`{ status: 201, body: { id: 1 }, headers: { 'x-n': 1 } }` answers 200 with the
+whole object, `#/body/id` resolves to `1`, and `#/id` is unresolved, which skips
+the callback.
 
 The dispatched payload is generated from the **callback operation's own declared
 request body**, using `fakerSeed` when one is configured, so the webhook your

@@ -70,13 +70,25 @@ When `true` (default), requests that don't match any Schmock route are forwarded
 
 ### `baseUrl`
 
-Only intercept requests whose URL starts with this string. The base URL is stripped before matching:
+Only intercept requests whose path starts with this prefix, on a segment
+boundary. The prefix is stripped before matching:
 
 ```typescript
 // With baseUrl: '/api'
 // Request to /api/users → Schmock matches route /users
 provideSchmockInterceptor(mock, { baseUrl: '/api' })
 ```
+
+The prefix is matched the way the fetch interceptor matches it:
+
+- canonically, so `'/café'` and `'/caf%C3%A9'` are the same prefix, and a
+  non-ASCII base also matches an absolute request URL, whose path Angular
+  percent-encodes;
+- with a leading slash implied: `'api'` is `'/api'` and strips `/api/users` to
+  `/users`;
+- ignoring one trailing slash: `'/api/'` is `'/api'`.
+
+The stripped remainder keeps the spelling the request used.
 
 ### `transformRequest`
 
@@ -87,6 +99,34 @@ handlers, so `{ 'X-Tenant': 'dev' }` arrives as `headers['x-tenant']`.
 `transformRequest` runs per subscription, inside the interceptor's error
 boundary: if it throws, the subscriber receives a 500 `HttpErrorResponse`
 shaped by `errorFormatter` rather than a bare `Error`.
+
+### `beforeRequest` and `beforeResponse`
+
+The same two hooks under the names the fetch interceptor, React, Vue and
+Express use. Unlike `transformRequest` and `transformResponse`, they may be
+async, and returning nothing leaves the request or response unchanged:
+
+```typescript
+provideSchmockInterceptor(mock, {
+  beforeRequest: async (request) => {
+    if (!request.headers.has('authorization')) return
+    return { headers: { 'x-user': 'dev' } }
+  },
+  beforeResponse: (response) => ({
+    ...response,
+    headers: { ...response.headers, 'x-mock': 'true' },
+  }),
+})
+```
+
+When both names of a hook are set, `transformRequest` or `transformResponse`
+is used. The deprecated `AngularAdapterOptions` copy on `@schmock/core` lists
+the same `beforeRequest`/`beforeResponse` aliases. `beforeRequest` receives Angular's `HttpRequest`, not the
+`AdapterRequest` a fetch-interceptor hook gets, so a React or Vue hook that
+spreads its argument (`{ ...request, headers }`) does not port verbatim: return
+only the fields to override. A `transformRequest` or `transformResponse` that
+returns a promise is awaited as well, but only the `before*` hooks are typed
+for it.
 
 ## OpenAPI-Driven Interceptor
 
@@ -130,7 +170,10 @@ providers: [
 
 The spec helpers load `@schmock/openapi` through a specifier computed at
 runtime, so an app that does not install it still bundles cleanly with
-`ng build` and esbuild. Webpack-based builders may print a harmless
+`ng build` and esbuild. When the peer is missing, or does not export an
+`openapi()` factory, they reject with `SchmockError` code
+`OPENAPI_PEER_UNAVAILABLE` and the import failure in `context.cause`.
+Webpack-based builders may print a harmless
 `Critical dependency: the request of a dependency is an expression` warning.
 
 ## Helper Functions
@@ -260,8 +303,11 @@ Formatter output for a core-marked 500 is normalized like any other response.
 A HEAD request gets no body, and `Date` values arrive as ISO strings. The
 `HttpErrorResponse` carries `content-type: application/json` and keeps the
 route's other headers. Output that cannot be serialized, such as an embedded
-`Error`, falls back to
-`{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }`.
+`Error` or an `undefined`-valued property, falls back to
+`{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }`; `undefined` is
+rejected, not dropped, so write `code: error.code ?? null` or spread the
+property conditionally. The out-of-band path, a throwing hook, is formatted the
+same way.
 
 Unsubscribing aborts pending Schmock work and unsubscribes any unmatched
 passthrough request. No response is emitted after teardown.

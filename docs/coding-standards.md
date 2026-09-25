@@ -358,12 +358,30 @@ export type { CallableMockInstance, Generator, HttpMethod } from "./types";
 
 ### Single Responsibility
 
-One concern per file:
+One concern per file. In `packages/core/src`:
 
-- `builder.ts` — route management and request handling
+- `builder.ts` — route registration, plugin piping and request handling
+  (resolve, generate, pipeline, finalize)
+- `history.ts` — request history and the spy API
+- `node-server.ts` — the `listen()`/`close()` server lifecycle
+- `route-table.ts` — the copy-on-write route table and per-request route copies
+- `plugin-hooks.ts` — plugin validation and install/uninstall hooks
+- `generations.ts` — request generations and deferred uninstall
+- `events.ts` — lifecycle event listeners
+- `delay.ts` — response delay
+- `debug-logger.ts` — the debug logger
 - `parser.ts` — route key parsing only
 - `errors.ts` — error definitions only
 - `constants.ts` — constants and type guards
+
+The CLI is split the same way, in `packages/cli/src`: `args.ts` (flag
+parsing), `seed-manifest.ts` (`--seed` manifests), `admin.ts` (the admin API),
+`cors.ts` (CORS headers and preflights), `request.ts` (serving one request
+through core's `serveNodeRequest`), `server.ts` (`createCliServer` and
+shutdown) and `watch.ts` (spec reloads). `cli.ts` holds `run()` and re-exports
+the public surface. In `packages/openapi/src`, `load-document.ts` reads and
+dereferences a spec, `operation-extract.ts` reads one operation's contract out
+of it, and `parser.ts` walks the paths.
 
 ## Patterns
 
@@ -387,14 +405,18 @@ export function createSchmockInterceptor(mock, options = {}): new () => HttpInte
 
 ### Plugin Interface
 
-Plugins implement `process()` and optionally `onError()`:
+Plugins implement `process()`; every other hook is optional. The interface is
+declared once, in `packages/core/schmock.d.ts`:
 
 ```typescript
 interface Plugin {
   name: string;
   version?: string;
-  process(context: PluginContext, response?: any): PluginResult | Promise<PluginResult>;
-  onError?(error: Error, context: PluginContext): Error | ResponseResult | void;
+  install?(instance: CallableMockInstance): void | undefined;
+  uninstall?(instance: CallableMockInstance): void | undefined;
+  beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>;
+  process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>;
+  onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
 }
 ```
 

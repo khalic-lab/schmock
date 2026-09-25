@@ -146,6 +146,12 @@ describe('Petstore API', () => {
 })
 ```
 
+The seed row and the `toHaveProperty('petId')` assertion assume this
+petstore's `Pet` schema declares `petId`. The plugin stores and returns a
+resource's [id property](./openapi.md#identifiers): the path parameter's name
+only when the item schema declares it, otherwise `id`. For a `Pet` that declares
+`id`, seed `{ id: 1, … }` and assert on `id`.
+
 A file-path `spec` (`'./petstore.yaml'`), and any relative external `$ref`s
 it has with `refs: { external: true }`, is read from disk in jsdom and
 happy-dom test environments too, not fetched relative to `window.location`.
@@ -241,15 +247,20 @@ Two things differ from the other adapters:
 
 ### OpenAPI-driven Angular tests
 
+Pass the spec as an object. Under the browser build a file path throws
+`OPENAPI_NODE_ONLY` (see [Running in a browser](./openapi.md#running-in-a-browser)),
+so fetch the spec or import it as JSON:
+
 ```typescript
 import { provideSchmockInterceptorFromSpec } from '@schmock/angular'
 
 beforeEach(async () => {
+  const spec: object = await fetch('/assets/api.json').then((res) => res.json())
   TestBed.configureTestingModule({
     providers: [
       provideHttpClient(withInterceptorsFromDi()),
       await provideSchmockInterceptorFromSpec(
-        { spec: './api.yaml', seed: { users: { count: 5 } } },
+        { spec, seed: { users: { count: 5 } } },
         { baseUrl: '/api' },
       ),
     ],
@@ -302,12 +313,13 @@ describe('paginated list', () => {
     }))
 
     mock = schmock()
+    // Plugins apply to every route on the mock, not only to one route.
+    mock.pipe(queryPlugin({
+      pagination: { defaultLimit: 10 },
+      sorting: { allowed: ['name', 'id'] },
+      filtering: { allowed: ['role'] },
+    }))
     mock('GET /users', () => users)
-      .pipe(queryPlugin({
-        pagination: { defaultLimit: 10 },
-        sorting: { allowed: ['name', 'id'] },
-        filtering: { allowed: ['role'] },
-      }))
   })
 
   it('paginates results', async () => {
@@ -389,8 +401,11 @@ checks React root/testing context identity, exercises the CLI and browser
 bundle, runs the release-script tests, and runs `publint` plus `attw`.
 
 Both browser stages bundle with esbuild (`--platform=browser --external:node:*
---metafile`) and run `scripts/check-browser-node-imports.mjs`, which fails on
-any external Node built-in outside the allowlist. The allowlist holds only
+--metafile`) and run `scripts/check-browser-node-imports.mjs`, which reads each
+external import's `kind` from the metafile. It fails on any external Node
+built-in outside the allowlist, and on an allowlisted one reached any way other
+than a lazy `import()`: a static `import` or a `require` of it breaks Angular's
+application builder, which externalises nothing. The allowlist holds only
 `node:http`, core's lazy `listen()` import. A bare built-in such as `path` or
 `util` fails the esbuild bundle itself.
 

@@ -8,13 +8,20 @@ Plugins extend Schmock's request pipeline. They can validate, generate, or trans
 interface Plugin {
   name: string
   version?: string
-  install?(instance: CallableMockInstance): void
-  uninstall?(instance: CallableMockInstance): void
+  install?(instance: CallableMockInstance): PluginHookResult
+  uninstall?(instance: CallableMockInstance): PluginHookResult
   beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
 }
 ```
+
+`install()` and `uninstall()` return `PluginHookResult`, exported from
+`@schmock/core`: any value that is not a thenable, and the value is ignored. An
+expression-bodied arrow such as `install: (mock) => mock('GET /health', { ok: true })`
+type-checks, as does every synchronous hook whether or not it is annotated
+`: void`. An `async` hook is a compile error, and an `install()` that returns a
+promise is also rejected at runtime with `PLUGIN_ASYNC_INSTALL_UNSUPPORTED`.
 
 The `install()` instance is valid only for the synchronous duration of that
 hook. Route registrations are staged and committed together when installation
@@ -67,6 +74,20 @@ Request → beforeRequest hooks → Route generator → process hooks → Respon
 must unwrap and rewrap the envelope, or it turns a 401 or a 201 into a 200 body
 that contains the tuple.
 
+Use `getResponseParts(response)` and `replaceResponseBody(response, body)`
+from `@schmock/core` for that instead of a hand-written envelope guard.
+`getResponseParts` returns `{ status, body, headers, kind }` with the guards
+core itself applies, including the rule that an object whose `headers` are not
+a string record is a plain body, not an envelope. `replaceResponseBody` puts a
+new body into the same shape without mutating the original. A guard that checks
+only for `status` and `body` misreads that case and rewrites a body core would
+deliver whole. See [Response parts](./api.md#response-parts).
+
+A hook must return a `PluginResult` (`beforeRequest` may also return nothing).
+Anything else fails the request with `PluginError` and the message
+`Plugin "<name>" failed: didn't return valid result`, and `onError` hooks see
+that `PluginError`.
+
 Static route data (a non-function generator) and `context.route` are
 per-request copies. Editing them in place changes only the current response
 and request, never the registered route or later requests. Static data is
@@ -116,35 +137,23 @@ function timestampPlugin(): Schmock.Plugin {
 ### Transformer — Modify existing response
 
 ```typescript
-import { isStatusTuple } from '@schmock/core'
+import { getResponseParts, replaceResponseBody } from '@schmock/core'
 
 function wrapPlugin(key: string): Schmock.Plugin {
   return {
     name: 'wrap',
     process(context, response) {
-      const wrap = (body: unknown) => ({ [key]: body, _meta: { path: context.path } })
+      // A guard's rejection: leave it alone
+      if (context.requestShortCircuited) return { context, response }
 
-      // Nothing to wrap, or a guard's rejection: leave it alone
-      if (response === undefined || response === null || context.requestShortCircuited) {
+      // Plain body, tuple or envelope, read with core's own rules
+      const { status, body } = getResponseParts(response)
+      // Nothing to wrap, or an error: leave it alone
+      if (body === undefined || body === null || status >= 300) {
         return { context, response }
       }
-      // [status, body] or [status, body, headers]: wrap successful bodies only
-      if (isStatusTuple(response)) {
-        if (response[0] >= 300) return { context, response }
-        const [status, body, ...headers] = response
-        return { context, response: [status, wrap(body), ...headers] }
-      }
-      // { status, body, headers? } envelope
-      if (
-        typeof response === 'object' &&
-        'status' in response &&
-        typeof response.status === 'number' &&
-        'body' in response
-      ) {
-        if (response.status >= 300) return { context, response }
-        return { context, response: { ...response, body: wrap(response.body) } }
-      }
-      return { context, response: wrap(response) }
+      const wrapped = { [key]: body, _meta: { path: context.path } }
+      return { context, response: replaceResponseBody(response, wrapped) }
     },
   }
 }

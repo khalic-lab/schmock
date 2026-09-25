@@ -118,10 +118,14 @@ Custom internal-error response format:
 ```typescript
 toExpress(mock, {
   errorFormatter: (error) => ({
-    error: { message: error.message, code: error.code },
+    error: { message: error.message, code: error.code ?? null },
   }),
 })
 ```
+
+An `undefined`-valued property in the formatted body is rejected, not dropped:
+the whole body falls back to `{ error: 'Internal Server Error', code:
+'INTERNAL_ERROR' }`. A plain `Error` has no `code`, hence the `?? null`.
 
 The formatter receives core-marked internal exceptions and errors thrown by
 adapter hooks or request handling before the Express response is committed. It
@@ -139,12 +143,16 @@ sent as-is and the formatter is not called.
 
 ### Query parameters
 
-By default the adapter re-reads `req.originalUrl` with the same parser as the
-CLI, so the mock sees the same query whatever `app.set('query parser', ...)`
-is. Keys stay literal (`filter[name]`, `sort[]`), and a repeated key resolves
-to its last value. Express 4's default `qs` "extended" parser therefore no
-longer turns `filter[name]=rex` into `[object Object]`. A custom
-`transformQuery` still receives `req.query` as Express parsed it.
+By default the adapter re-reads the query string of `req.url`, the same URL
+`req.path` comes from, with the same parser as the CLI, so the mock sees the
+same query whatever `app.set('query parser', ...)` is. A URL rewrite by earlier
+middleware moves path and query together, and a router mount keeps the query.
+Keys stay literal (`filter[name]`, `sort[]`), and a repeated key resolves to
+its last value. Express 4's default `qs` "extended" parser therefore no longer
+turns `filter[name]=rex` into `[object Object]`. The default ignores a
+`req.query` that earlier middleware assigned or redefined (coercion or
+sanitizer middleware, for example). Pass `transformQuery` to receive `req.query`
+as Express, or that middleware, left it; its return value replaces the default.
 
 ## Response Behavior
 
@@ -154,6 +162,17 @@ longer turns `filter[name]=rex` into `[object Object]`. A custom
   explicit representation `Content-Length`, and 304 headers are preserved.
 - Route headers are sent verbatim. A route's `content-type: application/json`
   is not rewritten to `application/json; charset=utf-8`.
+- A body that declares no content type gets the one it implies:
+  `application/octet-stream` for binary and `application/json` for any other
+  non-string body. A `null` body, from `beforeResponse` for example, is sent as
+  `null` with `application/json`, as `mock.listen()` and the CLI send it. It
+  used to get no content type.
+- A mock whose request-admission factory returns something that is not an
+  admission fails with `SchmockError` `INVALID_REQUEST_ADMISSION` (message
+  `Schmock returned an invalid request admission`). With
+  `passErrorsToNext: false` and no `errorFormatter`, the 500 body carries that
+  code instead of `INTERNAL_ERROR`, and with `passErrorsToNext: true`, `next()`
+  receives the `SchmockError`.
 - If the client disconnects, pending adapter-hook awaits settle early and core
   plugins, delays, and route generators receive an aborted signal. Adapter
   hooks do not receive the signal directly, and no response is written.

@@ -25,8 +25,11 @@ it leaves history unbounded. Any other value — negative (which once meant
 unbounded), fractional, `NaN` or `Infinity` — throws a `SchmockError`
 (`INVALID_CONFIG`) from `schmock()`.
 
-A trailing slash on `namespace` is allowed: `namespace: '/api/'` serves the bare
-`/api` just as `'/api'` does, and also `/api/`, `/api/users` and `/api//users`.
+One trailing slash on `namespace` is ignored: `'/api/'` and `'/api'` are the
+same namespace. Both serve `/api`, `/api/` and `/api/users`, and neither serves
+`/api//users` (404) or `/apiv2/users`. `'/api/'` used to serve `/api//users`.
+The namespace follows the same prefix rule as the fetch interceptor's
+`baseUrl`; see [`parsePathPrefix()`](#path-prefixes).
 
 Each mock keeps one persistent state object from creation. A supplied state
 object is used until reset; when `state` is omitted, the default is one empty
@@ -116,6 +119,10 @@ With several parameters in one segment, each one except the last stops at the
 first character of the literal that follows it, as in Express: `:name.:ext` on
 `a.tar.gz` gives name `'a'` and ext `'tar.gz'`. A single parameter before a
 suffix stays greedy: `:name.json` on `report.v2.json` gives `'report.v2'`.
+When the separator is a character that percent-encodes in the URL, such as a
+non-ASCII letter, the earlier capture ends at the whole encoded separator and
+may itself contain other encoded characters: `:aé:b` on `x%C3%A0%C3%A9y` gives
+`{ a: 'xà', b: 'y' }`.
 
 `getRoutes()` reports a route with parameters in its escaped spelling
 (`/jobs/:job\:cancel`) and a route without parameters as its literal path
@@ -259,14 +266,19 @@ structured 413 `PAYLOAD_TOO_LARGE`; malformed JSON for `application/json` or
 close the connection and do not execute a route or enter history. Client
 disconnects abort admitted work.
 
-The built-in server answers a request without a `Host` header, or with a
-malformed request target, with 400 `BAD_REQUEST`. It answers a method outside
+The built-in server answers a request without a `Host` header
+(`Missing Host header`), with a malformed `Host` header (`Malformed Host header`)
+or with a malformed request target (`Malformed request target`) with 400
+`BAD_REQUEST`. It answers a method outside
 `HTTP_METHODS` with 405 `METHOD_NOT_ALLOWED` and
 `Allow: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS`, the same as the CLI. The
 request target is routed by its full path: `GET //users` is looked up as
 `//users`, never as `/` or `/users`. A server-level `error` event after startup
 (such as an accept `EMFILE`) is logged in the debug `server` category instead
 of crashing the process.
+
+Each request goes through [`serveNodeRequest()`](#servenoderequest), the same
+bridge the CLI uses, so both answer client errors alike.
 
 #### `.intercept(options?)`
 
@@ -307,6 +319,19 @@ media types; unmatched passthrough receives the original effective body and
 headers. Aborts settle pending request/response hooks, route generators, and
 passthrough fetches.
 
+With `passthrough: true` and no `beforeRequest` hook, a request that no route
+matches is never read or parsed. The interceptor checks the mock's routes
+first and forwards the original request untouched, while `request:start`,
+`request:notfound` and `request:end` still fire. An unreadable body (malformed
+multipart, an erroring stream) sent to an unmocked URL therefore reaches the
+network instead of rejecting the fetch. A matched route still reads it, and a
+failure there still rejects or goes to `errorFormatter`.
+
+`errorFormatter(error, request)` receives the request as routed: the
+`AdapterRequest` after `beforeRequest` once that hook has returned, the
+pre-hook request when the hook threw, and the incoming request without a body
+when the body itself could not be read. One-argument formatters still work.
+
 An empty JSON body reaches the route as `undefined`. With `passthrough: false`,
 a JSON body that does not parse gets 400
 `{ error: 'Malformed JSON request body', code: 'MALFORMED_JSON' }` before any
@@ -327,6 +352,12 @@ leases — nested providers, separate roots, or an adapter alongside a manual
 them, and the original `fetch` returns once the last lease is released. A mock
 is consulted once per distinct effective method and path across its leases, so
 its handler and lifecycle events run once per request it is asked.
+
+A lease without `beforeRequest` claims a request before answering it, so an
+older `passthrough: false` lease leaves an unmocked request, malformed JSON or
+a non-standard method included, to the network once a newer lease has passed
+it through. A lease with `beforeRequest` knows its effective request only after
+the hook runs, so it still answers 400 `MALFORMED_JSON` before its hook.
 
 `update(options?)` reconfigures a lease without re-registering it, so it keeps
 its position in the dispatch order: an adapter can apply new hooks without
@@ -389,9 +420,11 @@ recovery produces.
 > envelope you actually mean as an explicit `[status, body]` tuple.
 
 An object whose `headers` is present but is not a record of strings is *not* an
-envelope: it is delivered whole as the body. Plugins that unwrap envelopes must
-apply the same rule — see [What gets validated](#what-gets-validated) for what
-that means when a response schema is attached.
+envelope: it is delivered whole as the body. Plugins that unwrap envelopes
+should read the result with [`getResponseParts()`](#response-parts) and rewrite
+it with `replaceResponseBody()`, which apply core's own rule, rather than
+re-implement it. See [What gets validated](#what-gets-validated) for what the
+rule means when a response schema is attached.
 
 Final response statuses must be finite integers from 200 through 599. Bodies are
 removed for HEAD, 204, 205, and 304 responses. Other bodies must be strings,
@@ -417,8 +450,8 @@ Advanced adapter authors can import `normalizeResponse()` and
 interface Plugin {
   name: string
   version?: string
-  install?(instance: CallableMockInstance): void
-  uninstall?(instance: CallableMockInstance): void
+  install?(instance: CallableMockInstance): PluginHookResult
+  uninstall?(instance: CallableMockInstance): PluginHookResult
   beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
@@ -447,6 +480,17 @@ interface PluginResult {
 `install()` receives a synchronous, installation-scoped callable. Routes it
 registers are committed atomically only after the hook returns successfully;
 the callable must not be retained. Promise-returning installs are rejected.
+
+`install()` and `uninstall()` return `void | undefined` rather than `void`, so
+an `async` hook is a compile error for both. Every synchronous hook still
+satisfies the type, annotated or not. An async `uninstall()` used to compile
+and was ignored at runtime.
+
+A `process` hook that returns something other than a `PluginResult`, or a
+`beforeRequest` hook that returns something other than a `PluginResult` or
+nothing, fails with `PluginError` (`PLUGIN_ERROR`) and the message
+`Plugin "<name>" failed: didn't return valid result`. `onError` hooks receive
+that `PluginError`, and it is not wrapped a second time.
 
 During `reset()`, `uninstall()` runs in reverse order after requests admitted
 with that plugin generation have settled. It receives a read-only, expiring
@@ -492,6 +536,7 @@ class SchmockError extends Error {
 | `RouteNotFoundError` | `ROUTE_NOT_FOUND` | `{ method, path }` |
 | `RouteParseError` | `ROUTE_PARSE_ERROR` | `{ routeKey, reason }` |
 | `RouteDefinitionError` | `ROUTE_DEFINITION_ERROR` | `{ routeKey, reason }` |
+| `InvalidHttpMethodError` | `INVALID_HTTP_METHOD` | `{ method }` |
 | `InvalidResponseError` | `INVALID_RESPONSE` | `{ reason, ...details }` |
 | `PluginError` | `PLUGIN_ERROR` | `{ pluginName, originalError }` |
 | `SchemaValidationError` | `SCHEMA_VALIDATION_ERROR` | `{ schemaPath, issue, suggestion }` |
@@ -519,9 +564,17 @@ characters) instead of being flattened to `Unknown error`.
 HTTP_METHODS          // readonly ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
 ROUTE_NOT_FOUND_CODE  // 'ROUTE_NOT_FOUND'
 isHttpMethod(s)       // type guard → HttpMethod
-toHttpMethod(s)       // normalize → HttpMethod (throws on invalid)
+toHttpMethod(s)       // normalize → HttpMethod (throws InvalidHttpMethodError on invalid)
 toRouteKey(m, path)   // build a RouteKey, supplying the required leading slash
 ```
+
+`toHttpMethod()` compares case-insensitively and throws `InvalidHttpMethodError`
+(`INVALID_HTTP_METHOD`) for any other verb, with the message
+`Invalid HTTP method: "<method>"`. It used to throw a plain `Error` with the same
+message, so `err instanceof SchmockError` now catches it. With
+`passErrorsToNext: false`, the Express adapter now renders a `beforeRequest`
+that rewrites the method to an unsupported verb as a 500 with code
+`INVALID_HTTP_METHOD` instead of `INTERNAL_ERROR`.
 
 ### Response helpers
 
@@ -533,7 +586,10 @@ forbidden(message?: string | object): [403, object]
 serverError(message?: string | object): [500, object]
 created(body: object): [201, object]
 noContent(): [204, null]
-paginate<T>(items: readonly T[], options?: { page?: number; pageSize?: number }): PaginatedResponse<T>
+paginate<T>(items: readonly T[], options?: PaginateOptions): PaginatedResponse<T>
+
+interface PaginateOptions { page?: number; pageSize?: number }
+interface PaginatedResponse<T> { data: T[]; page: number; pageSize: number; total: number; totalPages: number }
 ```
 
 `paginate()` normalizes its options: `page` and `pageSize` must be integers `>= 1`, and any other
@@ -545,22 +601,42 @@ value (`0`, negative, fractional, `NaN`, `Infinity`, missing) falls back to page
 
 ### Adapter-author utilities
 
-`@schmock/core` exports the pieces its own adapters are built from. Application
-code does not need them.
+`@schmock/core` exports the pieces its own adapters and plugins are built from.
+Application code does not need them. The request-admission protocol lives on a
+separate entry, [`@schmock/core/adapter`](#schmockcoreadapter).
 
 ```typescript
 isStatusTuple(v)            // v is [number, unknown] | [number, unknown, unknown]
 isBinaryBody(v)             // v is ArrayBuffer | ArrayBufferView
 isRouteNotFound(response)   // true for the mock's own route-miss 404
 getResponseException(response)  // the Error an exception response was built from, or undefined
-createFetchInterceptor(handle, options?)  // the lease behind mock.intercept()
+
+// Response results, for plugins
+getResponseParts(response: unknown): ResponseParts
+replaceResponseBody(response: unknown, body: unknown): unknown
+
+// Path prefixes: the namespace and baseUrl rule
+parsePathPrefix(prefix: string): PathPrefix
+matchPathPrefix(prefix: PathPrefix, path: string): boolean
 
 // Node ingress, as used by mock.listen() and the CLI
+serveNodeRequest(req, res, options: ServeNodeRequestOptions): Promise<void>
 parseNodeHeaders(req): Record<string, string>
 parseNodeQuery(url: URL): Record<string, string>
 collectBody(req, headers, maxBodySize?): Promise<unknown>  // default limit: 10 MiB
 writeSchmockResponse(res, response, extraHeaders?): void
 writeRejectedSchmockResponse(req, res, response, extraHeaders?): void
+
+// Response shaping
+withDefaultContentType(response: Response): Response
+buildFormattedErrorResponse(options: FormattedErrorOptions): Response
+
+// Headers
+SENSITIVE_HEADER_NAMES: ReadonlySet<string>
+redactHeaders(headers: Record<string, string>): Record<string, string>
+getHeader(headers: Readonly<Record<string, string>> | undefined, name: string): string | undefined
+
+createFetchInterceptor(handle, options?)  // deprecated here: import it from @schmock/core/adapter
 ```
 
 `isStatusTuple(v)` checks only the length and the status, so its third element
@@ -585,6 +661,8 @@ same request, or `undefined` for an empty body:
 | `multipart/*` | `FormData` |
 | anything else, or none | an `ArrayBuffer` |
 
+It reads `content-type` and `content-length` from `headers` case-insensitively.
+
 It rejects with `HttpIngressError`, which carries `status` and `code`:
 
 | Code | Status | Cause |
@@ -603,6 +681,334 @@ still be uploading. It keeps the socket open until the upload ends, goes idle
 or runs out of grace time, so the client reads the response instead of a
 connection reset.
 
+#### Response parts
+
+```typescript
+getResponseParts(response: unknown): ResponseParts
+replaceResponseBody(response: unknown, body: unknown): unknown
+
+interface ResponseParts {
+  status: number                   // what core answers with; a plain null or undefined is 204
+  body: unknown                    // the body element as carried; null stays null
+  headers: Record<string, string>  // a copy; {} when the carried headers are not a string record
+  kind: 'plain' | 'tuple' | 'object'
+}
+```
+
+`getResponseParts()` splits a route or plugin result with the guards `handle()`
+applies, so a plugin reads what core will deliver. A `[status, body]` or
+`[status, body, headers]` tuple is `kind: 'tuple'`. A `{ status, body, headers? }`
+object whose `headers` are absent or a string record is `kind: 'object'`.
+Anything else, including an object whose `headers` are not a string record, is
+`kind: 'plain'`, with the whole value as the body and status 200. A tuple whose
+third element is not a string record reads as `headers: {}`, and core rejects
+it as `INVALID_RESPONSE`.
+
+`replaceResponseBody()` puts `body` in place of the carried body and keeps the
+shape. A tuple keeps its length and headers, an envelope keeps its `status` and
+`headers` (other properties are dropped, as core ignores them), and a plain
+result is replaced by `body` itself. It never mutates `response`.
+
+```typescript
+import { getResponseParts, replaceResponseBody } from '@schmock/core'
+
+const countPlugin: Schmock.Plugin = {
+  name: 'count',
+  process(context, response) {
+    const { status, body } = getResponseParts(response)
+    if (status >= 300 || !Array.isArray(body)) return { context, response }
+    return {
+      context,
+      response: replaceResponseBody(response, { count: body.length, items: body }),
+    }
+  },
+}
+```
+
+#### Path prefixes
+
+```typescript
+parsePathPrefix(prefix: string): PathPrefix
+matchPathPrefix(prefix: PathPrefix, path: string): boolean
+
+interface PathPrefix {
+  origin: string | null  // the origin of an origin-form prefix, or null for a path prefix
+  path: string           // canonical, without a trailing slash; '' for the root
+}
+```
+
+These are the one prefix rule shared by `namespace`, the fetch interceptor's
+`baseUrl` and the Angular adapter's `baseUrl`. `parsePathPrefix()`
+canonicalizes the path the way request paths are (`'/café'` and `'/caf%C3%A9'`
+are one prefix), adds a missing leading slash and drops one trailing slash. A
+value containing `://` that is not a valid URL is read as a path.
+
+| Input | `parsePathPrefix()` |
+|-------|---------------------|
+| `'/api'`, `'/api/'`, `'api'` | `{ origin: null, path: '/api' }` |
+| `'/'`, `''` | `{ origin: null, path: '' }` |
+| `'https://x.com/api/v1/'` | `{ origin: 'https://x.com', path: '/api/v1' }` |
+| `'https://x.com'` | `{ origin: 'https://x.com', path: '' }` |
+
+`matchPathPrefix()` canonicalizes `path` first, so a raw and an encoded spelling
+match alike, and matches on a segment boundary. It compares the path only.
+Checking `origin` against the request's origin is the caller's job.
+
+```typescript
+import { matchPathPrefix, parsePathPrefix } from '@schmock/core'
+
+const prefix = parsePathPrefix('/api/')
+matchPathPrefix(prefix, '/api')        // true
+matchPathPrefix(prefix, '/api/users')  // true
+matchPathPrefix(prefix, '/apiv2')      // false
+```
+
+#### `serveNodeRequest()`
+
+```typescript
+serveNodeRequest(req, res, options: ServeNodeRequestOptions): Promise<void>
+
+interface ServeNodeRequestOptions {
+  handle: MockRequestHandler  // mock.handle, or a request admission's handle
+  maxBodySize?: number        // bytes; a larger body gets 413. Default 10 MiB, as mock.listen()
+  answerBeforeBody?: (method: HttpMethod, path: string) => Response | undefined  // answer without reading the body
+  extraHeaders?: (context: ServeNodeResponseContext) => Record<string, string> | undefined
+  classifyError?: (error: unknown) => HttpErrorReply | undefined
+}
+
+interface ServeNodeResponseContext {
+  isError: boolean            // true for an error answer serveNodeRequest writes itself
+  path: string | undefined    // the request pathname; undefined when the request did not parse
+}
+
+interface HttpErrorReply {
+  status: number
+  code: string
+  message: string
+  headers?: Record<string, string>  // besides the content type, such as a 405's allow
+}
+```
+
+`serveNodeRequest()` serves one Node request through a handler. It is the
+bridge `mock.listen()` and the CLI run, and it fits any `http.createServer`
+callback. `req` and `res` are typed structurally as `NodeRequestLike` and
+`NodeResponseLike`, so no Node types appear in its declarations and a request
+typed by any `@types/node` copy fits. `maxBodySize` defaults to 10 MiB, the
+limit `mock.listen()` uses.
+
+`answerBeforeBody(method, path)` runs after the `Host`, target and method
+checks and before the body is read. A `Response` it returns is sent as is,
+through `extraHeaders`, and the body is never read; `undefined` reads the body
+and calls `handle`. A throw is answered 500 `SERVER_ERROR`. The CLI answers its
+admin API and CORS preflights this way, so a stalled or oversized body never
+delays or changes a 401.
+
+Error answers are JSON `{ error: message, code }`:
+
+| Status | Code | Cause |
+|--------|------|-------|
+| 400 | `BAD_REQUEST` | a missing or malformed `Host` header, or a malformed request target |
+| 405 | `METHOD_NOT_ALLOWED` | a method outside `HTTP_METHODS`; the answer carries `allow` |
+| 400 | `MALFORMED_JSON`, `JSON_TOO_DEEP`, `MALFORMED_MULTIPART` | a body that does not parse |
+| 413 | `PAYLOAD_TOO_LARGE` | a body over `maxBodySize` |
+| 500 | `SERVER_ERROR` | `handle` rejected; the message is the error's |
+
+A body failure also sends `connection: close`, and a 413 is flushed while the
+client may still be uploading. A target starting with `//` is a path, never a
+host. `extraHeaders` runs for every answer, success and error, and its headers
+replace any case variant of the same name. `classifyError` chooses the answer
+for an error; returning `undefined` keeps the default. A client that goes away
+aborts the `signal` passed to `handle`.
+
+The returned promise never rejects. It settles once the response is handed to
+Node, which is when a request admission can be released.
+
+```typescript
+import { createServer } from 'node:http'
+import { schmock, serveNodeRequest } from '@schmock/core'
+
+const mock = schmock()
+mock('GET /users', [{ id: 1 }])
+
+createServer((req, res) => {
+  void serveNodeRequest(req, res, {
+    handle: mock.handle,
+    maxBodySize: 1024 * 1024,
+    extraHeaders: ({ isError }) => (isError ? undefined : { 'x-served-by': 'schmock' }),
+  })
+}).listen(3000)
+```
+
+#### Response shaping
+
+```typescript
+withDefaultContentType(response: Response): Response
+buildFormattedErrorResponse(options: FormattedErrorOptions): Response
+
+interface FormattedErrorOptions {
+  formatter: (error: Error) => unknown       // the errorFormatter; called exactly once
+  error: Error
+  inheritedHeaders?: Record<string, string>  // headers of the response being replaced
+  method: string                             // a HEAD answer carries no body
+}
+```
+
+`withDefaultContentType()` adds the content type a body implies when the
+response has no `content-type` header, in any letter case:
+`application/octet-stream` for a binary
+body, and `application/json` for any other non-string body, `null` included. A
+string or `undefined` body gets none. It never throws, never mutates its
+argument and does not normalize the result.
+
+`buildFormattedErrorResponse()` runs an `errorFormatter` and returns the
+normalized 500 that carries its result, with `content-type: application/json`
+and the inherited headers minus their content type. When the inherited headers
+cannot be sent (a non-string value, a control character, a case-duplicate
+name), it keeps the formatted body and sends only the JSON content type. When
+the formatter throws or its result cannot be serialized, it sends
+`{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }`. It never throws.
+
+```typescript
+import { buildFormattedErrorResponse } from '@schmock/core'
+
+const response = buildFormattedErrorResponse({
+  formatter: (error) => ({ message: error.message }),
+  error: new Error('boom'),
+  inheritedHeaders: { 'Retry-After': '5', 'Content-Type': 'text/plain' },
+  method: 'GET',
+})
+// { status: 500, body: { message: 'boom' },
+//   headers: { 'Retry-After': '5', 'content-type': 'application/json' } }
+```
+
+#### Header helpers
+
+```typescript
+SENSITIVE_HEADER_NAMES: ReadonlySet<string>
+redactHeaders(headers: Record<string, string>): Record<string, string>
+getHeader(headers: Readonly<Record<string, string>> | undefined, name: string): string | undefined
+```
+
+`SENSITIVE_HEADER_NAMES` holds the seven credential headers, in lowercase:
+`authorization`, `proxy-authorization`, `cookie`, `set-cookie`, `x-api-key`,
+`x-auth-token` and `x-schmock-admin-token`. Debug logs and the CLI's admin
+history mask this set. `redactHeaders()` replaces their values with
+`"[redacted]"`, matching names case-insensitively. It is copy-on-write: the
+input is never mutated, and when nothing is sensitive the same object comes
+back. `getHeader()` looks a header up case-insensitively and returns the first
+match, or `undefined`.
+
+```typescript
+import { getHeader, redactHeaders } from '@schmock/core'
+
+const headers = { Authorization: 'Bearer t', 'Content-Type': 'text/plain' }
+redactHeaders(headers)              // { Authorization: '[redacted]', 'Content-Type': 'text/plain' }
+getHeader(headers, 'content-type')  // 'text/plain'
+```
+
+### `@schmock/core/adapter`
+
+The low-level protocol for adapter authors: the pieces `mock.intercept()`, the
+Express adapter and the CLI are built on. Application code uses
+`mock.handle()`, `mock.listen()` and `mock.intercept()` instead.
+
+```typescript
+acquireRequestAdmission(mock: CallableMockInstance): RequestAdmission | undefined
+awaitWithAbort<T>(value: T | PromiseLike<T>, signal?: AbortSignal): Promise<T>
+abortReason(signal: AbortSignal): unknown
+createFetchInterceptor(
+  handle: MockRequestHandler,
+  options?: InterceptOptions,
+  admitRequest?: () => RequestAdmission,
+): InterceptHandle
+
+type MockRequestHandler = (method: HttpMethod, path: string, options?: RequestOptions) => Promise<Response>
+
+interface RequestAdmission {
+  handle: MockRequestHandler  // call at most once
+  release(): void             // call exactly once, after the request settles
+  hasRoute?(method: HttpMethod, path: string): boolean  // exact route probe; absent on a hand-written admission
+}
+```
+
+The entry also re-exports the `InterceptOptions`, `InterceptHandle` and
+`CallableMockInstance` types, so it compiles when imported alone.
+
+`hasRoute(method, path)` answers whether `handle` would match a route for that
+method and path, against the same route table the admission pinned. A `false`
+answer must be exact, because the fetch interceptor uses it to skip reading a
+passthrough request's body; any other answer, or a throw, counts as a match.
+Admissions from `schmock()` always carry it. An admission passed to
+`createFetchInterceptor` without it has every request body read, and its
+responses are normalized like a mock's own: hop-by-hop headers are dropped and
+a HEAD body is stripped.
+`RequestAdmission` and `MockRequestHandler` are also on the ambient `Schmock`
+namespace.
+
+`acquireRequestAdmission(mock)` pins one request to the mock's routes, plugins
+and state as they are on arrival. Route it with `admission.handle`, then call
+`admission.release()` once it settles, so a `mock.reset()` issued meanwhile
+neither changes what the request sees nor uninstalls its plugins underneath it.
+It returns `undefined` for a value that is not a `schmock()` instance, such as
+a hand-written stub; route that through `mock.handle`. It throws `SchmockError`
+`INVALID_REQUEST_ADMISSION` when the mock's admission factory returns something
+else.
+
+`awaitWithAbort(value, signal)` settles with `value`, or rejects with the
+signal's abort reason as soon as it aborts. An already-aborted signal gives a
+rejected promise rather than a synchronous throw. `abortReason(signal)` is the
+signal's `reason`, or a generic `AbortError` on runtimes whose signals predate
+`reason`.
+
+`createFetchInterceptor(handle, options?, admitRequest?)` is the lease
+`mock.intercept()` holds. Pass `admitRequest` to admit each fetch against the
+mock on arrival.
+
+```typescript
+import { schmock } from '@schmock/core'
+import { acquireRequestAdmission } from '@schmock/core/adapter'
+
+const mock = schmock()
+mock('GET /users', [{ id: 1 }])
+
+async function serve(path: string): Promise<Schmock.Response> {
+  const admission = acquireRequestAdmission(mock)
+  if (!admission) return mock.handle('GET', path)
+  try {
+    return await admission.handle('GET', path)
+  } finally {
+    admission.release()
+  }
+}
+```
+
+### Deprecations
+
+Each of these is planned for removal in the next major version.
+
+| Deprecated | Use instead |
+|------------|-------------|
+| `createFetchInterceptor` from `@schmock/core` | `mock.intercept()`. Adapter authors import `createFetchInterceptor` from `@schmock/core/adapter`; the root export is the same function. |
+| `ExpressAdapterOptions` from `@schmock/core` | `ExpressAdapterOptions` from `@schmock/express` |
+| `AngularAdapterOptions` from `@schmock/core` | `AngularAdapterOptions` from `@schmock/angular` |
+
+### Named types
+
+These types are exported by name from `@schmock/core`. All but the last row are
+also on the ambient `Schmock` namespace.
+
+| Type | Describes |
+|------|-----------|
+| `PaginateOptions`, `PaginatedResponse<T>` | `paginate()`'s options and result |
+| `SchmockEvent`, `SchmockEventMap` | the event names, and each event's payload, for `on()`/`off()` |
+| `RequestStartEvent`, `RequestMatchEvent`, `RequestNotFoundEvent`, `RequestEndEvent` | one lifecycle event payload each |
+| `OpenApiRefPolicy` | `OpenApiOptions.refs` |
+| `OnSchemaCallback`, `OnSchemaContext` | `OpenApiOptions.onSchema` and its context |
+| `ResponseParts`, `PathPrefix`, `FormattedErrorOptions` | the utility types above |
+| `ServeNodeRequestOptions`, `ServeNodeResponseContext`, `HttpErrorReply`, `HttpIngressErrorCode` | `serveNodeRequest()` and `collectBody()` |
+| `NodeRequestLike`, `NodeResponseLike` | the structural `req` and `res` `serveNodeRequest()` accepts |
+| `PluginHookResult` | what `install()` and `uninstall()` may return: anything but a thenable |
+
 ---
 
 ## Faker Plugin (`@schmock/faker`)
@@ -615,7 +1021,7 @@ Generate data from JSON schemas using faker.js.
 function fakerPlugin(options: FakerPluginOptions): Plugin
 
 interface FakerPluginOptions {
-  schema: JSONSchema7
+  schema: Schmock.Schema            // draft-07 plus Schmock's keywords (see Schema extensions)
   count?: number                    // items for array schemas
   overrides?: Record<string, unknown> // field overrides (supports templates)
   seed?: number                     // deterministic generation
@@ -633,7 +1039,7 @@ synchronously, so assert on it with `await expect(...).rejects` rather than
 async function generateFromSchema(options: SchemaGenerationContext): Promise<unknown>
 
 interface SchemaGenerationContext {
-  schema: JSONSchema7
+  schema: Schmock.Schema
   count?: number
   overrides?: Record<string, unknown>
   params?: Record<string, string>
@@ -769,10 +1175,13 @@ inside `allOf`/`anyOf`/`oneOf` branches, `$ref` targets and
 `anyOf`/`oneOf` branch a value matches.
 
 `faker`, `schmockNullable` and `schmockTrueProbability` are Schmock's own
-keywords and are not part of `JSONSchema7`, so a schema literal that uses them
-fails to typecheck against it. Declare such schemas as `Schmock.Schema` — draft-07
-plus these three keywords, applied recursively to nested subschemas — and pass
-them wherever a `JSONSchema7` is accepted:
+keywords and are not part of `JSONSchema7`. `fakerPlugin` and
+`generateFromSchema` take a `Schmock.Schema` — draft-07 plus these three
+keywords, applied recursively to nested subschemas — so a schema literal written
+inline in their options may use them. A schema kept in a variable, for example
+to share it with `validationPlugin`, still needs the `Schmock.Schema`
+annotation; a `Schmock.Schema` can be passed wherever a `JSONSchema7` is
+accepted:
 
 ```typescript
 const userSchema: Schmock.Schema = {
@@ -809,6 +1218,12 @@ register them the same way:
   `SCHEMA_VALIDATION_ERROR` at `<path>.chance`; use `faker` instead.
 - A faker method string that resolves to an `Object.prototype` member
   (`person.toString`) or to a `_`-prefixed member is rejected.
+- A map keyword (`properties`, `patternProperties`, `definitions`, `$defs`,
+  `dependencies`, `dependentSchemas`) given as an array is walked by index, so
+  a bad child there is rejected at its index path, such as
+  `$.definitions.0.faker`.
+- `unevaluatedProperties` and `unevaluatedItems` are stripped before
+  generation. They are neither validated nor generated.
 
 ### Generation limits
 
@@ -889,19 +1304,29 @@ absent body must be rejected; supplied bodies are always validated.
 Query and header values always arrive as strings, so their schemas coerce
 scalar types: `'2'` satisfies `type: 'integer'`, `'25'` satisfies
 `type: 'number'` with `maximum: 50`, and `'true'` satisfies `type: 'boolean'`.
-Numeric range keywords therefore work on query and header parameters.
+A value coerced to a number must be a finite number in plain decimal notation:
+an optional leading `-`, digits, an optional fraction, such as `-3`, `2.5` or
+`007`. `Infinity`, `1e400`, exponents (`1e1`), hex, binary and octal literals
+(`0x10`, `0b11`, `0o7`), a leading `+` or `.`, and padded values (`' 7 '`) are
+rejected with the slot's validation error, so numeric range keywords such as
+`minimum`/`maximum` hold for every accepted query and header value.
 Coercion happens on a copy: the route and later plugins still receive the
 original strings in `context.query`. Request and response bodies keep strict
 typing, so `'3'` does not satisfy `type: 'integer'` in `request.body`.
 
 Header schemas may spell names in any case (`'X-Api-Key'`). Incoming header
-names are matched case-insensitively against every name the schema declares in
-`properties`, `required` and `dependencies`, anywhere in the schema. Two names
-that differ only by case (`'X-Api-Key'` and `'x-api-key'`, or a property
+names are matched case-insensitively against every name declared in
+`properties`, `required` and `dependencies` by the header schema itself, by its
+`allOf`/`anyOf`/`oneOf`/`if`/`then`/`else`/`not` and schema-form `dependencies`
+subschemas, and by the `$ref` targets those reach. Names inside property
+schemas, and in `definitions`/`$defs` that no `$ref` reaches, are ignored. Two
+names that differ only by case (`'X-Api-Key'` and `'x-api-key'`, or a property
 `'x-api-key'` with `required: ['X-Api-Key']`) throw `SchmockError`
 `VALIDATION_CONFIG_INVALID` with `context.option` `'request.headers'` at
-creation time. `patternProperties` and `propertyNames` still see lowercased
-header names, so write those patterns in lowercase.
+creation time. Headers the schema names this way reach `patternProperties` and
+`propertyNames` in the schema's own spelling (`X-Api-Key`); every other header
+arrives lowercased. Write those patterns to match both, for example `^[Xx]-`
+or `^[A-Za-z0-9-]+$`.
 
 Error response format:
 
@@ -943,7 +1368,9 @@ the bytes the client receives.
 
 Tuple (`[status, body]`) and object (`{ status, body, headers? }`) response
 envelopes are unwrapped so the schema applies to the body rather than the
-envelope. An envelope whose `headers` is present but is not a record of
+envelope. Validation reads the status and body through core's
+`getResponseParts()`, so its envelope rule is core's by construction. An
+envelope whose `headers` is present but is not a record of
 strings is not a valid envelope: core delivers the whole object as the body,
 and validation applies the schema to that same whole object — which normally
 fails and returns `RESPONSE_VALIDATION_ERROR`.
@@ -1128,16 +1555,15 @@ interface OpenApiRefPolicy {
 type SeedConfig = Record<string, SeedSource>
 type SeedSource = unknown[] | string | { count: number }
 
-type OnSchemaCallback = (
-  schema: JSONSchema7,
-  context: {
-    method: string
-    path: string
-    params: Record<string, string>
-    query: Record<string, string>
-    headers: Record<string, string>
-  },
-) => JSONSchema7 | undefined
+type OnSchemaCallback = (schema: JSONSchema7, context: OnSchemaContext) => JSONSchema7 | undefined
+
+interface OnSchemaContext {
+  method: string
+  path: string
+  params: Record<string, string>
+  query: Record<string, string>
+  headers: Record<string, string>
+}
 
 interface ResourceOverride {
   listWrapProperty?: string       // property holding items (e.g. "data")
@@ -1156,12 +1582,26 @@ Callbacks are disabled by default and never issue implicit network requests.
 The legacy `queryFeatures` option is unsupported and throws
 `OPENAPI_UNSUPPORTED_OPTION` when supplied.
 
-Invalid `seed` options throw `SchmockError` when the plugin is created:
+Invalid `seed` and `resources` options throw `SchmockError` when the plugin is
+created, and so does a `spec` that is neither a path string nor a document
+object (`OPENAPI_INVALID_SPEC`, context `{ spec: undefined }`):
 
 | Code | Cause | Context |
 |------|-------|---------|
 | `OPENAPI_UNKNOWN_SEED_RESOURCE` | a `seed` key names no detected CRUD resource | `{ key, resources }` |
+| `OPENAPI_UNKNOWN_RESOURCE_OVERRIDE` | a `resources` key names no detected CRUD resource | `{ key, resources }` |
 | `OPENAPI_INVALID_OPTION` | `seed` is not an object, or an entry is not an array, a file path or `{ count }` | `{ option: 'seed', resource? }` |
+| `OPENAPI_INVALID_OPTION` | while loading: a seed file that is not valid JSON or not a JSON array, a `{ count }` that is not a non-negative integer, or a `{ count }` for a resource with no schema | `{ option: 'seed', resource, file? }` |
+
+The loading failures are thrown after the key and shape checks. `file` is set
+for the two seed-file cases. They were plain `Error`s before; the messages are
+unchanged.
+
+`@schmock/openapi` exports these types by name, each an alias of the
+`@schmock/core` ambient type: `OpenApiOptions`, `OpenApiRefPolicy`,
+`ResourceOverride`, `CrudOperationMeta`, `OnSchemaCallback`, `OnSchemaContext`,
+`OpenApiCallbackOptions`, `OpenApiCallbackRequest`, `SeedConfig` and
+`SeedSource`.
 
 Supports Swagger 2.0, OpenAPI 3.0, and OpenAPI 3.1.
 
@@ -1200,8 +1640,12 @@ function restoreSchmockInterception(app: App): void
 interface SchmockPluginOptions {
   mock: CallableMockInstance
   interceptOptions?: InterceptOptions   // passed to mock.intercept()
+  options?: InterceptOptions            // alias of interceptOptions, as React names it
 }
 ```
+
+`options` is an alias of `interceptOptions`, the name React's `SchmockProvider`
+uses. When both are given, `interceptOptions` wins.
 
 In a browser, `app.use(schmockPlugin, { mock })` takes one `mock.intercept()`
 lease for the app and releases it when the app unmounts or fails to mount.
@@ -1270,7 +1714,12 @@ Angular's AOT compiler never sees it and `useClass` would fail with NG0204
 
 ### `createSchmockInterceptorFromSpec(openapiOptions, adapterOptions?)`
 
-Create interceptor from an OpenAPI spec.
+Create interceptor from an OpenAPI spec. Node and test runners only:
+`@schmock/openapi` is loaded through a runtime-computed specifier that bundlers
+do not include, so a bundled browser app uses `mock.pipe(await openapi({ spec }))`
+with `provideSchmockInterceptor(mock)` instead (see the
+[Angular guide](./angular.md#openapi-driven-interceptor)). A missing or
+malformed peer rejects with `SchmockError` `OPENAPI_PEER_UNAVAILABLE`.
 
 ```typescript
 async function createSchmockInterceptorFromSpec(
@@ -1281,7 +1730,9 @@ async function createSchmockInterceptorFromSpec(
 
 ### `provideSchmockInterceptorFromSpec(openapiOptions, adapterOptions?)`
 
-Create provider from an OpenAPI spec. Same `useFactory` shape, awaited.
+Create provider from an OpenAPI spec. Same `useFactory` shape, awaited, and the
+same Node-only loading and `OPENAPI_PEER_UNAVAILABLE` rejection as
+`createSchmockInterceptorFromSpec`.
 
 ```typescript
 async function provideSchmockInterceptorFromSpec(
@@ -1299,12 +1750,25 @@ interface AngularAdapterOptions {
     method?: string; path?: string; headers?: Record<string, string>; body?: any; query?: Record<string, string>
   }
   transformResponse?: (response: Schmock.Response, request: HttpRequest<any>) => Schmock.Response
+  beforeRequest?: (request: HttpRequest<unknown>) =>
+    | Schmock.AdapterRequestOverride | void | Promise<Schmock.AdapterRequestOverride | undefined>
+  beforeResponse?: (response: Schmock.Response, request: HttpRequest<unknown>) =>
+    | Schmock.Response | void | Promise<Schmock.Response | undefined>
 }
 ```
 
 `baseUrl` intercepts only requests whose path starts with the prefix on a
 segment boundary, and strips the prefix before routing: with `baseUrl: '/api'`,
-a request to `/api/users` matches a route registered as `GET /users`.
+a request to `/api/users` matches a route registered as `GET /users`. The
+prefix is matched with [`matchPathPrefix()`](#path-prefixes), as in the fetch
+interceptor: `'/café'` and `'/caf%C3%A9'` are the same prefix, `'api'` is
+`'/api'`, and one trailing slash is ignored. The stripped remainder keeps the
+request's spelling.
+
+`beforeRequest` and `beforeResponse` are `transformRequest` and
+`transformResponse` under the names the other adapters use. They may be async,
+and returning nothing leaves the request or response unchanged. When both names
+of a hook are set, `transformRequest` or `transformResponse` is used.
 
 ### Helper functions
 
@@ -1325,6 +1789,7 @@ Start a mock server programmatically.
 ```typescript
 async function createCliServer(options: CliOptions): Promise<CliServer>
 
+// @schmock/cli exports `type CliOptions = Schmock.CliOptions`, with these fields
 interface CliOptions {
   spec: string
   port?: number              // default: 3000
@@ -1353,9 +1818,17 @@ interface CliServer {
 }
 ```
 
+`CliOptions` is a type alias of the ambient `Schmock.CliOptions`, so it is not
+open to declaration merging; augment `Schmock.CliOptions` instead. `CliServer`
+is the CLI's own type, with the exact `node:http` `Server`.
+
 `hostname` must be a non-blank string. `createCliServer({ hostname: '' })`
 rejects instead of starting: an empty host binds every interface rather than
 the documented `127.0.0.1` default.
+
+Configuration errors are `SchmockError` with code `INVALID_CONFIG`. A blank
+`hostname` carries context `{ option: 'hostname', value }`, and an unusable
+`adminToken` carries `{ option: 'adminToken' }`, without the credential.
 
 `watch: true` starts the spec watcher here, not only under the `--watch` flag,
 and the promise rejects if the watcher cannot be created — nothing is left
@@ -1375,6 +1848,12 @@ Parse CLI arguments.
 ```typescript
 function parseCliArgs(args: string[]): CliOptions & { help: boolean }
 ```
+
+A flag value the CLI refuses, a second positional argument, and
+`--admin-token` without `--admin` throw `SchmockError` with code
+`INVALID_CONFIG` and context `{ flag, value }`. `--admin-token` errors carry
+`{ flag }` only, and the extra-positional error carries `{ flag: '<spec>' }`.
+An unknown flag throws Node's own `parseArgs` error.
 
 ### `run(args)`
 
@@ -1403,7 +1882,11 @@ function loadSeedFile(seedPath: string): SeedConfig
 ```
 
 File entries resolve relative to the manifest and may not leave its directory.
-An entry of an unrecognized shape throws. See
+A manifest that is not a JSON object, an entry of an unrecognized shape, a
+missing file and an entry that escapes the directory throw `SchmockError`
+`OPENAPI_INVALID_OPTION` with context `{ option: 'seed', resource? }`, the code
+`openapi()` raises for the same mistakes in its `seed` option. An oversized
+manifest throws `ResourceLimitError`. See
 [Manifest rules](./cli.md#manifest-rules).
 
 See the [CLI guide](./cli.md) for detailed usage.

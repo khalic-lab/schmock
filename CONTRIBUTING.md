@@ -66,8 +66,10 @@ bun run lint:fix       # auto-fix lint issues
 Pre-commit hooks enforce:
 - Biome lint and format
 - TypeScript type checking
-- Unit + BDD tests
-- Benchmarks
+- Unit, BDD and integration tests
+
+The throughput benchmark (`bun run bench`) is not a gate: it has no
+thresholds, so it reports numbers without blocking any regression.
 
 Before package or release changes, also run:
 

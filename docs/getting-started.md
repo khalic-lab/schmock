@@ -21,6 +21,16 @@ bun install @schmock/cli        # Standalone CLI server
 bun install @schmock/schmock    # Core + non-framework plugins + CLI
 ```
 
+`@schmock/schmock` re-exports only `schmock` and the core response helpers.
+The other packages arrive as its dependencies, which pnpm, Yarn PnP and
+`bun install --linker isolated` do not let your code import. List every package
+you import, and `@schmock/cli` if you run the `schmock` command, as a direct
+dependency:
+
+```sh
+bun add -d @schmock/schmock @schmock/openapi
+```
+
 The CLI and the all-in-one package require a Node.js version supported by their
 faker dependency: `^20.19.0 || ^22.13.0 || ^23.5.0 || >=24.0.0`.
 
@@ -382,8 +392,12 @@ Server starts are reserved immediately, `close()` safely cancels a pending
 start, and an immediate same-port restart waits for shutdown. Node ingress has
 a 10 MiB request limit: malformed JSON returns structured 400
 `MALFORMED_JSON`, oversized bodies return structured 413
-`PAYLOAD_TOO_LARGE`, and neither reaches route code or history. Client
-disconnects cancel admitted work.
+`PAYLOAD_TOO_LARGE`, and neither reaches route code or history. Either one
+also closes the connection. A missing or malformed `Host` header or request
+target gets 400 `BAD_REQUEST`, and a method outside `GET`, `POST`, `PUT`,
+`DELETE`, `PATCH`, `HEAD` and `OPTIONS` gets 405 `METHOD_NOT_ALLOWED` with an
+`Allow` header. Client disconnects cancel admitted work. See
+[HTTP server](./api.md#http-server) for every answer.
 
 ## Next Steps
 

@@ -120,11 +120,16 @@ adapter's `baseUrl` strips the prefix instead.
 
 ### `errorFormatter`
 
-`errorFormatter(error)` formats core-marked internal exceptions — an error
-thrown by a route generator or a plugin — and errors thrown by the
+`errorFormatter(error, request)` formats core-marked internal exceptions — an
+error thrown by a route generator or a plugin — and errors thrown by the
 `beforeRequest`/`beforeResponse` hooks, matching the Express and Angular
 adapters. It does not reinterpret an ordinary user-defined 500 route response
 such as `[500, { error: 'domain failure' }]`.
+
+The second argument is the request as routed: the `AdapterRequest` after
+`beforeRequest` once that hook has returned, the pre-hook request when the hook
+threw, and the incoming request without a body when the body could not be
+read. A one-argument formatter still works.
 
 On the core-marked exception path, provenance is captured before
 `beforeResponse` runs, so a hook that clones the response with
@@ -222,6 +227,14 @@ The testing entry imports the same provider context as the package root, so
 `renderWithSchmock()` from `@schmock/react/testing`.
 
 > **Note:** `renderWithSchmock` requires `@testing-library/react` as a peer dependency. It is exported from `@schmock/react/testing` (a separate entry point) so projects that don't use Testing Library are not affected.
+
+### OpenAPI specs in jsdom and happy-dom
+
+A file-path `spec` passed to `@schmock/openapi` (`'./petstore.yaml'`), and any
+relative external `$ref`s it has with `refs: { external: true }`, is read from
+disk in jsdom and happy-dom test environments too, not fetched relative to
+`window.location`. See
+[OpenAPI-Based Tests](./testing.md#openapi-based-tests).
 
 ## Stateful Mocking
 
