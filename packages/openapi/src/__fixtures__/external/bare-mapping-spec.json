@@ -1,0 +1,20 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "External bare-name mapping", "version": "1.0.0" },
+  "paths": {
+    "/pet": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "A pet",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "./bare-mapping-models.json#/Pet" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

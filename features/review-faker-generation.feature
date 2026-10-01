@@ -114,6 +114,10 @@ Feature: Faker generation review fixes
       | contains         |
       | containsAll      |
       | dependentSchemas |
+      | dependencies     |
+      | if               |
+      | else             |
+      | untyped-contains |
 
   # Finding 80: resource limit errors carry a path
   Scenario: A nested resource-limit breach names the offending schema path

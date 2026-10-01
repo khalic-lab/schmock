@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { Server } from "node:http";
 import { resolve } from "node:path";
 import fc from "fast-check";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -356,6 +357,48 @@ describe("NodeServerController", () => {
     await expect(started).rejects.toMatchObject({
       code: "SERVER_START_CANCELLED",
     });
+  });
+
+  it("drops a server whose start close() cancelled before its listening callback ran", async () => {
+    const running = new NodeServerController({
+      admitRequest: () => ({
+        handle: async () => okResponse(),
+        release: () => {},
+      }),
+      logger,
+    });
+    controller = running;
+    const originalListen = Server.prototype.listen;
+    let created: Server | undefined;
+    let bound: Promise<void> | undefined;
+    // close() lands after the socket bound but before the controller's
+    // listening callback runs. (On Node 26 a close() before the bind never
+    // gets here: node:http's own close() cancels a bind still waiting on its
+    // lookup.)
+    const listenSpy = vi
+      .spyOn(Server.prototype, "listen")
+      .mockImplementationOnce(function (this: Server, ...args: unknown[]) {
+        created = this;
+        this.prependOnceListener("listening", () => running.close());
+        Reflect.apply(originalListen, this, args);
+        bound = new Promise((settle) => this.once("listening", settle));
+        return this;
+      });
+
+    try {
+      const started = running.listen(0, "127.0.0.1");
+      await expect(started).rejects.toMatchObject({
+        code: "SERVER_START_CANCELLED",
+      });
+      await bound;
+      if (!created) throw new Error("Expected a created server");
+      expect(created.listening).toBe(false);
+    } finally {
+      listenSpy.mockRestore();
+    }
+
+    const restarted = await running.listen(0, "127.0.0.1");
+    expect(restarted.port).toBeGreaterThan(0);
   });
 
   it("admits each request on arrival and releases it once answered", async () => {

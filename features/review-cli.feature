@@ -21,6 +21,15 @@ Feature: CLI review fixes
     When the sibling pets file is edited to seed a different pet
     Then the pet list serves the newly seeded pet
 
+  Scenario: A seed manifest broken and then fixed under watch recovers
+    Given a seed manifest with inline pets
+    And a CLI server is started watching the petstore spec with that seed manifest
+    When the seed manifest is overwritten with invalid JSON
+    Then the reload failure is reported
+    And the pet list still serves the originally seeded pet
+    When the seed manifest is edited to seed a different pet
+    Then the pet list serves the newly seeded pet
+
   Scenario: A watch reload says that state and request history start empty
     Given a temp spec whose response schema lives in a sibling schema file
     And a CLI server is started watching that spec with external refs

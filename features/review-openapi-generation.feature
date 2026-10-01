@@ -86,6 +86,14 @@ Feature: OpenAPI generation review fixes
     Then the list response has status 200
     And the list body is an object with a "mode"
 
+  Scenario: A list contract with no array that cannot be generated serves the collection
+    Given a settings mock whose list response is an object without any array nested past the generation depth limit
+    And a setting with mode "auto" has been created
+    When I list the settings
+    Then the list response has status 200
+    And the list body is the bare collection holding the created setting
+    And a warning said the list body generation failed
+
   Scenario: A tall item under a list envelope keeps the envelope's siblings
     Given an items mock whose item nests 13 levels deep under an object, has_more, data envelope, seeded with 1 item, with response validation
     When I list the items

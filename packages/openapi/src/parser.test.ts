@@ -673,6 +673,75 @@ describe("parseSpec", () => {
       expect(createPet?.requestContent).toBeUndefined();
     });
   });
+
+  describe("Swagger 2.0 security, examples and headers", () => {
+    const swagger2 = {
+      swagger: "2.0",
+      info: { title: "Secured", version: "1.0.0" },
+      produces: ["application/json"],
+      securityDefinitions: {
+        basicAuth: { type: "basic" },
+        apiKey: { type: "apiKey", in: "header", name: "X-Key" },
+      },
+      security: [{ basicAuth: [] }],
+      paths: {
+        "/items": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                schema: {
+                  type: "object",
+                  properties: { id: { type: "integer" } },
+                },
+                examples: { "application/json": { id: 1 } },
+                headers: {
+                  "X-Rate": { type: "integer", format: "int32" },
+                  "X-Mode": { type: "string", enum: ["fast", "slow"] },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    it("maps securityDefinitions, with type basic as http basic", async () => {
+      const spec = await parseSpec(swagger2);
+
+      expect(spec.securitySchemes?.get("basicAuth")).toEqual({
+        type: "http",
+        scheme: "basic",
+      });
+      expect(spec.securitySchemes?.get("apiKey")).toMatchObject({
+        type: "apiKey",
+        in: "header",
+        name: "X-Key",
+      });
+      expect(spec.globalSecurity).toEqual([["basicAuth"]]);
+    });
+
+    it("keeps response examples keyed by media type", async () => {
+      const spec = await parseSpec(swagger2);
+      const ok = spec.paths[0].responses.get(200);
+
+      expect(ok?.examples).toEqual(new Map([["application/json", { id: 1 }]]));
+    });
+
+    it("reads type, format and enum inline on a response header", async () => {
+      const spec = await parseSpec(swagger2);
+      const headers = spec.paths[0].responses.get(200)?.headers;
+
+      expect(headers?.["X-Rate"]?.schema).toMatchObject({
+        type: "integer",
+        format: "int32",
+      });
+      expect(headers?.["X-Mode"]?.schema).toMatchObject({
+        type: "string",
+        enum: ["fast", "slow"],
+      });
+    });
+  });
 });
 
 describe("discriminator mapping", () => {
@@ -887,6 +956,20 @@ describe("discriminator mapping", () => {
     });
     expect(branches[2]).not.toHaveProperty("properties.petType.enum");
     expect(JSON.stringify(branches[2])).not.toContain("anonymous-cat.json");
+  });
+
+  it("applies bare-name mapping targets to branches from an external document", async () => {
+    const parsed = await parseSpec(`${externalDir}/bare-mapping-spec.json`, {
+      refs: { external: true },
+    });
+    const branches = parsed.paths[0]?.responses.get(200)?.schema?.oneOf ?? [];
+
+    expect(branches[0]).toMatchObject({
+      properties: { petType: { enum: ["kitty"] } },
+    });
+    expect(branches[1]).toMatchObject({
+      properties: { petType: { enum: ["doggo"] } },
+    });
   });
 
   it("distinguishes equal schema names from different external documents", async () => {

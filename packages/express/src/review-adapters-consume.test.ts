@@ -67,6 +67,26 @@ describe("Express consumes core's request admission", () => {
   });
 });
 
+describe("Express consumes core's InvalidHttpMethodError", () => {
+  it("renders a beforeRequest rewrite to an unsupported verb as INVALID_HTTP_METHOD", async () => {
+    const mock = schmock();
+    mock("GET /ok", "ok");
+
+    const response = await request(
+      appFor(mock, {
+        passErrorsToNext: false,
+        beforeRequest: () => ({ method: "PROPFIND" }),
+      }),
+    ).get("/ok");
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: 'Invalid HTTP method: "PROPFIND"',
+      code: "INVALID_HTTP_METHOD",
+    });
+  });
+});
+
 describe("Express consumes core's default content type", () => {
   it("gives a null body from beforeResponse a JSON content type", async () => {
     // Core's withDefaultContentType treats null as JSON (it serializes as

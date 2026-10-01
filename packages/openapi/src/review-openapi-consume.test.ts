@@ -557,4 +557,32 @@ describe("R11: parser split and ParseContext", () => {
     ]);
     expect(spec.paths).toEqual([]);
   });
+
+  it("skips a backslash before a parameter and a double quote in its name", async () => {
+    const document = {
+      openapi: "3.0.3",
+      info: { title: "Templates", version: "1.0.0" },
+      paths: {
+        "/a\\{x}": {
+          get: { responses: { "200": { description: "ok" } } },
+        },
+        '/b/{x"y}': {
+          get: { responses: { "200": { description: "ok" } } },
+        },
+      },
+    };
+    const spec = await parserModule.parseSpec(document);
+
+    expect(spec.warnings).toEqual([
+      "GET /a\\{x}: a backslash directly before {x} cannot be expressed as a route, skipped",
+      'GET /b/{x"y}: path parameter name {x"y} contains a double quote, skipped',
+    ]);
+    expect(spec.paths).toEqual([]);
+
+    // The plugin builds without throwing and serves neither template.
+    const mock = schmock();
+    mock.pipe(await openapi({ spec: document }));
+    expect((await mock.handle("GET", "/a\\x")).status).toBe(404);
+    expect((await mock.handle("GET", '/b/x"y')).status).toBe(404);
+  });
 });

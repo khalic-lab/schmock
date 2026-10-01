@@ -5,6 +5,7 @@ import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import type { CrudResource } from "./crud-detector";
 import { detectCrudResources } from "./crud-detector";
+import { applyOverrides } from "./crud-registration";
 import {
   arrayPropertyPath,
   createUpdateGenerator,
@@ -733,6 +734,53 @@ describe("list envelopes naming prototype keys (cold-review openapi-1)", () => {
     }
   });
 
+  it("keeps a generated __proto__ envelope key as data when injecting the list", async () => {
+    // The key skip above keeps `__proto__` off the injection PATH; a sibling
+    // still reaches the rebuilt envelope when the skeleton carries one. An
+    // envelope `default` is copied as own data, so it is how such a key gets
+    // there, and `injectAtPath` has to define it rather than assign it.
+    const spec = JSON.parse(`{
+      "openapi": "3.0.3",
+      "info": { "title": "Proto", "version": "1.0.0" },
+      "paths": {
+        "/items": {
+          "get": { "responses": { "200": { "description": "List", "content": {
+            "application/json": { "schema": {
+              "type": "object",
+              "default": { "__proto__": { "polluted": "yes" }, "total": 3 },
+              "properties": {
+                "total": { "type": "integer" },
+                "items": { "type": "array", "items": { "$ref": "#/components/schemas/Item" } }
+              }
+            } } } } } },
+          "post": { "responses": { "201": { "description": "Created", "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/Item" } } } } } }
+        },
+        "/items/{itemId}": {
+          "get": { "responses": { "200": { "description": "Item", "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/Item" } } } } } }
+        }
+      },
+      "components": { "schemas": { "Item": {
+        "type": "object",
+        "properties": { "id": { "type": "integer" }, "name": { "type": "string" } }
+      } } }
+    }`);
+    const mock = schmock({ state: {} });
+    mock.pipe(await openapi({ spec }));
+    await mock.handle("POST", "/items", { body: { name: "a" } });
+
+    const response = await mock.handle("GET", "/items");
+    const body = Object(response.body);
+
+    expect(response.status).toBe(200);
+    expect(Object.keys(body)).toEqual(["total", "items", "__proto__"]);
+    expect(Object.hasOwn(body, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(body)).toBe(Object.prototype);
+    expect(Reflect.get(body, "polluted")).toBeUndefined();
+    expect(body.items).toEqual([{ id: 1, name: "a" }]);
+  });
+
   it("does not read a prototype-named property as the list array", () => {
     const item: JSONSchema7 = {
       type: "object",
@@ -750,5 +798,168 @@ describe("list envelopes naming prototype keys (cold-review openapi-1)", () => {
       const info = findArrayProperty({ type: "object", properties });
       expect(arrayPropertyPath(info)).toBeUndefined();
     }
+  });
+});
+
+describe("listWrapProperty naming another declared array", () => {
+  const tag: JSONSchema7 = {
+    type: "object",
+    properties: { label: { type: "string" } },
+  };
+  const petsSpec = () => ({
+    openapi: "3.0.3",
+    info: { title: "Pets", version: "1.0.0" },
+    paths: {
+      "/pets": {
+        get: {
+          responses: {
+            "200": {
+              description: "List",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      results: { type: "array", items: zone },
+                      tags: { type: "array", items: tag },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          responses: {
+            "201": {
+              description: "Created",
+              content: { "application/json": { schema: zone } },
+            },
+          },
+        },
+      },
+      "/pets/{petId}": {
+        get: {
+          responses: {
+            "200": {
+              description: "Pet",
+              content: { "application/json": { schema: zone } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  it("takes the list items from the named property's own items schema", async () => {
+    const spec = await parseSpec(petsSpec());
+    const [resource] = detectCrudResources(spec.paths).resources;
+    const list = resource.routes.find((route) => route.op === "list");
+    const detected = list?.meta.responseSchema;
+    if (!detected) throw new Error("expected a list response schema");
+    expect(arrayPropertyPath(findArrayProperty(detected))).toEqual(["results"]);
+
+    applyOverrides(resource, { listWrapProperty: "tags" });
+
+    expect(list?.meta.responseSchema).toEqual({
+      type: "object",
+      properties: { tags: { type: "array", items: tag } },
+    });
+  });
+
+  it("serves the live collection under the named property", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: petsSpec(),
+        resources: { pets: { listWrapProperty: "tags" } },
+      }),
+    );
+    const created = await mock.handle("POST", "/pets", {
+      body: { name: "rex" },
+    });
+
+    const response = await mock.handle("GET", "/pets");
+
+    expect(response.status).toBe(200);
+    expect(Object(response.body).tags).toEqual([created.body]);
+    expect(Object(response.body)).not.toHaveProperty("results");
+  });
+});
+
+describe("access modes under a composition-only nullable", () => {
+  const widgetSpec = {
+    openapi: "3.0.3",
+    info: { title: "Widgets", version: "1.0.0" },
+    paths: {
+      "/widgets": {
+        post: {
+          requestBody: {
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/Widget" },
+              },
+            },
+          },
+          responses: {
+            "201": {
+              description: "Created",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/Widget" },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/widgets/{id}": {
+        get: {
+          responses: {
+            "200": {
+              description: "Widget",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/Widget" },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    components: {
+      schemas: {
+        Widget: {
+          nullable: true,
+          allOf: [
+            {
+              type: "object",
+              properties: {
+                id: { type: "integer" },
+                name: { type: "string" },
+                createdAt: { type: "string", readOnly: true },
+                secret: { type: "string", writeOnly: true },
+              },
+            },
+          ],
+        },
+      },
+    },
+  };
+
+  it("keeps a client readOnly value out and a writeOnly value unechoed", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(await openapi({ spec: widgetSpec }));
+
+    const created = await mock.handle("POST", "/widgets", {
+      body: { name: "a", createdAt: "client", secret: "s" },
+    });
+
+    expect(created.status).toBe(201);
+    const body = Object(created.body);
+    expect(body.name).toBe("a");
+    expect(body.createdAt).not.toBe("client");
+    expect(body).not.toHaveProperty("secret");
   });
 });

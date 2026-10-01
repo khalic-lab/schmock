@@ -309,6 +309,40 @@ describe("mock.intercept()", () => {
     }
   });
 
+  it("consults the mock once when two hooked leases map a request to the same effective request", async () => {
+    mock("GET /api/hit", { hit: true });
+    const network = globalThis.fetch;
+    const events: string[] = [];
+    mock.on("request:start", () => {
+      events.push("start");
+    });
+    mock.on("request:notfound", () => {
+      events.push("notfound");
+    });
+    mock.on("request:end", () => {
+      events.push("end");
+    });
+    const olderHook = vi.fn((request: Schmock.AdapterRequest) => request);
+    const newerHook = vi.fn((request: Schmock.AdapterRequest) => request);
+
+    const older = mock.intercept({ beforeRequest: olderHook });
+    const newer = mock.intercept({ beforeRequest: newerHook });
+
+    try {
+      const response = await fetch("http://localhost/api/miss");
+      expect(await response.text()).toBe("real backend");
+      // Each hooked lease runs its hook, but only the first to claim the
+      // effective request consults the mock.
+      expect(newerHook).toHaveBeenCalledOnce();
+      expect(olderHook).toHaveBeenCalledOnce();
+      expect(events).toEqual(["start", "notfound", "end"]);
+      expect(network).toHaveBeenCalledOnce();
+    } finally {
+      newer.restore();
+      older.restore();
+    }
+  });
+
   it("consults both leases of one mock when their baseUrls are disjoint", async () => {
     mock("GET /alpha/ping", { lease: "alpha" });
     mock("GET /beta/ping", { lease: "beta" });

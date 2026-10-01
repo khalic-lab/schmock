@@ -1,8 +1,26 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
+import {
+  getDefaultAutoSelectFamily,
+  setDefaultAutoSelectFamily,
+} from "node:net";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { gzipSync } from "node:zlib";
+import * as tls from "node:tls";
+import {
+  brotliCompressSync,
+  deflateSync,
+  gzipSync,
+  constants as zlibConstants,
+} from "node:zlib";
 import { SchmockError } from "@schmock/core";
 import {
   afterAll,
@@ -187,12 +205,70 @@ describe("isUnsafeHost: internal ranges beyond RFC1918", () => {
     }
   });
 
+  it("blocks the documentation, relay and special-purpose IPv4 ranges", () => {
+    for (const host of [
+      "192.0.2.1", // TEST-NET-1
+      "192.0.2.255",
+      "198.51.100.7", // TEST-NET-2
+      "203.0.113.9", // TEST-NET-3
+      "192.88.99.1", // 6to4 relay anycast
+    ]) {
+      expect(isUnsafeHost(host), host).toBe(true);
+    }
+  });
+
+  it("blocks local-use NAT64, discard-only, Teredo and documentation IPv6", () => {
+    for (const host of [
+      "64:ff9b:1::a00:1", // local-use NAT64 64:ff9b:1::/48
+      "64:ff9b:1:abcd::1", // a non-zero middle group inside that /48
+      "100::1", // discard-only 100::/64
+      "100::ffff:ffff:ffff:ffff", // top of 100::/64
+      "2001::1", // Teredo 2001::/32
+      "2001:0:4136:e378:8000:63bf:3fff:fdd2", // a real Teredo address
+      "2001:db8::1", // documentation 2001:db8::/32
+      "2001:db8:ffff::1",
+    ]) {
+      expect(isUnsafeHost(host), host).toBe(true);
+    }
+  });
+
+  it("refuses an IP literal it cannot parse instead of guessing", () => {
+    for (const host of [
+      "1::2::3", // two `::`
+      "12345::1", // a group wider than 16 bits
+      "gggg::1", // a group that is not hex
+      "1:2:3:4:5:6:7:8:9", // nine groups
+      "::ffff:1.2.3.999", // a dotted tail with an octet above 255
+      "1.2.3.256", // an IPv4 octet above 255
+      "999.0.0.1",
+    ]) {
+      expect(isUnsafeHost(host), host).toBe(true);
+    }
+  });
+
+  it("does not over-block the neighbours of those ranges", () => {
+    for (const host of [
+      "192.0.3.1",
+      "198.51.101.1",
+      "203.0.114.1",
+      "192.88.98.1",
+      "64:ff9b:2::1", // outside the local-use /48
+      "100:0:0:1::1", // outside discard-only /64
+      "2001:4860::8888", // Google DNS: 2001::/23 is not all Teredo
+      "2001:db9::1", // next to documentation
+    ]) {
+      expect(isUnsafeHost(host), host).toBe(false);
+    }
+  });
+
   it("refuses those ranges in an http $ref under the any-host policy", () => {
     const anyHost = resolveRefPolicy({ external: true, allowHttp: true });
     for (const url of [
       "http://100.100.100.200/latest/meta-data/x.json",
       "http://[64:ff9b::a9fe:a9fe]/x.json",
       "http://[::127.0.0.1]/x.json",
+      "http://[2001:db8::1]/x.json",
+      "http://203.0.113.5/x.json",
     ]) {
       expect(checkRef(url, anyHost).allowed, url).toBe(false);
     }
@@ -332,6 +408,324 @@ describe("guarded http transport", () => {
       await stopServer(gzipHost);
     }
   });
+
+  it.each([
+    // Quality 1 keeps the brotli encode fast; 8 MB of zeros is still eight
+    // times the limit once decoded.
+    [
+      "br",
+      () =>
+        brotliCompressSync(Buffer.alloc(8 * 1024 * 1024), {
+          params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 1 },
+        }),
+    ],
+    ["deflate", () => deflateSync(Buffer.alloc(8 * 1024 * 1024))],
+  ])(
+    "counts decompressed bytes against maxBytes (%s bomb)",
+    async (coding, encode) => {
+      const { createGuardedFetch } = await import("./ref-transport");
+      const bomb = encode();
+      const bombHost = await startServer((_request, response) => {
+        response.setHeader("content-encoding", coding);
+        response.setHeader("content-length", String(bomb.length));
+        response.end(bomb);
+      });
+      try {
+        const options = buildRefParserOptions(
+          { external: true, allowHttp: true, maxBytes: 1_000_000 },
+          undefined,
+          createGuardedFetch({
+            resolveHost: async () => [{ address: "127.0.0.1", family: 4 }],
+            isBlockedAddress: () => false,
+          }),
+        );
+        const http = options.resolve.http;
+        if (typeof http !== "object") throw new Error("expected http resolver");
+
+        expect(bomb.length).toBeLessThan(1_000_000);
+        await expect(
+          http.read({
+            url: `http://bomb.example.test:${bombHost.port}/b.json`,
+          }),
+        ).rejects.toThrow(/above the 1000000 byte limit/);
+      } finally {
+        await stopServer(bombHost);
+      }
+    },
+  );
+
+  it("refuses a content-encoding it cannot decode and drops the connection", async () => {
+    const { createGuardedFetch } = await import("./ref-transport");
+    let socketClosed: Promise<void> = Promise.resolve();
+    const zstdHost = await startServer((request, response) => {
+      socketClosed = new Promise((done) => request.socket.once("close", done));
+      response.setHeader("content-encoding", "zstd");
+      response.flushHeaders();
+      response.write("(µ/ý");
+    });
+    try {
+      const guarded = createGuardedFetch({
+        resolveHost: async () => [{ address: "127.0.0.1", family: 4 }],
+        isBlockedAddress: () => false,
+      });
+
+      await expect(
+        guarded(`http://zstd.example.test:${zstdHost.port}/z.json`, {
+          signal: AbortSignal.timeout(2_000),
+        }),
+      ).rejects.toThrow(/unsupported content-encoding "zstd"/);
+      // The response never ended on the server side, so only the client
+      // destroying its socket can close it.
+      await socketClosed;
+    } finally {
+      await stopServer(zstdHost);
+    }
+  });
+
+  it("connects through the single-address lookup when family autoselection is off", async () => {
+    const { createGuardedFetch } = await import("./ref-transport");
+    const previous = getDefaultAutoSelectFamily();
+    setDefaultAutoSelectFamily(false);
+    try {
+      internal.hits.length = 0;
+      const resolveHost = vi.fn(async () => [
+        { address: "127.0.0.1", family: 4 },
+      ]);
+      const guarded = createGuardedFetch({
+        resolveHost,
+        isBlockedAddress: () => false,
+      });
+
+      const response = await guarded(
+        `http://single.example.test:${internal.port}/doc.json`,
+        { signal: AbortSignal.timeout(2_000) },
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain("LOOPBACK-SECRET");
+      expect(resolveHost).toHaveBeenCalledTimes(1);
+      expect(internal.hits).toEqual([
+        `single.example.test:${internal.port} /doc.json`,
+      ]);
+    } finally {
+      setDefaultAutoSelectFamily(previous);
+    }
+  });
+
+  it("surfaces a DNS failure from the resolver", async () => {
+    const { createGuardedFetch } = await import("./ref-transport");
+    const notFound = createGuardedFetch({
+      resolveHost: async () => {
+        throw Object.assign(
+          new Error("getaddrinfo ENOTFOUND nope.example.test"),
+          { code: "ENOTFOUND" },
+        );
+      },
+    });
+    await expect(
+      notFound("http://nope.example.test/x.json", {
+        signal: AbortSignal.timeout(2_000),
+      }),
+    ).rejects.toThrow(/getaddrinfo ENOTFOUND nope\.example\.test/);
+
+    // A resolver that rejects with something other than an Error still
+    // reaches the caller as an Error carrying that value.
+    const rejectsString = createGuardedFetch({
+      resolveHost: () => Promise.reject("boom"),
+    });
+    const error = await failureOf(
+      rejectsString("http://boom.example.test/x.json", {
+        signal: AbortSignal.timeout(2_000),
+      }),
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(messageOf(error)).toBe("boom");
+  });
+
+  it("reports a DNS failure through readHttpRef as could not be fetched", async () => {
+    const { createGuardedFetch } = await import("./ref-transport");
+    const options = buildRefParserOptions(
+      { external: true, allowHttp: true },
+      undefined,
+      createGuardedFetch({
+        resolveHost: async () => {
+          throw Object.assign(
+            new Error("getaddrinfo ENOTFOUND typo.example.test"),
+            { code: "ENOTFOUND" },
+          );
+        },
+      }),
+    );
+    const http = options.resolve.http;
+    if (typeof http !== "object") throw new Error("expected http resolver");
+
+    await expect(
+      http.read({ url: "http://typo.example.test/x.json" }),
+    ).rejects.toThrow(/could not be fetched: .*ENOTFOUND typo\.example\.test/);
+  });
+});
+
+// ── The guarded transport over https, the scheme real external refs use ─────
+
+/**
+ * A throwaway self-signed certificate for `name`, or `undefined` when the
+ * `openssl` binary is missing. The key never touches the repository.
+ */
+function selfSignedCertificate(
+  name: string,
+): { key: string; cert: string } | undefined {
+  const dir = mkdtempSync(join(tmpdir(), "schmock-review-tls-"));
+  try {
+    execFileSync(
+      "openssl",
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "ec",
+        "-pkeyopt",
+        "ec_paramgen_curve:prime256v1",
+        "-nodes",
+        "-days",
+        "1",
+        "-subj",
+        `/CN=${name}`,
+        "-addext",
+        `subjectAltName=DNS:${name}`,
+        "-keyout",
+        join(dir, "key.pem"),
+        "-out",
+        join(dir, "cert.pem"),
+      ],
+      { stdio: "ignore" },
+    );
+    return {
+      key: readFileSync(join(dir, "key.pem"), "utf8"),
+      cert: readFileSync(join(dir, "cert.pem"), "utf8"),
+    };
+  } catch {
+    return undefined;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe("guarded https transport", () => {
+  // The transport takes no `ca` option and opens its sockets with
+  // `agent: false`, so the only way to make it trust a test certificate is the
+  // process-wide default CA store (Node 22.19 / 24.5 and later).
+  const certificate = selfSignedCertificate("pinned.example.test");
+  const canTrust =
+    certificate !== undefined &&
+    typeof tls.setDefaultCACertificates === "function" &&
+    typeof tls.getCACertificates === "function";
+  const fallbackCertificate = certificate ?? { key: "", cert: "" };
+  let secure: LocalServer;
+  let originalCAs: string[] = [];
+
+  beforeAll(async () => {
+    const hits: string[] = [];
+    const server = canTrust
+      ? createHttpsServer(fallbackCertificate, (request, response) => {
+          const sni =
+            request.socket instanceof tls.TLSSocket
+              ? request.socket.servername
+              : undefined;
+          hits.push(`${request.headers.host} ${request.url} sni=${sni}`);
+          response.setHeader("content-type", "application/json");
+          response.end(JSON.stringify({ Secure: { type: "string" } }));
+        })
+      : createServer((request, response) => {
+          hits.push(`${request.headers.host} ${request.url}`);
+          response.end();
+        });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("expected a TCP address");
+    }
+    secure = { server, port: address.port, hits };
+    if (canTrust) {
+      originalCAs = tls.getCACertificates("default");
+      tls.setDefaultCACertificates([...originalCAs, fallbackCertificate.cert]);
+    }
+  });
+
+  afterAll(async () => {
+    if (canTrust) tls.setDefaultCACertificates(originalCAs);
+    await stopServer(secure);
+  });
+
+  it("refuses an https $ref whose hostname resolves to loopback", async () => {
+    const { createGuardedFetch } = await import("./ref-transport");
+    secure.hits.length = 0;
+    const guarded = createGuardedFetch({
+      resolveHost: async () => [{ address: "127.0.0.1", family: 4 }],
+    });
+
+    const error = await failureOf(
+      guarded(`https://internal.example.test:${secure.port}/x.json`, {
+        signal: AbortSignal.timeout(2_000),
+      }),
+    );
+
+    expect(codeOf(error)).toBe("OPENAPI_EXTERNAL_REF_BLOCKED");
+    expect(messageOf(error)).toMatch(
+      /host "internal\.example\.test" resolves to 127\.0\.0\.1/,
+    );
+    expect(secure.hits).toEqual([]);
+  });
+
+  it("refuses an https name when one of its addresses is private", async () => {
+    const { createGuardedFetch } = await import("./ref-transport");
+    secure.hits.length = 0;
+    const guarded = createGuardedFetch({
+      resolveHost: async () => [
+        { address: "93.184.215.14", family: 4 },
+        { address: "10.0.0.1", family: 4 },
+      ],
+    });
+
+    const error = await failureOf(
+      guarded(`https://mixed.example.test:${secure.port}/x.json`, {
+        signal: AbortSignal.timeout(2_000),
+      }),
+    );
+
+    expect(codeOf(error)).toBe("OPENAPI_EXTERNAL_REF_BLOCKED");
+    expect(messageOf(error)).toMatch(/resolves to 10\.0\.0\.1/);
+    expect(secure.hits).toEqual([]);
+  });
+
+  it.skipIf(!canTrust)(
+    "connects over TLS to the vetted address, verifying the original name",
+    async () => {
+      const { createGuardedFetch } = await import("./ref-transport");
+      secure.hits.length = 0;
+      const resolveHost = vi.fn(async () => [
+        { address: "127.0.0.1", family: 4 },
+      ]);
+      const guarded = createGuardedFetch({
+        resolveHost,
+        isBlockedAddress: () => false,
+      });
+
+      const response = await guarded(
+        `https://pinned.example.test:${secure.port}/doc.json`,
+        { signal: AbortSignal.timeout(2_000) },
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ Secure: { type: "string" } });
+      expect(resolveHost).toHaveBeenCalledTimes(1);
+      expect(resolveHost).toHaveBeenCalledWith("pinned.example.test");
+      // Host header and SNI both carry the name from the URL, while the
+      // socket went to the address the lookup vetted.
+      expect(secure.hits).toEqual([
+        `pinned.example.test:${secure.port} /doc.json sni=pinned.example.test`,
+      ]);
+    },
+  );
 });
 
 // ── #8: maxBytes must bound what is pulled, not what is kept ─────────────────
@@ -362,6 +756,45 @@ describe("http $ref size limit while streaming", () => {
     ).rejects.toThrow(/above the 10000 byte limit/);
     // A few chunks of slack for the stream's own read-ahead, not 50 MB.
     expect(pulled).toBeLessThan(20_000);
+  });
+
+  it("refuses a declared Content-Length above maxBytes without reading the body", async () => {
+    let pulls = 0;
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array(100).fill(0x20));
+      },
+      cancel,
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(body, {
+        status: 200,
+        headers: { "content-length": "99999" },
+      }),
+    );
+    const diagnostics = new Map<string, string>();
+
+    const http = httpResolver(
+      {
+        external: true,
+        allowHttp: true,
+        allowedHosts: ["schemas.example.test"],
+        maxBytes: 1_000,
+      },
+      diagnostics,
+    );
+    await expect(
+      http.read({ url: "https://schemas.example.test/huge.json" }),
+    ).rejects.toThrow(/declares 99999 bytes, above the 1000 byte limit/);
+    expect(diagnostics.get("https://schemas.example.test/huge.json")).toMatch(
+      /declares 99999 bytes/,
+    );
+    // The stream fills its one-chunk queue on construction; nothing past that
+    // is pulled, and the body is released rather than left holding the socket.
+    expect(pulls).toBeLessThanOrEqual(1);
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -541,6 +974,66 @@ describe("http $ref failure diagnostics", () => {
     ).rejects.toThrow(/could not be fetched: fetch failed.*ENOTFOUND/);
     expect(diagnostics.get("https://schemas.example.test/gone.json")).toMatch(
       /ENOTFOUND/,
+    );
+  });
+
+  /**
+   * A 200 whose body sends one chunk and then fails on the next read: the
+   * headers arrived, so `fetch` itself resolved and only the body read throws.
+   */
+  function stallingBody(
+    fail: (signal: AbortSignal | undefined) => Promise<unknown>,
+  ) {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      let sent = false;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (!sent) {
+            sent = true;
+            controller.enqueue(new TextEncoder().encode('{"partial":'));
+            return;
+          }
+          controller.error(await fail(init?.signal ?? undefined));
+        },
+      });
+      return new Response(body, { status: 200 });
+    });
+  }
+
+  it("names the timeout when it fires in the middle of the body", async () => {
+    stallingBody(
+      (signal) =>
+        new Promise((settle) => {
+          signal?.addEventListener("abort", () => settle(signal.reason));
+        }),
+    );
+    const diagnostics = new Map<string, string>();
+
+    await expect(
+      httpResolver(policy, diagnostics).read({
+        url: "https://schemas.example.test/stalls.json",
+      }),
+    ).rejects.toThrow(/timed out after 50ms/);
+    expect(diagnostics.get("https://schemas.example.test/stalls.json")).toMatch(
+      /timed out after 50ms/,
+    );
+  });
+
+  it("names a connection reset in the middle of the body", async () => {
+    stallingBody(async () =>
+      Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }),
+    );
+    const diagnostics = new Map<string, string>();
+
+    await expect(
+      httpResolver(policy, diagnostics).read({
+        url: "https://schemas.example.test/reset.json",
+      }),
+    ).rejects.toThrow(
+      /schemas\.example\.test\/reset\.json could not be fetched: read ECONNRESET/,
+    );
+    expect(diagnostics.get("https://schemas.example.test/reset.json")).toMatch(
+      /could not be fetched: read ECONNRESET/,
     );
   });
 });
@@ -872,6 +1365,25 @@ describe("OpenAPI versions swagger-parser does not know", () => {
       const error = await failureOf(parseSpec(path));
       expect(codeOf(error)).toBe("OPENAPI_INVALID_SPEC");
       expect(messageOf(error)).toMatch(/3\.2\.0/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not relabel a missing or malformed spec FILE as a version problem", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "schmock-review-version-"));
+    try {
+      const missing = join(dir, "nope.yaml");
+      const malformed = join(dir, "broken.yaml");
+      writeFileSync(malformed, "openapi: 3.0.0\npaths: [\n");
+
+      const missingError = await failureOf(parseSpec(missing));
+      expect(messageOf(missingError)).toMatch(/nope\.yaml|ENOENT/);
+      expect(messageOf(missingError)).not.toMatch(/has a version/);
+
+      const malformedError = await failureOf(parseSpec(malformed));
+      expect(messageOf(malformedError)).toMatch(/broken\.yaml|YAML/i);
+      expect(messageOf(malformedError)).not.toMatch(/has a version/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

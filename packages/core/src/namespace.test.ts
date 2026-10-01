@@ -34,6 +34,18 @@ describe("namespace functionality", () => {
       expect(response.body).toBe("v1-users");
     });
 
+    it("matches an origin-form namespace on its path only", async () => {
+      const mock = schmock({ namespace: "https://api.example.com/v1" });
+      mock("GET /users", "users");
+
+      const scoped = await mock.handle("GET", "/v1/users");
+      const unscoped = await mock.handle("GET", "/users");
+
+      expect(scoped.status).toBe(200);
+      expect(scoped.body).toBe("users");
+      expect(unscoped.status).toBe(404);
+    });
+
     it("works with root namespace", async () => {
       const mock = schmock({ namespace: "/" });
       mock("GET /users", "users");

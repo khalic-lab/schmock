@@ -805,6 +805,49 @@ describe("Angular Adapter", () => {
       expect(errorFormatter).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ["a mock dispatch", {}],
+      ["a pass-through for an unsupported verb", { method: "PROPFIND" }],
+    ])(
+      "does not start %s when the async request hook settles after teardown",
+      async (_, override: Schmock.AdapterRequestOverride) => {
+        mockInstance.handle = vi.fn().mockResolvedValue({
+          status: 200,
+          body: { mocked: true },
+          headers: {},
+        });
+        let settleHook = (_override: Schmock.AdapterRequestOverride) => {};
+        const InterceptorClass = createSchmockInterceptor(mockInstance, {
+          beforeRequest: () =>
+            new Promise<Schmock.AdapterRequestOverride>((resolve) => {
+              settleHook = resolve;
+            }),
+        });
+        const interceptor = new InterceptorClass();
+        const backend: HttpHandler = {
+          handle: vi
+            .fn()
+            .mockReturnValue(of(new HttpResponse({ body: "real" }))),
+        };
+        const next = vi.fn();
+        const error = vi.fn();
+        const complete = vi.fn();
+        const subscription = interceptor
+          .intercept(new HttpRequest("GET", "/api/pending"), backend)
+          .subscribe({ next, error, complete });
+
+        subscription.unsubscribe();
+        settleHook(override);
+        await new Promise((tick) => setTimeout(tick, 0));
+
+        expect(mockInstance.handle).not.toHaveBeenCalled();
+        expect(backend.handle).not.toHaveBeenCalled();
+        expect(next).not.toHaveBeenCalled();
+        expect(error).not.toHaveBeenCalled();
+        expect(complete).not.toHaveBeenCalled();
+      },
+    );
+
     it("unsubscribes from inner subscription on teardown", async () => {
       mockInstance.handle = vi.fn().mockResolvedValue({
         status: 404,

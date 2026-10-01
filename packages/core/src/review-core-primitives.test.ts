@@ -407,6 +407,38 @@ describe("intercept errorFormatter", () => {
       }),
     ]);
   });
+
+  it("receives the bodyless incoming request when the body cannot be read", async () => {
+    const mock = schmock();
+    mock("POST /items", [201, { ok: true }]);
+    const requests: unknown[] = [];
+    const handle = mock.intercept({
+      passthrough: false,
+      errorFormatter: (_error, request) => {
+        requests.push(request);
+        return { body: "unreadable" };
+      },
+    });
+    try {
+      const response = await fetch("http://localhost/items?page=2", {
+        method: "POST",
+        headers: { "content-type": "multipart/form-data; boundary=xyz" },
+        body: "not a multipart body",
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ body: "unreadable" });
+    } finally {
+      handle.restore();
+    }
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      method: "POST",
+      path: "/items",
+      headers: { "content-type": "multipart/form-data; boundary=xyz" },
+      query: { page: "2" },
+    });
+    expect(requests[0]).not.toHaveProperty("body");
+  });
 });
 
 describe("collectBody header lookup", () => {
@@ -497,6 +529,107 @@ describe("serveNodeRequest", () => {
     expect(response.headers.connection).toBe("close");
     expect(bodyCode(response)).toBe("PAYLOAD_TOO_LARGE");
   });
+
+  // None of these requests asks for `Connection: close`: the close must come
+  // from the server's answer to the failure.
+  it.each([
+    {
+      label: "a JSON body nested past the depth limit",
+      contentType: "application/json",
+      body: `${"[".repeat(300)}${"]".repeat(300)}`,
+      code: "JSON_TOO_DEEP",
+    },
+    {
+      label: "a malformed multipart body",
+      contentType: "multipart/form-data; boundary=xyz",
+      body: "not a multipart body",
+      code: "MALFORMED_MULTIPART",
+    },
+  ])(
+    "answers $label with 400 and closes the connection",
+    async ({ contentType, body, code }) => {
+      const mock = schmock();
+      mock("POST /items", () => "stored");
+      const port = await serve(mock);
+      const response = await sendRaw(
+        port,
+        "POST /items HTTP/1.1\r\nHost: 127.0.0.1\r\n" +
+          `Content-Type: ${contentType}\r\n` +
+          `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+      );
+      expect(response.status).toBe(400);
+      expect(response.headers.connection).toBe("close");
+      expect(bodyCode(response)).toBe(code);
+    },
+  );
+
+  it("closes the connection when classifyError answers a handler error with 413", async () => {
+    const port = await serve(schmock(), {
+      handle: () => Promise.reject(new Error("quota exceeded")),
+      classifyError: (error) => ({
+        status: 413,
+        code: "QUOTA_EXCEEDED",
+        message: error instanceof Error ? error.message : "quota",
+      }),
+    });
+    const response = await sendRaw(
+      port,
+      "GET /quota HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+    );
+    expect(response.status).toBe(413);
+    expect(response.headers.connection).toBe("close");
+    expect(bodyCode(response)).toBe("QUOTA_EXCEEDED");
+  });
+
+  it.each([
+    {
+      label: "extraHeaders throws",
+      requestLine: "GET /x",
+      options: {
+        extraHeaders: () => {
+          throw new Error("boom");
+        },
+      },
+    },
+    {
+      label: "classifyError throws",
+      requestLine: "PROPFIND /x",
+      options: {
+        classifyError: () => {
+          throw new Error("boom");
+        },
+      },
+    },
+  ])(
+    "destroys the socket when even the error answer fails ($label)",
+    async ({ requestLine, options }) => {
+      let served: Promise<void> | undefined;
+      const server = createServer((req, res) => {
+        served = serveNodeRequest(req, res, {
+          handle: async () => ({ status: 200, body: "ok", headers: {} }),
+          maxBodySize: 1024,
+          ...options,
+        });
+      });
+      const port = await listenOn(server);
+
+      // A destroyed socket may end cleanly or reset; either way the client is
+      // released without a single byte of an answer.
+      const received = await new Promise<string>((resolve) => {
+        const socket = connect(port, "127.0.0.1");
+        const chunks: Buffer[] = [];
+        socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+        socket.on("error", () => {});
+        socket.on("close", () => {
+          resolve(Buffer.concat(chunks).toString("utf8"));
+        });
+        socket.write(rawRequest(requestLine));
+      });
+
+      expect(received).toBe("");
+      await expect(served).resolves.toBeUndefined();
+    },
+  );
 
   it("answers a handler failure with 500 SERVER_ERROR and never rejects", async () => {
     let served: Promise<void> | undefined;

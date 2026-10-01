@@ -81,3 +81,15 @@ Feature: Fetch interceptor review fixes
     Given a mock with a route "POST /api/items" held by an older passthrough-disabled lease and a newer default lease
     When I fetch "https://dav.example.com/files/" with method "PROPFIND"
     Then the network backend should answer the request
+
+  Scenario: A passthrough-false lease with a beforeRequest hook answers malformed JSON with 400 before its hook runs
+    Given a mock with a recording "POST /api/items" route and a passthrough-disabled lease with a beforeRequest hook
+    When I post the JSON body '{"name": "x",}' to "/api/items"
+    Then the fetch should answer 400 with code "MALFORMED_JSON"
+    And the beforeRequest hook should not have run
+    And the recording route should not have run
+
+  Scenario: A beforeResponse that returns a null body is labelled JSON
+    Given an intercepting mock with route "GET /api/empty" whose beforeResponse returns a null body
+    When I fetch "/api/empty" through the rewriting lease
+    Then the response content-type should be "application/json"

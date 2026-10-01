@@ -210,6 +210,17 @@ describe("Standalone Server", () => {
     }
   });
 
+  it("can retry listening after listen() throws synchronously for a bad port", async () => {
+    mock = schmock();
+    mock("GET /test", { ok: true });
+    await expect(mock.listen(70000)).rejects.toMatchObject({
+      code: "ERR_SOCKET_BAD_PORT",
+    });
+
+    const retry = await mock.listen(0);
+    expect(retry.port).toBeGreaterThan(0);
+  });
+
   it("close is idempotent", async () => {
     mock = schmock();
     mock("GET /test", { ok: true });

@@ -317,6 +317,30 @@ describe("CLI requests served through core's serveNodeRequest", () => {
     expect(response.body).toBe("");
   });
 
+  it.each([["x-a;b"], ["x-a, ,b"]])(
+    "answers a preflight requesting headers %j with the default list",
+    async (requested) => {
+      server = await createCliServer({
+        spec: PETSTORE_SPEC,
+        port: 0,
+        cors: true,
+      });
+      const response = await sendRaw(
+        server.port,
+        "OPTIONS /pets HTTP/1.1\r\nHost: localhost\r\n" +
+          "Origin: http://app.test\r\n" +
+          "Access-Control-Request-Method: POST\r\n" +
+          `Access-Control-Request-Headers: ${requested}\r\n` +
+          "Connection: close\r\n\r\n",
+      );
+      expect(response.status).toBe(204);
+      expect(response.headers["access-control-allow-origin"]).toBe("*");
+      expect(response.headers["access-control-allow-headers"]).toBe(
+        "Content-Type, Authorization",
+      );
+    },
+  );
+
   it("answers a preflight without reading its body", async () => {
     server = await createCliServer({
       spec: PETSTORE_SPEC,
@@ -410,6 +434,36 @@ describe("the handler behind the CLI server", () => {
     });
     expect(routes.status).toBe(200);
     expect(await routes.json()).toEqual(real.getRoutes());
+  });
+
+  it("reads the body before answering a broken admission's 500", async () => {
+    const real = schmock({ state: {} });
+    real("POST /hello", { ok: true });
+    const broken: CallableMockInstance = Object.create(real);
+    Object.defineProperty(
+      broken,
+      Symbol.for("@schmock/core.request-admission"),
+      { value: () => ({ handle: "not a function" }) },
+    );
+    const base = await serve(broken);
+
+    // The admission failure surfaces only when the mock is called, which is
+    // after the body is collected, so a malformed body is still a 400.
+    const malformed = await fetch(`${base}/hello`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"broken":',
+    });
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toMatchObject({ code: "MALFORMED_JSON" });
+
+    const wellFormed = await fetch(`${base}/hello`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"fine":true}',
+    });
+    expect(wellFormed.status).toBe(500);
+    expect(await wellFormed.json()).toMatchObject({ code: "SERVER_ERROR" });
   });
 
   it("serves a mock route through its admission", async () => {

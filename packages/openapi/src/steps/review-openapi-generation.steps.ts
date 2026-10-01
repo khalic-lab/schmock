@@ -1,6 +1,7 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
-import { expect } from "vitest";
+import { MAX_NESTING_DEPTH } from "@schmock/faker";
+import { expect, type MockInstance, vi } from "vitest";
 import { openapi } from "../plugin";
 
 const feature = await loadFeature(
@@ -346,6 +347,38 @@ function nestedChild(depth: number): Record<string, unknown> {
   return node;
 }
 
+/**
+ * A `/settings` list whose GET contract is an object with no array anywhere,
+ * nested `depth` levels deep so faker refuses to generate it.
+ */
+function tallSettingsSpec(depth: number) {
+  const settings = {
+    type: "object",
+    required: ["mode", "advanced"],
+    properties: { mode: { type: "string" }, advanced: nestedChild(depth) },
+  };
+  return spec({
+    "/settings": {
+      get: {
+        responses: {
+          "200": { description: "Settings", content: json(settings) },
+        },
+      },
+      post: {
+        responses: {
+          "200": {
+            description: "Settings",
+            content: json({
+              type: "object",
+              properties: { mode: { type: "string" } },
+            }),
+          },
+        },
+      },
+    },
+  });
+}
+
 function tallItemsSpec(depth: number) {
   const item = {
     type: "object",
@@ -618,10 +651,14 @@ const limitsSpec = spec({
   },
 });
 
-describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
+describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
   let responses: Schmock.Response[] = [];
+
+  AfterEachScenario(() => {
+    vi.restoreAllMocks();
+  });
 
   async function build(options: Schmock.OpenApiOptions): Promise<void> {
     mock = schmock({ state: {} });
@@ -925,6 +962,54 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
 
       And('the list body is an object with a "mode"', () => {
         expect(["auto", "manual"]).toContain(asRecord(response.body).mode);
+      });
+    },
+  );
+
+  Scenario(
+    "A list contract with no array that cannot be generated serves the collection",
+    ({ Given, When, Then, And }) => {
+      let created: Schmock.Response;
+      let warn: MockInstance<typeof console.warn>;
+
+      Given(
+        "a settings mock whose list response is an object without any array nested past the generation depth limit",
+        async () => {
+          warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+          // No response validation: the bare collection is exactly the shape
+          // this contract forbids, served because the alternative is a 500.
+          await build({ spec: tallSettingsSpec(MAX_NESTING_DEPTH + 5) });
+        },
+      );
+
+      And('a setting with mode "auto" has been created', async () => {
+        created = await mock.handle("POST", "/settings", {
+          body: { mode: "auto" },
+        });
+        expect(created.status).toBe(200);
+      });
+
+      When("I list the settings", async () => {
+        response = await mock.handle("GET", "/settings");
+      });
+
+      Then("the list response has status 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And(
+        "the list body is the bare collection holding the created setting",
+        () => {
+          expect(response.body).toEqual([created.body]);
+          expect(asRecord(created.body).mode).toBe("auto");
+        },
+      );
+
+      And("a warning said the list body generation failed", () => {
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringMatching(/List body generation failed/),
+          expect.stringMatching(/schema_nesting_depth/),
+        );
       });
     },
   );

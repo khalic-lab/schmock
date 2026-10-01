@@ -287,6 +287,50 @@ describe("FIX 2.3 — history() and lastRequest() return deep clones", () => {
     expect([...second.view]).toEqual([2, 3]);
   });
 
+  it("copies shared memory held in Map and Set bodies, once per source object", async () => {
+    const mock = schmock();
+    const shared = new SharedArrayBuffer(2);
+    const source = new Uint8Array(shared);
+    source.set([1, 2]);
+    mock("POST /shared", { accepted: true });
+
+    await mock.handle("POST", "/shared", {
+      body: {
+        map: new Map([["k", shared]]),
+        set: new Set([shared]),
+        again: shared,
+      },
+    });
+    source.fill(9);
+
+    const first = requireRecord(mock.lastRequest()?.body);
+    if (!(first.map instanceof Map) || !(first.set instanceof Set)) {
+      throw new Error("Expected Map and Set snapshots");
+    }
+    expect([...first.map.keys()]).toEqual(["k"]);
+    expect(first.set.size).toBe(1);
+    const fromMap: unknown = first.map.get("k");
+    const [fromSet] = [...first.set];
+    if (!(fromMap instanceof ArrayBuffer)) {
+      throw new Error("Expected an ordinary ArrayBuffer in the Map");
+    }
+    expect([...new Uint8Array(fromMap)]).toEqual([1, 2]);
+    // One source buffer, one copy, wherever the body refers to it.
+    expect(fromSet).toBe(fromMap);
+    expect(first.again).toBe(fromMap);
+    new Uint8Array(fromMap).fill(8);
+
+    const second = requireRecord(mock.lastRequest()?.body);
+    if (!(second.map instanceof Map)) {
+      throw new Error("Expected a Map snapshot");
+    }
+    const isolated: unknown = second.map.get("k");
+    if (!(isolated instanceof ArrayBuffer)) {
+      throw new Error("Expected an isolated ArrayBuffer snapshot");
+    }
+    expect([...new Uint8Array(isolated)]).toEqual([1, 2]);
+  });
+
   it("copies shared memory from non-enumerable structured-clone fields", async () => {
     const mock = schmock();
     const shared = new SharedArrayBuffer(3);

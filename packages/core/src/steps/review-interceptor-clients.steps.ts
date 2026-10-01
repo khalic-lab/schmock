@@ -497,4 +497,68 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       });
     },
   );
+
+  // ── Release notes: a hooked lease still owns the malformed-JSON 400 ───────
+
+  Scenario(
+    "A passthrough-false lease with a beforeRequest hook answers malformed JSON with 400 before its hook runs",
+    ({ Given, When, Then, And }) => {
+      const hook = vi.fn((request: Schmock.AdapterRequest) => request);
+
+      Given(
+        'a mock with a recording "POST /api/items" route and a passthrough-disabled lease with a beforeRequest hook',
+        () => {
+          setup();
+          mock("POST /api/items", ({ body }) => {
+            routeBodies.push(body);
+            return [201, { stored: true }];
+          });
+          intercept({ passthrough: false, beforeRequest: hook });
+        },
+      );
+
+      When(`I post the JSON body '{"name": "x",}' to "/api/items"`, () =>
+        postJson('{"name": "x",}'),
+      );
+
+      Then('the fetch should answer 400 with code "MALFORMED_JSON"', () =>
+        expectErrorCode(400, "MALFORMED_JSON"),
+      );
+
+      And("the beforeRequest hook should not have run", () => {
+        expect(hook).not.toHaveBeenCalled();
+      });
+
+      And("the recording route should not have run", () => {
+        expect(routeBodies).toEqual([]);
+      });
+    },
+  );
+
+  // ── Release notes: a null body from beforeResponse is labelled JSON ───────
+
+  Scenario(
+    "A beforeResponse that returns a null body is labelled JSON",
+    ({ Given, When, Then }) => {
+      Given(
+        'an intercepting mock with route "GET /api/empty" whose beforeResponse returns a null body',
+        () => {
+          setup();
+          mock("GET /api/empty", { replaced: false });
+          intercept({
+            beforeResponse: () => ({ status: 200, body: null, headers: {} }),
+          });
+        },
+      );
+
+      When('I fetch "/api/empty" through the rewriting lease', async () => {
+        response = await fetch("http://localhost/api/empty");
+      });
+
+      Then('the response content-type should be "application/json"', () => {
+        expect(response?.status).toBe(200);
+        expect(response?.headers.get("content-type")).toBe("application/json");
+      });
+    },
+  );
 });

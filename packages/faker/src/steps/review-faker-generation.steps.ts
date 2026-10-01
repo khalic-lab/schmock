@@ -158,6 +158,34 @@ function nestedArrayThrough(keyword: string): JSONSchema7 {
       });
       return schema;
     }
+    case "dependencies":
+      return {
+        type: "object",
+        properties: { a: { type: "string" } },
+        required: ["a"],
+        dependencies: { a: { properties: { b: big }, required: ["b"] } },
+      };
+    case "if":
+      // json-schema-faker merges the if into its then, so the then declares
+      // no maxItems that would shrink the merged array.
+      return {
+        type: "object",
+        properties: {
+          a: {
+            if: big,
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { type: "array", items: { type: "integer" } },
+          },
+        },
+      };
+    case "else":
+      return {
+        type: "object",
+        properties: { a: { if: { minItems: 1 }, else: big } },
+      };
+    case "untyped-contains":
+      // No type, items or item counts: only the keyword shows it is an array.
+      return { type: "object", properties: { a: { contains: big } } };
     default:
       throw new Error(`Unknown keyword: ${keyword}`);
   }

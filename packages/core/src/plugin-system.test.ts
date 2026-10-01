@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { schmock } from "./index";
+import { PluginError, schmock } from "./index";
 
 describe("plugin system", () => {
   describe("plugin registration", () => {
@@ -476,6 +476,69 @@ describe("plugin system", () => {
     });
   });
 
+  describe("unrecovered beforeRequest failures", () => {
+    it("answers a throwing beforeRequest with a 500 PluginError before the generator runs", async () => {
+      const mock = schmock();
+      const generator = vi.fn(() => "ok");
+      mock("GET /x", generator).pipe({
+        name: "guard",
+        beforeRequest() {
+          throw new Error("denied");
+        },
+        process: (context, current) => ({ context, response: current }),
+      });
+
+      const response = await mock.handle("GET", "/x");
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({
+        error: 'Plugin "guard" failed: denied',
+        code: "PLUGIN_ERROR",
+      });
+      expect(generator).not.toHaveBeenCalled();
+      expect(mock.lastRequest()?.response.status).toBe(500);
+    });
+
+    it.each([
+      ["a number", 42],
+      ["an object that is not a result", { notAResult: true }],
+    ])(
+      "fails an invalid beforeRequest result (%s) with the attributed PluginError",
+      async (_label, invalid) => {
+        const mock = schmock();
+        const generator = vi.fn(() => "ok");
+        const seen: Error[] = [];
+        // Untyped on purpose: plain JavaScript can return any shape.
+        const broken = {
+          name: "broken",
+          beforeRequest: () => invalid,
+          process: (context: unknown, current: unknown) => ({
+            context,
+            response: current,
+          }),
+          onError: (error: Error) => {
+            seen.push(error);
+            return undefined;
+          },
+        };
+        Reflect.apply(mock.pipe, mock, [broken]);
+        mock("GET /x", generator);
+
+        const response = await mock.handle("GET", "/x");
+
+        const message = `Plugin "broken" failed: didn't return valid result`;
+        expect(response.status).toBe(500);
+        expect(response.body).toEqual({ error: message, code: "PLUGIN_ERROR" });
+        expect(generator).not.toHaveBeenCalled();
+        // onError sees the same PluginError the response reports, prefixed once.
+        expect(seen).toHaveLength(1);
+        expect(seen[0]).toBeInstanceOf(PluginError);
+        expect(seen[0]?.message).toBe(message);
+        expect(mock.lastRequest()?.response.status).toBe(500);
+      },
+    );
+  });
+
   describe("async plugin support", () => {
     it("handles async plugin process methods", async () => {
       const mock = schmock();
@@ -787,6 +850,64 @@ describe("plugin system", () => {
       releases[1]();
       await second;
       expect(uninstall).toHaveBeenCalledOnce();
+    });
+
+    it("expires the uninstall instance once uninstall returns", () => {
+      const mock = schmock();
+      let retained: Schmock.CallableMockInstance | undefined;
+      mock.pipe({
+        name: "uninstall-retainer",
+        process: (context, response) => ({ context, response }),
+        uninstall(instance) {
+          retained = instance;
+        },
+      });
+
+      mock.reset();
+
+      if (!retained) throw new Error("Expected an uninstall instance");
+      const expired = retained;
+      expect(() => expired.getRoutes()).toThrowError(
+        expect.objectContaining({ code: "PLUGIN_UNINSTALL_SCOPE_EXPIRED" }),
+      );
+      expect(() => expired("GET /x", 1)).toThrowError(
+        expect.objectContaining({ code: "PLUGIN_UNINSTALL_SCOPE_EXPIRED" }),
+      );
+    });
+
+    it("keeps uninstalling the other plugins when one uninstall throws", () => {
+      const mock = schmock({ debug: true });
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const uninstalled: string[] = [];
+      mock.pipe({
+        name: "A",
+        process: (context, response) => ({ context, response }),
+        uninstall() {
+          uninstalled.push("A");
+        },
+      });
+      mock.pipe({
+        name: "B",
+        process: (context, response) => ({ context, response }),
+        uninstall() {
+          throw new Error("B broke");
+        },
+      });
+
+      try {
+        // B, piped last, is uninstalled first; its failure must not stop A.
+        expect(() => mock.reset()).not.toThrow();
+        expect(uninstalled).toEqual(["A"]);
+        expect(
+          log.mock.calls.some(
+            ([line]) =>
+              typeof line === "string" &&
+              line.includes("Plugin B uninstall failed: B broke"),
+          ),
+        ).toBe(true);
+      } finally {
+        log.mockRestore();
+      }
     });
   });
 

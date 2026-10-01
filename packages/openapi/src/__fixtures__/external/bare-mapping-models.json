@@ -1,0 +1,23 @@
+{
+  "Pet": {
+    "oneOf": [{ "$ref": "#/Cat" }, { "$ref": "#/Dog" }],
+    "discriminator": {
+      "propertyName": "petType",
+      "mapping": { "kitty": "Cat", "doggo": "Dog" }
+    }
+  },
+  "Cat": {
+    "type": "object",
+    "properties": {
+      "petType": { "type": "string" },
+      "meow": { "type": "boolean" }
+    }
+  },
+  "Dog": {
+    "type": "object",
+    "properties": {
+      "petType": { "type": "string" },
+      "bark": { "type": "boolean" }
+    }
+  }
+}

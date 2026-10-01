@@ -175,6 +175,63 @@ describe("review: faker allocation ceilings (finding 78)", () => {
       validateSchema({ type: "string", pattern: "^(?:ab|c{70000})$" }),
     ).not.toThrow();
   });
+
+  // A pattern that does not compile is never charged, so every pattern below
+  // is checked to compile first; otherwise "does not throw" proves nothing.
+  function patternCharge(pattern: string): unknown {
+    expect(() => new RegExp(pattern, "u")).not.toThrow();
+    return captureFailure(() => validateSchema({ type: "string", pattern }));
+  }
+
+  it("charges nothing for zero-width pattern tokens", () => {
+    for (const pattern of [
+      // Lookarounds, the common shape of password rules.
+      String.raw`^(?=.*[A-Z])(?=.*\d).{8,}$`,
+      "^(?=a{70000})b$",
+      "^(?!a{70000})b$",
+      "(?<=a{70000})b",
+      "(?<!a{70000})b",
+      // Backreferences repeat a group already counted, so they add nothing.
+      String.raw`^(a)\1{70000}$`,
+      String.raw`^(?<n>a)\k<n>{70000}$`,
+      // Every escape is one atom, and \b, \k and \1 are zero-width.
+      String.raw`^(?<id>\d)\k<id>\1\b\x41\u{1F600}\u00e9\cJ\p{L}[\]a]$`,
+      // An escaped bracket does not close the class, so the quantifier is
+      // part of the class rather than applied to it.
+      String.raw`^[\]{70000}]$`,
+    ]) {
+      expect(patternCharge(pattern), pattern).toBeUndefined();
+    }
+  });
+
+  it("applies a quantifier to the whole escape or group before it", () => {
+    for (const pattern of [
+      String.raw`^\x41{70000}$`,
+      String.raw`^\u00e9{70000}$`,
+      String.raw`^\u{1F600}{70000}$`,
+      String.raw`^\cJ{70000}$`,
+      String.raw`^\p{L}{70000}$`,
+      String.raw`^[\]]{70000}$`,
+      "^(?<n>a{70000})$",
+    ]) {
+      expectResource(patternCharge(pattern), "string_length");
+    }
+  });
+
+  it("bounds a helpers.fromRegExp source that does not compile", () => {
+    const fromRegExp = (source: string) =>
+      captureFailure(() =>
+        validateSchema(withFaker({ "helpers.fromRegExp": [source] })),
+      );
+    // An unclosed group still charges what it holds.
+    expectResource(fromRegExp("(a{0,2000000}"), "string_length");
+    // An unterminated class swallows the rest of the source as one character.
+    expect(fromRegExp("[a{0,2000000}")).toBeUndefined();
+    // A trailing backslash and an unbalanced close are single characters.
+    expect(fromRegExp("abc\\")).toBeUndefined();
+    expect(fromRegExp("a)b")).toBeUndefined();
+    expectResource(fromRegExp("a)b{0,2000000}"), "string_length");
+  });
 });
 
 describe("review: non-generating subschemas (finding 79)", () => {

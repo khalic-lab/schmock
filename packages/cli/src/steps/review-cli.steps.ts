@@ -251,6 +251,42 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     },
   );
 
+  Scenario(
+    "A seed manifest broken and then fixed under watch recovers",
+    ({ Given, And, When, Then }) => {
+      Given("a seed manifest with inline pets", () => {
+        seedPath = join(makeTempDir(), "seed.json");
+        writeFileSync(seedPath, JSON.stringify({ pets: pets("Buddy") }));
+      });
+      And(
+        "a CLI server is started watching the petstore spec with that seed manifest",
+        async () => {
+          await startWatched({ spec: PETSTORE_SPEC, seed: seedPath });
+          expect(await servesPet("Buddy")).toBe(true);
+        },
+      );
+      When("the seed manifest is overwritten with invalid JSON", () => {
+        writeFileSync(seedPath, "{broken");
+      });
+      Then("the reload failure is reported", async () => {
+        expect(await eventually(() => stderr.includes("Reload failed"))).toBe(
+          true,
+        );
+      });
+      And("the pet list still serves the originally seeded pet", async () => {
+        expect(await servesPet("Buddy")).toBe(true);
+      });
+      // The failed reload re-armed with no seed entries; the manifest itself
+      // must still be watched for this edit to be seen.
+      When("the seed manifest is edited to seed a different pet", () => {
+        writeFileSync(seedPath, JSON.stringify({ pets: pets("Rex") }));
+      });
+      Then("the pet list serves the newly seeded pet", async () => {
+        expect(await eventually(() => servesPet("Rex"))).toBe(true);
+      });
+    },
+  );
+
   // ── #97: a reload announces that it starts from empty state ─────────────
 
   Scenario(

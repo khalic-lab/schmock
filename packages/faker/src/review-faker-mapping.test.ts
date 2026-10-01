@@ -440,6 +440,128 @@ describe("#23 weighting and nullable rolls reach every generated node", () => {
       expect(asRecord(item).nick).not.toBeNull();
     }
   });
+
+  /**
+   * Generate a oneOf of two object branches (and a bare null branch) where
+   * only the first branch's `name` is nullable, and count the null names on
+   * each side. Rolls reach `name` only when exactly one branch matches.
+   */
+  async function nullNamesByBranch(
+    nullable: JSONSchema7,
+    plain: JSONSchema7,
+    isNullableSide: (item: Record<string, unknown>) => boolean,
+  ) {
+    const generated = await generateFromSchema({
+      seed: 3,
+      count: 400,
+      schema: {
+        type: "array",
+        items: { oneOf: [nullable, plain, { type: "null" }] },
+      },
+    });
+    const objects = asArray(generated).filter(isRecord);
+    const nullableSide = objects.filter(isNullableSide);
+    const plainSide = objects.filter((item) => !isNullableSide(item));
+    return {
+      nullableSide: nullableSide.length,
+      plainSide: plainSide.length,
+      nullableNulls: nullableSide.filter((item) => item.name === null).length,
+      plainNulls: plainSide.filter((item) => item.name === null).length,
+    };
+  }
+
+  const nullableName = { type: ["string", "null"] } satisfies JSONSchema7;
+
+  it("tells oneOf object branches apart by a property enum", async () => {
+    const counts = await nullNamesByBranch(
+      {
+        type: "object",
+        properties: { kind: { enum: ["cat"] }, name: nullableName },
+        required: ["kind", "name"],
+      },
+      {
+        type: "object",
+        properties: { kind: { enum: ["dog"] }, name: { type: "string" } },
+        required: ["kind", "name"],
+      },
+      (item) => item.kind === "cat",
+    );
+    expect(counts.nullableSide).toBeGreaterThan(50);
+    expect(counts.plainSide).toBeGreaterThan(50);
+    expect(counts.nullableNulls).toBeGreaterThan(0);
+    expect(counts.plainNulls).toBe(0);
+  });
+
+  it("tells oneOf object branches apart by an object const", async () => {
+    const counts = await nullNamesByBranch(
+      {
+        type: "object",
+        properties: { meta: { const: { v: 1 } }, name: nullableName },
+        required: ["meta", "name"],
+      },
+      {
+        type: "object",
+        properties: { meta: { const: { v: 2 } }, name: { type: "string" } },
+        required: ["meta", "name"],
+      },
+      (item) => asRecord(item.meta).v === 1,
+    );
+    expect(counts.nullableSide).toBeGreaterThan(50);
+    expect(counts.plainSide).toBeGreaterThan(50);
+    expect(counts.nullableNulls).toBeGreaterThan(0);
+    expect(counts.plainNulls).toBe(0);
+  });
+
+  it("tells oneOf object branches apart by an allOf branch", async () => {
+    const counts = await nullNamesByBranch(
+      {
+        allOf: [
+          {
+            type: "object",
+            properties: { kind: { const: "cat" } },
+            required: ["kind"],
+          },
+        ],
+        properties: { name: nullableName },
+        required: ["name"],
+      },
+      {
+        allOf: [
+          {
+            type: "object",
+            properties: { kind: { const: "dog" } },
+            required: ["kind"],
+          },
+        ],
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      },
+      (item) => item.kind === "cat",
+    );
+    expect(counts.nullableSide).toBeGreaterThan(50);
+    expect(counts.plainSide).toBeGreaterThan(50);
+    expect(counts.nullableNulls).toBeGreaterThan(0);
+    expect(counts.plainNulls).toBe(0);
+  });
+
+  it("never nulls a field that an allOf sibling pins with an enum or const", async () => {
+    const items = await sampleObjects(
+      {
+        status: { allOf: [nullableName, { enum: ["on", "off"] }] },
+        mode: { allOf: [nullableName, { const: "x" }] },
+        // Same shape, but the sibling admits null: proves rolls reach here.
+        note: { allOf: [nullableName, { minLength: 1 }] },
+      },
+      400,
+    );
+    expect(items.filter((item) => item.note === null).length).toBeGreaterThan(
+      0,
+    );
+    for (const item of items) {
+      expect(item.status).not.toBeNull();
+      expect(item.mode).not.toBeNull();
+    }
+  });
 });
 
 describe("#73 dotted override paths through arrays", () => {

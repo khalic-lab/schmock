@@ -162,6 +162,29 @@ describe("dispatchCallbacks URL expressions", () => {
     ]);
   });
 
+  it("substitutes a present path parameter and query parameter", async () => {
+    const urls = await dispatchedUrls(
+      "{$request.body#/callbackUrl}/pets/{$request.path.petId}?src={$request.query.src}",
+      makeContext({
+        path: "/pets/42/subscribe",
+        params: { petId: "42" },
+        query: { src: "web" },
+        body: { callbackUrl: "https://hooks.example" },
+      }),
+      [201, { id: 1 }],
+    );
+    expect(urls).toEqual(["https://hooks.example/pets/42?src=web"]);
+  });
+
+  it("splices an unimplemented expression kind in as an empty string", async () => {
+    const urls = await dispatchedUrls(
+      "{$request.body#/callbackUrl}/{$method}",
+      makeContext({ body: { callbackUrl: "https://hooks.example" } }),
+      [201, { id: 1 }],
+    );
+    expect(urls).toEqual(["https://hooks.example/"]);
+  });
+
   it("reads a request header case-insensitively", async () => {
     const urls = await dispatchedUrls(
       "{$request.header.X-Hook}",

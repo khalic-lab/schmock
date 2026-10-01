@@ -258,6 +258,58 @@ describe("validationPlugin header name case", () => {
     });
   });
 
+  const shortKey = {
+    type: "object" as const,
+    properties: { "X-Api-Key": { type: "string" as const, minLength: 8 } },
+  };
+
+  it.each<[string, ValidationPluginOptions["request"]]>([
+    ["anyOf", { headers: { anyOf: [shortKey] } }],
+    ["oneOf", { headers: { oneOf: [shortKey] } }],
+    [
+      "then",
+      {
+        headers: {
+          if: { type: "object" },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: shortKey,
+        },
+      },
+    ],
+    ["else", { headers: { if: false, else: shortKey } }],
+    ["not", { headers: { not: { required: ["X-Api-Key"] } } }],
+    [
+      "a schema-form dependency",
+      { headers: { dependencies: { "x-a": shortKey } } },
+    ],
+  ])("matches a capitalized name declared under %s", async (_, request) => {
+    const plugin = validationPlugin({ request });
+    const result = await runBeforeRequest(
+      plugin,
+      context({ headers: { "x-a": "1", "x-api-key": "short" } }),
+    );
+    expect(result.response).toMatchObject({
+      status: 400,
+      body: { code: "HEADER_VALIDATION_ERROR" },
+    });
+  });
+
+  it("rejects a case collision reached through anyOf", () => {
+    expect(
+      creationError({
+        request: {
+          headers: {
+            anyOf: [{ type: "object", required: ["X-Api-Key"] }],
+            properties: { "x-api-key": { type: "string" } },
+          },
+        },
+      }),
+    ).toMatchObject({
+      code: "VALIDATION_CONFIG_INVALID",
+      context: { option: "request.headers" },
+    });
+  });
+
   it("matches capitalized names from another slot's $id resource", async () => {
     const plugin = validationPlugin({
       request: {
@@ -287,6 +339,80 @@ describe("validationPlugin header name case", () => {
       context({ headers: { "x-api-key": "short" } }),
     );
     expect(short.response).toMatchObject({ status: 400 });
+  });
+});
+
+describe("validationPlugin header names behind $ref corners", () => {
+  const apiKeyHeaders = {
+    type: "object" as const,
+    required: ["X-Api-Key"],
+    properties: { "X-Api-Key": { type: "string" as const, minLength: 8 } },
+  };
+
+  async function expectKeyedBySchemaSpelling(
+    request: ValidationPluginOptions["request"],
+  ): Promise<void> {
+    const plugin = validationPlugin({ request });
+    const valid = await runBeforeRequest(
+      plugin,
+      context({ headers: { "x-api-key": "abcdefghij" } }),
+    );
+    expect(valid.response).toBeUndefined();
+    const short = await runBeforeRequest(
+      plugin,
+      context({ headers: { "x-api-key": "short" } }),
+    );
+    expect(short.response).toMatchObject({
+      status: 400,
+      body: { code: "HEADER_VALIDATION_ERROR" },
+    });
+  }
+
+  it("follows a whole-resource $ref without a fragment", async () => {
+    await expectKeyedBySchemaSpelling({
+      body: { $id: "https://example.test/hdr.json", ...apiKeyHeaders },
+      headers: { $ref: "https://example.test/hdr.json" },
+    });
+  });
+
+  it("resolves a relative $ref against the header schema's own $id", async () => {
+    await expectKeyedBySchemaSpelling({
+      headers: {
+        $id: "https://example.test/h/root.json",
+        allOf: [{ $ref: "defs.json#/definitions/Headers" }],
+        definitions: {
+          Defs: {
+            $id: "defs.json",
+            definitions: { Headers: apiKeyHeaders },
+          },
+        },
+      },
+    });
+  });
+
+  it("skips a $ref whose target is a boolean schema", async () => {
+    await expectKeyedBySchemaSpelling({
+      headers: {
+        ...apiKeyHeaders,
+        allOf: [{ $ref: "#/definitions/Anything" }],
+        definitions: { Anything: true },
+      },
+    });
+  });
+
+  it.each([
+    ["a missing local definition", "#/definitions/missing"],
+    ["an unknown resource", "https://example.test/nope.json"],
+  ])("leaves an unresolvable $ref to Ajv (%s)", (_, ref) => {
+    const error = creationError({
+      request: {
+        headers: { ...apiKeyHeaders, allOf: [{ $ref: ref }] },
+      },
+    });
+    expect(error).not.toBeInstanceOf(TypeError);
+    expect(error).toMatchObject({
+      message: expect.stringContaining(`can't resolve reference ${ref}`),
+    });
   });
 });
 

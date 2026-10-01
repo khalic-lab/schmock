@@ -164,6 +164,43 @@ describe("createCliServer admin token validation", () => {
   });
 });
 
+// ── an authorized request to an unknown admin path ────────────────────────
+
+describe("unknown admin endpoints", () => {
+  it.each([
+    ["GET", "nope"],
+    ["POST", "routes"],
+  ])(
+    "answers an authorized %s /schmock-admin/%s with a CORS-free 404",
+    async (method, endpoint) => {
+      const server = await createCliServer({
+        spec: PETSTORE_SPEC,
+        port: 0,
+        admin: true,
+        cors: true,
+        shutdownGraceMs: 100,
+      });
+      try {
+        const response = await fetch(
+          `http://127.0.0.1:${server.port}/schmock-admin/${endpoint}`,
+          {
+            method,
+            headers: { authorization: `Bearer ${server.adminToken}` },
+          },
+        );
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({
+          error: "Unknown admin endpoint",
+          code: "NOT_FOUND",
+        });
+        expect(response.headers.get("access-control-allow-origin")).toBeNull();
+      } finally {
+        await server.close();
+      }
+    },
+  );
+});
+
 // ── #144: IPv4-mapped loopback is loopback ────────────────────────────────
 
 describe("isLoopbackHost", () => {
@@ -174,6 +211,55 @@ describe("isLoopbackHost", () => {
 
   it("still treats an IPv4-mapped public address as reachable", () => {
     expect(isLoopbackHost("::ffff:10.0.0.1")).toBe(false);
+  });
+});
+
+// ── run() keeps its signal handlers until the close settles ─────────────
+
+describe("signal handlers during shutdown", () => {
+  it("stay attached while the close drains, so a repeat signal is absorbed", async () => {
+    const realClose = Server.prototype.close;
+    let wedged:
+      | { server: Server; callback?: (error?: Error) => void }
+      | undefined;
+    vi.spyOn(Server.prototype, "close").mockImplementation(function (
+      this: Server,
+      callback?: (error?: Error) => void,
+    ) {
+      wedged = { server: this, callback };
+      return this;
+    });
+    const baselineSigterm = process.listeners("SIGTERM");
+
+    const cli = await startRun(["--spec", PETSTORE_SPEC, "--port", "0"]);
+    const sigtermHandlers = () =>
+      process
+        .listeners("SIGTERM")
+        .filter((listener) => !baselineSigterm.includes(listener));
+    const handler = sigtermHandlers()[0];
+    try {
+      expect(handler).toBeDefined();
+      cli.signal();
+      expect(cli.stderr()).toContain("Shutting down...");
+
+      // Detaching now would restore the default disposition, so a second
+      // Ctrl-C would kill the process mid-drain.
+      expect(process.listeners("SIGINT")).toContain(handler);
+      expect(process.listeners("SIGTERM")).toContain(handler);
+
+      // Delivered through the emitter, as the OS would, rather than by
+      // calling the captured reference: a detached handler never sees it.
+      process.emit("SIGINT", "SIGINT");
+      expect(cli.stderr()).toContain("Shutdown already in progress");
+    } finally {
+      vi.restoreAllMocks();
+      if (wedged) realClose.call(wedged.server, wedged.callback);
+      await cli.finished;
+    }
+
+    // Once the close settles, run releases what it registered.
+    expect(process.listeners("SIGINT")).not.toContain(handler);
+    expect(process.listeners("SIGTERM")).not.toContain(handler);
   });
 });
 

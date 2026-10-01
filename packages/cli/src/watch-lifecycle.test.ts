@@ -1,6 +1,8 @@
 import type { FSWatcher } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
-import { basename, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -12,7 +14,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  */
 const watchControl = vi.hoisted(() => ({
   failWith: undefined as Error | undefined,
+  /** Fail only the watch on this directory. */
+  failFor: undefined as string | undefined,
+  /**
+   * Hand out inert watchers that only fire when a test emits on them, so a
+   * test that really writes files is not raced by the OS's own events.
+   */
+  inert: false,
   watchers: [] as FSWatcher[],
+  /** The directory each entry of `watchers` watches. */
+  directories: [] as string[],
 }));
 
 /**
@@ -29,12 +40,31 @@ const openapiControl = vi.hoisted(() => ({
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
+  const { EventEmitter } = await import("node:events");
   const watch: typeof actual.watch = ((...args: unknown[]) => {
     if (watchControl.failWith) throw watchControl.failWith;
-    const watcher = (actual.watch as unknown as (...a: unknown[]) => FSWatcher)(
-      ...args,
-    );
+    const directory = String(args[0]);
+    if (directory === watchControl.failFor) {
+      throw new Error(`EACCES: cannot watch ${directory}`);
+    }
+    let watcher: FSWatcher;
+    if (watchControl.inert) {
+      const inert = Object.assign(new EventEmitter(), {
+        close: vi.fn(),
+        ref: () => inert,
+        unref: () => inert,
+      });
+      const listener = args[1];
+      if (typeof listener === "function")
+        inert.on("change", listener as (...a: unknown[]) => void);
+      watcher = inert as unknown as FSWatcher;
+    } else {
+      watcher = (actual.watch as unknown as (...a: unknown[]) => FSWatcher)(
+        ...args,
+      );
+    }
     watchControl.watchers.push(watcher);
+    watchControl.directories.push(directory);
     return watcher;
   }) as typeof actual.watch;
 
@@ -95,7 +125,10 @@ describe("watcher lifecycle", () => {
     await server?.close();
     server = undefined;
     watchControl.failWith = undefined;
+    watchControl.failFor = undefined;
+    watchControl.inert = false;
     watchControl.watchers = [];
+    watchControl.directories = [];
     openapiControl.gate = undefined;
     openapiControl.parked = false;
     openapiControl.failWith = undefined;
@@ -382,6 +415,138 @@ describe("watcher lifecycle", () => {
     // The mock built at startup is still the one serving.
     const response = await fetch(`http://127.0.0.1:${server?.port}/pets`);
     expect(response.status).toBe(200);
+  });
+
+  describe("re-arming after a reload changes the watched directories", () => {
+    let seedDir = "";
+    let seedPath = "";
+
+    afterEach(() => {
+      rmSync(seedDir, { recursive: true, force: true });
+    });
+
+    /** A manifest naming `./a/pets.json` (Buddy); `./b/pets.json` is Rex. */
+    function writeSeedFixture(): void {
+      seedDir = mkdtempSync(join(tmpdir(), "schmock-watch-rearm-"));
+      seedPath = join(seedDir, "seed.json");
+      for (const [directory, name] of [
+        ["a", "Buddy"],
+        ["b", "Rex"],
+      ] as const) {
+        mkdirSync(join(seedDir, directory));
+        writeFileSync(
+          join(seedDir, directory, "pets.json"),
+          JSON.stringify([{ id: 1, name, tag: "dog" }]),
+        );
+      }
+      writeFileSync(seedPath, JSON.stringify({ pets: "./a/pets.json" }));
+    }
+
+    function watcherFor(directory: string): FSWatcher {
+      const index = watchControl.directories.lastIndexOf(directory);
+      const watcher = watchControl.watchers[index];
+      if (index < 0 || !watcher) throw new Error(`No watcher for ${directory}`);
+      return watcher;
+    }
+
+    /** Point the manifest at `./b/pets.json` and report the edit. */
+    function moveSeedEntryToB(): void {
+      writeFileSync(seedPath, JSON.stringify({ pets: "./b/pets.json" }));
+      watcherFor(seedDir).emit("change", "change", "seed.json");
+    }
+
+    async function petNames(): Promise<unknown> {
+      const response = await fetch(`http://127.0.0.1:${server?.port}/pets`);
+      const body: unknown = await response.json();
+      return Array.isArray(body)
+        ? body.map((pet: { name?: unknown }) => pet.name)
+        : body;
+    }
+
+    it("watches the new directory, closes the old one and ignores its late events", async () => {
+      writeSeedFixture();
+      watchControl.inert = true;
+      const stderr: string[] = [];
+      const stderrWrite = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation((chunk) => {
+          stderr.push(String(chunk));
+          return true;
+        });
+      const reloads = (): number =>
+        stderr.join("").split("Spec changed, reloading").length - 1;
+
+      try {
+        server = await createCliServer({
+          spec: PETSTORE_SPEC,
+          port: 0,
+          watch: true,
+          seed: seedPath,
+          shutdownGraceMs: 100,
+        });
+        const dirA = join(seedDir, "a");
+        const dirB = join(seedDir, "b");
+        expect(watchControl.directories).toContain(dirA);
+        expect(watchControl.directories).not.toContain(dirB);
+        const oldWatcher = watcherFor(dirA);
+        expect(await petNames()).toEqual(["Buddy"]);
+
+        moveSeedEntryToB();
+        await vi.waitFor(
+          () => expect(watchControl.directories).toContain(dirB),
+          { timeout: 3_000 },
+        );
+        expect(oldWatcher.close).toHaveBeenCalled();
+        expect(await petNames()).toEqual(["Rex"]);
+        expect(reloads()).toBe(1);
+
+        // An event the OS had already queued for the dropped directory.
+        oldWatcher.emit("change", "change", "pets.json");
+        // Longer than the watcher's 500 ms debounce.
+        await new Promise((tick) => setTimeout(tick, 800));
+        expect(reloads()).toBe(1);
+      } finally {
+        stderrWrite.mockRestore();
+      }
+    });
+
+    it("reports a directory it cannot watch and keeps serving", async () => {
+      writeSeedFixture();
+      watchControl.inert = true;
+      watchControl.failFor = join(seedDir, "b");
+      const stderr: string[] = [];
+      const stderrWrite = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation((chunk) => {
+          stderr.push(String(chunk));
+          return true;
+        });
+
+      try {
+        server = await createCliServer({
+          spec: PETSTORE_SPEC,
+          port: 0,
+          watch: true,
+          seed: seedPath,
+          shutdownGraceMs: 100,
+        });
+
+        moveSeedEntryToB();
+        await vi.waitFor(
+          () =>
+            expect(stderr.join("")).toContain(
+              `Spec watch error: EACCES: cannot watch ${join(seedDir, "b")}`,
+            ),
+          { timeout: 3_000 },
+        );
+        expect(stderr.join("")).toContain("Schmock server reloaded on");
+      } finally {
+        stderrWrite.mockRestore();
+      }
+
+      // The reload that could not arm the new watch still went live.
+      expect(await petNames()).toEqual(["Rex"]);
+    });
   });
 
   it("still loads specs through the partially mocked fs module", async () => {
