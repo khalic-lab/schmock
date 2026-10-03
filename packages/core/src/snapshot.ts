@@ -1,4 +1,4 @@
-export function unavailableValue(value: unknown): Record<string, string> {
+function unavailableValue(value: unknown): Record<string, string> {
   let type: string = typeof value;
   if (typeof value === "object" && value !== null) {
     try {

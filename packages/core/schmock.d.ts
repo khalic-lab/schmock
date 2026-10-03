@@ -779,6 +779,20 @@ declare namespace Schmock {
     hasRoute?(method: HttpMethod, path: string): boolean;
   }
 
+  /**
+   * A relay transport's hold on in-page fetch interception, from
+   * `acquireFetchRelay()` in `@schmock/core/adapter`. While any hold is
+   * active, a fetch the page makes is forwarded to the network unanswered,
+   * with exactly the input and init it was called with, for the relay (a
+   * service worker) to bring back through `routeRelayedRequest()`.
+   */
+  interface FetchRelay {
+    /** Hand fetch back to in-page interception once no hold remains. Idempotent. */
+    release(): void;
+    /** False once released. */
+    readonly active: boolean;
+  }
+
   /** Input to `buildFormattedErrorResponse()`. */
   interface FormattedErrorOptions {
     /** The `errorFormatter` hook, called exactly once. */

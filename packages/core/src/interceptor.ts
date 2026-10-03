@@ -127,6 +127,12 @@ interface InterceptorSession {
 
 let activeSession: InterceptorSession | undefined;
 
+/**
+ * Holds taken through acquireFetchRelay(). Module-wide rather than per
+ * session, so a dispatcher that a third-party wrapper captured obeys them too.
+ */
+const fetchRelayHolds = new Set<symbol>();
+
 function getRelativeRequestBase(): string {
   const candidates = [
     typeof document === "undefined" ? undefined : document.baseURI,
@@ -309,7 +315,7 @@ function createInterceptorSession(): InterceptorSession {
   const interceptors: RegisteredInterceptor[] = [];
   const dispatchFetch: typeof globalThis.fetch = async (input, init) => {
     const snapshot = interceptors.slice();
-    if (snapshot.length === 0) {
+    if (snapshot.length === 0 || fetchRelayHolds.size > 0) {
       return baselineFetch(input, init);
     }
 
@@ -381,6 +387,42 @@ function registerInterceptor(
       return active;
     },
   };
+}
+
+/**
+ * Makes every intercepted fetch skip routing and go straight to the baseline
+ * until released. Holds stack: fetches resume once every hold is released.
+ * It never touches `globalThis.fetch`.
+ */
+export function acquireFetchRelay(): Schmock.FetchRelay {
+  const token = Symbol("schmock.fetch.relay");
+  fetchRelayHolds.add(token);
+  return {
+    release() {
+      fetchRelayHolds.delete(token);
+    },
+    get active() {
+      return fetchRelayHolds.has(token);
+    },
+  };
+}
+
+/**
+ * Routes a request that a service worker relayed to the page through the
+ * newest session's leases. Resolves `undefined` when nothing answers it (no
+ * lease, or a route miss with passthrough) and never calls the baseline fetch,
+ * so the caller decides how the request reaches the network. Rejects with the
+ * request's abort reason when it is aborted mid-route.
+ */
+export async function routeRelayedRequest(
+  request: Request,
+): Promise<Response | undefined> {
+  const startTime = performance.now();
+  const leases = activeSession?.interceptors.slice() ?? [];
+  if (leases.length === 0) return undefined;
+  const normalizedRequest = normalizeFetchRequest(request);
+  const answer = await routeThroughLeases(leases, normalizedRequest, startTime);
+  return answer === PASSTHROUGH ? undefined : answer;
 }
 
 function extractQuery(url: URL): Record<string, string> {

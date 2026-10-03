@@ -9,6 +9,8 @@
  *   request's abort signal.
  * - `createFetchInterceptor` is the fetch interception `mock.intercept()` is
  *   built on.
+ * - `acquireFetchRelay` / `routeRelayedRequest` let a relay transport (a
+ *   service worker) deliver intercepted requests itself.
  *
  * @packageDocumentation
  */
@@ -23,5 +25,13 @@ export type {
   InterceptHandle,
   InterceptOptions,
 } from "./index.js";
-export { createFetchInterceptor } from "./interceptor.js";
-export type { MockRequestHandler, RequestAdmission } from "./types.js";
+export {
+  acquireFetchRelay,
+  createFetchInterceptor,
+  routeRelayedRequest,
+} from "./interceptor.js";
+export type {
+  FetchRelay,
+  MockRequestHandler,
+  RequestAdmission,
+} from "./types.js";

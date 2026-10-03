@@ -66,6 +66,7 @@ export type PathPrefix = Schmock.PathPrefix;
 export type FormattedErrorOptions = Schmock.FormattedErrorOptions;
 export type MockRequestHandler = Schmock.MockRequestHandler;
 export type RequestAdmission = Schmock.RequestAdmission;
+export type FetchRelay = Schmock.FetchRelay;
 export type Exchange = Schmock.Exchange;
 export type ExchangeRequest = Schmock.ExchangeRequest;
 export type ExchangeResponse = Schmock.ExchangeResponse;
