@@ -16,6 +16,7 @@ import {
   serializeResponseBody,
   withDefaultContentType,
 } from "./response-normalizer.js";
+import { snapshotRequestBody } from "./snapshot.js";
 
 const PASSTHROUGH = Symbol("schmock.fetch.passthrough");
 // A lease whose baseUrl filter rejected the request never reached its handler:
@@ -70,7 +71,35 @@ interface InterceptDispatch {
    * a newer lease of the same mock already asked it exactly this.
    */
   claim(requestKey: string): boolean;
+  /** Where the lease leaves what the exchange of this consultation needs. */
+  draft: ExchangeDraft;
 }
+
+/** What one lease consultation leaves for its exchange: created by the dispatch, written by the lease. */
+interface ExchangeDraft {
+  /** Whether anything observes this consultation; only then does the lease copy the request body. */
+  readonly observed: boolean;
+  /**
+   * A copy of the request body as the lease read it, taken before
+   * beforeRequest, the plugins or the route could change it in place.
+   */
+  requestBody?: unknown;
+  /**
+   * Set as soon as the effective request is known (after admission without a
+   * beforeRequest hook, after the hook and its claim with one): whether the
+   * lease would answer it (passthrough off, or the mock routes it). Total:
+   * the route probe already swallows throws. Unset while a beforeRequest
+   * hook is still deciding.
+   */
+  answers?: () => boolean;
+  /** The normalized response of the Response the lease built. */
+  response?: Schmock.Response;
+}
+
+export type ExchangeObserver = (exchange: Schmock.Exchange) => void;
+
+/** Called synchronously right before one consultation of a lease; undefined when nothing observes the lease's mock. */
+type ExchangeObservationOpener = () => ExchangeObserver | undefined;
 
 interface RegisteredInterceptor {
   token: symbol;
@@ -78,6 +107,7 @@ interface RegisteredInterceptor {
   // distinct effective request once; undefined means the lease stands alone.
   owner?: symbol;
   intercept: (dispatch: InterceptDispatch) => Promise<InterceptorResult>;
+  observe?: ExchangeObservationOpener;
 }
 
 interface FetchResponseContext {
@@ -85,6 +115,8 @@ interface FetchResponseContext {
   method: string;
   /** The request URL without its fragment, as real fetch reports it. */
   url: string;
+  /** Receives the normalized response of the Response built. */
+  draft: ExchangeDraft;
 }
 
 interface InterceptorSession {
@@ -193,8 +225,10 @@ function normalizeFetchRequest(
 async function routeThroughLeases(
   leases: readonly RegisteredInterceptor[],
   normalizedRequest: NormalizedFetchRequest,
+  startTime: number,
 ): Promise<Response | typeof PASSTHROUGH> {
-  throwIfAborted(normalizedRequest.request.signal);
+  const { signal } = normalizedRequest.request;
+  throwIfAborted(signal);
 
   // A mock is asked each distinct effective request at most once, however
   // many leases it holds: without this, nested providers on one mock would
@@ -219,14 +253,35 @@ async function routeThroughLeases(
 
   for (let index = leases.length - 1; index >= 0; index -= 1) {
     const registered = leases[index];
-    const result = await awaitWithAbort(
-      registered.intercept({
-        request: normalizedRequest,
-        claim: claimFor(registered.owner),
-      }),
-      normalizedRequest.request.signal,
-    );
-    throwIfAborted(normalizedRequest.request.signal);
+    // Synchronously before the call: the handler admits before its first await,
+    // so the generation the opener captures is the one the request runs in.
+    const observe = registered.observe?.();
+    const draft: ExchangeDraft = { observed: observe !== undefined };
+    let result: InterceptorResult;
+    try {
+      result = await awaitWithAbort(
+        registered.intercept({
+          request: normalizedRequest,
+          claim: claimFor(registered.owner),
+          draft,
+        }),
+        signal,
+      );
+      throwIfAborted(signal);
+    } catch (error) {
+      if (observe !== undefined) {
+        if (!signal.aborted) {
+          notify(observe, () =>
+            failedExchange(normalizedRequest, draft, error, startTime),
+          );
+        } else if (draft.response !== undefined || draft.answers?.() === true) {
+          notify(observe, () =>
+            abortedExchange(normalizedRequest, draft, startTime),
+          );
+        }
+      }
+      throw error;
+    }
     // FILTERED: this lease was not interested, so a sibling lease may be.
     // ALREADY_CONSULTED: the mock already answered this exact request.
     // PASSTHROUGH: the mock has no route for it. All three move on.
@@ -237,7 +292,13 @@ async function routeThroughLeases(
     ) {
       continue;
     }
-    return result;
+    const response = result;
+    if (observe !== undefined) {
+      notify(observe, () =>
+        answeredExchange(normalizedRequest, draft, response, startTime),
+      );
+    }
+    return response;
   }
 
   return PASSTHROUGH;
@@ -252,8 +313,13 @@ function createInterceptorSession(): InterceptorSession {
       return baselineFetch(input, init);
     }
 
+    const startTime = performance.now();
     const normalizedRequest = normalizeFetchRequest(input, init);
-    const answer = await routeThroughLeases(snapshot, normalizedRequest);
+    const answer = await routeThroughLeases(
+      snapshot,
+      normalizedRequest,
+      startTime,
+    );
     if (answer !== PASSTHROUGH) return answer;
 
     return awaitWithAbort(
@@ -269,6 +335,7 @@ function registerInterceptor(
   intercept: RegisteredInterceptor["intercept"],
   applyOptions: (options?: Schmock.InterceptOptions) => void,
   owner?: symbol,
+  observe?: ExchangeObservationOpener,
 ): Schmock.InterceptHandle {
   let session = activeSession;
   if (!session || globalThis.fetch !== session.dispatchFetch) {
@@ -278,7 +345,7 @@ function registerInterceptor(
   }
 
   const token = Symbol("schmock.fetch.interceptor");
-  session.interceptors.push({ token, owner, intercept });
+  session.interceptors.push({ token, owner, intercept, observe });
   let active = true;
 
   return {
@@ -320,12 +387,89 @@ function extractQuery(url: URL): Record<string, string> {
   return Object.fromEntries(url.searchParams);
 }
 
-function extractHeaders(request: Request): Record<string, string> {
-  const headers: Record<string, string> = {};
-  request.headers.forEach((value, key) => {
-    headers[key.toLowerCase()] = value;
+function headerRecordOf(headers: Headers): Record<string, string> {
+  const record: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    record[key.toLowerCase()] = value;
   });
-  return headers;
+  return record;
+}
+
+function extractHeaders(request: Request): Record<string, string> {
+  return headerRecordOf(request.headers);
+}
+
+/** Hand an exchange to its observer. */
+function notify(
+  observe: ExchangeObserver,
+  build: () => Schmock.Exchange,
+): void {
+  try {
+    observe(build());
+  } catch {
+    // observation never changes the fetch outcome
+  }
+}
+
+function exchangeRequestOf(
+  { request, url }: NormalizedFetchRequest,
+  draft: ExchangeDraft,
+): Schmock.ExchangeRequest {
+  return {
+    method: request.method,
+    url: responseUrlOf(url),
+    headers: extractHeaders(request),
+    ...(draft.requestBody !== undefined ? { body: draft.requestBody } : {}),
+  };
+}
+
+function answeredExchange(
+  normalizedRequest: NormalizedFetchRequest,
+  draft: ExchangeDraft,
+  response: Response,
+  startTime: number,
+): Schmock.Exchange {
+  return {
+    outcome: "answered",
+    request: exchangeRequestOf(normalizedRequest, draft),
+    response: {
+      status: response.status,
+      headers: headerRecordOf(response.headers),
+      ...(draft.response?.body !== undefined
+        ? { body: draft.response.body }
+        : {}),
+    },
+    startTime,
+    endTime: performance.now(),
+  };
+}
+
+function failedExchange(
+  normalizedRequest: NormalizedFetchRequest,
+  draft: ExchangeDraft,
+  error: unknown,
+  startTime: number,
+): Schmock.Exchange {
+  return {
+    outcome: "failed",
+    request: exchangeRequestOf(normalizedRequest, draft),
+    error,
+    startTime,
+    endTime: performance.now(),
+  };
+}
+
+function abortedExchange(
+  normalizedRequest: NormalizedFetchRequest,
+  draft: ExchangeDraft,
+  startTime: number,
+): Schmock.Exchange {
+  return {
+    outcome: "aborted",
+    request: exchangeRequestOf(normalizedRequest, draft),
+    startTime,
+    endTime: performance.now(),
+  };
 }
 
 function normalizeMediaType(contentType: string | null): string {
@@ -376,7 +520,12 @@ function routeProbeOf(
   admission: Schmock.RequestAdmission | undefined,
 ): ((method: Schmock.HttpMethod, path: string) => boolean) | undefined {
   if (admission === undefined) return undefined;
-  const probe: unknown = Reflect.get(admission, "hasRoute");
+  let probe: unknown;
+  try {
+    probe = Reflect.get(admission, "hasRoute");
+  } catch {
+    return undefined;
+  }
   if (typeof probe !== "function") return undefined;
   // Anything but a definite `false` counts as a route, so an unexpected
   // answer, or a throw, only costs the body read the probe would have saved.
@@ -412,6 +561,7 @@ function createFetchResponse(
   // A constructed Response has an empty url. Real fetch reports the request
   // URL, and code resolving links with `new URL(next, res.url)` needs it.
   Object.defineProperty(response, "url", { value: context.url });
+  context.draft.response = normalized;
   return response;
 }
 
@@ -516,12 +666,13 @@ interface FetchLeaseSpec {
   options?: Schmock.InterceptOptions;
   admitRequest?: () => Schmock.RequestAdmission;
   owner?: symbol;
+  observe?: ExchangeObservationOpener;
 }
 
 export function createFetchLease(
   spec: FetchLeaseSpec,
 ): Schmock.InterceptHandle {
-  const { handle, admitRequest, owner } = spec;
+  const { handle, admitRequest, owner, observe } = spec;
   // The options live in a mutable cell that each request reads once at its
   // start. Reconfiguring a lease in place is what lets an adapter apply new
   // hooks without re-registering — re-registration would move the lease to the
@@ -532,6 +683,7 @@ export function createFetchLease(
     async ({
       request: { request, url, origin },
       claim,
+      draft,
     }): Promise<InterceptorResult> => {
       const {
         baseUrl,
@@ -562,6 +714,7 @@ export function createFetchLease(
       const context: FetchResponseContext = {
         method: request.method,
         url: responseUrlOf(url),
+        draft,
       };
       const initialMethod = request.method.toUpperCase();
       // Without a beforeRequest hook (which may change the method or path)
@@ -592,8 +745,16 @@ export function createFetchLease(
       // it. On a definite miss the body is never read: the request reaches
       // the network untouched, and handle() still runs, without a body, so
       // request:start/notfound/end are emitted exactly as before.
+      const routeExists = routeProbeOf(admission);
+      const answersFor =
+        (method: Schmock.HttpMethod, routedPath: string) => (): boolean =>
+          !passthrough ||
+          routeExists === undefined ||
+          routeExists(method, routedPath);
+      if (beforeRequest === undefined)
+        draft.answers = answersFor(initialMethod, path);
       const routeProbe =
-        passthrough && !beforeRequest ? routeProbeOf(admission) : undefined;
+        passthrough && !beforeRequest ? routeExists : undefined;
       // The request handed to errorFormatter: the latest one this lease built,
       // so it reflects beforeRequest once that hook has returned.
       let formatterRequest: Schmock.AdapterRequest | undefined;
@@ -603,6 +764,7 @@ export function createFetchLease(
           routeProbe !== undefined && !routeProbe(initialMethod, path)
             ? { value: undefined, malformedJson: false }
             : await awaitWithAbort(extractBody(request), request.signal);
+        if (draft.observed) draft.requestBody = snapshotRequestBody(body.value);
         throwIfAborted(request.signal);
 
         // With passthrough off the lease owns every request that reaches it,
@@ -654,6 +816,9 @@ export function createFetchLease(
           !claim(effectiveRequestKey(effectiveMethod, adapterRequest.path))
         ) {
           return ALREADY_CONSULTED;
+        }
+        if (beforeRequest !== undefined) {
+          draft.answers = answersFor(effectiveMethod, adapterRequest.path);
         }
 
         const requestOptions: InterceptorRequestOptions = {
@@ -757,5 +922,6 @@ export function createFetchLease(
       currentOptions = nextOptions ?? {};
     },
     owner,
+    observe,
   );
 }

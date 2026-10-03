@@ -21,6 +21,7 @@ const PACKAGES = [
   "express",
   "react",
   "vue",
+  "devtools",
   "openapi",
   "angular",
   "cli",
@@ -109,10 +110,10 @@ describe("check-deps.sh", () => {
     expect(result.stderr).toContain("unknown target");
   });
 
-  it("preflights all 11 synchronized workspaces without invoking Bun", () => {
+  it("preflights all 12 synchronized workspaces without invoking Bun", () => {
     const result = run(["preflight"]);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("11 Schmock workspaces");
+    expect(result.stdout).toContain("12 Schmock workspaces");
     expect(result.stdout).toContain("2.2.3");
     expect(existsSync(commandLog)).toBe(false);
   });

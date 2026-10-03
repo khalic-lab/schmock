@@ -78,6 +78,18 @@
         "vitest": "^4.1.9",
       },
     },
+    "packages/devtools": {
+      "name": "@schmock/devtools",
+      "version": "2.5.0",
+      "devDependencies": {
+        "@amiceli/vitest-cucumber": "^7.0.0",
+        "@types/node": "^26.1.0",
+        "vitest": "^4.1.9",
+      },
+      "peerDependencies": {
+        "@schmock/core": "^2.5.0",
+      },
+    },
     "packages/express": {
       "name": "@schmock/express",
       "version": "2.5.0",
@@ -522,6 +534,8 @@
     "@schmock/cli": ["@schmock/cli@workspace:packages/cli"],
 
     "@schmock/core": ["@schmock/core@workspace:packages/core"],
+
+    "@schmock/devtools": ["@schmock/devtools@workspace:packages/devtools"],
 
     "@schmock/express": ["@schmock/express@workspace:packages/express"],
 

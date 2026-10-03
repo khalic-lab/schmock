@@ -88,7 +88,7 @@ function checkPackage(directory) {
   // npm and bun always include a package-root LICENSE — like README.md, it
   // needs no `files` entry — so the only way a tarball ships the terms is a
   // per-package copy. The root LICENSE never reaches a tarball: packing only
-  // looks inside the package directory. Byte-identity is asserted so the 11
+  // looks inside the package directory. Byte-identity is asserted so the 12
   // copies cannot drift away from the root one.
   const licensePath = join(ROOT_DIR, "packages", directory, "LICENSE");
   const rootLicense = readRootLicense();

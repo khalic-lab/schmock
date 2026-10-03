@@ -17,7 +17,7 @@ const PACKAGES_DIR = join(ROOT, "packages");
 /**
  * bump.ts modifies real files (package.json), so we back them all up before
  * each test and restore after. Every package must be covered — bump.ts rewrites
- * all 11 package.json files (version + cross-package @schmock/* deps), so
+ * all 12 package.json files (version + cross-package @schmock/* deps), so
  * backing up only a subset leaks version drift into the working tree.
  */
 const backupDir = join(__dirname, "__backup__");

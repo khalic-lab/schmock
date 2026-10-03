@@ -93,3 +93,20 @@ export function snapshotNormalizedBody(value: unknown): unknown {
     return unavailableValue(value);
   }
 }
+
+/**
+ * Snapshot a request body as a transport read it. A `FormData` is copied entry
+ * by entry, since `structuredClone` cannot copy one.
+ */
+export function snapshotRequestBody(body: unknown): unknown {
+  if (typeof FormData !== "undefined" && body instanceof FormData) {
+    try {
+      const copy = new FormData();
+      for (const [key, value] of body.entries()) copy.append(key, value);
+      return copy;
+    } catch {
+      return unavailableValue(body);
+    }
+  }
+  return snapshotValue(body);
+}

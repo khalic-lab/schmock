@@ -18,6 +18,7 @@ bun install @schmock/faker      # Schema-based data generation
 bun install @schmock/validation # Request/response validation
 bun install @schmock/query      # Pagination, sorting, filtering
 bun install @schmock/cli        # Standalone CLI server
+bun install @schmock/devtools   # Chrome DevTools reporting for mocked fetch
 bun install @schmock/schmock    # Core + non-framework plugins + CLI
 ```
 

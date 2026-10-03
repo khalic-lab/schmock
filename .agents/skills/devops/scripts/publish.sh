@@ -8,7 +8,7 @@ set -euo pipefail
 #   publish.sh [all|package] --dry-run
 #   publish.sh [all|package] --execute --confirm <scope>@vX.Y.Z:<full-commit>
 
-PACKAGES=(core faker validation query express react vue openapi angular cli schmock)
+PACKAGES=(core faker validation query express react vue devtools openapi angular cli schmock)
 NPM_REGISTRY="https://registry.npmjs.org/"
 GITHUB_REPOSITORY="khalic-lab/schmock"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -378,7 +378,7 @@ create_release() {
     --repo "$GITHUB_REPOSITORY" \
     --target "$HEAD_SHA" \
     --title "$tag" \
-    --notes "Release ${tag} — all 11 @schmock/* packages."
+    --notes "Release ${tag} — all 12 @schmock/* packages."
 }
 
 preflight

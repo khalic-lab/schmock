@@ -78,7 +78,7 @@ bun run check:publish
 ```
 
 This gate verifies clean/repeated build reproducibility, stale-artifact removal,
-all 11 packed packages under Node and Bun, strict standalone declarations,
+all 12 packed packages under Node and Bun, strict standalone declarations,
 packed Core declarations with TypeScript 5.6, React root/testing context
 identity, browser bundling, CLI startup, `publint`, and `attw`.
 

@@ -150,6 +150,32 @@ console.log(mock.callCount())
 
 Throws if used outside an app with `schmockPlugin` installed.
 
+## Seeing mocked requests in Chrome DevTools
+
+Requests the plugin mocks never reach the network, so Chrome's Network panel
+does not list them. Pipe `devtoolsPlugin()` from `@schmock/devtools` into the
+mock to log each one as a collapsed console group and a Performance-panel
+track entry:
+
+```typescript
+import { createApp } from 'vue'
+import { schmock } from '@schmock/core'
+import { devtoolsPlugin } from '@schmock/devtools'
+import { schmockPlugin } from '@schmock/vue'
+
+const mock = schmock()
+mock.pipe(devtoolsPlugin())
+mock('GET /api/users', [{ id: 1, name: 'Alice' }])
+
+const app = createApp(App)
+app.use(schmockPlugin, { mock })
+app.mount('#app')
+```
+
+`schmockPlugin` needs no extra option: the DevTools plugin observes the lease
+it already takes. `mock.reset()` removes the DevTools plugin while the lease
+stays, so pipe it again after a reset. See the [DevTools guide](./devtools.md).
+
 ## Testing with `@vue/test-utils`
 
 ```typescript

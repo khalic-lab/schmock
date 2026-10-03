@@ -8,13 +8,13 @@ cd "$(git rev-parse --show-toplevel)"
 # Publish Schmock packages to npm and create one unified GitHub release.
 #
 # Run from the repo root:
-#   bash .claude/skills/devops/scripts/publish.sh           # all 11 packages + vX.Y.Z release
+#   bash .claude/skills/devops/scripts/publish.sh           # all 12 packages + vX.Y.Z release
 #   bash .claude/skills/devops/scripts/publish.sh <package> # a single package (no release)
 #
 # Packages are listed in dependency order (deps before dependents):
-#   core -> faker -> {validation,query,express,react,vue} -> openapi -> angular -> cli -> schmock
+#   core -> faker -> {validation,query,express,react,vue,devtools} -> openapi -> angular -> cli -> schmock
 
-PACKAGES=(core faker validation query express react vue openapi angular cli schmock)
+PACKAGES=(core faker validation query express react vue devtools openapi angular cli schmock)
 
 TARGET="${1:-all}"
 
@@ -107,7 +107,7 @@ if [ "$TARGET" = "all" ]; then
     gh release create "v${VERSION}" \
       --target main \
       --title "v${VERSION}" \
-      --notes "Release v${VERSION} — all 11 @schmock/* packages."
+      --notes "Release v${VERSION} — all 12 @schmock/* packages."
   fi
 elif in_list "$TARGET" "${PACKAGES[@]}"; then
   publish_package "$TARGET"

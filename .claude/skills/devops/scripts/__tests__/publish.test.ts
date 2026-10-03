@@ -25,9 +25,9 @@ describe("publish.sh", () => {
     expect(content).toContain('TARGET="${1:-all}"');
   });
 
-  it("should list all 11 packages in dependency order", () => {
+  it("should list all 12 packages in dependency order", () => {
     expect(content).toContain(
-      "PACKAGES=(core faker validation query express react vue openapi angular cli schmock)",
+      "PACKAGES=(core faker validation query express react vue devtools openapi angular cli schmock)",
     );
     // Packages previously missing from the stale 8-package list.
     for (const pkg of ["react", "vue", "schmock"]) {

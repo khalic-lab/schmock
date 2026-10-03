@@ -1,0 +1,61 @@
+{
+  "name": "@schmock/devtools",
+  "version": "2.5.0",
+  "description": "Chrome DevTools visibility for Schmock mocks: console and Performance-panel reporting, and a service-worker relay for the Network panel",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khalic-lab/schmock.git",
+    "directory": "packages/devtools"
+  },
+  "homepage": "https://github.com/khalic-lab/schmock/tree/main/packages/devtools#readme",
+  "bugs": {
+    "url": "https://github.com/khalic-lab/schmock/issues"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "scripts": {
+    "clean": "rm -rf dist && rm -f tsconfig.tsbuildinfo",
+    "build": "bun run clean && bun run build:lib && bun run build:types",
+    "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts --external @schmock/core",
+    "build:types": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest --watch",
+    "test:bdd": "vitest run --config vitest.config.bdd.ts",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write --unsafe src/",
+    "check:publish": "publint && attw --pack --ignore-rules cjs-resolves-to-esm"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@schmock/core": "^2.5.0"
+  },
+  "devDependencies": {
+    "@amiceli/vitest-cucumber": "^7.0.0",
+    "@types/node": "^26.1.0",
+    "vitest": "^4.1.9"
+  },
+  "keywords": [
+    "schmock",
+    "mock",
+    "devtools",
+    "chrome",
+    "service-worker"
+  ],
+  "author": "Khalic Lab"
+}

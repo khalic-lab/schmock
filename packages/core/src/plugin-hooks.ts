@@ -1,5 +1,6 @@
 import type { DebugLogger } from "./debug-logger.js";
 import { errorMessage, SchmockError } from "./errors.js";
+import { snapshotNormalizedBody, snapshotRequestBody } from "./snapshot.js";
 
 type PluginHook = "install" | "uninstall";
 
@@ -18,13 +19,16 @@ const PLUGIN_HOOK_ERROR_CODES = {
 >;
 
 /**
- * Optional hooks that break the plugin when set to a truthy non-function:
- * `install` threw a TypeError from pipe() and `beforeRequest` failed every
- * matched request. Falsy values (`onError: null`, `install: false`) are how
- * callers switch a hook off and keep working; `onError`/`uninstall` failures
- * only ever surfaced on paths that already fail or log, so they are left alone.
+ * Optional hooks rejected when set to a truthy non-function. `install` threw a
+ * TypeError from pipe() and `beforeRequest` failed every matched request, so
+ * rejecting them breaks no working setup. `onExchange` is new: no working
+ * setup relies on another shape, and a non-function would otherwise silently
+ * observe nothing. Falsy values (`onError: null`, `install: false`,
+ * `onExchange: undefined`) still switch a hook off. `onError`/`uninstall`
+ * failures only ever surfaced on paths that already fail or log, so they are
+ * left alone.
  */
-const EAGER_PLUGIN_HOOKS = ["install", "beforeRequest"] as const;
+const EAGER_PLUGIN_HOOKS = ["install", "beforeRequest", "onExchange"] as const;
 
 export function isThenable(value: unknown): value is PromiseLike<unknown> {
   return (
@@ -56,8 +60,10 @@ function describeInvalidPlugin(plugin: unknown): string | undefined {
 
 /**
  * Reject, when it is piped, a plugin that could never work: one without a
- * `process` function answered every matched request with a 500 instead.
- * Only shapes that already failed are rejected, so no working setup breaks.
+ * `process` function (it answered every matched request with a 500), or one
+ * whose `install`, `beforeRequest` or `onExchange` is a truthy non-function.
+ * The `install` and `beforeRequest` shapes already failed before this check;
+ * `onExchange` is new, so no working setup breaks.
  */
 export function assertValidPlugin(
   plugin: unknown,
@@ -77,6 +83,97 @@ export function assertValidPlugin(
       reason,
     },
   );
+}
+
+/** Whether any plugin observes exchanges (a function `onExchange`). */
+export function hasExchangeObserver(
+  plugins: readonly Schmock.Plugin[],
+): boolean {
+  return plugins.some((plugin) => typeof plugin.onExchange === "function");
+}
+
+/** A fresh, frozen copy of an exchange, built for one observer. */
+function snapshotExchange(exchange: Schmock.Exchange): Schmock.Exchange {
+  const { request } = exchange;
+  const requestCopy = Object.freeze({
+    method: request.method,
+    url: request.url,
+    headers: Object.freeze({ ...request.headers }),
+    ...(request.body !== undefined
+      ? { body: snapshotRequestBody(request.body) }
+      : {}),
+  });
+  const { startTime, endTime } = exchange;
+  if (exchange.outcome === "answered") {
+    const { response } = exchange;
+    return Object.freeze({
+      outcome: exchange.outcome,
+      request: requestCopy,
+      response: Object.freeze({
+        status: response.status,
+        headers: Object.freeze({ ...response.headers }),
+        ...(response.body !== undefined
+          ? { body: snapshotNormalizedBody(response.body) }
+          : {}),
+      }),
+      startTime,
+      endTime,
+    });
+  }
+  if (exchange.outcome === "failed") {
+    return Object.freeze({
+      outcome: exchange.outcome,
+      request: requestCopy,
+      error: exchange.error,
+      startTime,
+      endTime,
+    });
+  }
+  return Object.freeze({
+    outcome: exchange.outcome,
+    request: requestCopy,
+    startTime,
+    endTime,
+  });
+}
+
+/**
+ * Report one settled exchange to each plugin's `onExchange`, in pipe order.
+ * Every observer gets its own frozen snapshot, built right before its call, so
+ * none sees or alters another's copy. A throwing or rejecting observer is
+ * logged and never stops the others. Reporting stops as soon as `isLive`
+ * returns false.
+ */
+export function runExchangeHooks(input: {
+  plugins: readonly Schmock.Plugin[];
+  exchange: Schmock.Exchange;
+  logger: Pick<DebugLogger, "log">;
+  isLive?: () => boolean;
+}): void {
+  const { plugins, exchange, logger, isLive } = input;
+  for (const plugin of plugins) {
+    if (isLive !== undefined && !isLive()) return;
+    try {
+      const observe: unknown = plugin.onExchange;
+      if (typeof observe !== "function") continue;
+      const result: unknown = Reflect.apply(observe, plugin, [
+        snapshotExchange(exchange),
+      ]);
+      if (isThenable(result)) {
+        void Promise.resolve(result).catch((error: unknown) => {
+          logger.log(
+            "plugin",
+            `Plugin ${plugin.name} onExchange rejected: ${errorMessage(error)}`,
+          );
+        });
+      }
+    } catch (error) {
+      logger.log(
+        "plugin",
+        `Plugin ${plugin.name} onExchange failed: ${errorMessage(error)}`,
+      );
+    }
+  }
 }
 
 /** The live reads a hook's instance forwards to the mock. */

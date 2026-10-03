@@ -9,7 +9,7 @@ set -euo pipefail
 #   bun run publish -- openapi --execute --confirm openapi@vX.Y.Z:<40-char-commit>
 #
 # With no arguments this runs every check a release runs — the release preflight
-# (11 synchronized manifests, lockfile parity, clean canonical `main`), the full
+# (12 synchronized manifests, lockfile parity, clean canonical `main`), the full
 # quality gate, and the dry-run plan — then prints the exact execute command and
 # stops. Nothing is published, pushed, or tagged.
 #
@@ -71,7 +71,7 @@ HEAD_SHA=$(git rev-parse HEAD)
 
 echo ""
 echo "All checks passed. Nothing has been published, pushed, or tagged."
-echo "To publish all 11 packages at ${VERSION}, push main and create the v${VERSION} release:"
+echo "To publish all 12 packages at ${VERSION}, push main and create the v${VERSION} release:"
 echo ""
 echo "    bun run publish -- all --execute --confirm all@v${VERSION}:${HEAD_SHA}"
 echo ""

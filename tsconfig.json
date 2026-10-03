@@ -22,6 +22,7 @@
       "@schmock/query": ["./packages/query/src"],
       "@schmock/openapi": ["./packages/openapi/src"],
       "@schmock/cli": ["./packages/cli/src"],
+      "@schmock/devtools": ["./packages/devtools/src"],
       "@schmock/schmock": ["./packages/schmock/src"],
       "@features/*": ["./features/*"]
     }

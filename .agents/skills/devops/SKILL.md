@@ -1,6 +1,6 @@
 ---
 name: devops
-description: Plan and execute guarded releases for the 11-package Schmock monorepo, including synchronized version bumps, npm publishing, and one GitHub release. Use only when explicitly invoked for release work; never change manifests, publish, push, or create a release without the user's explicit approval of the exact version and scope.
+description: Plan and execute guarded releases for the 12-package Schmock monorepo, including synchronized version bumps, npm publishing, and one GitHub release. Use only when explicitly invoked for release work; never change manifests, publish, push, or create a release without the user's explicit approval of the exact version and scope.
 ---
 
 # Schmock Release Operations
@@ -11,23 +11,23 @@ permission for a later boundary from an earlier request.
 
 ## Current release topology
 
-The release version is synchronized across these 11 workspaces:
+The release version is synchronized across these 12 workspaces:
 
-`core`, `faker`, `validation`, `query`, `express`, `react`, `vue`, `openapi`,
-`angular`, `cli`, `schmock`.
+`core`, `faker`, `validation`, `query`, `express`, `react`, `vue`, `devtools`,
+`openapi`, `angular`, `cli`, `schmock`.
 
 Publish in this dependency order:
 
 1. `core`
 2. `faker`
-3. `validation`, `query`, `express`, `react`, `vue`
+3. `validation`, `query`, `express`, `react`, `vue`, `devtools`
 4. `openapi`
 5. `angular`
 6. `cli`
 7. `schmock`
 
 Read the live version from all `packages/*/package.json` files before acting.
-Stop if there are not exactly 11 manifests, names do not match their directory,
+Stop if there are not exactly 12 manifests, names do not match their directory,
 versions are not synchronized, or `bun.lock` does not contain exact matching
 workspace records and workspace resolutions. To run only this local check:
 
@@ -64,7 +64,7 @@ reachable as `bun run publish -- <args>`.
    bun .agents/skills/devops/scripts/bump.ts patch --apply
    ```
 
-4. Inspect the 11 manifest diffs and cross-workspace ranges. Run the full
+4. Inspect the 12 manifest diffs and cross-workspace ranges. Run the full
    quality gate, then commit the bump only if the user asked for a commit.
 
 5. On a clean `main` checkout containing the committed bump, preview every
@@ -91,7 +91,7 @@ release, but still requires the exact confirmation token.
 ## Script guarantees
 
 - `bump.ts` defaults to dry-run and writes only with `--apply`.
-- Applied bumps update the 11 manifests and exact `bun.lock` workspace records
+- Applied bumps update the 12 manifests and exact `bun.lock` workspace records
   in one guarded transaction. Writes use same-directory atomic replacement,
   reject stale snapshots, and roll back only files still owned by the failed
   transaction.

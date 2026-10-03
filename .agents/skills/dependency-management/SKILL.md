@@ -29,7 +29,7 @@ failures from that command, `bun audit`, and `bun run check:publish`.
 
 ## Workspace invariants
 
-The repository has 11 synchronized workspaces. Read the live version and all
+The repository has 12 synchronized workspaces. Read the live version and all
 dependency ranges from `packages/*/package.json`; stop if versions differ.
 
 | Workspace | Important runtime or peer dependencies |

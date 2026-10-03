@@ -45,6 +45,7 @@ After living with it in day-to-day development, these are the parts that have ma
 | [`@schmock/angular`](./docs/angular.md) | Angular HTTP interceptor adapter |
 | [`@schmock/react`](./docs/react.md) | React provider, hook, and testing utilities |
 | [`@schmock/vue`](./docs/vue.md) | Vue plugin and composable |
+| [`@schmock/devtools`](./docs/devtools.md) | Chrome DevTools reporting for mocked requests |
 | [`@schmock/cli`](./docs/cli.md) | Standalone CLI mock server |
 | [`@schmock/schmock`](./packages/schmock/README.md) | Aggregate package for Core, non-framework plugins, and CLI |
 
@@ -193,6 +194,7 @@ schmock petstore.yaml --port 8080 --cors --seed seed.json
 | [Angular Adapter](./docs/angular.md) | Angular interceptor, helpers, TestBed setup |
 | [React Adapter](./docs/react.md) | Provider, hook, fetch interception, and testing helper |
 | [Vue Adapter](./docs/vue.md) | Plugin, composable, and fetch interception |
+| [DevTools](./docs/devtools.md) | Mocked requests in the Chrome console and Performance panel |
 | [CLI](./docs/cli.md) | Command-line mock server |
 | [Plugin Development](./docs/plugins.md) | Writing custom plugins |
 | [API Reference](./docs/api.md) | Complete type and method reference |

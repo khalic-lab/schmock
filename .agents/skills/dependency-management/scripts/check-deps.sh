@@ -9,7 +9,7 @@ set -euo pipefail
 #   check-deps.sh check|outdated|publish|audit --execute
 
 PACKAGES=(
-  core faker validation query express react vue openapi angular cli schmock
+  core faker validation query express react vue devtools openapi angular cli schmock
 )
 
 TARGET="${1:-preflight}"

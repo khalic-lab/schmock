@@ -13,8 +13,12 @@ interface Plugin {
   beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
+  onExchange?(exchange: Exchange): void | Promise<void>
 }
 ```
+
+`onExchange` observes what a fetch caller finally received. See
+[Observing exchanges](#observing-exchanges).
 
 `install()` and `uninstall()` return `PluginHookResult`, exported from
 `@schmock/core`: any value that is not a thenable, and the value is ignored. An
@@ -44,10 +48,11 @@ uninstall is still pending (a request was in flight at `reset()`) runs that
 uninstall immediately, before the new `install()`.
 
 `pipe()` throws `SchmockError` `PLUGIN_INVALID` for a plugin that could never
-work: a non-object, a missing or non-function `process`, or an `install` or
-`beforeRequest` set to a truthy non-function. Falsy hooks (`onError: null`,
-`install: false`) are accepted. Piping the same plugin object again is a no-op,
-and debug mode logs `Plugin <name> is already piped into this mock — ignored`.
+work: a non-object, a missing or non-function `process`, or an `install`,
+`beforeRequest` or `onExchange` set to a truthy non-function. Falsy hooks
+(`onError: null`, `install: false`) are accepted. Piping the same plugin object
+again is a no-op, and debug mode logs
+`Plugin <name> is already piped into this mock — ignored`.
 Distinct objects with the same name, such as two `openapi()` plugins, still
 stack.
 
@@ -177,6 +182,31 @@ function autoRoutesPlugin(routes: Record<string, Function>): Schmock.Plugin {
 }
 ```
 
+### Observer — Watch what callers received
+
+```typescript
+function slowRequestPlugin(thresholdMs: number): Schmock.Plugin {
+  return {
+    name: 'slow-requests',
+    // Identity process: an observer never changes the response
+    process(context, response) {
+      return { context, response }
+    },
+    onExchange(exchange) {
+      const duration = exchange.endTime - exchange.startTime
+      if (duration < thresholdMs) return
+      const { method, url } = exchange.request
+      const outcome =
+        exchange.outcome === 'answered' ? exchange.response.status : exchange.outcome
+      console.warn(`${method} ${url} took ${duration.toFixed(0)} ms (${outcome})`)
+    },
+  }
+}
+```
+
+`process` is still required, so an observer passes the response through
+unchanged. See [Observing exchanges](#observing-exchanges).
+
 ## Context and State
 
 The `PluginContext` provides request data:
@@ -236,6 +266,66 @@ Return values from `onError`:
 - `ResponseResult` — converts to a response, stops error propagation
 - `Error` — replaces the error, continues propagation
 - `void` — continues propagation with original error
+
+## Observing exchanges
+
+`onExchange` receives each request the mock settled through `mock.intercept()`,
+as its caller saw it end. That includes the leases React's `SchmockProvider`
+and Vue's `schmockPlugin` take. The argument is an `Exchange`, with one of three
+outcomes:
+
+- `'answered'`: `response` (`{ status, headers, body? }`) is what the caller
+  received, after the adapter's `beforeResponse` and `errorFormatter`. With
+  `passthrough: false` that includes the 404 for an unrouted request and the
+  400 for a malformed JSON body.
+- `'failed'`: the caller's `fetch` rejected, and `error` is the value it
+  rejected with.
+- `'aborted'`: the caller aborted while this mock was answering.
+
+Every exchange also has `request` (`{ method, url, headers, body? }`, as the
+client sent it, before `beforeRequest`) and `startTime`/`endTime`
+(`performance.now()` values). See the [Plugin Interface](./api.md#plugin-interface)
+reference for the full shapes.
+
+```typescript
+const failures: Schmock.FailedExchange[] = []
+
+mock.pipe({
+  name: 'failure-log',
+  process: (context, response) => ({ context, response }),
+  onExchange(exchange) {
+    if (exchange.outcome === 'failed') failures.push(exchange)
+  },
+})
+mock.intercept()
+```
+
+How it runs:
+
+- **Once per request, for the mock that settled it.** When several mocks
+  intercept, a mock that missed the request sees nothing. Observers run in
+  `.pipe()` order, synchronously, before the caller's `fetch` settles. A
+  returned promise is not awaited.
+- **On its own copy.** Each observer gets a snapshot built just for it. The
+  exchange, `request`, `response` and both header records are frozen. Bodies
+  are `structuredClone` copies, so an observer that edits one changes neither
+  the route's data nor another observer's view. A body that cannot be cloned
+  arrives as an `unavailable` descriptor, and `FormData` is copied entry by
+  entry. `error` is not copied: it is the exact value the fetch rejected with.
+- **In isolation.** A throw or a rejected promise never reaches the caller and
+  never stops the next observer. It is logged under the `PLUGIN` debug
+  category, which prints only with `schmock({ debug: true })`.
+- **Within one plugin generation.** Core captures the mock's plugins when a
+  request reaches the mock. It reports to them only if no `reset()` ran before
+  the request settled. An observer piped while a request is in flight does not
+  see that request. `reset()` drops observers but keeps `intercept()` leases,
+  so pipe observers again after a reset.
+- **Never for `mock.handle()`.** Requests passed through to the network are not
+  observed either, and neither are the transports built on `mock.handle()`:
+  `mock.listen()`, Express, the CLI and Angular's `provideSchmockInterceptor`.
+
+When no piped plugin has an `onExchange`, core builds no exchange at all.
+`@schmock/devtools` is a complete observer: see the [DevTools guide](./devtools.md).
 
 ## Chaining
 
@@ -348,6 +438,7 @@ These serve as reference implementations:
 | `@schmock/validation` | Guard | Validate requests/responses with AJV |
 | `@schmock/query` | Transformer | Pagination, sorting, filtering |
 | `@schmock/openapi` | Install hook | Auto-register routes from spec |
+| `@schmock/devtools` | Observer | Report mocked requests to Chrome DevTools |
 
 Plugin options are trusted configuration, not request data. Schemas handed to
 `@schmock/validation` or `@schmock/faker` compile to native regular expressions

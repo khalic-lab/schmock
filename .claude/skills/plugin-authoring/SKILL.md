@@ -23,6 +23,7 @@ interface Plugin {
   beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>;
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>;
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
+  onExchange?(exchange: Exchange): void | Promise<void>;
 }
 ```
 
@@ -35,6 +36,8 @@ interface Plugin {
   short-circuits the generator; returning only a context passes request changes
   into it.
 - `process()` runs after the generator and transforms its result.
+- `onExchange()` observes a request the mock settled through `mock.intercept()`,
+  as its caller received it. See "Observer plugins" below.
 
 ## PluginContext
 
@@ -98,6 +101,29 @@ mock('GET /users', () => defaultData);
 - **Return an `Error`** — replace the error (transformed error propagates)
 - **Return `ResponseResult`** — suppress the error, use this as the response
 - **Return `void`/`undefined`** — error propagates unchanged
+
+## Observer plugins
+
+A plugin that only watches traffic implements `onExchange` and an identity
+`process`. `process` is still required, so `pipe()` rejects an observer without
+it with `PLUGIN_INVALID`:
+
+```typescript
+process: (context, response) => ({ context, response }),
+onExchange(exchange) { /* report it */ },
+```
+
+- `onExchange` runs after the transport has answered, once per request the
+  mock settled through `mock.intercept()` (answered, failed or aborted). It
+  sees the final response, after `beforeResponse` and `errorFormatter`.
+- It never changes the response. Its return value is ignored, a promise is not
+  awaited, and a throw or rejection is only logged (debug category `plugin`).
+- Each observer gets its own frozen snapshot with copied bodies.
+- It is not called for `mock.handle()`, for passthrough, or for requests that
+  started before the plugin was piped or before the last `reset()`.
+- Narrow on `exchange.outcome` before reading `response` or `error`.
+
+`packages/devtools/src/index.ts` (`devtoolsPlugin`) is the reference observer.
 
 ## Reference Implementation: `fakerPlugin`
 

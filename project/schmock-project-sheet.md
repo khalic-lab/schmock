@@ -28,6 +28,7 @@ A lightweight, framework-agnostic tool that provides immediate callable mock API
 | `@schmock/cli` | Standalone CLI server from OpenAPI specs |
 | `@schmock/react` | React provider, hook, and testing utilities |
 | `@schmock/vue` | Vue plugin and composable |
+| `@schmock/devtools` | Chrome DevTools reporting plugin ([docs](../docs/devtools.md)) |
 | `@schmock/schmock` | Aggregate package for Core, non-framework plugins, and CLI |
 
 ### Package Structure
@@ -44,6 +45,7 @@ schmock/
 │   ├── cli/            # Standalone CLI server
 │   ├── react/          # React provider, hook, and testing utilities
 │   ├── vue/            # Vue plugin and composable
+│   ├── devtools/       # Chrome DevTools reporting plugin
 │   └── schmock/        # Core + non-framework plugins + CLI aggregate
 ├── features/           # BDD test specifications
 ├── docs/               # API documentation

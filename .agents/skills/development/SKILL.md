@@ -16,7 +16,7 @@ repository themselves and do not depend on a particular agent directory.
 
 - Read the relevant package manifest and nearby implementation and tests.
 - Treat the root workspace configuration as authoritative. The repository
-  currently has eleven `@schmock/*` workspaces; scripts discover them live
+  currently has twelve `@schmock/*` workspaces; scripts discover them live
   rather than maintaining a package allowlist.
 - Treat `packages/core/schmock.d.ts` as the shared ambient-type source of truth.
 - Search existing `features/*.feature` scenarios before adding a new feature.

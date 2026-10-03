@@ -25,6 +25,7 @@ const PACKAGES = [
   "express",
   "react",
   "vue",
+  "devtools",
   "openapi",
   "angular",
   "cli",
@@ -229,7 +230,7 @@ describe("publish.sh", () => {
   it("defaults to a local-only preflight", () => {
     const result = run([]);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("11 workspaces synchronized at 2.2.3");
+    expect(result.stdout).toContain("12 workspaces synchronized at 2.2.3");
     expect(result.stdout).toContain("No external actions executed");
     expect(commands()).toBe(
       `bun ${BUMP_SCRIPT} check-lockfile\ngit branch --show-current\ngit status --porcelain\ngit remote get-url origin\ngit remote get-url --push origin\ngit rev-parse HEAD\n`,
@@ -248,11 +249,11 @@ describe("publish.sh", () => {
     expect(commands()).toBe(`bun ${BUMP_SCRIPT} check-lockfile\n`);
   });
 
-  it("dry-runs all 11 packages without executing external commands", () => {
+  it("dry-runs all 12 packages without executing external commands", () => {
     const result = run(["all", "--dry-run"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("no registry queries");
-    expect(result.stdout.match(/npm publish \.\/packages\//g)).toHaveLength(11);
+    expect(result.stdout.match(/npm publish \.\/packages\//g)).toHaveLength(12);
     expect(result.stdout).toContain("git push origin main");
     expect(result.stdout).toContain("gh release create v2.2.3");
     expect(result.stdout).toContain("bun run lint");
@@ -352,13 +353,13 @@ describe("publish.sh", () => {
     expect(lines).toContain(
       "npm whoami --registry https://registry.npmjs.org/",
     );
-    expect(views).toHaveLength(11);
-    expect(publishes).toHaveLength(11);
+    expect(views).toHaveLength(12);
+    expect(publishes).toHaveLength(12);
     expect(Math.max(...views)).toBeLessThan(Math.min(...publishes));
     expect(lines).toContain("git push --dry-run origin main");
     expect(lines).toContain("git push origin main");
     expect(lines).toContain(
-      `gh release create v2.2.3 --repo khalic-lab/schmock --target ${HEAD_SHA} --title v2.2.3 --notes Release v2.2.3 — all 11 @schmock/* packages.`,
+      `gh release create v2.2.3 --repo khalic-lab/schmock --target ${HEAD_SHA} --title v2.2.3 --notes Release v2.2.3 — all 12 @schmock/* packages.`,
     );
   });
 

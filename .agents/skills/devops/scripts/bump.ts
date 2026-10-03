@@ -28,6 +28,7 @@ const EXPECTED_PACKAGES = [
   "express",
   "react",
   "vue",
+  "devtools",
   "openapi",
   "angular",
   "cli",

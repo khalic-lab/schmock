@@ -46,6 +46,7 @@ const expectedExports = new Map([
   ["@schmock/angular", ["createSchmockInterceptor"]],
   ["@schmock/cli", ["createCliServer", "parseCliArgs"]],
   ["@schmock/core", ["schmock"]],
+  ["@schmock/devtools", ["devtoolsPlugin"]],
   ["@schmock/express", ["toExpress"]],
   ["@schmock/faker", ["fakerPlugin"]],
   ["@schmock/openapi", ["openapi"]],

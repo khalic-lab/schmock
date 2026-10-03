@@ -26,6 +26,7 @@ Monorepo with 8 packages under `packages/`:
 | `@schmock/query` | Pagination, sorting, filtering for arrays | `@schmock/core` |
 | `@schmock/openapi` | Auto-register routes from OpenAPI specs | `@schmock/core`, `@schmock/faker` |
 | `@schmock/cli` | Standalone CLI server from OpenAPI specs | `@schmock/core`, `@schmock/openapi` |
+| `@schmock/devtools` | Chrome DevTools reporting plugin (console, Performance track) | `@schmock/core` |
 
 Key locations:
 

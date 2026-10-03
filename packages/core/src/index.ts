@@ -169,6 +169,7 @@ export {
 } from "./response-parser.js";
 // Re-export types
 export type {
+  AbortedExchange,
   AdapterRequest,
   AdapterRequestOverride,
   AdapterResponse,
@@ -177,13 +178,18 @@ export type {
    * copy will be removed in the next major version.
    */
   AngularAdapterOptions,
+  AnsweredExchange,
   CallableMockInstance,
   CrudOperationMeta,
+  Exchange,
+  ExchangeRequest,
+  ExchangeResponse,
   /**
    * @deprecated Import `ExpressAdapterOptions` from `@schmock/express`; this
    * copy will be removed in the next major version.
    */
   ExpressAdapterOptions,
+  FailedExchange,
   FakerPluginOptions,
   FormattedErrorOptions,
   Generator,

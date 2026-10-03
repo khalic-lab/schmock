@@ -171,6 +171,37 @@ function DevTools() {
 
 Throws if used outside a `SchmockProvider`.
 
+## Seeing mocked requests in Chrome DevTools
+
+Requests the provider mocks never reach the network, so Chrome's Network panel
+does not list them. Pipe `devtoolsPlugin()` from `@schmock/devtools` into the
+mock to log each one as a collapsed console group and a Performance-panel
+track entry:
+
+```typescript
+import { schmock } from '@schmock/core'
+import { devtoolsPlugin } from '@schmock/devtools'
+import { SchmockProvider } from '@schmock/react'
+
+const mock = schmock()
+mock.pipe(devtoolsPlugin())
+mock('GET /api/users', [{ id: 1, name: 'Alice' }])
+
+function App() {
+  return (
+    <SchmockProvider mock={mock}>
+      <YourApp />
+    </SchmockProvider>
+  )
+}
+```
+
+The provider needs no extra prop: the plugin observes the lease it already
+takes. This is unrelated to the `DevTools` component above, which is your own
+UI reading the mock. The plugin writes to the browser's DevTools instead.
+`mock.reset()` removes the plugin while the lease stays, so pipe it again after
+a reset. See the [DevTools guide](./devtools.md).
+
 ## Testing
 
 ### With SchmockProvider directly

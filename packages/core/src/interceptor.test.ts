@@ -977,6 +977,36 @@ describe("mock.intercept()", () => {
     }
   });
 
+  it("answers and releases the admission when its hasRoute getter throws", async () => {
+    const handleRequest = vi.fn(
+      async (): Promise<Schmock.Response> => ({
+        status: 200,
+        body: { ok: true },
+        headers: {},
+      }),
+    );
+    const release = vi.fn();
+    const interceptor = createFetchInterceptor(
+      handleRequest,
+      { passthrough: false },
+      () => ({
+        handle: handleRequest,
+        release,
+        get hasRoute(): never {
+          throw new Error("getter boom");
+        },
+      }),
+    );
+
+    try {
+      const response = await fetch("http://localhost/api/probe");
+      expect(response.status).toBe(200);
+      expect(release).toHaveBeenCalledTimes(1);
+    } finally {
+      interceptor.restore();
+    }
+  });
+
   it("forwards the effective AbortSignal to handle request options", async () => {
     const handleRequest = vi.fn(
       async (): Promise<Schmock.Response> => ({

@@ -25,8 +25,8 @@ End-to-end release flow:
 
 ## Version Management
 
-11 packages with synchronized versions tracked in `packages/*/package.json`:
-`core`, `faker`, `validation`, `query`, `express`, `react`, `vue`, `openapi`, `angular`, `cli`, `schmock`.
+12 packages with synchronized versions tracked in `packages/*/package.json`:
+`core`, `faker`, `validation`, `query`, `express`, `react`, `vue`, `devtools`, `openapi`, `angular`, `cli`, `schmock`.
 
 ### Current Versions
 

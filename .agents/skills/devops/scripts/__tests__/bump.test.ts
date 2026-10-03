@@ -20,6 +20,7 @@ const PACKAGES = [
   "express",
   "react",
   "vue",
+  "devtools",
   "openapi",
   "angular",
   "cli",
@@ -158,7 +159,7 @@ describe("bump.ts", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain(
-      "bun.lock matches all 11 workspace manifests at 2.2.3",
+      "bun.lock matches all 12 workspace manifests at 2.2.3",
     );
     expect(readFileSync(lockfilePath(), "utf-8")).toBe(before);
   });
@@ -219,7 +220,7 @@ describe("bump.ts", () => {
     );
     const result = run(["patch"]);
     expect(result, result.output).toMatchObject({ exitCode: 0 });
-    expect(result.output).toContain("DRY RUN: patch bump for 11 workspaces");
+    expect(result.output).toContain("DRY RUN: patch bump for 12 workspaces");
     expect(result.output).toContain("2.2.3 -> 2.2.4");
     expect(result.output).toContain("exact workspace records refreshed");
     expect(result.output).toContain("No files written");
@@ -352,11 +353,11 @@ describe("bump.ts", () => {
     expect(readLockedVersion("core")).toBe("2.2.2");
   });
 
-  it("requires the exact 11-workspace topology", () => {
+  it("requires the exact 12-workspace topology", () => {
     rmSync(manifestPath("react"));
     const result = run(["patch", "--apply"]);
     expect(result.exitCode).not.toBe(0);
-    expect(result.output).toContain("expected exactly 11 workspaces");
+    expect(result.output).toContain("expected exactly 12 workspaces");
     expect(readManifest("core").version).toBe("2.2.3");
   });
 });

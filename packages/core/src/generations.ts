@@ -30,6 +30,14 @@ export class RequestGenerations {
     return generation === this.#current;
   }
 
+  /**
+   * The live generation, for a caller to compare later with `isCurrent()`.
+   * Reading it admits nothing and never runs an uninstall.
+   */
+  get current(): RequestGeneration {
+    return this.#current;
+  }
+
   /** Count one more in-flight request in the current generation. */
   admit(): RequestGeneration {
     const generation = this.#current;

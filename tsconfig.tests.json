@@ -21,6 +21,7 @@
       "@schmock/react": ["./packages/react/src"],
       "@schmock/react/testing": ["./packages/react/src/testing"],
       "@schmock/vue": ["./packages/vue/src"],
+      "@schmock/devtools": ["./packages/devtools/src"],
       "@schmock/schmock": ["./packages/schmock/src"],
       "@features/*": ["./features/*"]
     }

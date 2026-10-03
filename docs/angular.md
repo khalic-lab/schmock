@@ -176,6 +176,47 @@ runtime, so an app that does not install it still bundles cleanly with
 Webpack-based builders may print a harmless
 `Critical dependency: the request of a dependency is an expression` warning.
 
+## Chrome DevTools
+
+`@schmock/devtools` reports the requests a mock answers through
+`mock.intercept()`. `provideSchmockInterceptor` answers through `mock.handle()`
+inside Angular's interceptor chain instead, so its requests are not reported.
+To see them in the console and the Performance panel, switch `HttpClient` to
+the fetch backend and intercept `fetch`:
+
+```typescript
+import { provideHttpClient, withFetch } from '@angular/common/http'
+import { schmock } from '@schmock/core'
+import { devtoolsPlugin } from '@schmock/devtools'
+
+const mock = schmock()
+mock.pipe(devtoolsPlugin())
+mock('GET /api/users', [{ id: 1, name: 'Alice' }])
+mock.intercept({ baseUrl: '/api' })
+
+export const appConfig = {
+  providers: [provideHttpClient(withFetch())],
+}
+```
+
+`withFetch()` sends every request through `globalThis.fetch`, which
+`mock.intercept()` patches. Leave `provideSchmockInterceptor` out of the
+providers: it would answer first, and nothing would be reported.
+
+What changes on this path:
+
+- `mock.intercept()`'s `baseUrl` filters requests but does not strip the
+  prefix, so routes use the full path: `GET /api/users`, not `GET /users`.
+- `transformRequest` and `transformResponse` do not apply. Use the
+  [`intercept()` options](./api.md#interceptoptions) `beforeRequest`,
+  `beforeResponse` and `errorFormatter`, whose hooks receive an
+  `AdapterRequest` rather than Angular's `HttpRequest`.
+- With `passthrough: false`, an unrouted request gets
+  `{ error: 'No matching mock route found', code: 'ROUTE_NOT_FOUND' }` instead
+  of `{ message: 'No matching mock route found' }`.
+
+See the [DevTools guide](./devtools.md).
+
 ## Helper Functions
 
 Utility functions for building responses:

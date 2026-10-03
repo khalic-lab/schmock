@@ -16,10 +16,16 @@ import { RequestGenerations } from "./generations.js";
 import { redactHeaders } from "./headers.js";
 import type { RequestHistorySnapshot } from "./history.js";
 import { RequestHistory } from "./history.js";
-import { createFetchLease, NORMALIZED_ADMISSION_KEY } from "./interceptor.js";
+import {
+  createFetchLease,
+  type ExchangeObserver,
+  NORMALIZED_ADMISSION_KEY,
+} from "./interceptor.js";
 import { NodeServerController } from "./node-server.js";
 import {
   assertValidPlugin,
+  hasExchangeObserver,
+  runExchangeHooks,
   runInstallHook,
   runUninstallHooks,
 } from "./plugin-hooks.js";
@@ -389,6 +395,7 @@ export class CallableMockInstance {
       options,
       admitRequest: () => this.createRequestAdmission(),
       owner: this.interceptOwner,
+      observe: () => this.#openExchangeObservation(),
     });
 
     const handle: Schmock.InterceptHandle = {
@@ -416,6 +423,27 @@ export class CallableMockInstance {
     );
 
     return handle;
+  }
+
+  /**
+   * Called by the lease right before it consults this mock about one request.
+   * It captures the plugins and the generation the request is admitted under,
+   * so observers piped later, or retired by reset(), never see it.
+   */
+  #openExchangeObservation(): ExchangeObserver | undefined {
+    const plugins = this.plugins; // replaced, never mutated
+    if (!hasExchangeObserver(plugins)) return undefined; // no exchange is built
+    const generation = this.generations.current;
+    // Same gate as events and history, checked before each observer: one
+    // observer may reset() the mock and uninstall the ones after it.
+    return (exchange) => {
+      runExchangeHooks({
+        plugins,
+        exchange,
+        logger: this.logger,
+        isLive: () => this.generations.isCurrent(generation),
+      });
+    };
   }
 
   // ===== Request Handling =====

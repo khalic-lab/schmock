@@ -160,10 +160,11 @@ pipe(plugin: Plugin): CallableMockInstance
 ```
 
 `pipe()` throws `SchmockError` `PLUGIN_INVALID` for a plugin that could never
-work: a non-object, a missing or non-function `process`, or an `install` or
-`beforeRequest` set to a truthy non-function. Falsy hooks (`onError: null`,
-`install: false`) are accepted. Piping the same plugin object again is a no-op,
-and debug mode logs `Plugin <name> is already piped into this mock — ignored`.
+work: a non-object, a missing or non-function `process`, or an `install`,
+`beforeRequest` or `onExchange` set to a truthy non-function. Falsy hooks
+(`onError: null`, `install: false`) are accepted. Piping the same plugin object
+again is a no-op, and debug mode logs
+`Plugin <name> is already piped into this mock — ignored`.
 Distinct objects with the same name, such as two `openapi()` plugins, still
 stack.
 
@@ -233,6 +234,10 @@ off<E extends SchmockEvent>(event: E, listener: (data: SchmockEventMap[E]) => vo
 | `request:match` | `{ method, path, routePath, params }` |
 | `request:notfound` | `{ method, path }` |
 | `request:end` | `{ method, path, status, duration }` |
+
+Events describe the mock's own handling: `request:end` fires before an
+adapter's `beforeResponse` and `errorFormatter` run, and carries no bodies. For
+what a caller finally received, use [`Plugin.onExchange`](#plugin-interface).
 
 Event payloads and listener sets are immutable snapshots for each emission.
 Listener failures are isolated from the request, and returned promises are
@@ -455,6 +460,7 @@ interface Plugin {
   beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
+  onExchange?(exchange: Exchange): void | Promise<void>
 }
 
 interface PluginContext {
@@ -520,6 +526,61 @@ copied deeply, but only its arrays and plain objects; Dates, binary values and
 class instances are passed by reference. `context.route` is a shallow copy, so
 custom route data nested inside it is shared.
 
+`onExchange` observes what a fetch caller finally received. Core calls it once
+for each request the mock settled through `mock.intercept()` (answered, failed,
+or aborted while the mock was answering), after every adapter hook, in
+`.pipe()` order and before the caller's `fetch` settles:
+
+```typescript
+type Exchange = AnsweredExchange | FailedExchange | AbortedExchange
+
+interface ExchangeRequest {
+  readonly method: string                             // as the client sent it, before beforeRequest
+  readonly url: string                                // absolute, without the fragment
+  readonly headers: Readonly<Record<string, string>>  // names lowercased
+  readonly body?: unknown                             // as the mock read it; absent when none or never read
+}
+
+interface ExchangeResponse {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string>>  // of the Response the client received
+  readonly body?: unknown                             // before serialization; absent when none (HEAD, 204)
+}
+
+interface AnsweredExchange {
+  readonly outcome: 'answered'
+  readonly request: ExchangeRequest
+  readonly response: ExchangeResponse   // after beforeResponse and errorFormatter
+  readonly startTime: number            // performance.now() when the transport received the request
+  readonly endTime: number              // performance.now() when the caller's outcome settled
+}
+
+interface FailedExchange {
+  readonly outcome: 'failed'
+  readonly request: ExchangeRequest
+  readonly error: unknown               // exactly what the caller's fetch rejected with
+  readonly startTime: number
+  readonly endTime: number
+}
+
+interface AbortedExchange {
+  readonly outcome: 'aborted'
+  readonly request: ExchangeRequest
+  readonly startTime: number
+  readonly endTime: number
+}
+```
+
+An answered exchange includes the 404 for an unrouted request and the 400 for
+a malformed JSON body when `passthrough` is `false`. Requests passed on to the
+network are not observed, nor are `mock.handle()` calls, nor requests that
+reached the mock before the observer was piped or before the last `reset()`.
+Each observer gets its own snapshot: the exchange, `request`, `response` and
+both header records are frozen, and bodies are copies (`error` keeps its
+identity). The return value is ignored and a promise is not awaited. A throw or
+rejection is logged under the `PLUGIN` debug category and never reaches the
+caller. See [Observing exchanges](./plugins.md#observing-exchanges).
+
 ### Error Classes
 
 All extend `SchmockError`:
@@ -548,6 +609,10 @@ When a resource-limit breach has a location, `path` is the schema path
 `$.properties.a.faker` for a faker argument) and the message ends with
 ` at <path>`:
 `Resource limit exceeded for array_max_items: limit=10000, actual=20000 at $.properties.a.properties.b`.
+
+Plugin packages throw a plain `SchmockError` with their own code for invalid
+options. `@schmock/devtools` uses `DEVTOOLS_CONFIG_INVALID`, with context
+`{ option, received }`; see [DevTools](#devtools-schmockdevtools).
 
 `HttpIngressError`, thrown by `collectBody()`, is the one exception: it extends
 plain `Error`, not `SchmockError`. See
@@ -1007,6 +1072,7 @@ also on the ambient `Schmock` namespace.
 | `ResponseParts`, `PathPrefix`, `FormattedErrorOptions` | the utility types above |
 | `ServeNodeRequestOptions`, `ServeNodeResponseContext`, `HttpErrorReply`, `HttpIngressErrorCode` | `serveNodeRequest()` and `collectBody()` |
 | `NodeRequestLike`, `NodeResponseLike` | the structural `req` and `res` `serveNodeRequest()` accepts |
+| `Exchange`, `AnsweredExchange`, `FailedExchange`, `AbortedExchange`, `ExchangeRequest`, `ExchangeResponse` | what `Plugin.onExchange` receives (see [Plugin Interface](#plugin-interface)) |
 | `PluginHookResult` | what `install()` and `uninstall()` may return: anything but a thenable |
 
 ---
@@ -1654,6 +1720,39 @@ Without a DOM it provides the mock but does not patch `fetch`.
 for an app that never intercepted.
 
 See the [Vue guide](./vue.md) for detailed usage.
+
+---
+
+## DevTools (`@schmock/devtools`)
+
+### `devtoolsPlugin(options?)`
+
+Report each request a mock answers through `mock.intercept()` to Chrome
+DevTools: one collapsed console group and one Performance-panel track entry.
+
+```typescript
+function devtoolsPlugin(options?: DevtoolsPluginOptions): Plugin
+
+interface DevtoolsPluginOptions {
+  console?: boolean      // default: true
+  performance?: boolean  // default: true
+  track?: string         // track name and console badge; default: 'Schmock'
+  trackGroup?: string    // Performance-panel track group; default: none
+}
+```
+
+`DevtoolsPluginOptions` is exported from `@schmock/devtools`. The returned
+plugin is named `devtools`. It has an identity `process` and an `onExchange`
+hook, so it never changes a response. Options are validated and copied when the
+plugin is created. Invalid ones throw `SchmockError` `DEVTOOLS_CONFIG_INVALID`
+with context `{ option, received }`, naming the first failure in this order:
+`options` must be an object, `console` and `performance` booleans, `track` and
+`trackGroup` non-empty strings.
+
+The Performance track needs Chrome 128 or later, a recording, and Capture
+settings → **Show custom tracks**.
+
+See the [DevTools guide](./devtools.md) for detailed usage.
 
 ---
 

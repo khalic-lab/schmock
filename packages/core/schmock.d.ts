@@ -190,6 +190,22 @@ declare namespace Schmock {
       error: Error,
       context: PluginContext,
     ): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
+
+    /**
+     * Observe what a client finally received. Called once for each request this
+     * mock settled through fetch interception (`mock.intercept()`, and the
+     * service-worker relay built on its leases): answered, failed, or aborted
+     * while the mock was answering it. It runs after every adapter hook, so it
+     * sees `beforeResponse` and `errorFormatter` output, the 404 for an
+     * unrouted request and the 400 for a malformed JSON body when passthrough
+     * is off. Not called for requests passed on to the network, for
+     * `mock.handle()`, or for requests that arrived before the last `reset()`
+     * or before this plugin was piped. Observation only: each observer gets its
+     * own frozen snapshot (bodies are copies), the return value is ignored, and
+     * a throw or rejection is logged under the `plugin` debug category without
+     * reaching the client.
+     */
+    onExchange?(exchange: Exchange): void | Promise<void>;
   }
 
   /**
@@ -821,6 +837,58 @@ declare namespace Schmock {
   };
 
   type SchmockEvent = keyof SchmockEventMap;
+
+  // ===== Exchange Observation =====
+
+  /** The request half of an {@link Exchange}: the request as its client sent it, before any adapter `beforeRequest` hook. */
+  interface ExchangeRequest {
+    /** The method as the client sent it. */
+    readonly method: string;
+    /** The absolute request URL without its fragment, as `Response.url` reports it (a relative fetch is resolved against the document base). */
+    readonly url: string;
+    /** Request headers, names lowercased. */
+    readonly headers: Readonly<Record<string, string>>;
+    /** The body as the mock read it (JSON value, text, form fields, FormData, ArrayBuffer); absent when the request had none or it was never read. The observer's own copy. */
+    readonly body?: unknown;
+  }
+
+  /** The response half of an {@link AnsweredExchange}: what the client received. */
+  interface ExchangeResponse {
+    readonly status: number;
+    /** Headers of the Response the client received, names lowercased. */
+    readonly headers: Readonly<Record<string, string>>;
+    /** The body before serialization; absent for none (HEAD, 204). The observer's own copy. */
+    readonly body?: unknown;
+  }
+
+  interface ExchangeBase {
+    readonly request: ExchangeRequest;
+    /** `performance.now()` when the transport received the request. */
+    readonly startTime: number;
+    /** `performance.now()` when the client's outcome was settled. */
+    readonly endTime: number;
+  }
+
+  /** The mock answered: `response` is what the client got after `beforeResponse` and `errorFormatter`, including the 404 for an unrouted request and the 400 for a malformed JSON body when passthrough is off. */
+  interface AnsweredExchange extends ExchangeBase {
+    readonly outcome: "answered";
+    readonly response: ExchangeResponse;
+  }
+
+  /** The client's request rejected with `error` (a hook or handler threw and no errorFormatter replaced it, or the formatter threw). */
+  interface FailedExchange extends ExchangeBase {
+    readonly outcome: "failed";
+    /** Exactly the value the client's request rejected with. */
+    readonly error: unknown;
+  }
+
+  /** The client aborted the request while this mock was answering it. */
+  interface AbortedExchange extends ExchangeBase {
+    readonly outcome: "aborted";
+  }
+
+  /** One request a transport delivered to a mock, as its client saw it end. Passed to `Plugin.onExchange`. */
+  type Exchange = AnsweredExchange | FailedExchange | AbortedExchange;
 
   // ===== Introspection Types =====
 

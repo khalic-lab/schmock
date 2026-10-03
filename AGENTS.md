@@ -23,6 +23,7 @@ Schmock is a Bun/TypeScript monorepo for an HTTP mocking library with a callable
 | `@schmock/angular` | Angular HTTP interceptor adapter |
 | `@schmock/react` | React provider, hooks, and test utilities |
 | `@schmock/vue` | Vue plugin and composables |
+| `@schmock/devtools` | Chrome DevTools reporting for intercepted requests (`docs/devtools.md`) |
 | `@schmock/cli` | Standalone server CLI |
 | `@schmock/schmock` | All-in-one aggregate package |
 
