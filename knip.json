@@ -28,6 +28,11 @@
         "src/*.browser.ts!"
       ]
     },
+    "packages/devtools": {
+      "entry": [
+        "src/schmock-sw.ts!"
+      ]
+    },
     "packages/angular": {
       "ignoreDependencies": [
         "@angular/platform-browser",

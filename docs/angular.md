@@ -217,6 +217,35 @@ What changes on this path:
 
 See the [DevTools guide](./devtools.md).
 
+### Network panel relay
+
+The service-worker relay lists mocked requests in the Network panel itself. It
+routes requests to `mock.intercept()` leases, so it needs the lease setup
+above: with `provideSchmockInterceptor`, the request is answered inside
+Angular and never reaches the worker. Copy the worker script once into the
+directory your app serves at the site root, then start the relay before
+bootstrapping:
+
+```sh
+npx schmock-devtools init public
+```
+
+```typescript
+import { bootstrapApplication } from '@angular/platform-browser'
+import { startServiceWorkerRelay } from '@schmock/devtools'
+import { AppComponent } from './app/app.component'
+
+startServiceWorkerRelay()
+  .then(() => bootstrapApplication(AppComponent, appConfig))
+  .catch((err) => console.error(err))
+```
+
+Under the relay, Angular's default XHR backend is relayed too, so
+`withFetch()` is not strictly needed there. Keep it: if the relay falls back,
+`fetch` is still mocked in the page and XHR is not mocked at all. Mocked
+requests show as Network rows with Size `(ServiceWorker)`. See
+[Network panel relay](./devtools.md#network-panel-relay).
+
 ## Helper Functions
 
 Utility functions for building responses:

@@ -29,7 +29,8 @@
   "include": [
     "packages/**/*.steps.ts",
     "packages/**/*.steps.tsx",
-    "packages/faker/src/test-utils.ts"
+    "packages/faker/src/test-utils.ts",
+    "packages/devtools/src/test-support/relay-harness.ts"
   ],
   "exclude": ["node_modules", "**/dist/**", "**/coverage/**"]
 }

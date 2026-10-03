@@ -2,7 +2,8 @@
 
 This package shows the requests your Schmock mocks answer in Chrome DevTools.
 It creates one collapsed console group and one Performance-panel track entry
-per mocked request.
+per mocked request. Its service-worker relay lists mocked requests in the
+Network panel.
 
 This package is part of [Schmock](https://github.com/khalic-lab/schmock), which
 mocks APIs from OpenAPI specs or hand-crafted routes.
@@ -55,12 +56,49 @@ devtoolsPlugin({
 
 An invalid option throws a `SchmockError` with code `DEVTOOLS_CONFIG_INVALID`.
 
+## Network panel relay
+
+The relay displays mocked requests as native rows in Chrome's Network panel.
+This includes XHR. A service worker answers each request using your page's
+`mock.intercept()` leases.
+
+Copy the worker script to the directory your dev server serves at `/`:
+
+```bash
+npx schmock-devtools init public
+```
+
+Start the relay before the app renders:
+
+```typescript
+import { startServiceWorkerRelay } from "@schmock/devtools";
+
+mock.intercept();
+const relay = await startServiceWorkerRelay();
+```
+
+Mocked rows display `(ServiceWorker)` in the Size column. The filter
+`is:service-worker-intercepted` isolates them. The page must be served over
+https or from `localhost`.
+
+- `startServiceWorkerRelay({ url, scope, timeout })` defaults to
+  `url: "/schmock-sw.js"`, the browser's scope, and `timeout: 5000`.
+- If the relay cannot start, it resolves with `active: false` and a
+  `fallbackReason`. It logs one warning, and mocking stays in the page.
+- `relay.stop()` returns `fetch` to in-page interception. The worker remains
+  registered.
+
+Read the
+[relay guide](https://github.com/khalic-lab/schmock/blob/main/docs/devtools.md#network-panel-relay)
+for options, fallbacks, framework recipes, and hazards.
+
 ## Development only
 
 ```typescript
 if (import.meta.env.DEV) {
-  const { devtoolsPlugin } = await import("@schmock/devtools");
+  const { devtoolsPlugin, startServiceWorkerRelay } = await import("@schmock/devtools");
   mock.pipe(devtoolsPlugin());
+  await startServiceWorkerRelay(); // only if you use the Network panel relay
 }
 ```
 

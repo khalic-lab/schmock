@@ -176,6 +176,25 @@ app.mount('#app')
 it already takes. `mock.reset()` removes the DevTools plugin while the lease
 stays, so pipe it again after a reset. See the [DevTools guide](./devtools.md).
 
+To list mocked requests in the Network panel itself, XHR included, start the
+service-worker relay before mounting. Copy the worker script once with
+`npx schmock-devtools init public`, then:
+
+```typescript
+import { startServiceWorkerRelay } from '@schmock/devtools'
+
+const app = createApp(App)
+app.use(schmockPlugin, { mock })
+
+await startServiceWorkerRelay()
+app.mount('#app')
+```
+
+The relay routes the lease `schmockPlugin` takes, so the plugin needs no new
+option. Mocked requests then show as Network rows with Size `(ServiceWorker)`.
+A relay that cannot start warns once, and `fetch` stays mocked in the page.
+See [Network panel relay](./devtools.md#network-panel-relay).
+
 ## Testing with `@vue/test-utils`
 
 ```typescript

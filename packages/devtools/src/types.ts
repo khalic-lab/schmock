@@ -36,3 +36,27 @@ export interface ExchangeSummary {
   readonly duration: string;
   readonly tone: ExchangeTone;
 }
+export interface ServiceWorkerRelayOptions {
+  /** URL the app serves schmock-sw.js at. Default "/schmock-sw.js". Non-empty. */
+  url?: string;
+  /** Registration scope. Default: the browser's (the script's directory). Non-empty when set. */
+  scope?: string;
+  /** Milliseconds for the whole start (registration, activation, control and the handshake), and for stop()'s acknowledgement. Default 5000. Positive and finite. */
+  timeout?: number;
+}
+export type RelayFallbackReason =
+  | "unsupported"
+  | "insecure-context"
+  | "scope-taken"
+  | "registration-failed"
+  | "not-controlled"
+  | "protocol-mismatch"
+  | "timeout";
+export interface ServiceWorkerRelay {
+  /** True while the worker relays this page's requests (read live). */
+  readonly active: boolean;
+  /** Why the relay is not active, once it fell back; undefined while starting, active, or after stop(). */
+  readonly fallbackReason: RelayFallbackReason | undefined;
+  /** Stop relaying for this page: in-page interception answers fetch again. The worker stays registered (inert for this page). Idempotent. */
+  stop(): Promise<void>;
+}

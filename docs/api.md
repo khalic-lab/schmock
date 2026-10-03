@@ -613,6 +613,10 @@ When a resource-limit breach has a location, `path` is the schema path
 Plugin packages throw a plain `SchmockError` with their own code for invalid
 options. `@schmock/devtools` uses `DEVTOOLS_CONFIG_INVALID`, with context
 `{ option, received }`; see [DevTools](#devtools-schmockdevtools).
+`startServiceWorkerRelay()` rejects with the same code for invalid options, and
+with `DEVTOOLS_RELAY_ALREADY_STARTED`, context `{ running, requested }` (the
+resolved `url`, `scope` and `timeout` of each), when a relay with other options
+is already starting or running on the page.
 
 `HttpIngressError`, thrown by `collectBody()`, is the one exception: it extends
 plain `Error`, not `SchmockError`. See
@@ -974,7 +978,8 @@ getHeader(headers, 'content-type')  // 'text/plain'
 ### `@schmock/core/adapter`
 
 The low-level protocol for adapter authors: the pieces `mock.intercept()`, the
-Express adapter and the CLI are built on. Application code uses
+Express adapter, the CLI and the `@schmock/devtools` relay are built on.
+Application code uses
 `mock.handle()`, `mock.listen()` and `mock.intercept()` instead.
 
 ```typescript
@@ -994,6 +999,14 @@ interface RequestAdmission {
   release(): void             // call exactly once, after the request settles
   hasRoute?(method: HttpMethod, path: string): boolean  // exact route probe; absent on a hand-written admission
 }
+
+acquireFetchRelay(): FetchRelay
+routeRelayedRequest(request: Request): Promise<Response | undefined>
+
+interface FetchRelay {
+  release(): void           // idempotent
+  readonly active: boolean  // false once released
+}
 ```
 
 The entry also re-exports the `InterceptOptions`, `InterceptHandle` and
@@ -1007,8 +1020,8 @@ Admissions from `schmock()` always carry it. An admission passed to
 `createFetchInterceptor` without it has every request body read, and its
 responses are normalized like a mock's own: hop-by-hop headers are dropped and
 a HEAD body is stripped.
-`RequestAdmission` and `MockRequestHandler` are also on the ambient `Schmock`
-namespace.
+`RequestAdmission`, `MockRequestHandler` and `FetchRelay` are also on the
+ambient `Schmock` namespace.
 
 `acquireRequestAdmission(mock)` pins one request to the mock's routes, plugins
 and state as they are on arrival. Route it with `admission.handle`, then call
@@ -1046,6 +1059,40 @@ async function serve(path: string): Promise<Schmock.Response> {
   }
 }
 ```
+
+`acquireFetchRelay()` and `routeRelayedRequest(request)` let a relay transport,
+such as the service worker of `@schmock/devtools`, deliver intercepted requests
+itself: the page's fetches go out to the transport, and the transport brings
+each one back to the leases.
+
+`acquireFetchRelay()` takes a hold on in-page fetch interception. While any
+hold is active, every fetch the page makes skips the leases and goes to the
+original `fetch` with exactly the input and init it was called with, so the
+relay can see it. The mocks never see that fetch and fire no lifecycle events
+for it. Holds stack: interception resumes once every hold is released.
+`release()` is idempotent, and `active` turns `false` once `release()` runs. A hold
+never touches `globalThis.fetch`. It applies module-wide, so a fetch dispatcher
+that a third-party wrapper captured obeys it too.
+
+`routeRelayedRequest(request)` routes a request the transport brought back
+through the current interception's leases, newest first, as an intercepted
+fetch would be routed: each lease applies its own `baseUrl`, hooks and
+`passthrough`, and lifecycle events and `onExchange` observers fire as usual.
+It works whether or not a hold is active.
+
+- It resolves with the mock's `Response`, or `undefined` when nothing answers:
+  no lease is held, or no route matched and the lease passes through. It never
+  calls `fetch`, so the caller decides how an unanswered request reaches the
+  network.
+- It rejects with the request's abort reason when the request's signal aborts
+  mid-route, and with the error an intercepted fetch would reject with, such as
+  a hook error with no `errorFormatter`.
+- The request URL is absolute, so an origin-form `baseUrl` naming the
+  request's own origin matches it. For a relative fetch in the page it never
+  does.
+- Only the current interception's leases are consulted. A lease reachable only
+  through an older interception that a third-party fetch wrapper captured is
+  not routed.
 
 ### Deprecations
 
@@ -1753,6 +1800,74 @@ The Performance track needs Chrome 128 or later, a recording, and Capture
 settings → **Show custom tracks**.
 
 See the [DevTools guide](./devtools.md) for detailed usage.
+
+### `startServiceWorkerRelay(options?)`
+
+Register the `schmock-sw.js` service worker and relay the page's `fetch` and
+XHR requests through it to the page's `mock.intercept()` leases, so Chrome
+lists mocked requests as Network rows.
+
+```typescript
+function startServiceWorkerRelay(options?: ServiceWorkerRelayOptions): Promise<ServiceWorkerRelay>
+
+interface ServiceWorkerRelayOptions {
+  url?: string      // where the app serves schmock-sw.js; default: '/schmock-sw.js'
+  scope?: string    // registration scope; default: the browser's, the script's directory
+  timeout?: number  // ms for the whole start and for stop()'s acknowledgement; default: 5000
+}
+
+interface ServiceWorkerRelay {
+  readonly active: boolean                                  // read live
+  readonly fallbackReason: RelayFallbackReason | undefined  // set once it fell back
+  stop(): Promise<void>                                     // idempotent; never unregisters
+}
+
+type RelayFallbackReason =
+  | 'unsupported'
+  | 'insecure-context'
+  | 'scope-taken'
+  | 'registration-failed'
+  | 'not-controlled'
+  | 'protocol-mismatch'
+  | 'timeout'
+```
+
+`ServiceWorkerRelayOptions`, `ServiceWorkerRelay` and `RelayFallbackReason` are
+exported from `@schmock/devtools`. `url` and `scope` resolve against the page's
+base URL.
+
+The promise rejects only for a caller error:
+
+- `SchmockError` `DEVTOOLS_CONFIG_INVALID`, context `{ option, received }`,
+  naming the first failure in this order: `options` must be an object, `url`
+  and `scope` non-empty strings, `timeout` a positive finite number, and `url`
+  and `scope` must resolve against the page URL. Options are checked before
+  anything else, even where service workers are unavailable.
+- `SchmockError` `DEVTOOLS_RELAY_ALREADY_STARTED`, context
+  `{ running, requested }`, when a relay with other resolved options is
+  starting or active on the page. The same resolved options return the same
+  promise.
+
+Anything the browser refuses resolves a relay with `active: false` and a
+`fallbackReason`, after one `console.warn`; mocking continues in the page.
+`stop()` hands `fetch` back to in-page interception, waits up to `timeout` for
+the worker to acknowledge, and leaves the worker registered.
+
+See [Network panel relay](./devtools.md#network-panel-relay) for setup, the
+fallback warnings and the hazards.
+
+### `schmock-devtools init <publicDir>`
+
+```sh
+npx schmock-devtools init public
+```
+
+Copies the packaged `dist/schmock-sw.js` to `<publicDir>/schmock-sw.js`,
+creating the directory and replacing an older copy, then prints the next step.
+It exits 0 on success, and for `--help` or `-h`, which print
+`Usage: schmock-devtools init <publicDir>`. It exits 1 with a message on stderr
+for a missing or extra argument, a command other than `init`, a missing
+packaged worker, or a failed copy.
 
 ---
 

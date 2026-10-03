@@ -13,6 +13,9 @@
     "url": "https://github.com/khalic-lab/schmock/issues"
   },
   "main": "./dist/index.js",
+  "bin": {
+    "schmock-devtools": "dist/bin.js"
+  },
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -32,7 +35,7 @@
   "scripts": {
     "clean": "rm -rf dist && rm -f tsconfig.tsbuildinfo",
     "build": "bun run clean && bun run build:lib && bun run build:types",
-    "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts --external @schmock/core",
+    "build:lib": "bun build --minify --target browser --outdir=dist src/index.ts --external @schmock/core && bun build --target browser --format iife --outfile=dist/schmock-sw.js src/schmock-sw.ts && bun build --target node --format esm --outfile=dist/bin.js src/bin.ts",
     "build:types": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest --watch",

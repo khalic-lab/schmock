@@ -202,6 +202,29 @@ UI reading the mock. The plugin writes to the browser's DevTools instead.
 `mock.reset()` removes the plugin while the lease stays, so pipe it again after
 a reset. See the [DevTools guide](./devtools.md).
 
+To list mocked requests in the Network panel itself, XHR included, start the
+service-worker relay before the first render. Copy the worker script once with
+`npx schmock-devtools init public`, then:
+
+```typescript
+import { createRoot } from 'react-dom/client'
+import { startServiceWorkerRelay } from '@schmock/devtools'
+
+await startServiceWorkerRelay()
+
+createRoot(document.getElementById('root')!).render(
+  <SchmockProvider mock={mock}>
+    <App />
+  </SchmockProvider>,
+)
+```
+
+The relay routes every lease on the page, the provider's included, so the
+provider needs no new prop. Mocked requests then show as Network rows with
+Size `(ServiceWorker)`. A relay that cannot start warns once, and the provider
+keeps answering `fetch` in the page. See
+[Network panel relay](./devtools.md#network-panel-relay).
+
 ## Testing
 
 ### With SchmockProvider directly

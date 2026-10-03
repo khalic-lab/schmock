@@ -385,6 +385,21 @@ in core and angular, and in openapi `browser-compat.test.ts`,
 `browser-bundle.test.ts`, `entry-parity.test.ts` and
 `steps/openapi-browser-build.steps.ts`.
 
+The `@schmock/devtools` service-worker relay is tested without a browser.
+`packages/devtools/src/test-support/relay-harness.ts` fakes only the
+service-worker objects in process (the registration lifecycle, scope matching,
+claims, the client message queue, fetch events and Cache Storage) on top of
+Node's real `MessageChannel`, `Request`, `Response` and `AbortController`. Its
+self-test, `relay-harness.test.ts`, pins each modelled behaviour before the
+worker and page tests rely on it. The harness forwards a page's abort to the
+worker's request signal. In real Chrome the mock did not see the abort, so the
+499 that the abort scenarios assert is the harness's behaviour, not Chrome's.
+What only a real browser shows (Network rows, browser default headers, hard
+reload, abort) was checked once by hand in headless Chrome over the DevTools
+protocol, and the results are recorded in
+[DevTools](./devtools.md#network-panel-relay) as *observed*. That check is not
+committed and does not run in CI.
+
 Package manifests, exports, build output, or release changes also require the
 packed release-candidate gate:
 
@@ -395,7 +410,7 @@ bun run check:publish
 It first runs `check:manifests` (publish shape per package: `files`, `license`,
 `repository`, `homepage`, `bugs`, `engines`, README, and script symmetry), then
 verifies clean/repeated build equality and stale-artifact removal, packs all
-12 workspaces, runs Node and Bun consumers, compiles 12 strict standalone
+12 workspaces, runs Node and Bun consumers, compiles 15 strict standalone
 declaration entries, compiles packed Core declarations with TypeScript 5.6,
 checks React root/testing context identity, exercises the CLI and browser
 bundle, runs the release-script tests, and runs `publint` plus `attw`.

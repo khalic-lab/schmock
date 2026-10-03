@@ -1,27 +1,21 @@
 import type * as Schmock from "@schmock/core";
-import { SchmockError } from "@schmock/core";
 import { version as packageVersion } from "../package.json";
 import { logExchange } from "./console-reporter.js";
 import { summarizeExchange } from "./exchange-summary.js";
+import { invalidOption } from "./invalid-option.js";
 import { measureExchange } from "./performance-reporter.js";
 import type { DevtoolsPluginOptions } from "./types.js";
 
-export type { DevtoolsPluginOptions } from "./types.js";
-
-function describeReceived(value: unknown): string {
-  try {
-    return typeof value === "string" ? JSON.stringify(value) : String(value);
-  } catch {
-    return "<unprintable>";
-  }
-}
+export { startServiceWorkerRelay } from "./relay/page-relay.js";
+export type {
+  DevtoolsPluginOptions,
+  RelayFallbackReason,
+  ServiceWorkerRelay,
+  ServiceWorkerRelayOptions,
+} from "./types.js";
 
 function invalid(option: string, requirement: string, value: unknown): never {
-  throw new SchmockError(
-    `devtoolsPlugin: ${option} must be ${requirement} (received ${describeReceived(value)})`,
-    "DEVTOOLS_CONFIG_INVALID",
-    { option, received: value },
-  );
+  throw invalidOption("devtoolsPlugin", option, requirement, value);
 }
 
 function pageOrigin(): string | undefined {
