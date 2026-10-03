@@ -190,6 +190,59 @@ function normalizeFetchRequest(
   };
 }
 
+async function routeThroughLeases(
+  leases: readonly RegisteredInterceptor[],
+  normalizedRequest: NormalizedFetchRequest,
+): Promise<Response | typeof PASSTHROUGH> {
+  throwIfAborted(normalizedRequest.request.signal);
+
+  // A mock is asked each distinct effective request at most once, however
+  // many leases it holds: without this, nested providers on one mock would
+  // run handle() — and emit request:start/notfound/end — once per lease.
+  // The key is the request each lease would issue after its own baseUrl
+  // filter and beforeRequest, so an older lease whose hook rewrites the
+  // request (an outer provider stripping "/api") still gets its turn.
+  const consultedRequests = new Map<symbol, Set<string>>();
+  const claimFor =
+    (owner: symbol | undefined) =>
+    (requestKey: string): boolean => {
+      if (owner === undefined) return true;
+      let keys = consultedRequests.get(owner);
+      if (keys === undefined) {
+        keys = new Set();
+        consultedRequests.set(owner, keys);
+      }
+      if (keys.has(requestKey)) return false;
+      keys.add(requestKey);
+      return true;
+    };
+
+  for (let index = leases.length - 1; index >= 0; index -= 1) {
+    const registered = leases[index];
+    const result = await awaitWithAbort(
+      registered.intercept({
+        request: normalizedRequest,
+        claim: claimFor(registered.owner),
+      }),
+      normalizedRequest.request.signal,
+    );
+    throwIfAborted(normalizedRequest.request.signal);
+    // FILTERED: this lease was not interested, so a sibling lease may be.
+    // ALREADY_CONSULTED: the mock already answered this exact request.
+    // PASSTHROUGH: the mock has no route for it. All three move on.
+    if (
+      result === FILTERED ||
+      result === ALREADY_CONSULTED ||
+      result === PASSTHROUGH
+    ) {
+      continue;
+    }
+    return result;
+  }
+
+  return PASSTHROUGH;
+}
+
 function createInterceptorSession(): InterceptorSession {
   const baselineFetch = globalThis.fetch;
   const interceptors: RegisteredInterceptor[] = [];
@@ -200,51 +253,8 @@ function createInterceptorSession(): InterceptorSession {
     }
 
     const normalizedRequest = normalizeFetchRequest(input, init);
-    throwIfAborted(normalizedRequest.request.signal);
-
-    // A mock is asked each distinct effective request at most once, however
-    // many leases it holds: without this, nested providers on one mock would
-    // run handle() — and emit request:start/notfound/end — once per lease.
-    // The key is the request each lease would issue after its own baseUrl
-    // filter and beforeRequest, so an older lease whose hook rewrites the
-    // request (an outer provider stripping "/api") still gets its turn.
-    const consultedRequests = new Map<symbol, Set<string>>();
-    const claimFor =
-      (owner: symbol | undefined) =>
-      (requestKey: string): boolean => {
-        if (owner === undefined) return true;
-        let keys = consultedRequests.get(owner);
-        if (keys === undefined) {
-          keys = new Set();
-          consultedRequests.set(owner, keys);
-        }
-        if (keys.has(requestKey)) return false;
-        keys.add(requestKey);
-        return true;
-      };
-
-    for (let index = snapshot.length - 1; index >= 0; index -= 1) {
-      const registered = snapshot[index];
-      const result = await awaitWithAbort(
-        registered.intercept({
-          request: normalizedRequest,
-          claim: claimFor(registered.owner),
-        }),
-        normalizedRequest.request.signal,
-      );
-      throwIfAborted(normalizedRequest.request.signal);
-      // FILTERED: this lease was not interested, so a sibling lease may be.
-      // ALREADY_CONSULTED: the mock already answered this exact request.
-      // PASSTHROUGH: the mock has no route for it. All three move on.
-      if (
-        result === FILTERED ||
-        result === ALREADY_CONSULTED ||
-        result === PASSTHROUGH
-      ) {
-        continue;
-      }
-      return result;
-    }
+    const answer = await routeThroughLeases(snapshot, normalizedRequest);
+    if (answer !== PASSTHROUGH) return answer;
 
     return awaitWithAbort(
       baselineFetch(normalizedRequest.request),
@@ -498,11 +508,25 @@ export function createFetchInterceptor(
   admitRequest?: () => Schmock.RequestAdmission,
   owner?: symbol,
 ): Schmock.InterceptHandle {
+  return createFetchLease({ handle, options, admitRequest, owner });
+}
+
+interface FetchLeaseSpec {
+  handle: Schmock.MockRequestHandler;
+  options?: Schmock.InterceptOptions;
+  admitRequest?: () => Schmock.RequestAdmission;
+  owner?: symbol;
+}
+
+export function createFetchLease(
+  spec: FetchLeaseSpec,
+): Schmock.InterceptHandle {
+  const { handle, admitRequest, owner } = spec;
   // The options live in a mutable cell that each request reads once at its
   // start. Reconfiguring a lease in place is what lets an adapter apply new
   // hooks without re-registering — re-registration would move the lease to the
   // front of the dispatch order and steal precedence from other mocks.
-  let currentOptions: Schmock.InterceptOptions = options;
+  let currentOptions: Schmock.InterceptOptions = spec.options ?? {};
 
   return registerInterceptor(
     async ({

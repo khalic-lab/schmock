@@ -16,10 +16,7 @@ import { RequestGenerations } from "./generations.js";
 import { redactHeaders } from "./headers.js";
 import type { RequestHistorySnapshot } from "./history.js";
 import { RequestHistory } from "./history.js";
-import {
-  createFetchInterceptor,
-  NORMALIZED_ADMISSION_KEY,
-} from "./interceptor.js";
+import { createFetchLease, NORMALIZED_ADMISSION_KEY } from "./interceptor.js";
 import { NodeServerController } from "./node-server.js";
 import {
   assertValidPlugin,
@@ -387,12 +384,12 @@ export class CallableMockInstance {
     // slot with their own options, released independently. The owner symbol
     // keeps them one mock for dispatch, so a single request reaches handle()
     // once no matter how many leases this instance holds.
-    const lease = createFetchInterceptor(
-      (method, path, opts) => this.handle(method, path, opts),
+    const lease = createFetchLease({
+      handle: (method, path, opts) => this.handle(method, path, opts),
       options,
-      () => this.createRequestAdmission(),
-      this.interceptOwner,
-    );
+      admitRequest: () => this.createRequestAdmission(),
+      owner: this.interceptOwner,
+    });
 
     const handle: Schmock.InterceptHandle = {
       restore: () => {
