@@ -125,6 +125,45 @@ Feature: Exchange observers
     When the test calls handle for "GET /api/users"
     Then the number of observed exchanges is 0
 
+  Scenario: Requests answered by the mock's own server are not observed
+    Given a mock with route "GET /api/users" returning users and an exchange observer
+    And the mock intercepts fetch
+    And the mock serves HTTP on a random port
+    When a client requests "GET /api/users" from the mock's server
+    Then the server answered with status 200 and the mocked users
+    And the number of observed exchanges is 0
+
+  Scenario: A route that throws without an errorFormatter is observed as answered with 500
+    Given a mock whose route "GET /api/fail" throws "boom" and an exchange observer
+    And the mock intercepts fetch
+    When the app fetches "http://localhost/api/fail"
+    Then the fetch caller received status 500
+    And the observed exchange was answered with status 500
+    And the observed response body is the one the fetch caller received
+
+  Scenario: A request rewritten by beforeRequest is observed as the client sent it
+    Given a mock whose route "PUT /api/users" echoes the body and an exchange observer
+    And the mock intercepts fetch with a beforeRequest hook that sends the request to "PUT /api/users" and renames the user to "Grace" in place
+    When the app posts the JSON user "Ada" to "http://localhost/api/v1/users"
+    Then the fetch caller received status 200 and the user named "Grace"
+    And the observed request is "POST http://localhost/api/v1/users"
+    And the observed request body is the user named "Ada"
+
+  Scenario: A beforeRequest that throws is observed as failed with the body the client sent
+    Given a mock with route "POST /api/users" echoing the body and an exchange observer
+    And the mock intercepts fetch with a beforeRequest hook that renames the user to "Grace" in place and throws "hook failed"
+    When the app posts the JSON user "Ada" to "http://localhost/api/users" expecting a rejection
+    Then the fetch rejected with the message "hook failed"
+    And the observed exchange failed with the error the fetch rejected with
+    And the observed request body is the user named "Ada"
+
+  Scenario: An observer whose promise never settles does not delay the fetch
+    Given a mock with route "GET /api/users" returning users and an observer whose promise never settles
+    And the mock intercepts fetch
+    When the app fetches "http://localhost/api/users"
+    Then the fetch caller received status 200
+    And the never-settling observer was called once
+
   Scenario: Observation stops after reset while the interception lease remains
     Given a mock with route "GET /api/users" returning users and an exchange observer
     And the mock intercepts fetch

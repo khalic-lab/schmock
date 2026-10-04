@@ -304,3 +304,94 @@ Feature: Service worker relay
     When the page starts the relay through startServiceWorkerRelay
     Then the relay fell back with reason "unsupported"
     And the page console warned with "service workers are unavailable here"
+
+  Scenario: Invalid relay options are rejected before support is checked, naming only the first invalid option
+    Given a page without service worker support
+    When the page starts the relay with each of these options:
+      """
+      [
+        { "options": "fast", "option": "options", "received": "fast",
+          "message": "startServiceWorkerRelay: options must be an object (received \"fast\")" },
+        { "options": null, "option": "options", "received": null,
+          "message": "startServiceWorkerRelay: options must be an object (received null)" },
+        { "options": { "url": "", "scope": "", "timeout": 0 }, "option": "url", "received": "",
+          "message": "startServiceWorkerRelay: url must be a non-empty string (received \"\")" },
+        { "options": { "url": 5 }, "option": "url", "received": 5,
+          "message": "startServiceWorkerRelay: url must be a non-empty string (received 5)" },
+        { "options": { "scope": "", "timeout": 0, "url": "http://[" }, "option": "scope", "received": "",
+          "message": "startServiceWorkerRelay: scope must be a non-empty string (received \"\")" },
+        { "options": { "timeout": 0, "url": "http://[", "scope": "http://[" }, "option": "timeout", "received": 0,
+          "message": "startServiceWorkerRelay: timeout must be a positive finite number (received 0)" },
+        { "options": { "timeout": "5000" }, "option": "timeout", "received": "5000",
+          "message": "startServiceWorkerRelay: timeout must be a positive finite number (received \"5000\")" },
+        { "options": { "url": "http://[", "scope": "http://[" }, "option": "url", "received": "http://[",
+          "message": "startServiceWorkerRelay: url must be a URL that resolves against the page URL (received \"http://[\")" },
+        { "options": { "scope": "http://[" }, "option": "scope", "received": "http://[",
+          "message": "startServiceWorkerRelay: scope must be a URL that resolves against the page URL (received \"http://[\")" }
+      ]
+      """
+    Then each start rejected with a SchmockError with code "DEVTOOLS_CONFIG_INVALID", the listed option, received value and message
+    And the page console warned nothing
+
+  Scenario: Stopping the relay leaves the worker registered for other tabs
+    Given a page whose mock answers "GET /api/users" with users and whose relay has started
+    And a second page whose relay answers every request with:
+      """
+      { "tab": "second" }
+      """
+    When the page stops the relay
+    And the second page sends an XHR for "/api/users"
+    Then the Schmock worker is still registered and still controls the page
+    And the second page received through the service worker:
+      """
+      { "tab": "second" }
+      """
+
+  Scenario: A lease taken after the relay started is answered by the service worker
+    Given a page whose mock answers "GET /api/users" with users but takes no lease, and whose relay has started
+    When the mock takes its lease
+    And the page fetches "/api/users"
+    Then the page received status 200 with the mocked users
+    And the browser saw "GET http://localhost/api/users" served by the service worker
+    And the network received no request
+
+  Scenario: Documented hazard - a request no lease answers during a worker update is routed twice
+    Given a page whose mock answers "GET /api/users" with users and whose relay has started
+    And the mock records its lifecycle events
+    When a new worker version that holds the page's hello takes control of the page
+    And the page fetches "/api/other" while the relay reconnects
+    Then the page received the network's response
+    And the worker fetched "GET http://localhost/api/other" from the network once, for a request it served
+    And the mock emitted "request:start", "request:notfound" and "request:end" twice each, and no match
+    And the relay is active again once the new worker answers the hello
+
+  Scenario: startServiceWorkerRelay returns the running relay for the same options and rejects other options
+    Given a page whose mock answers "GET /api/users" with users and whose navigator exposes its service worker container
+    When the page starts the relay through startServiceWorkerRelay with no options
+    And the page starts it again through startServiceWorkerRelay with the default spelled out:
+      """
+      { "url": "/schmock-sw.js" }
+      """
+    And the page starts it once more through startServiceWorkerRelay with:
+      """
+      { "scope": "/" }
+      """
+    Then the second start returned the same promise and the same active relay
+    And the third start rejected with a SchmockError with code "DEVTOOLS_RELAY_ALREADY_STARTED" whose context is:
+      """
+      {
+        "running": { "url": "http://localhost/schmock-sw.js", "timeout": 5000 },
+        "requested": { "url": "http://localhost/schmock-sw.js", "scope": "http://localhost/", "timeout": 5000 }
+      }
+      """
+    And the running relay is still active
+
+  Scenario: After a fallback an XHR reaches the network unmocked while fetch is answered in the page
+    Given a page the Schmock worker already controls, whose mock answers "GET /api/users" with users and whose worker never answers the handshake
+    When the page starts the relay with a timeout of 100 ms
+    And the page fetches "/api/users"
+    And the page sends an XHR for "/api/users"
+    Then the relay fell back with reason "timeout"
+    And the fetch was answered in the page with status 200 without the browser seeing it
+    And the XHR was answered by the network although the Schmock worker controls the page
+    And the mock answered 1 request

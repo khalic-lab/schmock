@@ -9,8 +9,11 @@ import {
   startServiceWorkerRelay,
 } from "../relay/page-relay.js";
 import type {
+  ExtendableEventLike,
   ExtendableMessageEventLike,
+  FetchEventLike,
   ReadyMessage,
+  RelayEnvironment,
   ReleasedMessage,
   RequestMessage,
 } from "../relay/types.js";
@@ -97,6 +100,85 @@ function stubWorker(answer: HelloAnswer): (scope: FakeWorkerScope) => void {
       }
     });
   };
+}
+
+type ScopeListenerArgs =
+  | ["install" | "activate", (event: ExtendableEventLike) => void]
+  | ["message", (event: ExtendableMessageEventLike) => void]
+  | ["fetch", (event: FetchEventLike) => void];
+
+/**
+ * The real worker script, except that each hello it receives goes to
+ * `onHello` instead: `deliver` hands it to the worker's own listener.
+ */
+function relayWorkerFilteringHellos(
+  onHello: (event: ExtendableMessageEventLike, deliver: () => void) => void,
+): (scope: FakeWorkerScope) => void {
+  return (scope) => {
+    installRelayWorker({
+      clients: scope.clients,
+      caches: scope.caches,
+      registration: scope.registration,
+      skipWaiting: () => scope.skipWaiting(),
+      fetch: (request) => scope.fetch(request),
+      addEventListener(...args: ScopeListenerArgs) {
+        if (args[0] === "message") {
+          const listener = args[1];
+          scope.addEventListener("message", (event) => {
+            if (messageType(event.data) === "schmock:hello") {
+              onHello(event, () => listener(event));
+            } else {
+              listener(event);
+            }
+          });
+        } else if (args[0] === "fetch") {
+          scope.addEventListener("fetch", args[1]);
+        } else {
+          scope.addEventListener(args[0], args[1]);
+        }
+      },
+    });
+  };
+}
+
+/** Start the relay with options as plain JavaScript can pass them, invalid types included. */
+function startWithUntypedOptions(
+  environment: RelayEnvironment,
+  options: unknown,
+): Promise<unknown> {
+  return Promise.resolve(
+    Reflect.apply(createServiceWorkerRelay, undefined, [environment, options]),
+  );
+}
+
+interface InvalidOptionCase {
+  readonly options: unknown;
+  readonly option: string;
+  readonly received: unknown;
+  readonly message: string;
+}
+
+function parseInvalidOptionCases(docString: string): InvalidOptionCase[] {
+  const parsed = parseJson(docString);
+  if (!Array.isArray(parsed)) throw new Error("Expected a JSON list of cases");
+  return parsed.map((entry: unknown) => {
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error(`Not a case: ${JSON.stringify(entry)}`);
+    }
+    const option: unknown = Reflect.get(entry, "option");
+    const message: unknown = Reflect.get(entry, "message");
+    if (typeof option !== "string" || typeof message !== "string") {
+      throw new Error(
+        `A case needs an option and a message: ${JSON.stringify(entry)}`,
+      );
+    }
+    return {
+      options: Reflect.get(entry, "options"),
+      option,
+      received: Reflect.get(entry, "received"),
+      message,
+    };
+  });
 }
 
 function failingInstallWorker(scope: FakeWorkerScope): void {
@@ -219,11 +301,13 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let heldUntilLoaded = false;
   let releaseRoute = () => {};
   let releaseCaches = () => {};
+  let releaseHellos = () => {};
   let routeStarted: Promise<void> = Promise.resolve();
 
   AfterEachScenario(async () => {
     releaseRoute();
     releaseCaches();
+    releaseHellos();
     for (const started of relays) {
       await started.stop().catch(() => undefined);
     }
@@ -257,6 +341,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     heldUntilLoaded = false;
     releaseRoute = () => {};
     releaseCaches = () => {};
+    releaseHellos = () => {};
     routeStarted = Promise.resolve();
   });
 
@@ -1929,6 +2014,383 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
           expectWarnedWith("service workers are unavailable here");
         },
       );
+    },
+  );
+
+  Scenario(
+    "Invalid relay options are rejected before support is checked, naming only the first invalid option",
+    ({ Given, When, Then, And }) => {
+      let outcomes: { expected: InvalidOptionCase; error: unknown }[] = [];
+
+      Given("a page without service worker support", () => {
+        page = createHarness().openPage({ serviceWorkers: false });
+      });
+
+      When(
+        "the page starts the relay with each of these options:",
+        async (_, docString: string) => {
+          const environment = currentPage().environment;
+          outcomes = [];
+          for (const expected of parseInvalidOptionCases(docString)) {
+            const error = await rejectionOf(
+              startWithUntypedOptions(environment, expected.options),
+            );
+            outcomes.push({ expected, error });
+          }
+        },
+      );
+
+      Then(
+        'each start rejected with a SchmockError with code "DEVTOOLS_CONFIG_INVALID", the listed option, received value and message',
+        () => {
+          expect(outcomes).toHaveLength(9);
+          for (const { expected, error } of outcomes) {
+            expect(error).toBeInstanceOf(SchmockError);
+            expect(error).toMatchObject({
+              code: "DEVTOOLS_CONFIG_INVALID",
+              message: expected.message,
+              context: { option: expected.option },
+            });
+            expect(Reflect.get(Object(error), "context")).toEqual({
+              option: expected.option,
+              received: expected.received,
+            });
+          }
+        },
+      );
+
+      And("the page console warned nothing", () => {
+        expect(currentSpies().warn).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  Scenario(
+    "Stopping the relay leaves the worker registered for other tabs",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a page whose mock answers "GET /api/users" with users and whose relay has started',
+        () => givenRelayingPage(usersRoute),
+      );
+
+      And(
+        "a second page whose relay answers every request with:",
+        async (_, docString: string) => {
+          secondPage = currentHarness().openPage();
+          await withTimeout(
+            secondPage.respondToRelaysWith(parseJson(docString)),
+            "the second page's hello",
+          );
+        },
+      );
+
+      When("the page stops the relay", async () => {
+        await withTimeout(currentRelay().stop(), "stop()");
+      });
+
+      And('the second page sends an XHR for "/api/users"', () =>
+        secondPageXhr("/api/users"),
+      );
+
+      Then(
+        "the Schmock worker is still registered and still controls the page",
+        () => {
+          expect(currentRelay().active).toBe(false);
+          expect(currentHarness().registrations).toEqual([
+            {
+              scope: "http://localhost/",
+              scriptURL: "http://localhost/schmock-sw.js",
+            },
+          ]);
+          expect(
+            currentPage().environment.container?.controller?.scriptURL,
+          ).toBe("http://localhost/schmock-sw.js");
+        },
+      );
+
+      And(
+        "the second page received through the service worker:",
+        async (_, docString: string) => {
+          if (secondResponse === undefined) throw new Error("No XHR was sent");
+          expect(await bodyOf(secondResponse)).toEqual(parseJson(docString));
+          expectSeenByBrowser(currentSecondPage(), "GET", USERS_URL, "worker");
+          expect(currentMock().callCount()).toBe(0);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A lease taken after the relay started is answered by the service worker",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a page whose mock answers "GET /api/users" with users but takes no lease, and whose relay has started',
+        async () => {
+          page = createHarness().openPage();
+          globalThis.fetch = page.networkFetch;
+          mock = schmock();
+          usersRoute(mock);
+          await startRelay();
+          expect(currentRelay().active).toBe(true);
+        },
+      );
+
+      When("the mock takes its lease", () => {
+        handles.push(currentMock().intercept());
+      });
+
+      And('the page fetches "/api/users"', () => pageFetches("/api/users"));
+
+      Then("the page received status 200 with the mocked users", () =>
+        expectUsers(),
+      );
+
+      And(
+        'the browser saw "GET http://localhost/api/users" served by the service worker',
+        () => {
+          expectSeenByBrowser(currentPage(), "GET", USERS_URL, "worker");
+        },
+      );
+
+      And("the network received no request", () => {
+        expect(currentHarness().network).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  Scenario(
+    "Documented hazard - a request no lease answers during a worker update is routed twice",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a page whose mock answers "GET /api/users" with users and whose relay has started',
+        () => {
+          // The in-page passthrough resolves a relative URL against location,
+          // which Node lacks; in the browser it is the page's URL.
+          vi.stubGlobal("location", new URL("http://localhost/index.html"));
+          return givenRelayingPage(usersRoute);
+        },
+      );
+
+      And("the mock records its lifecycle events", () => recordLifecycle());
+
+      When(
+        "a new worker version that holds the page's hello takes control of the page",
+        async () => {
+          const gate = new Promise<void>((resolve) => {
+            releaseHellos = resolve;
+          });
+          // The new version answers no hello until the gate opens, which keeps
+          // the relay reconnecting. No flush() here: it would wait on the held hello.
+          await withTimeout(
+            currentHarness().replaceWorker(
+              relayWorkerFilteringHellos((event, deliver) => {
+                event.waitUntil(gate.then(deliver));
+              }),
+            ),
+            "replaceWorker()",
+          );
+          const pageId = currentPage().id;
+          await vi.waitFor(
+            () => {
+              expect(helloFrom(currentHarness().worker, pageId)).toBe(true);
+              expect(currentRelay().active).toBe(false);
+            },
+            { timeout: SETTLE_MS },
+          );
+        },
+      );
+
+      And('the page fetches "/api/other" while the relay reconnects', () =>
+        pageFetches("/api/other"),
+      );
+
+      Then("the page received the network's response", async () => {
+        await expectNetworkBody(await receivedResponse());
+      });
+
+      And(
+        'the worker fetched "GET http://localhost/api/other" from the network once, for a request it served',
+        () => {
+          expect(networkRequests()).toEqual([
+            { method: "GET", url: "http://localhost/api/other" },
+          ]);
+          expect(currentPage().browserLog).toEqual([
+            {
+              method: "GET",
+              url: "http://localhost/api/other",
+              servedBy: "worker",
+            },
+          ]);
+        },
+      );
+
+      And(
+        'the mock emitted "request:start", "request:notfound" and "request:end" twice each, and no match',
+        () => {
+          const count = (name: string) =>
+            lifecycle.filter((event) => event === name).length;
+          expect(count("request:start")).toBe(2);
+          expect(count("request:notfound")).toBe(2);
+          expect(count("request:end")).toBe(2);
+          expect(count("request:match")).toBe(0);
+        },
+      );
+
+      And(
+        "the relay is active again once the new worker answers the hello",
+        async () => {
+          releaseHellos();
+          await expectActiveEventually();
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "startServiceWorkerRelay returns the running relay for the same options and rejects other options",
+    ({ Given, When, Then, And }) => {
+      let firstStart: Promise<ServiceWorkerRelay> | undefined;
+      let secondStart: Promise<ServiceWorkerRelay> | undefined;
+
+      Given(
+        'a page whose mock answers "GET /api/users" with users and whose navigator exposes its service worker container',
+        () => {
+          createHarness();
+          const target = openPageWithMock(usersRoute);
+          vi.stubGlobal("navigator", {
+            serviceWorker: target.environment.container,
+          });
+          vi.stubGlobal("isSecureContext", true);
+          vi.stubGlobal("location", new URL(target.environment.baseUrl));
+        },
+      );
+
+      When(
+        "the page starts the relay through startServiceWorkerRelay with no options",
+        async () => {
+          firstStart = startServiceWorkerRelay();
+          const started = await withTimeout(firstStart, "the first start");
+          relays.push(started);
+          relay = started;
+        },
+      );
+
+      And(
+        "the page starts it again through startServiceWorkerRelay with the default spelled out:",
+        async (_, docString: string) => {
+          secondStart = startServiceWorkerRelay(parseRelayOptions(docString));
+          secondRelay = await withTimeout(secondStart, "the second start");
+        },
+      );
+
+      And(
+        "the page starts it once more through startServiceWorkerRelay with:",
+        async (_, docString: string) => {
+          startError = await withTimeout(
+            rejectionOf(startServiceWorkerRelay(parseRelayOptions(docString))),
+            "the third start",
+          );
+        },
+      );
+
+      Then(
+        "the second start returned the same promise and the same active relay",
+        () => {
+          expect(secondStart).toBe(firstStart);
+          expect(secondRelay).toBe(currentRelay());
+          expect(currentRelay().active).toBe(true);
+        },
+      );
+
+      And(
+        'the third start rejected with a SchmockError with code "DEVTOOLS_RELAY_ALREADY_STARTED" whose context is:',
+        (_, docString: string) => {
+          expect(startError).toBeInstanceOf(SchmockError);
+          expect(startError).toMatchObject({
+            code: "DEVTOOLS_RELAY_ALREADY_STARTED",
+          });
+          // JSON has no undefined: the running relay's omitted scope stays
+          // undefined, which toEqual treats as absent.
+          expect(Reflect.get(Object(startError), "context")).toEqual(
+            parseJson(docString),
+          );
+        },
+      );
+
+      And("the running relay is still active", () => {
+        expect(currentRelay().active).toBe(true);
+      });
+    },
+  );
+
+  Scenario(
+    "After a fallback an XHR reaches the network unmocked while fetch is answered in the page",
+    ({ Given, When, Then, And }) => {
+      let xhrResponse: Response | undefined;
+
+      Given(
+        'a page the Schmock worker already controls, whose mock answers "GET /api/users" with users and whose worker never answers the handshake',
+        async () => {
+          // Hellos are dropped, not held: a hello released after the page's
+          // timeout goodbye would re-register the page. The worker is active
+          // and controls the page before the start, so the deadline can only
+          // expire in the handshake.
+          await createHarness(
+            relayWorkerFilteringHellos(() => {}),
+          ).activateWorker();
+          openPageWithMock(usersRoute);
+        },
+      );
+
+      When("the page starts the relay with a timeout of 100 ms", async () => {
+        await startRelay({ timeout: 100 });
+      });
+
+      And('the page fetches "/api/users"', async () => {
+        const seenBefore = currentPage().browserLog.length;
+        await pageFetches("/api/users");
+        unseenByBrowser = currentPage().browserLog.slice(seenBefore);
+      });
+
+      And('the page sends an XHR for "/api/users"', async () => {
+        xhrResponse = await withTimeout(
+          currentPage().xhr("/api/users"),
+          "XHR /api/users",
+        );
+      });
+
+      Then('the relay fell back with reason "timeout"', () => {
+        expectFellBack("timeout");
+      });
+
+      And(
+        "the fetch was answered in the page with status 200 without the browser seeing it",
+        async () => {
+          const received = await receivedResponse();
+          expect(received.status).toBe(200);
+          expect(await bodyOf(received)).toEqual(USERS);
+          expect(unseenByBrowser).toEqual([]);
+        },
+      );
+
+      And(
+        "the XHR was answered by the network although the Schmock worker controls the page",
+        async () => {
+          if (xhrResponse === undefined) throw new Error("No XHR was sent");
+          await expectNetworkBody(xhrResponse);
+          expect(
+            currentPage().environment.container?.controller?.scriptURL,
+          ).toBe("http://localhost/schmock-sw.js");
+          expect(currentPage().relayedFrames).toEqual([]);
+          expect(currentPage().browserLog).toEqual([
+            { method: "GET", url: USERS_URL, servedBy: "network" },
+          ]);
+        },
+      );
+
+      And("the mock answered 1 request", () => {
+        expect(currentMock().callCount()).toBe(1);
+      });
     },
   );
 });

@@ -167,14 +167,14 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     );
   }
 
-  async function relayRoutesAndAborts(line: string) {
+  async function relayRoutesAndAborts(line: string, reason?: unknown) {
     const { method, url } = parseRequestLine(line);
     const controller = new AbortController();
     const pending = routeRelayedRequest(
       new Request(url, { method, signal: controller.signal }),
     );
     await startedOrSettled(routeStarted, pending);
-    controller.abort();
+    controller.abort(reason);
     await settle(pending);
     release();
   }
@@ -206,6 +206,20 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     const response = answeredResponse();
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(USERS);
+  }
+
+  /** Leases a second mock answering `GET /api/users` with `body`; returns its lifecycle log. */
+  function interceptNewerMock(body: string): string[] {
+    const newer = schmock();
+    const newerEvents: string[] = [];
+    for (const event of LIFECYCLE_EVENTS) {
+      newer.on(event, () => {
+        newerEvents.push(event);
+      });
+    }
+    newer("GET /api/users", body);
+    handles.push(newer.intercept());
+    return newerEvents;
   }
 
   function expectNetworkGotOriginalArguments() {
@@ -596,6 +610,258 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
           outcome: "answered",
           response: { status: 200 },
         });
+      });
+    },
+  );
+
+  Scenario(
+    "Fetch stays forwarded until every relay hold is released",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a mock with route "GET /api/users" returning users that intercepts fetch over a recording network',
+        () => givenUsersMock(),
+      );
+
+      And("two fetch relays are held", () => {
+        holdRelay();
+        holdRelay();
+      });
+
+      Then("both relay holds are active", () => {
+        expect(holds.map((hold) => hold.active)).toEqual([true, true]);
+      });
+
+      When("the first relay hold is released twice", () => {
+        holds[0].release();
+        holds[0].release();
+      });
+
+      Then(
+        "the first relay hold is inactive and the second is still active",
+        () => {
+          expect(holds.map((hold) => hold.active)).toEqual([false, true]);
+        },
+      );
+
+      When(
+        'the app fetches "http://localhost/api/users" while the second hold is in force',
+        async () => {
+          await appFetches("http://localhost/api/users");
+        },
+      );
+
+      Then(
+        "the recording network received the fetch with its original arguments",
+        () => {
+          expectNetworkGotOriginalArguments();
+        },
+      );
+
+      And("the mock emitted no lifecycle events", () => {
+        expect(events).toEqual([]);
+      });
+
+      When("the second relay hold is released", () => {
+        holds[1].release();
+      });
+
+      Then("no relay hold is active", () => {
+        expect(holds.map((hold) => hold.active)).toEqual([false, false]);
+      });
+
+      When('the app fetches "http://localhost/api/users" again', async () => {
+        await appFetches("http://localhost/api/users");
+      });
+
+      Then(
+        "the fetch caller received status 200 with the mocked users",
+        async () => {
+          expect(fetchResponse?.status).toBe(200);
+          expect(await fetchResponse?.json()).toEqual(USERS);
+        },
+      );
+
+      And("the recording network received only the earlier fetch", () => {
+        expect(network).toHaveBeenCalledOnce();
+      });
+    },
+  );
+
+  Scenario(
+    "A relayed request is answered by the newest lease first",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a mock with route "GET /api/users" returning users that intercepts fetch over a recording network',
+        () => givenUsersMock(),
+      );
+
+      And(
+        'a newer mock with route "GET /api/users" returning "newer" that intercepts fetch',
+        () => {
+          interceptNewerMock("newer");
+        },
+      );
+
+      When('the relay routes "GET http://localhost/api/users"', async () => {
+        await relayRoutes("GET http://localhost/api/users");
+      });
+
+      Then('the relay answered status 200 with "newer"', async () => {
+        const response = answeredResponse();
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("newer");
+      });
+
+      And("the older mock emitted no lifecycle events", () => {
+        expect(events).toEqual([]);
+      });
+    },
+  );
+
+  Scenario(
+    "A relayed miss is answered with a 404 when passthrough is off",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a mock with route "GET /api/users" returning users that intercepts fetch with passthrough off',
+        () => givenUsersMock({ passthrough: false }),
+      );
+
+      When('the relay routes "GET http://localhost/api/other"', async () => {
+        await relayRoutes("GET http://localhost/api/other");
+      });
+
+      Then(
+        'the relay answered status 404 with code "ROUTE_NOT_FOUND"',
+        async () => {
+          const response = answeredResponse();
+          expect(response.status).toBe(404);
+          expect(await response.json()).toMatchObject({
+            code: "ROUTE_NOT_FOUND",
+          });
+        },
+      );
+
+      And("the recording network received nothing", () => {
+        expect(network).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  Scenario(
+    "A relayed request rejects with the reason its signal was aborted with",
+    ({ Given, When, Then }) => {
+      const reason = { why: "the page navigated away" };
+
+      Given(
+        'a mock with route "GET /api/slow" that waits until released and intercepts fetch over a recording network',
+        () => {
+          setup();
+          defineWaitingRoute();
+          intercept();
+        },
+      );
+
+      When(
+        'the relay routes "GET http://localhost/api/slow" and the request is aborted with a custom reason while the route runs',
+        async () => {
+          await relayRoutesAndAborts("GET http://localhost/api/slow", reason);
+        },
+      );
+
+      Then("routing rejected with that same abort reason", () => {
+        expect(routingError()).toBe(reason);
+      });
+    },
+  );
+
+  Scenario(
+    "A relayed request outside the lease's baseUrl is left unanswered",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a mock with routes "GET /api/users" and "GET /admin/users" that intercepts fetch with baseUrl "/api"',
+        () => {
+          setup();
+          mock("GET /api/users", USERS);
+          mock("GET /admin/users", USERS);
+          intercept({ baseUrl: "/api" });
+        },
+      );
+
+      When('the relay routes "GET http://localhost/admin/users"', async () => {
+        await relayRoutes("GET http://localhost/admin/users");
+      });
+
+      Then("the relay answered nothing", () => {
+        expect(relayAnswer()).toBeUndefined();
+      });
+
+      And("the mock emitted no lifecycle events", () => {
+        expect(events).toEqual([]);
+      });
+
+      When('the relay routes "GET http://localhost/api/users"', async () => {
+        await relayRoutes("GET http://localhost/api/users");
+      });
+
+      Then("the relay answered status 200 with the mocked users", async () => {
+        await expectAnsweredUsers();
+      });
+    },
+  );
+
+  Scenario(
+    "A fetch dispatcher captured by a third-party wrapper obeys a relay hold",
+    ({ Given, When, Then, And }) => {
+      let wrapper: Mock<typeof globalThis.fetch>;
+      let newerEvents: string[] = [];
+
+      Given(
+        'a mock with route "GET /api/users" returning users that intercepts fetch over a recording network',
+        () => givenUsersMock(),
+      );
+
+      And(
+        "a third-party wrapper captured the fetch dispatcher and replaced fetch",
+        () => {
+          const captured = globalThis.fetch;
+          wrapper = vi
+            .fn<typeof globalThis.fetch>()
+            .mockImplementation((input, init) => captured(input, init));
+          globalThis.fetch = wrapper;
+        },
+      );
+
+      And(
+        'a newer mock with route "GET /api/users" returning "newer" that intercepts fetch on top of the wrapper',
+        () => {
+          newerEvents = interceptNewerMock("newer");
+          expect(globalThis.fetch).not.toBe(wrapper);
+        },
+      );
+
+      And("a fetch relay is held", () => holdRelay());
+
+      When('the app fetches "http://localhost/api/users"', async () => {
+        await appFetches("http://localhost/api/users");
+      });
+
+      Then(
+        "the recording network received the fetch with its original arguments",
+        () => {
+          expectNetworkGotOriginalArguments();
+        },
+      );
+
+      And("the wrapper forwarded the fetch once", () => {
+        expect(wrapper).toHaveBeenCalledOnce();
+      });
+
+      And("the older mock emitted no lifecycle events", () => {
+        expect(events).toEqual([]);
+      });
+
+      And("the newer mock emitted no lifecycle events", () => {
+        expect(newerEvents).toEqual([]);
       });
     },
   );

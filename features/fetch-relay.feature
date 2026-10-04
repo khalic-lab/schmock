@@ -90,3 +90,55 @@ Feature: Fetch relay
     When the relay routes "GET http://localhost/api/users"
     Then the number of observed exchanges is 1
     And the observed exchange was answered with status 200
+
+  Scenario: Fetch stays forwarded until every relay hold is released
+    Given a mock with route "GET /api/users" returning users that intercepts fetch over a recording network
+    And two fetch relays are held
+    Then both relay holds are active
+    When the first relay hold is released twice
+    Then the first relay hold is inactive and the second is still active
+    When the app fetches "http://localhost/api/users" while the second hold is in force
+    Then the recording network received the fetch with its original arguments
+    And the mock emitted no lifecycle events
+    When the second relay hold is released
+    Then no relay hold is active
+    When the app fetches "http://localhost/api/users" again
+    Then the fetch caller received status 200 with the mocked users
+    And the recording network received only the earlier fetch
+
+  Scenario: A relayed request is answered by the newest lease first
+    Given a mock with route "GET /api/users" returning users that intercepts fetch over a recording network
+    And a newer mock with route "GET /api/users" returning "newer" that intercepts fetch
+    When the relay routes "GET http://localhost/api/users"
+    Then the relay answered status 200 with "newer"
+    And the older mock emitted no lifecycle events
+
+  Scenario: A relayed miss is answered with a 404 when passthrough is off
+    Given a mock with route "GET /api/users" returning users that intercepts fetch with passthrough off
+    When the relay routes "GET http://localhost/api/other"
+    Then the relay answered status 404 with code "ROUTE_NOT_FOUND"
+    And the recording network received nothing
+
+  Scenario: A relayed request rejects with the reason its signal was aborted with
+    Given a mock with route "GET /api/slow" that waits until released and intercepts fetch over a recording network
+    When the relay routes "GET http://localhost/api/slow" and the request is aborted with a custom reason while the route runs
+    Then routing rejected with that same abort reason
+
+  Scenario: A relayed request outside the lease's baseUrl is left unanswered
+    Given a mock with routes "GET /api/users" and "GET /admin/users" that intercepts fetch with baseUrl "/api"
+    When the relay routes "GET http://localhost/admin/users"
+    Then the relay answered nothing
+    And the mock emitted no lifecycle events
+    When the relay routes "GET http://localhost/api/users"
+    Then the relay answered status 200 with the mocked users
+
+  Scenario: A fetch dispatcher captured by a third-party wrapper obeys a relay hold
+    Given a mock with route "GET /api/users" returning users that intercepts fetch over a recording network
+    And a third-party wrapper captured the fetch dispatcher and replaced fetch
+    And a newer mock with route "GET /api/users" returning "newer" that intercepts fetch on top of the wrapper
+    And a fetch relay is held
+    When the app fetches "http://localhost/api/users"
+    Then the recording network received the fetch with its original arguments
+    And the wrapper forwarded the fetch once
+    And the older mock emitted no lifecycle events
+    And the newer mock emitted no lifecycle events

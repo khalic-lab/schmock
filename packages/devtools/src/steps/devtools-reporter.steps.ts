@@ -39,6 +39,50 @@ function parseOptions(docString: string): DevtoolsPluginOptions {
   return parsed;
 }
 
+interface InvalidOptionCase {
+  options: unknown;
+  option: string;
+  message: string;
+}
+
+function isInvalidOptionCase(value: unknown): value is InvalidOptionCase {
+  return (
+    isRecord(value) &&
+    "options" in value &&
+    typeof value.option === "string" &&
+    typeof value.message === "string"
+  );
+}
+
+function parseInvalidOptionCases(docString: string): InvalidOptionCase[] {
+  const parsed: unknown = JSON.parse(docString);
+  if (!Array.isArray(parsed) || !parsed.every(isInvalidOptionCase)) {
+    throw new Error(`Not a list of invalid option cases: ${docString}`);
+  }
+  return parsed;
+}
+
+function parseStrings(docString: string): string[] {
+  const parsed: unknown = JSON.parse(docString);
+  if (
+    !Array.isArray(parsed) ||
+    !parsed.every((item) => typeof item === "string")
+  ) {
+    throw new Error(`Not a list of strings: ${docString}`);
+  }
+  return parsed;
+}
+
+/** True for a `#rrggbb` background whose channels are within 16 of each other. */
+function hasGreyBackground(style: string): boolean {
+  const match = /background:#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(
+    style,
+  );
+  if (!match) return false;
+  const channels = match.slice(1).map((hex) => Number.parseInt(hex, 16));
+  return Math.max(...channels) - Math.min(...channels) <= 16;
+}
+
 function exchangeObserver(seen: Schmock.Exchange[]): Schmock.Plugin {
   return {
     name: "observer",
@@ -258,8 +302,38 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     });
   }
 
-  function expectMeasuresNamed(name: string) {
-    expect(trackEntries().map((entry) => entry.name)).toEqual([name]);
+  function expectMeasuresNamed(...names: string[]) {
+    expect(trackEntries().map((entry) => entry.name)).toEqual(names);
+  }
+
+  function trackEntryNamed(name: string): TrackEntry {
+    const matching = trackEntries().filter((entry) => entry.name === name);
+    expect(matching).toHaveLength(1);
+    return matching[0];
+  }
+
+  /** Every group title, in order, each followed by a "(1.4 ms)" duration. */
+  function expectGroupTitles(texts: readonly string[]) {
+    const titles = spies.groupCollapsed.mock.calls.map((args) =>
+      renderConsole(args),
+    );
+    expect(titles).toHaveLength(texts.length);
+    texts.forEach((text, index) => {
+      expect(titles[index]).toMatch(
+        new RegExp(`^${escapeRegExp(text)} \\(\\d+\\.\\d ms\\)$`),
+      );
+    });
+  }
+
+  function addConfiguredMock(
+    name: string,
+    define: (instance: Schmock.CallableMockInstance) => void,
+    options: DevtoolsPluginOptions,
+  ) {
+    const instance = schmock();
+    define(instance);
+    namedMocks.set(name, instance);
+    instance.pipe(devtoolsPlugin(options));
   }
 
   Scenario(
@@ -770,6 +844,343 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
           expect(createError).toMatchObject({
             code: "DEVTOOLS_CONFIG_INVALID",
           });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "An aborted fetch logs that the client aborted it after the request",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a mock with route "GET /api/slow" that waits until released and the devtools plugin',
+        () => givenWaitingMock(),
+      );
+
+      And("the mock intercepts fetch", () => intercept(mock));
+
+      When(
+        'the app fetches "http://localhost/api/slow" and aborts it while the route runs',
+        async () => {
+          const controller = new AbortController();
+          const pending = fetch("http://localhost/api/slow", {
+            signal: controller.signal,
+          });
+          await startedOrSettled(routeStarted, pending);
+          controller.abort();
+          fetchResponse = await pending.catch(() => undefined);
+          release();
+        },
+      );
+
+      Then(
+        'the group title reads "Schmock GET http://localhost/api/slow → aborted" followed by the duration',
+        () => {
+          expectGroupTitle("Schmock GET http://localhost/api/slow → aborted");
+        },
+      );
+
+      And("the group title badge is grey", () => {
+        const [, badgeStyle] = spies.groupCollapsed.mock.calls[0];
+        expect(typeof badgeStyle).toBe("string");
+        expect(hasGreyBackground(String(badgeStyle))).toBe(true);
+      });
+
+      And(
+        'the group logs "Aborted by the client" after the request "GET http://localhost/api/slow"',
+        () => {
+          expectGroupLogsRequest("GET", "http://localhost/api/slow");
+          callInsideGroup(
+            spies.log,
+            ([label]) => label === "Aborted by the client",
+          );
+          const labels = spies.log.mock.calls.map(([label]) => label);
+          const requestOrder =
+            spies.log.mock.invocationCallOrder[labels.indexOf("Request")];
+          const abortedOrder =
+            spies.log.mock.invocationCallOrder[
+              labels.indexOf("Aborted by the client")
+            ];
+          expect(abortedOrder).toBeGreaterThan(requestOrder);
+        },
+      );
+
+      And("the group logs no response and no error", () => {
+        const labels = spies.log.mock.calls.map(([label]) => label);
+        expect(labels).not.toContain("Response");
+        expect(spies.error).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  Scenario(
+    "A cross-origin request keeps its absolute URL while a same-origin one shows path and query",
+    ({ Given, When, Then, And }) => {
+      Given('the page is served from "http://localhost"', () => {
+        vi.stubGlobal("location", new URL("http://localhost/"));
+      });
+
+      And(
+        'a mock with route "GET /api/users" returning users and the devtools plugin',
+        () => givenUsersMock(),
+      );
+
+      And("the mock intercepts fetch", () => intercept(mock));
+
+      When('the app fetches "http://api.example.com/api/users"', async () => {
+        await appFetches("http://api.example.com/api/users");
+      });
+
+      And('the app fetches "/api/users?page=2"', async () => {
+        await appFetches("/api/users?page=2");
+      });
+
+      Then("the group titles read in order:", (_, docString: string) => {
+        expectGroupTitles(parseStrings(docString));
+      });
+
+      And(
+        "the performance measures are named in order:",
+        (_, docString: string) => {
+          expectMeasuresNamed(...parseStrings(docString));
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Mocks with their own track and a shared track group report on separate tracks in one group",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a mock "users" with route "GET /api/users" and the devtools plugin configured with:',
+        (_, docString: string) => {
+          setup();
+          addConfiguredMock(
+            "users",
+            (instance) => instance("GET /api/users", USERS),
+            parseOptions(docString),
+          );
+        },
+      );
+
+      And(
+        'a mock "orders" with route "GET /api/orders" and the devtools plugin configured with:',
+        (_, docString: string) => {
+          addConfiguredMock(
+            "orders",
+            (instance) => instance("GET /api/orders", [{ id: 7 }]),
+            parseOptions(docString),
+          );
+        },
+      );
+
+      And('mock "users" intercepts fetch', () => {
+        intercept(namedMock("users"));
+      });
+
+      And('mock "orders" intercepts fetch', () => {
+        intercept(namedMock("orders"));
+      });
+
+      When('the app fetches "http://localhost/api/users"', async () => {
+        await appFetches("http://localhost/api/users");
+      });
+
+      And('the app fetches "http://localhost/api/orders"', async () => {
+        await appFetches("http://localhost/api/orders");
+      });
+
+      Then(
+        "the performance measures are named in order:",
+        (_, docString: string) => {
+          expectMeasuresNamed(...parseStrings(docString));
+        },
+      );
+
+      And(
+        'the measure "GET http://localhost/api/users" is on track "Users API" in the track group "My app"',
+        () => {
+          expect(
+            trackEntryNamed("GET http://localhost/api/users").devtools,
+          ).toMatchObject({ track: "Users API", trackGroup: "My app" });
+        },
+      );
+
+      And(
+        'the measure "GET http://localhost/api/orders" is on track "Orders API" in the track group "My app"',
+        () => {
+          expect(
+            trackEntryNamed("GET http://localhost/api/orders").devtools,
+          ).toMatchObject({ track: "Orders API", trackGroup: "My app" });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A track belongs to no track group by default",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a mock with route "GET /api/users" returning users and the devtools plugin',
+        () => givenUsersMock(),
+      );
+
+      And("the mock intercepts fetch", () => intercept(mock));
+
+      When('the app fetches "http://localhost/api/users"', async () => {
+        await appFetches("http://localhost/api/users");
+      });
+
+      Then(
+        'the measure is a track entry on track "Schmock" colored "primary"',
+        () => {
+          expectTrackEntry("Schmock", "primary");
+        },
+      );
+
+      And("the measure belongs to no track group", () => {
+        expect(onlyTrackEntry().devtools).not.toHaveProperty("trackGroup");
+      });
+    },
+  );
+
+  Scenario(
+    "A request answered through handle is not reported",
+    ({ Given, When, Then, And }) => {
+      let handled: Schmock.Response | undefined;
+
+      Given(
+        'a mock with route "GET /api/users" returning users and the devtools plugin',
+        () => {
+          handled = undefined;
+          givenUsersMock();
+        },
+      );
+
+      When('the mock handles "GET /api/users" directly', async () => {
+        handled = await mock.handle("GET", "/api/users");
+      });
+
+      Then("the handled response has status 200 with the mocked users", () => {
+        expect(handled?.status).toBe(200);
+        expect(handled?.body).toEqual(USERS);
+      });
+
+      And("no console group was opened", () => {
+        expect(spies.groupCollapsed).not.toHaveBeenCalled();
+      });
+
+      And("no performance measure was recorded", () => {
+        expect(trackEntries()).toHaveLength(0);
+      });
+    },
+  );
+
+  Scenario(
+    "After a reset the plugin stops reporting until it is piped again",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a mock with route "GET /api/users" returning users and the devtools plugin',
+        () => givenUsersMock(),
+      );
+
+      And("the mock intercepts fetch", () => intercept(mock));
+
+      When(
+        'the mock is reset and the route "GET /api/users" returning users is registered again',
+        () => {
+          mock.reset();
+          mock("GET /api/users", USERS);
+        },
+      );
+
+      And('the app fetches "http://localhost/api/users"', async () => {
+        await appFetches("http://localhost/api/users");
+      });
+
+      Then(
+        "the fetch caller received status 200 with the mocked users from the mock, not the network",
+        async () => {
+          expect(fetchResponse?.status).toBe(200);
+          expect(await fetchResponse?.json()).toEqual(USERS);
+          expect(networkFetch).not.toHaveBeenCalled();
+        },
+      );
+
+      And("no console group was opened", () => {
+        expect(spies.groupCollapsed).not.toHaveBeenCalled();
+      });
+
+      And("no performance measure was recorded", () => {
+        expect(trackEntries()).toHaveLength(0);
+      });
+
+      When("the devtools plugin is piped again", () => {
+        mock.pipe(devtoolsPlugin());
+      });
+
+      And('the app fetches "http://localhost/api/users" again', async () => {
+        await appFetches("http://localhost/api/users");
+      });
+
+      Then("exactly 1 collapsed console group was opened and closed", () => {
+        expectOneClosedGroup();
+      });
+
+      And(
+        'exactly 1 performance measure named "GET http://localhost/api/users" was recorded',
+        () => {
+          expectMeasuresNamed("GET http://localhost/api/users");
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Each invalid option is rejected with its name, received value and message",
+    ({ When, Then }) => {
+      let outcomes: { testCase: InvalidOptionCase; thrown: unknown }[] = [];
+
+      When(
+        "the devtools plugin is created with each of these invalid options:",
+        (_, docString: string) => {
+          outcomes = parseInvalidOptionCases(docString).map((testCase) => {
+            try {
+              // Invalid on purpose: call past the options type.
+              Reflect.apply(devtoolsPlugin, undefined, [testCase.options]);
+              return { testCase, thrown: undefined };
+            } catch (thrown) {
+              return { testCase, thrown };
+            }
+          });
+        },
+      );
+
+      Then(
+        `each creation throws a SchmockError with code "DEVTOOLS_CONFIG_INVALID", the case's option name, the value it received and the case's message`,
+        () => {
+          expect(outcomes).toHaveLength(6);
+          for (const { testCase, thrown } of outcomes) {
+            const { options, option, message } = testCase;
+            const received =
+              option === "options" || !isRecord(options)
+                ? options
+                : options[option];
+            // Soft, so one failing case does not hide the others.
+            expect.soft(thrown, option).toBeInstanceOf(SchmockError);
+            expect.soft(thrown, option).toMatchObject({
+              code: "DEVTOOLS_CONFIG_INVALID",
+              message,
+            });
+            const context =
+              thrown instanceof SchmockError ? thrown.context : undefined;
+            expect
+              .soft(isRecord(context) && context.option, message)
+              .toBe(option);
+            expect
+              .soft(isRecord(context) && context.received, message)
+              .toBe(received);
+          }
         },
       );
     },

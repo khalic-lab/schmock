@@ -50,8 +50,12 @@ function throwingObserver(message: string): Schmock.Plugin {
   };
 }
 
+function renameUserTo(value: unknown, name: string): void {
+  if (isRecord(value)) Reflect.set(value, "name", name);
+}
+
 function renameUser(value: unknown): void {
-  if (isRecord(value)) Reflect.set(value, "name", "Mallory");
+  renameUserTo(value, "Mallory");
 }
 
 function renamingObserver(): Schmock.Plugin {
@@ -131,6 +135,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
   AfterEachScenario(() => {
     release();
+    mock?.close();
     for (const handle of handles) {
       handle.restore();
     }
@@ -188,9 +193,12 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     fetchResponse = await fetch(input, init);
   }
 
-  async function appFetchesExpectingRejection(input: string) {
+  async function appFetchesExpectingRejection(
+    input: string,
+    init?: RequestInit,
+  ) {
     try {
-      fetchResponse = await fetch(input);
+      fetchResponse = await fetch(input, init);
     } catch (error) {
       fetchError = error;
     }
@@ -809,6 +817,248 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
       Then("the number of observed exchanges is 0", () => {
         expect(seen).toHaveLength(0);
+      });
+    },
+  );
+
+  Scenario(
+    "Requests answered by the mock's own server are not observed",
+    ({ Given, When, Then, And }) => {
+      let serverInfo: Schmock.ServerInfo | undefined;
+      let serverResponse: Response | undefined;
+
+      Given(
+        'a mock with route "GET /api/users" returning users and an exchange observer',
+        () => givenUsersMockWithObserver(),
+      );
+
+      And("the mock intercepts fetch", () => intercept(mock));
+
+      And("the mock serves HTTP on a random port", async () => {
+        serverInfo = await mock.listen(0);
+      });
+
+      When(
+        `a client requests "GET /api/users" from the mock's server`,
+        async () => {
+          if (!serverInfo) throw new Error("The server is not running");
+          serverResponse = await originalFetch(
+            `http://${serverInfo.hostname}:${serverInfo.port}/api/users`,
+          );
+        },
+      );
+
+      Then(
+        "the server answered with status 200 and the mocked users",
+        async () => {
+          expect(serverResponse?.status).toBe(200);
+          expect(await serverResponse?.json()).toEqual(USERS);
+        },
+      );
+
+      And("the number of observed exchanges is 0", async () => {
+        // Leave room for a report sent after the response, e.g. on "finish".
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(seen).toHaveLength(0);
+      });
+    },
+  );
+
+  Scenario(
+    "A route that throws without an errorFormatter is observed as answered with 500",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a mock whose route "GET /api/fail" throws "boom" and an exchange observer',
+        () => {
+          setup();
+          mock("GET /api/fail", () => {
+            throw new Error("boom");
+          });
+          mock.pipe(exchangeObserver(seen));
+        },
+      );
+
+      And("the mock intercepts fetch", () => intercept(mock));
+
+      When('the app fetches "http://localhost/api/fail"', async () => {
+        await appFetches("http://localhost/api/fail");
+      });
+
+      Then("the fetch caller received status 500", () => {
+        expect(fetchResponse?.status).toBe(500);
+      });
+
+      And("the observed exchange was answered with status 500", () => {
+        expect(onlyExchangeWith(seen, "answered").response.status).toBe(500);
+      });
+
+      And(
+        "the observed response body is the one the fetch caller received",
+        async () => {
+          const received: unknown = await fetchResponse?.json();
+          expect(received).toMatchObject({ error: "boom" });
+          expect(onlyExchangeWith(seen, "answered").response.body).toEqual(
+            received,
+          );
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A request rewritten by beforeRequest is observed as the client sent it",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a mock whose route "PUT /api/users" echoes the body and an exchange observer',
+        () => {
+          setup();
+          mock("PUT /api/users", ({ body }) => body);
+          mock.pipe(exchangeObserver(seen));
+        },
+      );
+
+      And(
+        'the mock intercepts fetch with a beforeRequest hook that sends the request to "PUT /api/users" and renames the user to "Grace" in place',
+        () => {
+          intercept(mock, {
+            beforeRequest: (request) => {
+              renameUserTo(request.body, "Grace");
+              return { ...request, method: "PUT", path: "/api/users" };
+            },
+          });
+        },
+      );
+
+      When(
+        'the app posts the JSON user "Ada" to "http://localhost/api/v1/users"',
+        async () => {
+          await appFetches(
+            "http://localhost/api/v1/users",
+            postJson(JSON.stringify({ name: "Ada" })),
+          );
+        },
+      );
+
+      Then(
+        'the fetch caller received status 200 and the user named "Grace"',
+        async () => {
+          expect(fetchResponse?.status).toBe(200);
+          expect(await fetchResponse?.json()).toEqual({ name: "Grace" });
+        },
+      );
+
+      And(
+        'the observed request is "POST http://localhost/api/v1/users"',
+        () => {
+          const { request } = onlyExchangeWith(seen, "answered");
+          expect(`${request.method} ${request.url}`).toBe(
+            "POST http://localhost/api/v1/users",
+          );
+        },
+      );
+
+      And('the observed request body is the user named "Ada"', () => {
+        expect(onlyExchange(seen).request.body).toEqual({ name: "Ada" });
+      });
+    },
+  );
+
+  Scenario(
+    "A beforeRequest that throws is observed as failed with the body the client sent",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a mock with route "POST /api/users" echoing the body and an exchange observer',
+        () => {
+          setup();
+          mock("POST /api/users", ({ body }) => body);
+          mock.pipe(exchangeObserver(seen));
+        },
+      );
+
+      And(
+        'the mock intercepts fetch with a beforeRequest hook that renames the user to "Grace" in place and throws "hook failed"',
+        () => {
+          intercept(mock, {
+            beforeRequest: (request) => {
+              renameUserTo(request.body, "Grace");
+              throw new Error("hook failed");
+            },
+          });
+        },
+      );
+
+      When(
+        'the app posts the JSON user "Ada" to "http://localhost/api/users" expecting a rejection',
+        async () => {
+          await appFetchesExpectingRejection(
+            "http://localhost/api/users",
+            postJson(JSON.stringify({ name: "Ada" })),
+          );
+        },
+      );
+
+      Then('the fetch rejected with the message "hook failed"', () => {
+        expect(fetchError).toBeInstanceOf(Error);
+        expect(fetchError).toMatchObject({ message: "hook failed" });
+      });
+
+      And(
+        "the observed exchange failed with the error the fetch rejected with",
+        () => {
+          expect(onlyExchangeWith(seen, "failed").error).toBe(fetchError);
+        },
+      );
+
+      And('the observed request body is the user named "Ada"', () => {
+        expect(onlyExchange(seen).request.body).toEqual({ name: "Ada" });
+      });
+    },
+  );
+
+  Scenario(
+    "An observer whose promise never settles does not delay the fetch",
+    ({ Given, When, Then, And }) => {
+      let calls = 0;
+
+      Given(
+        'a mock with route "GET /api/users" returning users and an observer whose promise never settles',
+        () => {
+          setup();
+          calls = 0;
+          mock("GET /api/users", USERS);
+          mock.pipe({
+            name: "never-settles",
+            process: passThrough,
+            onExchange: () => {
+              calls += 1;
+              return new Promise<void>(() => {});
+            },
+          });
+        },
+      );
+
+      And("the mock intercepts fetch", () => intercept(mock));
+
+      // Were the promise awaited, the fetch would never settle: fail fast
+      // with a clear message instead of a 30 s step timeout.
+      When('the app fetches "http://localhost/api/users"', async () => {
+        await Promise.race([
+          appFetches("http://localhost/api/users"),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("the fetch waited for the observer")),
+              2000,
+            ),
+          ),
+        ]);
+      });
+
+      Then("the fetch caller received status 200", () => {
+        expect(fetchResponse?.status).toBe(200);
+      });
+
+      And("the never-settling observer was called once", () => {
+        expect(calls).toBe(1);
       });
     },
   );
