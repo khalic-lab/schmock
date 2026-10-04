@@ -81,6 +81,9 @@
     "packages/devtools": {
       "name": "@schmock/devtools",
       "version": "2.5.0",
+      "bin": {
+        "schmock-devtools": "dist/bin.js",
+      },
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^7.0.0",
         "@types/node": "^26.1.0",
