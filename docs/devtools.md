@@ -222,8 +222,7 @@ interface ServiceWorkerRelay {
   relay starts, while it is active or reconnecting, and after `stop()`.
 - `stop()` hands `fetch` back to in-page interception at once, then tells the
   worker to forget this page and waits for its acknowledgement, up to
-  `timeout`. If the relay is still starting, `stop()` first waits for the start
-  to settle. From then on a `fetch` is answered in the page with no Network
+  `timeout`. From then on a `fetch` is answered in the page with no Network
   row, and XHR is no longer mocked. A request the worker relayed before it
   processed the goodbye is still answered by the mock. `stop()` is idempotent.
   On a relay that fell back it resolves at once and clears `fallbackReason`.
@@ -592,8 +591,8 @@ outcomes:
 
 | Outcome | When |
 |---------|------|
-| answered | The mock answered. The report shows the response the caller received after `beforeResponse` and `errorFormatter`. With `passthrough: false`, this includes the 404 for an unrouted request and the 400 for a malformed JSON body. |
-| failed | The caller's `fetch` rejected. This happens if a hook or route throws and no `errorFormatter` replaces the error, or if the formatter itself throws. |
+| answered | The mock answered. The report shows the response the caller received after `beforeResponse` and `errorFormatter`. With `passthrough: false`, this includes the 404 for an unrouted request and the 400 for a malformed JSON body. A route that throws is answered too, with core's 500 response or with what `errorFormatter` makes of the error. |
+| failed | The caller's `fetch` rejected. This happens if a `beforeRequest` or `beforeResponse` hook throws and no `errorFormatter` replaces the error, or if the formatter itself throws. |
 | aborted | The caller aborted the request while this mock was answering. |
 
 The plugin does not report these requests:
