@@ -1,6 +1,6 @@
 {
   "name": "@schmock/devtools",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "description": "Chrome DevTools visibility for Schmock mocks: console and Performance-panel reporting, and a service-worker relay for the Network panel",
   "type": "module",
   "repository": {
@@ -46,7 +46,7 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@schmock/core": "^2.5.0"
+    "@schmock/core": "^2.6.0"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",
