@@ -150,7 +150,8 @@ Once the worker is installed the wait is short. A relay that falls back with
 scope, and the default scope is the script's directory: `/schmock-sw.js`
 covers the whole origin, `/mocks/schmock-sw.js` only pages under `/mocks/`.
 Serve the script at or above the pages that start the relay, normally at `/`.
-Registering with a `scope` wider than the script's directory rejects with a
+A page outside the scope falls back at once with `"not-controlled"` and
+registers nothing (observed). Registering with a `scope` wider than the script's directory rejects with a
 `SecurityError` (observed), and the relay falls back with
 `"registration-failed"`, unless the server sends a `Service-Worker-Allowed`
 header.
@@ -252,10 +253,11 @@ script's absolute URL, such as `http://localhost:5173/schmock-sw.js`, and
 
 | Reason | When | Warning |
 |--------|------|---------|
-| `unsupported` | No `navigator.serviceWorker`: Node, a browser without service workers, or an insecure page in Chrome. | `Schmock relay: service workers are unavailable here, so mocked requests stay in the page and do not appear in the Network panel.` |
+| `unsupported` | No `navigator.serviceWorker`: Node, a browser without service workers, an insecure page in Chrome, or a sandboxed iframe without `allow-same-origin`, where reading it throws (observed). | `Schmock relay: service workers are unavailable here, so mocked requests stay in the page and do not appear in the Network panel.` |
 | `insecure-context` | The browser exposes service workers on a page that is not a secure context. Chrome does not, so there the reason is `unsupported`. | `Schmock relay: service workers need a secure context (https or localhost), so mocked requests stay in the page.` |
 | `scope-taken` | Another script is registered at exactly the relay's scope. Nothing is registered. | `Schmock relay: <scriptURL> already controls this scope; Schmock will not replace it. Unregister it while developing, or give Schmock its own scope.` |
 | `registration-failed` | The browser refused the registration (script not served, script error, scope wider than the script's directory), or the worker failed to install. | `Schmock relay: could not register <url> (<message>). Run "npx schmock-devtools init <publicDir>" and serve the file at <url>.` |
+| `not-controlled` | The URL the page was loaded at is outside the scope: the script's directory, or the `scope` option. Nothing is registered and nothing waits. Not checked for a page the Schmock worker already controls, or for a srcdoc, blob or `about:blank` document. | `Schmock relay: <url> can only control pages under <scope>, and this page is <pageUrl>. Serve the script at or above this page, or pass a scope that covers it.` |
 | `not-controlled` | The worker could not take control of the page within `timeout`, and no worker controls it. | `Schmock relay: this page is not controlled by the Schmock service worker (a hard reload bypasses service workers); reload normally.` |
 | `not-controlled` | Another worker still controls the page when `timeout` expires, or took it over after a worker update. | `Schmock relay: this page is controlled by <scriptURL>, which Schmock will not replace. Unregister it while developing, or give Schmock a scope that covers this page.` |
 | `protocol-mismatch` | The served script speaks another relay protocol: it was copied from an incompatible version. | `Schmock relay: <url> speaks relay protocol <n>, this page expects <m>. Run "npx schmock-devtools init <publicDir>" again.` |
@@ -388,6 +390,8 @@ leave `provideSchmockInterceptor`.
 | The mock fails, for example a hook throws with no `errorFormatter` | `fetch` rejects with that error | `fetch` rejects with a `TypeError` and XHR fires `error`; the original error is logged |
 | Relative `fetch` and an origin-form `baseUrl` naming the page origin | no match | matches |
 | Abort | the mock ends the request with `request:end` 499 | the row is canceled and `fetch` rejects with an `AbortError`; the mock did not see the abort (observed) |
+| Lease restored, or the mock reset, after the call | the leases and routes of the call answer | the request is routed when it reaches the page, a task or more later, by the leases and routes of that moment: a lease restored right after the call no longer answers it |
+| A mocked redirect (3xx with `Location`) | `fetch` receives the 3xx | the browser follows it as it would a server's: the follow-up request goes through the relay and reaches the network unless a route answers it; `redirect: 'manual'` gives status 0 (`opaqueredirect`) and `redirect: 'error'` rejects (observed) |
 | Headers a route sees | the ones the page set | those plus browser defaults; only `accept: */*` was added (observed) |
 | `response.url` | the URL without its fragment | the URL without its fragment (observed) |
 | `response.type` | `default` | `basic`, cross-origin included (observed) |
@@ -440,6 +444,15 @@ list in memory.
 
   Unregister the app's worker while developing, or give Schmock a scope that
   covers the page more closely than the app's worker does.
+- **Redirects.** A route that answers 3xx with a `Location` is followed by the
+  browser under the relay, as a server's redirect would be. In fetch mode the
+  caller receives the 3xx itself. Mock the target too, or the follow-up
+  request reaches the network (observed).
+- **A miss can be routed twice around a worker update or `stop()`.** While the
+  relay reconnects after a worker update, and after `stop()` until the worker
+  acknowledges it, `fetch` is answered in the page. A fetch no lease answers
+  passes through, the worker still relays it back, and the mock is consulted
+  again: `request:start`, `request:notfound` and `request:end` fire twice.
 - **Hard reload.** Shift+Reload loads the page without its service worker, so
   the relay asks the active worker to claim the page. After a hard reload the
   relay re-claimed the page and came back active, with no warning (observed).

@@ -1315,6 +1315,7 @@ export function createRelayHarness(settings?: {
       container: record.container,
       secureContext: secure,
       baseUrl: url,
+      pageUrl: url,
       onPageHide(listener) {
         record.pageHideListeners.push(listener);
         return () => {

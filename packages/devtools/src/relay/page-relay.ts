@@ -134,6 +134,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function sameHttpOrigin(pageUrl: string, scope: string): boolean {
+  try {
+    const page = new URL(pageUrl);
+    return (
+      (page.protocol === "http:" || page.protocol === "https:") &&
+      page.origin === new URL(scope).origin
+    );
+  } catch {
+    return false;
+  }
+}
+
 function sameKey(a: ResolvedOptions, b: ResolvedOptions): boolean {
   return a.url === b.url && a.scope === b.scope && a.timeout === b.timeout;
 }
@@ -179,8 +191,12 @@ function handleFrame(event: RelayMessageEvent): void {
       if (controller.signal.aborted) {
         reply = { type: "schmock:aborted" };
       } else {
+        // The URL is an argument, never part of the format string: a "%c"
+        // in it would swallow the error.
         console.error(
-          `Schmock relay: ${frame.request.method} ${frame.request.url} failed in the mock, so the page receives a network error.`,
+          "Schmock relay: %s %s failed in the mock, so the page receives a network error.",
+          frame.request.method,
+          frame.request.url,
           error,
         );
         reply = {
@@ -517,6 +533,22 @@ export function createServiceWorkerRelay(
       }
     }
 
+    // A worker controls only the pages under its scope: no point registering.
+    // Only an http(s) page on the scope's origin is checked; a srcdoc, blob or
+    // about:blank document can still inherit control from its parent.
+    const pageUrl = environment.pageUrl ?? environment.baseUrl;
+    const ours = container.controller?.scriptURL === resolvedUrl;
+    if (
+      !ours &&
+      sameHttpOrigin(pageUrl, intendedScope) &&
+      !pageUrl.startsWith(intendedScope)
+    ) {
+      return fallback(
+        "not-controlled",
+        `Schmock relay: ${resolvedUrl} can only control pages under ${intendedScope}, and this page is ${pageUrl}. Serve the script at or above this page, or pass a scope that covers it.`,
+      );
+    }
+
     // Register.
     let registration: RelayRegistration;
     try {
@@ -594,11 +626,18 @@ export function createServiceWorkerRelay(
 export function startServiceWorkerRelay(
   options?: ServiceWorkerRelayOptions,
 ): Promise<ServiceWorkerRelay> {
-  const serviceWorker = globalThis.navigator?.serviceWorker ?? undefined;
+  let serviceWorker: RelayContainer | undefined;
+  try {
+    serviceWorker = globalThis.navigator?.serviceWorker ?? undefined;
+  } catch {
+    // A sandboxed document without allow-same-origin throws a SecurityError.
+    serviceWorker = undefined;
+  }
   const environment: RelayEnvironment = {
     container: serviceWorker,
     secureContext: globalThis.isSecureContext === true,
     baseUrl: pageBaseUrl(),
+    pageUrl: documentCreationUrl(),
     onPageHide(listener) {
       if (typeof globalThis.addEventListener !== "function") return () => {};
       const handler = (event: Event) =>
@@ -608,6 +647,27 @@ export function startServiceWorkerRelay(
     },
   };
   return createServiceWorkerRelay(environment, options);
+}
+
+/**
+ * The URL the document was created at, which is what a worker's scope must
+ * cover: the navigation entry keeps it after history.pushState() moves
+ * location.href.
+ */
+function documentCreationUrl(): string | undefined {
+  try {
+    const [navigation] =
+      globalThis.performance?.getEntriesByType?.("navigation") ?? [];
+    if (navigation !== undefined && isNonEmptyString(navigation.name)) {
+      return navigation.name;
+    }
+  } catch {
+    // no navigation timing here
+  }
+  if (typeof location !== "undefined" && typeof location.href === "string") {
+    return location.href;
+  }
+  return undefined;
 }
 
 function pageBaseUrl(): string {

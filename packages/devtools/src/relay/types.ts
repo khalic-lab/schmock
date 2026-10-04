@@ -140,6 +140,8 @@ export interface RelayEnvironment {
   readonly secureContext: boolean;
   /** Resolves options.url (document.baseURI, else location.href). */
   readonly baseUrl: string;
+  /** The page's own URL, which a worker's scope must cover; baseUrl when absent. */
+  readonly pageUrl?: string;
   /** Subscribe to pagehide; returns the unsubscribe function. */
   onPageHide(listener: (persisted: boolean) => void): () => void;
 }

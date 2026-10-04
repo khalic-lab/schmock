@@ -48,8 +48,8 @@ const TEXT = {
     `Schmock relay: the service worker did not get ready within ${ms} ms, so mocked requests stay in the page.`,
   version: (v: string) =>
     `Schmock relay: ${SCRIPT} comes from @schmock/devtools ${v}, this page uses ${VERSION}. Run "npx schmock-devtools init <publicDir>" to update it.`,
-  mockFailure: (method: string, url: string) =>
-    `Schmock relay: ${method} ${url} failed in the mock, so the page receives a network error.`,
+  mockFailureFormat:
+    "Schmock relay: %s %s failed in the mock, so the page receives a network error.",
 };
 
 interface Seen {
@@ -954,9 +954,13 @@ describe("PR15 aborted and error replies", () => {
     });
     expect(error).toHaveBeenCalledTimes(1);
     const args = error.mock.calls[0];
-    expect(args).toHaveLength(2);
-    expect(args[0]).toBe(TEXT.mockFailure("GET", "http://localhost/api/users"));
-    expect(args[1]).toBe(hookError);
+    // Method and URL are arguments, never part of the format string.
+    expect(args).toEqual([
+      TEXT.mockFailureFormat,
+      "GET",
+      "http://localhost/api/users",
+      hookError,
+    ]);
   });
 });
 
@@ -1357,7 +1361,11 @@ describe("PR23 startServiceWorkerRelay reads globals at call time", () => {
     );
     warn.mockClear();
     vi.stubGlobal("document", { baseURI: "http://localhost/y/" });
-    const viaDocument = await startServiceWorkerRelay({ url: "schmock-sw.js" });
+    // An explicit "/" scope keeps the /x/ page in scope of a /y/ script.
+    const viaDocument = await startServiceWorkerRelay({
+      url: "schmock-sw.js",
+      scope: "/",
+    });
     expect(viaDocument.fallbackReason).toBe("registration-failed");
     expect(String(warn.mock.calls[0][0])).toContain(
       "http://localhost/y/schmock-sw.js",
@@ -1369,6 +1377,70 @@ describe("PR23 startServiceWorkerRelay reads globals at call time", () => {
     expect(relay.active).toBe(false);
     expect(relay.fallbackReason).toBe("unsupported");
     expect(warn).toHaveBeenCalledWith(TEXT.unsupported);
+  });
+});
+
+describe("PR26 scope pre-check", () => {
+  it("falls back at once for a page outside the script's directory, registering nothing", async () => {
+    const harnessed = harness();
+    harnessed.installWorker(stubWorker(), "/mocks/schmock-sw.js");
+    const page = harnessed.openPage({ path: "/index.html" });
+    const relay = await start(page, {
+      url: "/mocks/schmock-sw.js",
+      timeout: 60_000,
+    });
+    expect(relay.fallbackReason).toBe("not-controlled");
+    expect(String(warn.mock.calls[0]?.[0])).toContain(
+      "can only control pages under http://localhost/mocks/",
+    );
+    expect(harnessed.registerCalls).toEqual([]);
+  });
+
+  it("checks the URL the document was created at, not the one pushState moved to", async () => {
+    const harnessed = harness();
+    harnessed.installWorker(stubWorker(), "/mocks/schmock-sw.js");
+    const page = harnessed.openPage({ path: "/mocks/index.html" });
+    vi.stubGlobal("navigator", { serviceWorker: containerOf(page) });
+    vi.stubGlobal("isSecureContext", true);
+    vi.stubGlobal("location", { href: "http://localhost/elsewhere" });
+    vi.spyOn(performance, "getEntriesByType").mockImplementation((type) =>
+      type === "navigation"
+        ? ([
+            { name: "http://localhost/mocks/index.html" },
+          ] as unknown as PerformanceEntryList)
+        : [],
+    );
+    const relay = await startServiceWorkerRelay({
+      url: "/mocks/schmock-sw.js",
+    });
+    relays.push(relay);
+    expect(relay.active).toBe(true);
+  });
+
+  it("leaves a srcdoc document to register and claim as before", async () => {
+    const harnessed = harness();
+    harnessed.installWorker(stubWorker());
+    const page = harnessed.openPage();
+    const relay = await createServiceWorkerRelay({
+      ...page.environment,
+      pageUrl: "about:srcdoc",
+    });
+    relays.push(relay);
+    expect(harnessed.registerCalls).toHaveLength(1);
+  });
+
+  it("skips the check for a page the Schmock worker already controls", async () => {
+    const harnessed = harness();
+    harnessed.installWorker(stubWorker());
+    await harnessed.activateWorker();
+    const page = harnessed.openPage();
+    // A srcdoc iframe inherits its parent's controller under another URL.
+    const relay = await createServiceWorkerRelay({
+      ...page.environment,
+      pageUrl: "about:srcdoc",
+    });
+    relays.push(relay);
+    expect(relay.active).toBe(true);
   });
 });
 

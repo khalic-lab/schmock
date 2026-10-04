@@ -4,7 +4,10 @@ import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { SchmockError, schmock } from "@schmock/core";
 import { expect, vi } from "vitest";
 import { devtoolsPlugin } from "../index.js";
-import { createServiceWorkerRelay } from "../relay/page-relay.js";
+import {
+  createServiceWorkerRelay,
+  startServiceWorkerRelay,
+} from "../relay/page-relay.js";
 import type {
   ExtendableMessageEventLike,
   ReadyMessage,
@@ -764,7 +767,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   );
 
   Scenario(
-    "Aborting a relayed request cancels it in the mock",
+    "Aborting a relayed XHR cancels it in the mock when the worker sees the abort",
     ({ Given, When, Then, And }) => {
       Given(
         'a page whose mock answers "GET /api/slow" after it is released and whose relay has started',
@@ -1810,4 +1813,122 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     await delay(20);
     return !state.settled;
   }
+  Scenario(
+    "A failing mock's error log keeps the request URL literal",
+    ({ Given, When, Then }) => {
+      Given(
+        'a page whose mock answers "GET /discount/:code" through a beforeResponse hook that throws "hook failed" and whose relay has started',
+        () =>
+          givenRelayingPage(
+            (target) => {
+              target("GET /discount/:code", { ok: true });
+            },
+            {
+              beforeResponse: () => {
+                throw new Error("hook failed");
+              },
+            },
+          ),
+      );
+
+      When(
+        'the page fetches "/discount/20%cut" expecting a rejection',
+        async () => {
+          requestError = await withTimeout(
+            rejectionOf(fetch("/discount/20%cut")),
+            'fetch("/discount/20%cut")',
+          );
+        },
+      );
+
+      Then(
+        'the page console logged "GET http://localhost/discount/20%cut failed in the mock" with the original error "hook failed"',
+        () => {
+          const calls = currentSpies().error.mock.calls;
+          expect(calls).toHaveLength(1);
+          const rendered = renderConsole(calls[0]);
+          expect(rendered).toContain(
+            "GET http://localhost/discount/20%cut failed in the mock",
+          );
+          expect(rendered).toContain("hook failed");
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A page outside the worker's scope falls back without waiting",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'an empty page at "/index.html" with the Schmock worker available at "/mocks/schmock-sw.js"',
+        () => {
+          page = createHarness(
+            installRelayWorker,
+            "/mocks/schmock-sw.js",
+          ).openPage({ path: "/index.html" });
+        },
+      );
+
+      When("the page starts the relay with:", async (_, docString: string) => {
+        await startRelay(parseRelayOptions(docString));
+      });
+
+      Then('the relay fell back with reason "not-controlled"', () => {
+        expectFellBack("not-controlled");
+      });
+
+      And("no service worker was registered", () => {
+        expect(currentHarness().registerCalls).toEqual([]);
+      });
+
+      And(
+        'the page console warned with "can only control pages under http://localhost/mocks/"',
+        () => {
+          expectWarnedWith(
+            "can only control pages under http://localhost/mocks/",
+          );
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A sandboxed page that cannot read navigator.serviceWorker falls back as unsupported",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a sandboxed page where reading navigator.serviceWorker throws a SecurityError",
+        () => {
+          spies = spyOnConsole();
+          vi.stubGlobal("navigator", {
+            get serviceWorker(): never {
+              throw new DOMException(
+                "Service worker is disabled because the context is sandboxed and lacks the 'allow-same-origin' flag.",
+                "SecurityError",
+              );
+            },
+          });
+        },
+      );
+
+      When(
+        "the page starts the relay through startServiceWorkerRelay",
+        async () => {
+          const started = await startServiceWorkerRelay();
+          relays.push(started);
+          relay = started;
+        },
+      );
+
+      Then('the relay fell back with reason "unsupported"', () => {
+        expectFellBack("unsupported");
+      });
+
+      And(
+        'the page console warned with "service workers are unavailable here"',
+        () => {
+          expectWarnedWith("service workers are unavailable here");
+        },
+      );
+    },
+  );
 });

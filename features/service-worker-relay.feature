@@ -63,7 +63,7 @@ Feature: Service worker relay
     And the page received status 200 with the mocked users
     And the mock answered 1 request
 
-  Scenario: Aborting a relayed request cancels it in the mock
+  Scenario: Aborting a relayed XHR cancels it in the mock when the worker sees the abort
     Given a page whose mock answers "GET /api/slow" after it is released and whose relay has started
     And the mock records its request:end statuses
     When the page sends an XHR for "/api/slow" and aborts it while the route runs
@@ -283,3 +283,24 @@ Feature: Service worker relay
     When the page sends an XHR for "/api/users"
     Then exactly 1 collapsed console group was opened and closed
     And the group title reads "Schmock GET /api/users → 200" followed by the duration
+
+  Scenario: A failing mock's error log keeps the request URL literal
+    Given a page whose mock answers "GET /discount/:code" through a beforeResponse hook that throws "hook failed" and whose relay has started
+    When the page fetches "/discount/20%cut" expecting a rejection
+    Then the page console logged "GET http://localhost/discount/20%cut failed in the mock" with the original error "hook failed"
+
+  Scenario: A page outside the worker's scope falls back without waiting
+    Given an empty page at "/index.html" with the Schmock worker available at "/mocks/schmock-sw.js"
+    When the page starts the relay with:
+      """
+      { "url": "/mocks/schmock-sw.js", "timeout": 60000 }
+      """
+    Then the relay fell back with reason "not-controlled"
+    And no service worker was registered
+    And the page console warned with "can only control pages under http://localhost/mocks/"
+
+  Scenario: A sandboxed page that cannot read navigator.serviceWorker falls back as unsupported
+    Given a sandboxed page where reading navigator.serviceWorker throws a SecurityError
+    When the page starts the relay through startServiceWorkerRelay
+    Then the relay fell back with reason "unsupported"
+    And the page console warned with "service workers are unavailable here"
