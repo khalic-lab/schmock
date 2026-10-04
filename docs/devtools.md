@@ -61,7 +61,8 @@ bytes.
 Each request also appears as a `performance.measure()` entry on a custom track
 named `Schmock`. Follow these steps to see the track:
 
-1. Use Chrome 128 or later.
+1. Use Chrome 128 or later. Other browsers keep the measures but show no
+   custom track (see [Other browsers](#other-browsers)).
 2. In the Performance panel, open **Capture settings** (the gear icon) and turn
    on **Show custom tracks**.
 3. Start a recording, let the app make its requests, and stop.
@@ -98,7 +99,7 @@ A piped `devtoolsPlugin()` still reports relayed requests, so each one gets a
 console group and a Performance entry next to its Network row.
 
 Behaviour marked *observed* on this page was measured in headless Chrome on
-2026-10-03; the rest follows from the code. Mocked `fetch` and XHR requests
+2026-10-03, unless it names another browser; the rest follows from the code. Mocked `fetch` and XHR requests
 both showed as Network rows served by the service worker (observed).
 
 ### Setup
@@ -518,6 +519,33 @@ for (const registration of await navigator.serviceWorker.getRegistrations()) {
   }
 }
 ```
+
+### Other browsers
+
+The relay uses only standard service-worker APIs, so it is not tied to
+Chrome. On 2026-10-04 we ran it in Playwright's WebKit 26.6 (the engine
+behind Safari) and Firefox 155 with the same checks as Chrome, and
+observed:
+
+- The relay went live and the worker took control of the page.
+- The browser reported every mocked `fetch` and XHR, POSTs with a body
+  included, as answered by the service worker. No mocked request reached
+  the server, and requests no mock answered reached it with their bodies
+  intact.
+- The console groups were logged.
+- Aborting a relayed `fetch` canceled it in the page, but the mock still
+  ran the route to completion, as in Chrome.
+
+What differs:
+
+- Firefox and Safari lack the custom Performance track because it is a
+  Chrome DevTools extension. They keep the `performance.measure()` entries
+  as plain User Timing entries, without the `Schmock` track or its colors.
+- Firefox's Network Monitor and Safari's Web Inspector mark service-worker
+  responses their own way. The network labels
+  `is:service-worker-intercepted`, `-is:service-worker-initiated` and the
+  `(ServiceWorker)` Size belong to Chrome. Neither UI was inspected, and
+  Safari itself, as opposed to Playwright's WebKit build, was not run.
 
 ## `devtoolsPlugin(options?)`
 
