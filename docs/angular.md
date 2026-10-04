@@ -200,8 +200,10 @@ export const appConfig = {
 ```
 
 `withFetch()` sends every request through `globalThis.fetch`, which
-`mock.intercept()` patches. Leave `provideSchmockInterceptor` out of the
-providers: it would answer first, and nothing would be reported.
+`mock.intercept()` patches. From Angular 22 the fetch backend is the default
+and `withFetch()` is deprecated, so `provideHttpClient()` alone does the same;
+keep `withFetch()` on Angular 21 and earlier. Leave `provideSchmockInterceptor`
+out of the providers: it would answer first, and nothing would be reported.
 
 What changes on this path:
 
@@ -240,9 +242,10 @@ startServiceWorkerRelay()
   .catch((err) => console.error(err))
 ```
 
-Under the relay, Angular's default XHR backend is relayed too, so
-`withFetch()` is not strictly needed there. Keep it: if the relay falls back,
-`fetch` is still mocked in the page and XHR is not mocked at all. Mocked
+Under the relay, an XHR backend (Angular 21 and earlier without
+`withFetch()`) is relayed too, so the fetch backend is not strictly needed
+there. Use it anyway: if the relay falls back, `fetch` is still mocked in the
+page and XHR is not mocked at all. Mocked
 requests show as Network rows with Size `(ServiceWorker)`. See
 [Network panel relay](./devtools.md#network-panel-relay).
 
