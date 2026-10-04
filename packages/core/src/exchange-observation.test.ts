@@ -386,4 +386,40 @@ describe("exchange observation through intercept()", () => {
     expect(order).toContain("a.onExchange");
     expect(order).not.toContain("b.onExchange");
   });
+
+  it.each(["beforeRequest", "beforeResponse"] as const)(
+    "reports a %s hook error as failed when an abort lands one microtask later",
+    async (hook) => {
+      const seen: any[] = [];
+      const mock = schmock();
+      mock("GET /api/users", USERS);
+      const controller = new AbortController();
+      let abortedWhenObserved: boolean | undefined;
+      mock.pipe({
+        ...observer("obs", seen),
+        onExchange(exchange: any) {
+          abortedWhenObserved = controller.signal.aborted;
+          seen.push(exchange);
+        },
+      });
+      const hookError = new Error("hook failed");
+      handles.push(
+        mock.intercept({
+          [hook]: () => {
+            void Promise.resolve()
+              .then(() => {})
+              .then(() => controller.abort());
+            throw hookError;
+          },
+        }),
+      );
+      await expect(
+        fetch("http://localhost/api/users", { signal: controller.signal }),
+      ).rejects.toBe(hookError);
+      // The abort must land before observation, or this proves nothing.
+      expect(abortedWhenObserved).toBe(true);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({ outcome: "failed", error: hookError });
+    },
+  );
 });

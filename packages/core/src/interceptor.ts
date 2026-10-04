@@ -228,6 +228,18 @@ function normalizeFetchRequest(
   };
 }
 
+/**
+ * Whether `error` is the signal's own abort. An abort that lands after the
+ * lease already rejected with another error leaves that error the outcome.
+ */
+function isAbortOf(signal: AbortSignal, error: unknown): boolean {
+  if (!signal.aborted) return false;
+  if ("reason" in signal && signal.reason !== undefined) {
+    return error === signal.reason;
+  }
+  return error instanceof Error && error.name === "AbortError";
+}
+
 async function routeThroughLeases(
   leases: readonly RegisteredInterceptor[],
   normalizedRequest: NormalizedFetchRequest,
@@ -276,7 +288,7 @@ async function routeThroughLeases(
       throwIfAborted(signal);
     } catch (error) {
       if (observe !== undefined) {
-        if (!signal.aborted) {
+        if (!isAbortOf(signal, error)) {
           notify(observe, () =>
             failedExchange(normalizedRequest, draft, error, startTime),
           );

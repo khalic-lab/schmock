@@ -81,6 +81,13 @@ Feature: Exchange observers
     Then the fetch rejected with the message "hook failed"
     And the observed exchange failed with the error the fetch rejected with
 
+  Scenario: A hook error is observed as failed even when the caller aborts right after it
+    Given a mock with route "GET /api/users" returning users and an exchange observer
+    And the mock intercepts fetch with a beforeResponse hook that throws "hook failed" and aborts the fetch one microtask later
+    When the app fetches "http://localhost/api/users" with that abort signal expecting a rejection
+    Then the fetch rejected with the message "hook failed"
+    And the observed exchange failed with the error the fetch rejected with
+
   Scenario: Aborting a request the mock is answering is observed as aborted
     Given a mock with route "GET /api/slow" that waits until released and an exchange observer
     And the mock intercepts fetch

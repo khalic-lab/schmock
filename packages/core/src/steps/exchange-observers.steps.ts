@@ -557,6 +557,68 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   );
 
   Scenario(
+    "A hook error is observed as failed even when the caller aborts right after it",
+    ({ Given, When, Then, And }) => {
+      const controller = new AbortController();
+      let abortedWhenObserved: boolean | undefined;
+
+      Given(
+        'a mock with route "GET /api/users" returning users and an exchange observer',
+        () => givenUsersMockWithObserver(),
+      );
+
+      And(
+        'the mock intercepts fetch with a beforeResponse hook that throws "hook failed" and aborts the fetch one microtask later',
+        () => {
+          mock.pipe({
+            name: "abort-probe",
+            process: (context, response) => ({ context, response }),
+            onExchange: () => {
+              abortedWhenObserved = controller.signal.aborted;
+            },
+          });
+          intercept(mock, {
+            beforeResponse: () => {
+              // Lands after the lease rejected but before routing resumes.
+              void Promise.resolve()
+                .then(() => {})
+                .then(() => controller.abort());
+              throw new Error("hook failed");
+            },
+          });
+        },
+      );
+
+      When(
+        'the app fetches "http://localhost/api/users" with that abort signal expecting a rejection',
+        async () => {
+          try {
+            await globalThis.fetch("http://localhost/api/users", {
+              signal: controller.signal,
+            });
+          } catch (error) {
+            fetchError = error;
+          }
+        },
+      );
+
+      Then('the fetch rejected with the message "hook failed"', () => {
+        expect(fetchError).toBeInstanceOf(Error);
+        expect(fetchError).toMatchObject({ message: "hook failed" });
+      });
+
+      And(
+        "the observed exchange failed with the error the fetch rejected with",
+        () => {
+          // The abort must land before observation, or this proves nothing.
+          expect(abortedWhenObserved).toBe(true);
+          expect(onlyExchangeWith(seen, "failed").error).toBe(fetchError);
+        },
+      );
+    },
+  );
+
+  Scenario(
     "Aborting a request the mock is answering is observed as aborted",
     ({ Given, When, Then, And }) => {
       Given(
