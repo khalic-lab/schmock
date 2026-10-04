@@ -61,7 +61,10 @@ describe("scaffold.ts", () => {
       const result = run("some-feature invalid-pkg");
       expect(result.exitCode).not.toBe(0);
       expect(result.output).toContain("Invalid package");
-      expect(result.output).toContain("core, schema, express, angular");
+      for (const pkg of ["core", "devtools", "express"]) {
+        expect(result.output).toContain(pkg);
+      }
+      expect(result.output).not.toContain("schmock,");
     });
   });
 
@@ -131,7 +134,7 @@ describe("scaffold.ts", () => {
     });
 
     it("should work with all valid packages", () => {
-      for (const pkg of ["core", "schema", "express", "angular"]) {
+      for (const pkg of ["core", "devtools", "express", "angular"]) {
         const name = `${uniqueName}-${pkg}`;
         const fp = join(ROOT, "features", `${name}.feature`);
         const sp = join(

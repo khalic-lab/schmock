@@ -25,7 +25,18 @@ import {
 import { join } from "node:path";
 
 const root = join(import.meta.dir, "../../../..");
-const validPackages = ["core", "schema", "express", "angular"];
+// Every workspace package that runs BDD steps, so the list never names one
+// that does not exist or whose steps nothing would run.
+const validPackages = readdirSync(join(root, "packages"), {
+  withFileTypes: true,
+})
+  .filter(
+    (entry) =>
+      entry.isDirectory() &&
+      existsSync(join(root, "packages", entry.name, "vitest.config.bdd.ts")),
+  )
+  .map((entry) => entry.name)
+  .sort();
 const featuresDir = join(root, "features");
 
 // ─── Check mode: list existing features + scenarios ───

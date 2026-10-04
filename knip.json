@@ -5,6 +5,7 @@
     ".agents/**",
     "examples/**"
   ],
+  "ignoreBinaries": ["openssl"],
   "workspaces": {
     ".": {
       "entry": [
