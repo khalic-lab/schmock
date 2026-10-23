@@ -313,6 +313,43 @@ describe("debug functionality", () => {
       expect(logs).toContain("[redacted]");
     });
 
+    it("redacts query parameters named like credentials", async () => {
+      const mock = schmock({ debug: true });
+      let seenQuery: Record<string, string> = {};
+      mock("GET /pets", (ctx) => {
+        seenQuery = ctx.query;
+        return [];
+      });
+      const query = {
+        api_key: "QUERY-KEY-1",
+        access_token: "ACCESS-TOKEN-2",
+        client_secret: "CLIENT-SECRET-3",
+        Password: "PASSWORD-4",
+        limit: "10",
+      };
+
+      await mock.handle("GET", "/pets", { query });
+
+      const requestLog = consoleLogs.find((args) =>
+        String(args[0]).includes("[SCHMOCK:REQUEST]"),
+      );
+      expect(requestLog?.[1]).toMatchObject({
+        query: {
+          api_key: "[redacted]",
+          access_token: "[redacted]",
+          client_secret: "[redacted]",
+          Password: "[redacted]",
+          limit: "10",
+        },
+      });
+      const logs = serializedLogs();
+      for (const secret of Object.values(query).slice(0, 4)) {
+        expect(logs).not.toContain(secret);
+      }
+      expect(seenQuery).toEqual(query);
+      expect(mock.lastRequest()?.query).toEqual(query);
+    });
+
     it("does not mutate the headers handed to generators and history", async () => {
       const mock = schmock({ debug: true });
       let seen: Record<string, string> = {};

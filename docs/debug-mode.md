@@ -95,10 +95,22 @@ present; only the value is replaced with `[redacted]`:
 [SCHMOCK:REQUEST] [abc123] GET /users { headers: { authorization: '[redacted]', 'content-type': 'application/json' }, query: {}, bodyType: 'none' }
 ```
 
+Query parameter values are redacted in the `REQUEST` log when the parameter is
+named like a credential: exactly `key`, `token`, `apikey`, `api_key`,
+`api-key`, `secret` or `password`, or any name ending in one of those after a
+`-` or `_` (`access_token`, `client_secret`, `x-pet-key`), matched
+case-insensitively. That is the rule the CLI's admin history uses:
+
+```
+[SCHMOCK:REQUEST] [abc123] GET /pets { headers: {...}, query: { api_key: '[redacted]', limit: '10' }, bodyType: 'none' }
+```
+
 Redaction affects logs only — plugins, generators and `history()` still receive
-the real header values. There is no opt-out. The set is exported from
-`@schmock/core` as `SENSITIVE_HEADER_NAMES`, and `redactHeaders()` applies the
-same masking; see [Header helpers](./api.md#header-helpers).
+the real header and query values. There is no opt-out. The header set is
+exported from `@schmock/core` as `SENSITIVE_HEADER_NAMES`, and
+`redactHeaders()` applies the same masking; see
+[Header helpers](./api.md#header-helpers). The query rule is exported from
+`@schmock/core/adapter` as `isCredentialName()`.
 
 `bodyType` reports the type of the request body whenever one was supplied, so an
 empty string, `0` or `false` show as `string` / `number` / `boolean`; `none`

@@ -1034,6 +1034,7 @@ interface FetchRelay {
 
 toError(value: unknown): Error
 buildJsonErrorResponse(options: JsonErrorResponseOptions): Response
+isCredentialName(name: string): boolean
 
 interface JsonErrorResponseOptions {
   status: number
@@ -1049,6 +1050,14 @@ envelope that `handle()`, `listen()` and `intercept()` answer a failure with,
 labelled `application/json` and normalized for `method`. A transport that
 writes its own failure answers uses it so its envelope cannot drift from
 core's.
+
+`isCredentialName(name)` tells whether a header or query parameter name looks
+like a credential: exactly `key`, `token`, `apikey`, `api_key`, `api-key`,
+`secret` or `password`, or any name ending in one of those after a `-` or `_`
+(`X-Pet-Key`, `access_token`, `client_secret`), compared case-insensitively.
+Core's debug log masks query parameters by this rule. It is broader than
+[`SENSITIVE_HEADER_NAMES`](#header-helpers), which stays the fixed set the
+debug log masks headers by.
 
 `toError(value)` turns a thrown value into an `Error` the way core does on
 every error path. An `Error` whose `message` is a string comes back as is.

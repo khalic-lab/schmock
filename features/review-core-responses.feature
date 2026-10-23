@@ -43,6 +43,13 @@ Feature: Core response and error-path review fixes
     Then the two statuses are 200 and 404
     And the request log carries a v4 request id
 
+  Scenario: The debug request log masks query parameters named like credentials
+    Given a debug mock with a route "GET /pets"
+    When I request "GET /pets" with query api_key "QK-1", access_token "AT-2" and limit "10"
+    Then the request log shows api_key and access_token as "[redacted]" and limit as "10"
+    And neither credential value appears in any log line
+    And the route and history still see the real query values
+
   Scenario: Static JSON data every request would reject fails when the route is defined
     Given an empty mock
     When I define "GET /profile" with static data holding a Map

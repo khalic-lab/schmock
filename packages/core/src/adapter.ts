@@ -14,6 +14,7 @@
  * - `toError` turns any thrown value into an `Error` the way core does, and
  *   `buildJsonErrorResponse` builds the `{ error, code }` envelope core
  *   answers a failure with.
+ * - `isCredentialName` is the rule core's debug log masks query parameters by.
  *
  * @packageDocumentation
  */
@@ -21,6 +22,7 @@
 export { abortReason, awaitWithAbort } from "./abort.js";
 export { acquireRequestAdmission } from "./admission.js";
 export { toError } from "./errors.js";
+export { isCredentialName } from "./headers.js";
 // Taken from the root entry on purpose: only `dist/index.d.ts` declares the
 // ambient `Schmock` namespace, so this import is what makes the adapter
 // declarations resolve when a consumer imports this entry alone.

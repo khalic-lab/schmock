@@ -26,6 +26,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let thrown: unknown;
   let endStatuses: number[] = [];
   let statuses: number[] = [];
+  let logCalls: unknown[][] = [];
   let logLines: string[] = [];
 
   AfterEachScenario(() => {
@@ -37,10 +38,21 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     thrown = undefined;
     endStatuses = [];
     statuses = [];
+    logCalls = [];
     logLines = [];
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
+
+  /** Keep debug output off the console, recording each console.log call. */
+  function captureDebugConsole(): void {
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logCalls.push(args);
+      logLines.push(args.map(String).join(" "));
+    });
+    vi.spyOn(console, "time").mockImplementation(() => {});
+    vi.spyOn(console, "timeEnd").mockImplementation(() => {});
+  }
 
   function currentMock(): Schmock.CallableMockInstance {
     if (!mock) throw new Error("scenario did not create a mock");
@@ -238,11 +250,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       );
 
       And('a debug mock with a route "GET /users"', () => {
-        vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
-          logLines.push(args.map(String).join(" "));
-        });
-        vi.spyOn(console, "time").mockImplementation(() => {});
-        vi.spyOn(console, "timeEnd").mockImplementation(() => {});
+        captureDebugConsole();
         mock = schmock({ debug: true });
         mock("GET /users", [{ id: 1 }]);
       });
@@ -266,6 +274,60 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         expect(requestLine).toMatch(
           /\[[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\] GET \/users/,
         );
+      });
+    },
+  );
+
+  Scenario(
+    "The debug request log masks query parameters named like credentials",
+    ({ Given, When, Then, And }) => {
+      const sentQuery = { api_key: "QK-1", access_token: "AT-2", limit: "10" };
+      let routeQuery: Record<string, string> = {};
+
+      Given('a debug mock with a route "GET /pets"', () => {
+        captureDebugConsole();
+        mock = schmock({ debug: true });
+        mock("GET /pets", ({ query }) => {
+          routeQuery = { ...query };
+          return [];
+        });
+      });
+
+      When(
+        'I request "GET /pets" with query api_key "QK-1", access_token "AT-2" and limit "10"',
+        async () => {
+          handled = await currentMock().handle("GET", "/pets", {
+            query: sentQuery,
+          });
+        },
+      );
+
+      Then(
+        'the request log shows api_key and access_token as "[redacted]" and limit as "10"',
+        () => {
+          const requestCall = logCalls.find((args) =>
+            String(args[0]).includes("[SCHMOCK:REQUEST]"),
+          );
+          const data = requestCall?.[1];
+          expect(isRecord(data) ? data.query : undefined).toEqual({
+            api_key: "[redacted]",
+            access_token: "[redacted]",
+            limit: "10",
+          });
+        },
+      );
+
+      And("neither credential value appears in any log line", () => {
+        const lines = logCalls.map((args) =>
+          args.map((arg) => JSON.stringify(arg) ?? String(arg)).join(" "),
+        );
+        expect(lines.some((line) => line.includes("QK-1"))).toBe(false);
+        expect(lines.some((line) => line.includes("AT-2"))).toBe(false);
+      });
+
+      And("the route and history still see the real query values", () => {
+        expect(routeQuery).toEqual(sentQuery);
+        expect(currentMock().lastRequest()?.query).toEqual(sentQuery);
       });
     },
   );

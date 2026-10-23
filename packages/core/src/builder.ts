@@ -18,7 +18,7 @@ import {
 import { MockEvents } from "./events.js";
 import type { RequestGeneration } from "./generations.js";
 import { RequestGenerations } from "./generations.js";
-import { redactHeaders } from "./headers.js";
+import { redactHeaders, redactQuery } from "./headers.js";
 import type { RequestHistorySnapshot } from "./history.js";
 import { RequestHistory } from "./history.js";
 import {
@@ -500,7 +500,7 @@ export class CallableMockInstance {
     const { requestId } = scope;
     this.logger.log("request", `[${requestId}] ${method} ${path}`, {
       headers: redactHeaders(scope.headers),
-      query: scope.query,
+      query: redactQuery(scope.query),
       // Presence, not truthiness: "", 0 and false are bodies too.
       bodyType:
         options !== undefined && "body" in options && options.body !== undefined

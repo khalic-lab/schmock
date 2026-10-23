@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as adapterEntry from "./adapter.js";
+import { redactQuery } from "./headers.js";
 import { schmock } from "./index";
 
 function errorWithMessage(message: unknown): Error {
@@ -169,5 +170,40 @@ describe("@schmock/core/adapter error helpers", () => {
     const error = adapterEntry.toError("boom");
     expect(error.message).toBe("boom");
     expect(error.cause).toBe("boom");
+  });
+});
+
+describe("credential names", () => {
+  it.each([
+    "key",
+    "token",
+    "apikey",
+    "api_key",
+    "api-key",
+    "secret",
+    "password",
+    "X-Pet-Key",
+    "access_token",
+    "client_secret",
+    "API_KEY",
+  ])("treats %s as a credential name", (name) => {
+    expect(adapterEntry.isCredentialName(name)).toBe(true);
+  });
+
+  it.each(["limit", "keyboard", "monkey", "X-Pet-Credential", "tokens"])(
+    "does not treat %s as a credential name",
+    (name) => {
+      expect(adapterEntry.isCredentialName(name)).toBe(false);
+    },
+  );
+
+  it("redacts credential query values copy-on-write", () => {
+    const query = { api_key: "k", page: "2" };
+    const redacted = redactQuery(query);
+
+    expect(redacted).toEqual({ api_key: "[redacted]", page: "2" });
+    expect(query.api_key).toBe("k");
+    const harmless = { page: "2" };
+    expect(redactQuery(harmless)).toBe(harmless);
   });
 });

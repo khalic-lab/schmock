@@ -17,6 +17,41 @@ export const SENSITIVE_HEADER_NAMES: ReadonlySet<string> = new Set([
 const REDACTED_HEADER_VALUE = "[redacted]";
 
 /**
+ * A name of the shape credentials take: exactly `key`, `token`, `apikey`,
+ * `api_key`, `api-key`, `secret` or `password`, or any name ending in one of
+ * those after a `-` or `_` (`X-Pet-Key`, `access_token`, `client_secret`). It
+ * catches the conventional spellings of an API key scheme's parameter; a name
+ * outside the pattern (`X-Pet-Credential`) does not match.
+ */
+const CREDENTIAL_NAME = /(?:^|[-_])(?:api[-_]?key|key|token|secret|password)$/;
+
+/**
+ * Whether a header or query parameter name looks like a credential (see
+ * {@link CREDENTIAL_NAME}), compared case-insensitively. The debug log masks
+ * query parameters by this rule, and the CLI's admin history masks headers and
+ * query parameters by it.
+ */
+export function isCredentialName(name: string): boolean {
+  return CREDENTIAL_NAME.test(name.toLowerCase());
+}
+
+/**
+ * Replace the value of every query parameter named like a credential with
+ * "[redacted]". Copy-on-write, like {@link redactHeaders}.
+ */
+export function redactQuery(
+  query: Record<string, string>,
+): Record<string, string> {
+  let redacted: Record<string, string> | undefined;
+  for (const name of Object.keys(query)) {
+    if (!isCredentialName(name)) continue;
+    redacted ??= { ...query };
+    redacted[name] = REDACTED_HEADER_VALUE;
+  }
+  return redacted ?? query;
+}
+
+/**
  * Look a header up by name, ignoring case. Response headers keep the casing a
  * route gave them, so `headers["content-type"]` can miss a `Content-Type`.
  * @returns the first matching value, or `undefined`
