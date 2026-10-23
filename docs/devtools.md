@@ -155,9 +155,11 @@ startApp()
 
 Await it before the app makes its first request. Until the relay is live, a
 `fetch` is answered in the page with no Network row, and an XHR goes to the
-network unmocked. The relay serves every lease on the page, whether it was
-taken before or after the relay started, so the order relative to
-`mock.intercept()` does not matter.
+network unmocked. The relay serves every lease of the page's current
+interception, whether it was taken before or after the relay started, so the
+order relative to `mock.intercept()` does not matter. A lease left behind a
+library's own `fetch` wrapper is the exception (see
+[Hazards](#hazards)).
 
 Once the worker is installed the wait is short. A relay that falls back with
 `"timeout"` or `"not-controlled"` holds the first render for up to `timeout`
@@ -524,6 +526,15 @@ list in memory.
   app's leases, so `relay.active` still reads `true` while the app's copy keeps
   answering `fetch` in the page with no Network row. Make sure the bundle
   resolves one copy of `@schmock/core`.
+- **A lease behind another `fetch` wrapper.** A library that replaces
+  `globalThis.fetch` with its own wrapper after a `mock.intercept()` splits the
+  leases: the next lease starts a new interception around that wrapper. In
+  fetch mode a request the newer leases do not answer falls through the
+  wrapper to the older ones. The relay routes through the newest interception
+  only, so an older lease never answers a relayed request, which reaches the
+  network unmocked. Take every lease after the library installs its wrapper.
+  The [API reference](./api.md#schmockcoreadapter) states the same limit
+  for `routeRelayedRequest`.
 
 ### Development only
 
