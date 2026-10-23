@@ -87,3 +87,7 @@ Feature: CLI review fixes
     When a client posts 1000 bytes of application/octet-stream to the mock
     And the admin history is fetched with the token
     Then the recorded upload body reads as binary of 1000 bytes
+
+  Scenario: --refs-allow-http without --refs-external warns that it has no effect
+    When the CLI is run on the petstore spec with the extra arguments "--refs-allow-http schemas.example.com"
+    Then the startup output contains "WARNING: --refs-allow-http has no effect without --refs-external"

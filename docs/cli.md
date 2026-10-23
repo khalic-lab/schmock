@@ -111,8 +111,15 @@ schmock ./api/openapi.yaml --refs-external
 schmock ./api/openapi.yaml --refs-external --refs-allow-http schemas.example.com
 ```
 
-`--refs-allow-http` requires `--refs-external`; on its own it is a no-op. Passing
-it with an empty list (`--refs-allow-http ''`) allows any public host.
+`--refs-allow-http` requires `--refs-external`. On its own it has no effect, and
+the CLI says so on stderr before it loads the spec, so the line is there even
+when the spec then fails on an http `$ref`:
+
+```
+WARNING: --refs-allow-http has no effect without --refs-external; no $ref outside the spec is resolved.
+```
+
+Passing it with an empty list (`--refs-allow-http ''`) allows any public host.
 Loopback, link-local, private and reserved addresses are always refused. With an
 empty list or an explicit host list, every address a host resolves to is checked
 when the connection is made, so an allow-listed hostname that resolves to a

@@ -684,4 +684,17 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       });
     },
   );
+
+  // cli-6: the CLI warned for --admin-history-limit without --admin but said
+  // nothing for this flag without the one it depends on.
+  Scenario(
+    "--refs-allow-http without --refs-external warns that it has no effect",
+    ({ When, Then }) => {
+      When(
+        "the CLI is run on the petstore spec with the extra arguments {string}",
+        whenRunWithArguments,
+      );
+      Then("the startup output contains {string}", thenOutputContains);
+    },
+  );
 });

@@ -1,5 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { Server } from "node:http";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCliServer, isLoopbackHost, parseCliArgs, run } from "./cli";
 
@@ -302,6 +304,94 @@ describe("a repeat signal after the grace window", () => {
       if (wedged) realClose.call(wedged.server, wedged.callback);
       await cli.finished;
     }
+  });
+});
+
+// ── Review 2026-10-23, cli-6: --refs-allow-http alone is not silent ───────
+
+describe("--refs-allow-http without --refs-external", () => {
+  const WARNING =
+    "WARNING: --refs-allow-http has no effect without --refs-external";
+  let tempDir: string | undefined;
+
+  afterEach(() => {
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+    tempDir = undefined;
+  });
+
+  it("warns that the flag has no effect", async () => {
+    const cli = await startRun([
+      "--spec",
+      PETSTORE_SPEC,
+      "--port",
+      "0",
+      "--refs-allow-http",
+      "schemas.example.com",
+    ]);
+    cli.signal();
+    await cli.finished;
+
+    expect(cli.stderr()).toContain(WARNING);
+  });
+
+  it("does not warn when --refs-external is given too", async () => {
+    const cli = await startRun([
+      "--spec",
+      PETSTORE_SPEC,
+      "--port",
+      "0",
+      "--refs-external",
+      "--refs-allow-http",
+      "schemas.example.com",
+    ]);
+    cli.signal();
+    await cli.finished;
+
+    expect(cli.stderr()).not.toContain("WARNING");
+  });
+
+  it("warns before a spec with an http $ref fails to load", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "schmock-refs-allow-http-"));
+    const specPath = join(tempDir, "spec.json");
+    writeFileSync(
+      specPath,
+      JSON.stringify({
+        openapi: "3.0.3",
+        info: { title: "Remote schema", version: "1.0.0" },
+        paths: {
+          "/pets": {
+            get: {
+              responses: {
+                "200": {
+                  description: "OK",
+                  content: {
+                    "application/json": {
+                      schema: { $ref: "https://schemas.example.com/pet.json" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+    let stderr = "";
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      stderr += String(chunk);
+      return true;
+    });
+
+    await expect(
+      run([
+        specPath,
+        "--port",
+        "0",
+        "--refs-allow-http",
+        "schemas.example.com",
+      ]),
+    ).rejects.toMatchObject({ code: "OPENAPI_EXTERNAL_REF_BLOCKED" });
+    expect(stderr).toContain(WARNING);
   });
 });
 

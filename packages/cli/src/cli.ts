@@ -31,6 +31,15 @@ export async function run(args: string[]): Promise<void> {
     return;
   }
 
+  // Warned before the server starts, unlike --admin-history-limit below: when
+  // the spec does hold an http(s) $ref, startup then fails on it, and this
+  // line is what names the flag that is missing.
+  if (options.refsAllowHttp !== undefined && !options.refsExternal) {
+    process.stderr.write(
+      "WARNING: --refs-allow-http has no effect without --refs-external; no $ref outside the spec is resolved.\n",
+    );
+  }
+
   const cliServer = await createCliServer(options);
 
   process.stderr.write(`Schmock server running on ${serverUrl(cliServer)}\n`);
