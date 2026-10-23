@@ -2237,17 +2237,26 @@ function toExpress(mock: CallableMockInstance, options?: ExpressAdapterOptions):
 
 interface ExpressAdapterOptions {
   passErrorsToNext?: boolean     // default: true
-  errorFormatter?: (error: Error, req: Request) => any
+  errorFormatter?: (error: Error, req: Request) => unknown
   transformHeaders?: (headers: Request['headers']) => Record<string, string>
   transformQuery?: (query: Request['query']) => Record<string, string>
   beforeRequest?: (req: Request, res: Response) =>
-    | { method?: string; path?: string; headers?: Record<string, string>; body?: any; query?: Record<string, string> }
-    | undefined | Promise<any>
+    | Schmock.AdapterRequestOverride | undefined | void
+    | Promise<Schmock.AdapterRequestOverride | undefined | void>
   beforeResponse?: (response: Schmock.Response, req: Request, res: Response) =>
-    | { status: number; body: any; headers: Record<string, string> }
-    | undefined | Promise<any>
+    | Schmock.Response | undefined | void
+    | Promise<Schmock.Response | undefined | void>
 }
 ```
+
+`beforeRequest` returns a `Schmock.AdapterRequestOverride`
+(`{ method?, path?, headers?, body?, query? }`). Its `headers` and `query` are
+merged onto the request's own, so a hook can add one header without dropping
+the rest; an override header replaces the request's header of the same name in
+any letter case and keeps its own spelling. `method`, `path` and `body`
+replace. A hook declared to return `void`, sync or async, is accepted: one that
+writes its own response returns nothing, and a `beforeResponse` that returns
+nothing keeps the response.
 
 See the [Express guide](./express.md) for detailed usage.
 
@@ -2281,32 +2290,53 @@ function provideSchmockInterceptor(
 Angular's AOT compiler never sees it and `useClass` would fail with NG0204
 ("needs JIT compiler") in AOT builds.
 
-### `createSchmockInterceptorFromSpec(openapiOptions, adapterOptions?)`
+### `createSchmockInterceptorFromSpec(openapiOptions, adapterOptions?, peer?)`
 
-Create interceptor from an OpenAPI spec. Node and test runners only:
-`@schmock/openapi` is loaded through a runtime-computed specifier that bundlers
-do not include, so a bundled browser app uses `mock.pipe(await openapi({ spec }))`
-with `provideSchmockInterceptor(mock)` instead (see the
-[Angular guide](./angular.md#openapi-driven-interceptor)). A missing or
-malformed peer rejects with `SchmockError` `OPENAPI_PEER_UNAVAILABLE`.
+Create interceptor from an OpenAPI spec.
 
 ```typescript
 async function createSchmockInterceptorFromSpec(
   openapiOptions: OpenApiOptions,
   adapterOptions?: AngularAdapterOptions,
+  peer?: OpenApiPeer,
 ): Promise<new () => HttpInterceptor>
+
+// exported from @schmock/angular
+interface OpenApiPeer {
+  openapi: (options: OpenApiOptions) => Promise<Plugin>
+}
 ```
 
-### `provideSchmockInterceptorFromSpec(openapiOptions, adapterOptions?)`
+Pass `peer` as `{ openapi }`, from your own
+`import { openapi } from '@schmock/openapi'`: your bundler resolves that static
+import like any other, so with it the helper works in a bundled browser app.
+Without `peer`, `@schmock/openapi` is loaded through a runtime-computed
+specifier that bundlers do not include, which only Node and test runners
+resolve (see the [Angular guide](./angular.md#openapi-driven-interceptor)). A
+missing or malformed peer, or a `peer` with no `openapi()` function, rejects
+with `SchmockError` `OPENAPI_PEER_UNAVAILABLE`.
+
+```typescript
+import { openapi } from '@schmock/openapi'
+
+const Interceptor = await createSchmockInterceptorFromSpec(
+  { spec, seed: { pets: { count: 10 } } },
+  { baseUrl: '/api' },
+  { openapi },
+)
+```
+
+### `provideSchmockInterceptorFromSpec(openapiOptions, adapterOptions?, peer?)`
 
 Create provider from an OpenAPI spec. Same `useFactory` shape, awaited, and the
-same Node-only loading and `OPENAPI_PEER_UNAVAILABLE` rejection as
+same `peer`, loading and `OPENAPI_PEER_UNAVAILABLE` rejection as
 `createSchmockInterceptorFromSpec`.
 
 ```typescript
 async function provideSchmockInterceptorFromSpec(
   openapiOptions: OpenApiOptions,
   adapterOptions?: AngularAdapterOptions,
+  peer?: OpenApiPeer,
 ): Promise<{ provide: InjectionToken; useFactory: () => HttpInterceptor; multi: true }>
 ```
 
@@ -2314,17 +2344,23 @@ async function provideSchmockInterceptorFromSpec(
 interface AngularAdapterOptions {
   baseUrl?: string              // intercept only this prefix (segment boundary) and strip it before routing
   passthrough?: boolean         // pass unmatched requests to real backend (default: true)
-  errorFormatter?: (error: Error, request: HttpRequest<any>) => any
-  transformRequest?: (request: HttpRequest<any>) => {
-    method?: string; path?: string; headers?: Record<string, string>; body?: any; query?: Record<string, string>
-  }
-  transformResponse?: (response: Schmock.Response, request: HttpRequest<any>) => Schmock.Response
+  errorFormatter?: (error: Error, request: HttpRequest<unknown>) => unknown
+  transformRequest?: (request: HttpRequest<unknown>) => Schmock.AdapterRequestOverride
+  transformResponse?: (response: Schmock.Response, request: HttpRequest<unknown>) => Schmock.Response
   beforeRequest?: (request: HttpRequest<unknown>) =>
-    | Schmock.AdapterRequestOverride | void | Promise<Schmock.AdapterRequestOverride | undefined>
+    | Schmock.AdapterRequestOverride | void
+    | Promise<Schmock.AdapterRequestOverride | undefined | void>
   beforeResponse?: (response: Schmock.Response, request: HttpRequest<unknown>) =>
-    | Schmock.Response | void | Promise<Schmock.Response | undefined>
+    | Schmock.Response | void
+    | Promise<Schmock.Response | undefined | void>
 }
 ```
+
+`transformRequest` and `beforeRequest` return a
+`Schmock.AdapterRequestOverride` (`{ method?, path?, headers?, body?, query? }`).
+Its `headers` and `query` are merged onto the request's own, so a hook can add
+one header without dropping the rest (an override header replaces one of the
+same name in any letter case); `method`, `path` and `body` replace.
 
 `baseUrl` intercepts only requests whose path starts with the prefix on a
 segment boundary, and strips the prefix before routing: with `baseUrl: '/api'`,
