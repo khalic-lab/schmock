@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import {
+  mkdirSync,
   mkdtempSync,
   realpathSync,
   rmSync,
@@ -7,10 +9,46 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ResourceLimitError } from "@schmock/core";
+import { ResourceLimitError, SchmockError } from "@schmock/core";
 import { MAX_SEED_MANIFEST_BYTES } from "@schmock/openapi";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadSeedFile } from "./seed-manifest";
+
+/**
+ * When set, `node:fs` reports this size for every stat, standing in for a
+ * manifest that grows between the stat and the read.
+ */
+const statOverride = vi.hoisted(() => ({
+  size: undefined as number | undefined,
+}));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const shrink = <T extends object>(stats: T): T => {
+    if (statOverride.size === undefined) return stats;
+    return Object.assign(Object.create(Object.getPrototypeOf(stats)), stats, {
+      size: statOverride.size,
+    });
+  };
+  const overrides = {
+    statSync: ((...args: Parameters<typeof actual.statSync>) =>
+      shrink(actual.statSync(...args) as object)) as typeof actual.statSync,
+    fstatSync: ((...args: Parameters<typeof actual.fstatSync>) =>
+      shrink(actual.fstatSync(...args))) as typeof actual.fstatSync,
+  };
+  return { ...actual, ...overrides, default: { ...actual, ...overrides } };
+});
+
+const posixOnly = process.platform === "win32" ? it.skip : it;
+
+function failureOf(action: () => unknown): unknown {
+  try {
+    action();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Expected the action to throw");
+}
 
 const created: string[] = [];
 
@@ -22,6 +60,7 @@ function makeDir(): string {
 }
 
 afterEach(() => {
+  statOverride.size = undefined;
   while (created.length > 0) {
     const dir = created.pop();
     if (dir) rmSync(dir, { recursive: true, force: true });
@@ -170,5 +209,53 @@ describe("loadSeedFile", () => {
     expect(() => loadSeedFile(manifestPath)).toThrow(
       /must contain a JSON object, got: array/,
     );
+  });
+
+  describe("reading the manifest", () => {
+    it("stops a manifest that grows past the cap after it was measured", () => {
+      const dir = makeDir();
+      const manifestPath = join(dir, "seed.json");
+      const filler = "x".repeat(MAX_SEED_MANIFEST_BYTES);
+      writeFileSync(manifestPath, JSON.stringify({ pets: [{ note: filler }] }));
+      // The stat says ten bytes; the read finds the rest.
+      statOverride.size = 10;
+
+      expect(() => loadSeedFile(manifestPath)).toThrow(ResourceLimitError);
+    });
+
+    it("refuses a directory as not a regular file", () => {
+      const dir = makeDir();
+      const manifestPath = join(dir, "seed.json");
+      mkdirSync(manifestPath);
+
+      const error = failureOf(() => loadSeedFile(manifestPath));
+
+      expect(error).toBeInstanceOf(SchmockError);
+      expect(error).toMatchObject({
+        code: "OPENAPI_INVALID_OPTION",
+        message: `Seed file "${manifestPath}" is not a regular file`,
+        context: { option: "seed" },
+      });
+    });
+
+    posixOnly("refuses a character device, which reports a size of 0", () => {
+      const error = failureOf(() => loadSeedFile("/dev/null"));
+
+      expect(error).toMatchObject({
+        code: "OPENAPI_INVALID_OPTION",
+        message: 'Seed file "/dev/null" is not a regular file',
+      });
+    });
+
+    posixOnly("refuses a FIFO without waiting for a writer", () => {
+      // With a blocking open this never returns: nothing writes to the FIFO.
+      const dir = makeDir();
+      const manifestPath = join(dir, "seed.fifo");
+      execFileSync("mkfifo", [manifestPath]);
+
+      const error = failureOf(() => loadSeedFile(manifestPath));
+
+      expect(error).toMatchObject({ code: "OPENAPI_INVALID_OPTION" });
+    });
   });
 });

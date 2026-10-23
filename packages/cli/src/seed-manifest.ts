@@ -1,4 +1,11 @@
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readSync,
+  realpathSync,
+} from "node:fs";
 import {
   dirname,
   isAbsolute,
@@ -9,6 +16,9 @@ import {
 import type * as Schmock from "@schmock/core";
 import { ResourceLimitError, SchmockError } from "@schmock/core";
 import { MAX_SEED_MANIFEST_BYTES } from "@schmock/openapi";
+
+/** Bytes requested per read; the size cap is checked after each one. */
+const READ_CHUNK_BYTES = 64 * 1024;
 
 /**
  * A manifest becomes the openapi plugin's `seed` option, so its mistakes carry
@@ -79,6 +89,60 @@ function resolveSeedEntryPath(
 }
 
 /**
+ * Read the manifest itself, the way the openapi plugin reads a seed file
+ * (`seed-file.ts` there, which is async and not exported).
+ */
+function readManifest(manifestPath: string, seedPath: string): string {
+  // Non-blocking, so a FIFO with no writer opens at once instead of freezing
+  // startup, or a `--watch` reload, until one appears. It changes nothing for
+  // a regular file. Windows does not define the flag.
+  const fd = openSync(
+    manifestPath,
+    constants.O_RDONLY | (constants.O_NONBLOCK ?? 0),
+  );
+  try {
+    const stat = fstatSync(fd);
+    // A FIFO, a device or a procfs-style file reports a size of 0, which the
+    // check below would wave through whatever it then streams.
+    if (!stat.isFile()) {
+      throw invalidSeed(`Seed file "${seedPath}" is not a regular file`);
+    }
+    // Measured *before* the read: a read-then-measure check does not prevent
+    // the allocation it exists to bound.
+    if (stat.size > MAX_SEED_MANIFEST_BYTES) {
+      throw new ResourceLimitError(
+        `seed manifest "${seedPath}"`,
+        MAX_SEED_MANIFEST_BYTES,
+        stat.size,
+      );
+    }
+    // And again while reading, so a file that grows after the stat is still
+    // stopped one chunk past the cap rather than read whole.
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const chunk = new Uint8Array(READ_CHUNK_BYTES);
+      const read = readSync(fd, chunk, 0, chunk.length, null);
+      if (read === 0) break;
+      total += read;
+      if (total > MAX_SEED_MANIFEST_BYTES) {
+        throw new ResourceLimitError(
+          `seed manifest "${seedPath}"`,
+          MAX_SEED_MANIFEST_BYTES,
+          total,
+        );
+      }
+      chunks.push(chunk.subarray(0, read));
+    }
+    // `Buffer` decodes exactly as `readFileSync(path, "utf-8")` did: a BOM is
+    // kept, where `TextDecoder` would drop it.
+    return Buffer.concat(chunks, total).toString("utf-8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
  * Read a `--seed` manifest.
  *
  * Every entry shape is checked explicitly and anything unrecognised throws:
@@ -88,22 +152,13 @@ function resolveSeedEntryPath(
  *
  * @throws ResourceLimitError when the manifest exceeds `MAX_SEED_MANIFEST_BYTES`
  * @throws SchmockError `OPENAPI_INVALID_OPTION` for a manifest that is not a
- *   JSON object or holds an entry that is not an array, a file path inside the
- *   manifest directory, or `{ "count": <number> }`
+ *   regular file or not a JSON object, or that holds an entry that is not an
+ *   array, a file path inside the manifest directory, or `{ "count": <number> }`
  */
 export function loadSeedFile(seedPath: string): Schmock.SeedConfig {
   const manifestPath = resolvePath(seedPath);
-  // statSync before readFileSync: measuring after the read does not bound it.
-  const { size } = statSync(manifestPath);
-  if (size > MAX_SEED_MANIFEST_BYTES) {
-    throw new ResourceLimitError(
-      `seed manifest "${seedPath}"`,
-      MAX_SEED_MANIFEST_BYTES,
-      size,
-    );
-  }
+  const raw = readManifest(manifestPath, seedPath);
   const baseDir = realpathSync(dirname(manifestPath));
-  const raw = readFileSync(manifestPath, "utf-8");
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);

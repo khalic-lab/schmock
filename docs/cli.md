@@ -170,15 +170,18 @@ lists the detected resources.
 
 The manifest itself is capped at 1 MiB (`MAX_SEED_MANIFEST_BYTES`), each
 referenced seed file at 5 MiB, and each resource at 10 000 items; a breach
-raises `RESOURCE_LIMIT_ERROR` before the server starts. Malformed JSON is
-reported as `Seed file "…" contains invalid JSON` instead of a raw
-`SyntaxError`.
+raises `RESOURCE_LIMIT_ERROR` before the server starts. The manifest's size is
+checked before it is read and again while it is read, so a file that grows in
+between is still stopped. It must be a regular file: a directory, a FIFO or a
+device is refused with `Seed file "…" is not a regular file`, and a FIFO is
+refused at once rather than waiting for a writer. Malformed JSON is reported as
+`Seed file "…" contains invalid JSON` instead of a raw `SyntaxError`.
 
-Manifest mistakes (invalid JSON, a manifest that is not an object, an entry of
-the wrong shape, a missing file, an entry that escapes the directory) are
-`SchmockError` with code `OPENAPI_INVALID_OPTION` and context
-`{ option: 'seed', resource? }`: the code the openapi plugin raises for the
-same mistakes in its `seed` option. The same code, with `file` in the context,
+Manifest mistakes (a manifest that is not a regular file, invalid JSON, a
+manifest that is not an object, an entry of the wrong shape, a missing file, an
+entry that escapes the directory) are `SchmockError` with code
+`OPENAPI_INVALID_OPTION` and context `{ option: 'seed', resource? }`: the code
+the openapi plugin raises for the same mistakes in its `seed` option. The same code, with `file` in the context,
 covers a referenced seed file that is not valid JSON or not a JSON array.
 
 ### CORS for frontend development
