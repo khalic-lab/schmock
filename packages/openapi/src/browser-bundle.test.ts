@@ -45,14 +45,13 @@ const ALLOWED_EXTERNALS: string[] = [];
  * `node:` specifiers that survive into the bundle unresolved, pinned so a new
  * one cannot appear without this list moving with it.
  *
- * `node:http` is `@schmock/core`'s `listen()`, a dynamic import on a branch a
- * browser never takes. esbuild leaves it external without being told to only
- * because the `import()` expression carries its own rejection handler. Nothing
- * in `@schmock/openapi` itself reaches a `node:` import any more, and
- * `bun run build` fails outright if `node:fs` reappears in
- * `dist/index.browser.js`.
+ * None: esbuild's browser platform resolves `@schmock/core` through its
+ * `browser` export condition to `dist/index.browser.js`, which leaves out the
+ * Node server and its `node:http` import. Nothing in `@schmock/openapi` itself
+ * reaches a `node:` import any more, and `bun run build` fails outright if
+ * `node:fs` reappears in `dist/index.browser.js`.
  */
-const EXPECTED_NODE_IMPORTS = ["node:http"];
+const EXPECTED_NODE_IMPORTS: string[] = [];
 
 /**
  * An inline spec with an internal `$ref`, which is the case that decides
