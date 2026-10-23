@@ -473,6 +473,48 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   );
 
   Scenario(
+    "A transformRequest header override is added to the request's own headers",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Angular mock whose transformRequest adds an x-tenant header",
+        () => {
+          resetState();
+          interceptorOptions = {
+            transformRequest: () => ({ headers: { "x-tenant": "dev" } }),
+          };
+          mock("GET /api/me", ({ headers }) => [
+            200,
+            {
+              authorization: headers.authorization ?? null,
+              tenant: headers["x-tenant"] ?? null,
+            },
+          ]);
+        },
+      );
+
+      When(
+        'I make an Angular request to "GET /api/me" with an Authorization header',
+        async () => {
+          await makeRequest("GET", "/api/me", undefined, {
+            Authorization: "Bearer t",
+          });
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And('the echoed headers should be "Bearer t" and "dev"', () => {
+        expect(response?.body).toEqual({
+          authorization: "Bearer t",
+          tenant: "dev",
+        });
+      });
+    },
+  );
+
+  Scenario(
     "A named async beforeRequest that returns nothing leaves the request unchanged",
     ({ Given, When, Then, And }) => {
       Given(

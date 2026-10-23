@@ -59,6 +59,16 @@ toExpress(mock, {
 ### `beforeRequest`
 
 Modify request data before Schmock processes it. Return an object with any subset of `{ method, path, headers, body, query }`.
+`headers` and `query` are merged onto the request's own, so returning one
+header adds it and keeps the rest (`authorization` included); a header the
+override names replaces the request's header of that name in any case.
+`method`, `path` and `body` replace the request's. Because of the merge, an
+override cannot remove a header or a query key; to drop one (`authorization`,
+say, to simulate an unauthenticated call), use `transformHeaders` or
+`transformQuery`, which build the records the override is merged onto. This
+differs from the fetch
+interceptor's `beforeRequest` (React, Vue), which receives the request record
+and returns the whole request.
 A rewrite to a method Schmock does not route (`PURGE`, `PROPFIND`) is a miss,
 like an incoming one: the request goes to `next()`, as the fetch interceptor
 and the Angular adapter pass it on.
@@ -66,7 +76,7 @@ and the Angular adapter pass it on.
 ```typescript
 toExpress(mock, {
   beforeRequest: (req) => ({
-    // Add tenant header from URL
+    // Add a tenant header from the URL; the client's headers are kept
     headers: { 'x-tenant': req.params.tenant },
   }),
 })

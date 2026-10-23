@@ -92,9 +92,16 @@ The stripped remainder keeps the spelling the request used.
 
 ### `transformRequest`
 
-Rewrite the request before Schmock matches it. Header names — both the
-request's own and any the override supplies — are lowercased before reaching
-handlers, so `{ 'X-Tenant': 'dev' }` arrives as `headers['x-tenant']`.
+Rewrite the request before Schmock matches it. Return any subset of
+`{ method, path, headers, body, query }`. `headers` and `query` are merged onto
+the request's own, so `{ headers: { 'x-tenant': 'dev' } }` adds one header and
+keeps the rest (`authorization` included); `method`, `path` and `body`
+replace. Header names — both the request's own and any the override supplies —
+are lowercased before reaching handlers, so `{ 'X-Tenant': 'dev' }` arrives as
+`headers['x-tenant']`, and an override header replaces the request's header of
+that name whatever its case. Because of the merge, an override cannot remove a
+header or a query key the request carries. To simulate an unauthenticated
+call, send the request without `authorization` instead.
 
 `transformRequest` runs per subscription, inside the interceptor's error
 boundary: if it throws, the subscriber receives a 500 `HttpErrorResponse`

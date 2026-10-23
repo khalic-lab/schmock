@@ -112,6 +112,15 @@ Feature: Express Adapter
     And the Express error middleware should observe "request hook exploded after write"
     And the Express error formatter should not have handled the error
 
+  Scenario: A beforeRequest header override is added to the request's own headers
+    Given I create an Express middleware whose beforeRequest adds an x-tenant header
+    When a request is made to "GET /me" with header "authorization" set to "Bearer t"
+    Then the Express response should have status 200
+    And the Express response body should be:
+      """
+      { "authorization": "Bearer t", "tenant": "acme" }
+      """
+
   Scenario: A beforeRequest rewrite to an unsupported method reaches the next middleware
     Given I create an Express middleware whose beforeRequest rewrites the method to "PURGE"
     When a request is made to "GET /users"

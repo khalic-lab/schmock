@@ -697,6 +697,51 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   );
 
   Scenario(
+    "A beforeRequest header override is added to the request's own headers",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Express middleware whose beforeRequest adds an x-tenant header",
+        () => {
+          const mock = schmock();
+          mock("GET /me", ({ headers }) => ({
+            authorization: headers.authorization ?? null,
+            tenant: headers["x-tenant"] ?? null,
+          }));
+          mount(mock, {
+            beforeRequest: () => ({ headers: { "x-tenant": "acme" } }),
+          });
+        },
+      );
+
+      When(
+        "a request is made to {string} with header {string} set to {string}",
+        async (
+          _,
+          requestSpec: string,
+          headerName: string,
+          headerValue: string,
+        ) => {
+          await makeRequest(requestSpec, {
+            name: headerName,
+            value: headerValue,
+          });
+        },
+      );
+
+      Then(
+        "the Express response should have status {int}",
+        (_, status: number) => {
+          expect(currentResponse().status).toBe(status);
+        },
+      );
+
+      And("the Express response body should be:", (_, docString: string) => {
+        expect(parseJson(currentResponse().text)).toEqual(parseJson(docString));
+      });
+    },
+  );
+
+  Scenario(
     "A beforeRequest rewrite to an unsupported method reaches the next middleware",
     ({ Given, When, Then, And }) => {
       Given(

@@ -255,7 +255,10 @@ export interface AngularAdapterOptions {
   errorFormatter?: (error: Error, request: HttpRequest<unknown>) => unknown;
 
   /**
-   * Request transformer - modify request before passing to Schmock
+   * Request transformer - modify request before passing to Schmock. The
+   * returned `headers` and `query` are merged onto the request's own (a
+   * header replaces one of the same name in any case); `method`, `path` and
+   * `body` replace.
    * @param request - Angular HTTP request
    * @returns Modified request data
    */
@@ -690,8 +693,11 @@ function transformAndEmit(
 }
 
 /**
- * Apply a request hook's override. A rewrite to a method no route can match
- * is passed on to the real backend untouched.
+ * Apply a request hook's override. Its headers and query are merged onto the
+ * request's own, so a hook can add one header without dropping the rest;
+ * header names are folded at the `mock.handle()` call, where the override's
+ * value wins. A rewrite to a method no route can match is passed on to the
+ * real backend untouched.
  */
 function applyRequestOverride(
   interception: Interception,
@@ -704,7 +710,13 @@ function applyRequestOverride(
     interception.innerSub = next.handle(req).subscribe(observer);
     return;
   }
-  dispatchRequest(interception, { ...requestData, ...override, method });
+  dispatchRequest(interception, {
+    ...requestData,
+    ...override,
+    method,
+    headers: { ...requestData.headers, ...override.headers },
+    query: { ...requestData.query, ...override.query },
+  });
 }
 
 /** Route the request through the mock and emit what it answers. */

@@ -109,6 +109,12 @@ Feature: Angular Adapter
     And the error status should be 500
     And the error body should use the custom error format
 
+  Scenario: A transformRequest header override is added to the request's own headers
+    Given I create an Angular mock whose transformRequest adds an x-tenant header
+    When I make an Angular request to "GET /api/me" with an Authorization header
+    Then the response should be an HttpResponse
+    And the echoed headers should be "Bearer t" and "dev"
+
   # A named async hook with nothing to return infers Promise<void>. The hook
   # types accept it, so this scenario's step file only compiles when they do.
   Scenario: A named async beforeRequest that returns nothing leaves the request unchanged

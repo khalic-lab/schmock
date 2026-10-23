@@ -290,6 +290,68 @@ describe("toExpress", () => {
       );
     });
 
+    it("adds an override's headers to the request's own", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+
+      await toExpress(mock, {
+        beforeRequest: () => ({ headers: { "x-tenant": "acme" } }),
+      })(
+        createReq({ headers: { authorization: "Bearer t", host: "h" } }),
+        createRes(),
+        vi.fn() as NextFunction,
+      );
+
+      expect(mock.handle).toHaveBeenCalledWith(
+        "GET",
+        "/",
+        expect.objectContaining({
+          headers: { authorization: "Bearer t", host: "h", "x-tenant": "acme" },
+        }),
+      );
+    });
+
+    it("replaces a request header the override names in another case", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+
+      await toExpress(mock, {
+        beforeRequest: () => ({ headers: { Authorization: "Basic x" } }),
+      })(
+        createReq({ headers: { authorization: "Bearer t" } }),
+        createRes(),
+        vi.fn() as NextFunction,
+      );
+
+      expect(mock.handle).toHaveBeenCalledWith(
+        "GET",
+        "/",
+        expect.objectContaining({ headers: { Authorization: "Basic x" } }),
+      );
+    });
+
+    it("merges an override's query onto the request's own", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+
+      await toExpress(mock, {
+        beforeRequest: () => ({ query: { tenant: "acme" } }),
+      })(
+        createReq({ query: { page: "2" } }),
+        createRes(),
+        vi.fn() as NextFunction,
+      );
+
+      expect(mock.handle).toHaveBeenCalledWith(
+        "GET",
+        "/",
+        expect.objectContaining({ query: { page: "2", tenant: "acme" } }),
+      );
+    });
+
     it("retains the admitted generation across an async adapter hook", async () => {
       const realMock = schmock();
       const uninstall = vi.fn();

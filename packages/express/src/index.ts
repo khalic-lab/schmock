@@ -66,8 +66,11 @@ export interface ExpressAdapterOptions {
   transformQuery?: (query: Request["query"]) => Record<string, string>;
 
   /**
-   * Request interceptor - called before handling request. A hook declared to
-   * return `void` (one that writes its own response) is accepted.
+   * Request interceptor - called before handling request. The returned
+   * `headers` and `query` are merged onto the request's own (a header
+   * replaces one of the same name in any case); `method`, `path` and `body`
+   * replace. A hook declared to return `void` (one that writes its own
+   * response) is accepted.
    * @param req - Express request
    * @param res - Express response
    * @returns Modified request data or void
@@ -180,6 +183,27 @@ function sendFormattedError(send: FormattedErrorSend): void {
       res.end(body === undefined ? undefined : Buffer.from(body));
     }
   }
+}
+
+/**
+ * Merge a beforeRequest override's headers onto the request's own, so a hook
+ * can add one header without dropping the rest. An override replaces a header
+ * whatever case either side spells its name in, and keeps its own spelling.
+ */
+function mergeHeaders(
+  headers: Record<string, string>,
+  override: Record<string, string>,
+): Record<string, string> {
+  const replaced = new Set(
+    Object.keys(override).map((name) => name.toLowerCase()),
+  );
+  // Own-property definition, so a `__proto__` header stays an ordinary entry.
+  return Object.fromEntries([
+    ...Object.entries(headers).filter(
+      ([name]) => !replaced.has(name.toLowerCase()),
+    ),
+    ...Object.entries(override),
+  ]);
 }
 
 /**
@@ -336,6 +360,12 @@ export function toExpress(
             ...requestData,
             ...intercepted,
             method: rewritten,
+            headers: intercepted.headers
+              ? mergeHeaders(requestData.headers, intercepted.headers)
+              : requestData.headers,
+            query: intercepted.query
+              ? { ...requestData.query, ...intercepted.query }
+              : requestData.query,
           };
           responseMethod = requestData.method;
         }

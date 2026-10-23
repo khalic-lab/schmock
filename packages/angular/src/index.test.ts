@@ -911,13 +911,79 @@ describe("Angular Adapter", () => {
     });
 
     it("lowercases capitalized keys returned by transformRequest", async () => {
-      // transformRequest replaces requestData.headers wholesale, so folding
-      // must happen at the mock.handle choke point, not in headersToObject.
+      // An override's headers are merged after headersToObject has run, so
+      // folding must happen at the mock.handle choke point.
       expect(
         await capturedHeaders({
           transformRequest: () => ({ headers: { "X-Override": "yes" } }),
         }),
       ).toEqual({ "x-override": "yes" });
+    });
+  });
+
+  describe("request hook overrides", () => {
+    async function capturedOptions(
+      options: Parameters<typeof createSchmockInterceptor>[1],
+      request: HttpRequest<unknown>,
+    ): Promise<{
+      headers: Record<string, string>;
+      query: Record<string, string>;
+    }> {
+      mockInstance.handle = vi
+        .fn()
+        .mockResolvedValue({ status: 200, body: "ok", headers: {} });
+      const InterceptorClass = createSchmockInterceptor(mockInstance, options);
+
+      await new Promise<void>((resolve, reject) => {
+        new InterceptorClass()
+          .intercept(request, { handle: vi.fn() })
+          .subscribe({ complete: resolve, error: reject });
+      });
+
+      const options0: any = vi.mocked(mockInstance.handle).mock.calls[0]?.[2];
+      return { headers: options0.headers, query: options0.query };
+    }
+
+    const authorized = new HttpRequest("GET", "/api/test?page=2", null, {
+      headers: new HttpHeaders({ Authorization: "Bearer t" }),
+    });
+
+    it("adds a transformRequest header to the request's own", async () => {
+      const { headers } = await capturedOptions(
+        { transformRequest: () => ({ headers: { "x-tenant": "dev" } }) },
+        authorized,
+      );
+      expect(headers).toMatchObject({
+        authorization: "Bearer t",
+        "x-tenant": "dev",
+      });
+    });
+
+    it("adds a beforeRequest header to the request's own", async () => {
+      const { headers } = await capturedOptions(
+        { beforeRequest: async () => ({ headers: { "x-user": "dev" } }) },
+        authorized,
+      );
+      expect(headers).toMatchObject({
+        authorization: "Bearer t",
+        "x-user": "dev",
+      });
+    });
+
+    it("replaces a request header the override names in another case", async () => {
+      const { headers } = await capturedOptions(
+        { transformRequest: () => ({ headers: { authorization: "Basic x" } }) },
+        authorized,
+      );
+      expect(headers.authorization).toBe("Basic x");
+    });
+
+    it("merges the override's query onto the request's own", async () => {
+      const { query } = await capturedOptions(
+        { transformRequest: () => ({ query: { tenant: "dev" } }) },
+        authorized,
+      );
+      expect(query).toEqual({ page: "2", tenant: "dev" });
     });
   });
 
