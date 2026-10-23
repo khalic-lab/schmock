@@ -413,7 +413,12 @@ When the create operation declares a response schema, the created body is
 - a declared property the request omits keeps its generated value, so `required`
   and `format` constraints hold;
 - an **undeclared** request field is copied through, unless the contract sets
-  `additionalProperties: false` — then it is dropped;
+  `additionalProperties: false` — then it is dropped. PUT and PATCH apply the
+  same rule to the fields they merge, against their own response contract, or
+  against the resource schema when they declare none (a `204`) or wrap the
+  resource in an envelope. Names such as `toString` or `constructor` count as
+  declared only when the schema declares them, and a JSON `__proto__` key is
+  stored as an ordinary field;
 - the id property always wins over both the generated and the client value.
 
 The **resource** that is returned is the resource that is stored, so read, list

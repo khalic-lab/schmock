@@ -31,3 +31,12 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     And a widget named "x" has been created
     When I delete widget 1
     Then the delete response is 200 with id "1", object "widget" and deleted true
+
+  # ── Request fields a create or update stores ──────────────────────────────
+
+  Scenario: An update drops a field its closed contract does not declare
+    Given a validating pets mock whose pet contract sets additionalProperties false
+    And a pet named "rex" has been created
+    When I patch pet 1 with name "max" and an undeclared field
+    Then the patch response is 200 with only the declared pet fields
+    And reading pet 1 answers 200 with only the declared pet fields

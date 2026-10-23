@@ -97,6 +97,36 @@ const envelopedPetsSpec = spec({
   },
 });
 
+const closedPet = { ...pet, additionalProperties: false };
+
+const closedPetsSpec = spec({
+  "/pets": {
+    get: {
+      responses: {
+        "200": {
+          description: "list",
+          content: json({ type: "array", items: closedPet }),
+        },
+      },
+    },
+    post: {
+      responses: {
+        "201": { description: "created", content: json(closedPet) },
+      },
+    },
+  },
+  "/pets/{petId}": {
+    get: {
+      responses: { "200": { description: "pet", content: json(closedPet) } },
+    },
+    patch: {
+      responses: {
+        "200": { description: "patched", content: json(closedPet) },
+      },
+    },
+  },
+});
+
 const widget = {
   type: "object",
   required: ["id", "object", "name"],
@@ -248,6 +278,51 @@ describeFeature(feature, ({ Scenario }) => {
             object: "widget",
             deleted: true,
           });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "An update drops a field its closed contract does not declare",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a validating pets mock whose pet contract sets additionalProperties false",
+        async () => {
+          await validatingMock(closedPetsSpec);
+        },
+      );
+
+      And('a pet named "rex" has been created', async () => {
+        const created = await mock.handle("POST", "/pets", {
+          body: { name: "rex" },
+        });
+        expect(created.status).toBe(201);
+      });
+
+      When(
+        'I patch pet 1 with name "max" and an undeclared field',
+        async () => {
+          response = await mock.handle("PATCH", "/pets/1", {
+            body: { name: "max", undeclared: "stored" },
+          });
+        },
+      );
+
+      Then(
+        "the patch response is 200 with only the declared pet fields",
+        () => {
+          expect(response.status).toBe(200);
+          expect(response.body).toEqual({ id: 1, name: "max" });
+        },
+      );
+
+      And(
+        "reading pet 1 answers 200 with only the declared pet fields",
+        async () => {
+          const read = await mock.handle("GET", "/pets/1");
+          expect(read.status).toBe(200);
+          expect(read.body).toEqual({ id: 1, name: "max" });
         },
       );
     },

@@ -179,17 +179,24 @@ export function findArrayProperty(
  * which property carries the primary key, and which request fields survive an
  * `additionalProperties: false` create contract. Earlier branches win, matching
  * the way a merged `allOf` resolves.
+ *
+ * The record has no prototype, so `name in properties` answers for declared
+ * names only: on a plain `{}` it was true for `toString` or `constructor`,
+ * which let those request fields through a closed contract and dropped a
+ * schema property actually named `constructor`.
  */
 export function collectSchemaProperties(
   schema?: JSONSchema7,
 ): Record<string, JSONSchema7> {
-  const out: Record<string, JSONSchema7> = {};
+  const out: Record<string, JSONSchema7> = Object.create(null);
 
   const visit = (node?: JSONSchema7): void => {
     if (!node || typeof node === "boolean") return;
     if (isRecord(node.properties)) {
       for (const [key, value] of Object.entries(node.properties)) {
-        if (isRecord(value) && !(key in out)) out[key] = toJsonSchema(value);
+        if (isRecord(value) && !Object.hasOwn(out, key)) {
+          out[key] = toJsonSchema(value);
+        }
       }
     }
     if (Array.isArray(node.allOf)) {
@@ -1352,20 +1359,13 @@ export function createCreateGenerator(
     const modes = accessModesFor(resource, effective);
 
     if (isRecord(ctx.body)) {
-      const declared = collectSchemaProperties(effective);
-      const noContract = Object.keys(declared).length === 0;
-      const open = effective?.additionalProperties !== false;
-      for (const [property, value] of Object.entries(ctx.body)) {
-        if (value === undefined || property === resource.idProperty) continue;
-        // A readOnly value is the server's to assign and a writeOnly one is
-        // never returned — the response normalizer strips it from `declared`,
-        // so on an open contract it used to be copied through as "undeclared".
-        if (modes.readOnly.has(property) || modes.writeOnly.has(property)) {
-          continue;
-        }
-        if (property in declared || noContract || open) {
-          item[property] = value;
-        }
+      for (const [property, value] of acceptedFields(
+        ctx.body,
+        effective,
+        modes,
+        resource.idProperty,
+      )) {
+        defineOwn(item, property, value);
       }
     }
     for (const property of modes.writeOnly) delete item[property];
@@ -1373,7 +1373,11 @@ export function createCreateGenerator(
     // The id is allocated eagerly: staging the counter too would let two
     // in-flight creates peek the same id and commit duplicates. A rejected
     // create therefore burns an id — gaps are possible, duplicates are not.
-    item[resource.idProperty] = mintId(ctx.state, counterKey, key, resource);
+    defineOwn(
+      item,
+      resource.idProperty,
+      mintId(ctx.state, counterKey, key, resource),
+    );
 
     stageMutation(ctx, () => {
       getCollection(ctx.state, key).push(item);
@@ -1397,6 +1401,37 @@ export function createCreateGenerator(
       headers,
     });
   };
+}
+
+/**
+ * The request fields a create or update stores, judged against the item
+ * contract the operation declares: a declared property, any field when the
+ * contract is open, and every field when it declares nothing. A readOnly value
+ * is the server's to assign and a writeOnly one is never stored, so neither
+ * is kept — the response normalizer strips both from `declared`, so on an open
+ * contract they used to be copied through as "undeclared". The id property is
+ * always the server's.
+ *
+ * Fields are returned as entries, for the caller to define as own properties:
+ * a JSON `__proto__` key assigned with `=` re-prototyped the stored row.
+ */
+function acceptedFields(
+  body: Record<string, unknown>,
+  contract: JSONSchema7 | undefined,
+  modes: AccessModes,
+  idProperty: string,
+): Array<[string, unknown]> {
+  const declared = collectSchemaProperties(contract);
+  const noContract = Object.keys(declared).length === 0;
+  const open = contract?.additionalProperties !== false;
+  return Object.entries(body).filter(
+    ([property, value]) =>
+      value !== undefined &&
+      property !== idProperty &&
+      !modes.readOnly.has(property) &&
+      !modes.writeOnly.has(property) &&
+      (Object.hasOwn(declared, property) || noContract || open),
+  );
 }
 
 /**
@@ -1508,15 +1543,17 @@ export function createUpdateGenerator(
     }
 
     const responseSchema = metaSchema(meta, ctx.headers, headers);
-    const modes = accessModesFor(resource, responseSchema);
+    // Request fields are judged by create's rule against the item contract:
+    // the resource when the response is an envelope or declares nothing (a
+    // 204), so an undeclared field on a closed contract is dropped here as it
+    // is on create, instead of being stored and failing every later read.
+    const itemSchema = resourceWrapperProperty(resource, responseSchema)
+      ? resource.schema
+      : (responseSchema ?? resource.schema);
+    const modes = accessModesFor(resource, itemSchema);
     const updates = isRecord(ctx.body)
       ? Object.fromEntries(
-          Object.entries(ctx.body).filter(
-            ([property, value]) =>
-              value !== undefined &&
-              !modes.readOnly.has(property) &&
-              !modes.writeOnly.has(property),
-          ),
+          acceptedFields(ctx.body, itemSchema, modes, resource.idProperty),
         )
       : {};
     const merge = (row: unknown): Record<string, unknown> => {
@@ -1542,7 +1579,9 @@ export function createUpdateGenerator(
       if (liveIndex === -1) return;
       const committed = merge(live[liveIndex]);
       for (const property of Object.keys(updated)) delete updated[property];
-      Object.assign(updated, committed);
+      for (const [property, value] of Object.entries(committed)) {
+        defineOwn(updated, property, value);
+      }
       live[liveIndex] = updated;
     });
     return buildResponse({

@@ -2,6 +2,7 @@
 
 import { schmock } from "@schmock/core";
 import { describe, expect, it } from "vitest";
+import { collectSchemaProperties } from "./generators.js";
 import { openapi } from "./plugin.js";
 
 const json = (schema: Record<string, unknown>) => ({
@@ -225,6 +226,143 @@ describe("CRUD review fixes", () => {
       const deleted = await mock.handle("DELETE", "/widgets/1");
       expect(deleted.status).toBe(200);
       expect(deleted.body).toMatchObject({ id: "1", name: "x" });
+    });
+  });
+
+  describe("request fields on closed contracts and inherited names", () => {
+    const closedPet = { ...pet, additionalProperties: false };
+    const petsSpec = (item: Record<string, unknown>) =>
+      spec({
+        "/pets": {
+          get: {
+            responses: {
+              "200": {
+                description: "list",
+                content: json({ type: "array", items: item }),
+              },
+            },
+          },
+          post: {
+            responses: { "201": { description: "c", content: json(item) } },
+          },
+        },
+        "/pets/{petId}": {
+          get: {
+            responses: { "200": { description: "p", content: json(item) } },
+          },
+          patch: {
+            responses: { "200": { description: "p", content: json(item) } },
+          },
+          put: {
+            responses: { "204": { description: "replaced" } },
+          },
+        },
+      });
+
+    function storedPets(mock: Schmock.CallableMockInstance): unknown[] {
+      const rows = mock.getState()["openapi:collections:/pets"];
+      return Array.isArray(rows) ? rows : [];
+    }
+
+    it("drops Object.prototype names on a closed create contract", async () => {
+      const mock = await mockOf(petsSpec(closedPet));
+      const created = await mock.handle("POST", "/pets", {
+        body: {
+          name: "rex",
+          toString: "pwned",
+          hasOwnProperty: "x",
+          constructor: "c",
+        },
+      });
+      expect(created.body).toEqual({ id: 1, name: "rex" });
+      expect(Object.keys(storedPets(mock)[0] as object)).toEqual([
+        "id",
+        "name",
+      ]);
+    });
+
+    it("collects declared properties named after Object.prototype members", () => {
+      const declared = collectSchemaProperties({
+        properties: {
+          id: { type: "integer" },
+          constructor: { type: "string" },
+          toString: { type: "string" },
+        },
+      });
+      expect(Object.keys(declared)).toEqual(["id", "constructor", "toString"]);
+      expect("hasOwnProperty" in declared).toBe(false);
+    });
+
+    it("keeps schema properties that share a name with Object.prototype", async () => {
+      const things = {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          id: { type: "integer" },
+          constructor: { type: "string" },
+          toString: { type: "string" },
+        },
+      };
+      const mock = await mockOf(petsSpec(things), { validateResponses: true });
+      const created = await mock.handle("POST", "/pets", {
+        body: { constructor: "c1", toString: "s1" },
+      });
+      expect(created.status).toBe(201);
+      expect(created.body).toEqual({
+        id: 1,
+        constructor: "c1",
+        toString: "s1",
+      });
+    });
+
+    it("stores a JSON __proto__ key as data, never as the row's prototype", async () => {
+      const mock = await mockOf(petsSpec(pet));
+      await mock.handle("POST", "/pets", {
+        body: JSON.parse('{"name":"rex","__proto__":{"admin":true}}'),
+      });
+      await mock.handle("PATCH", "/pets/1", {
+        body: JSON.parse('{"__proto__":{"root":true}}'),
+      });
+
+      const [row] = storedPets(mock);
+      expect(Object.getPrototypeOf(row)).toBe(Object.prototype);
+      const record = row as Record<string, unknown>;
+      expect(record.admin).toBeUndefined();
+      expect(record.root).toBeUndefined();
+      expect(Object.hasOwn(record, "__proto__")).toBe(true);
+    });
+
+    for (const validateResponses of [false, true]) {
+      it(`drops an undeclared field on a closed update contract (validateResponses: ${validateResponses})`, async () => {
+        const mock = await mockOf(petsSpec(closedPet), { validateResponses });
+        await mock.handle("POST", "/pets", { body: { name: "rex" } });
+
+        const patched = await mock.handle("PATCH", "/pets/1", {
+          body: { name: "max", undeclared: "stored" },
+        });
+        expect(patched.status).toBe(200);
+        expect(patched.body).toEqual({ id: 1, name: "max" });
+
+        const read = await mock.handle("GET", "/pets/1");
+        expect(read.status).toBe(200);
+        expect(read.body).toEqual({ id: 1, name: "max" });
+      });
+    }
+
+    it("judges a bodiless update by the resource contract", async () => {
+      const mock = await mockOf(petsSpec(closedPet), {
+        validateResponses: true,
+      });
+      await mock.handle("POST", "/pets", { body: { name: "rex" } });
+
+      const replaced = await mock.handle("PUT", "/pets/1", {
+        body: { name: "max", undeclared: "stored" },
+      });
+      expect(replaced.status).toBe(204);
+
+      const read = await mock.handle("GET", "/pets/1");
+      expect(read.status).toBe(200);
+      expect(read.body).toEqual({ id: 1, name: "max" });
     });
   });
 });
