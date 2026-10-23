@@ -485,16 +485,30 @@ bun run publish
 ```
 
 It runs the release preflight (12 synchronized manifests, `bun.lock` parity, a
-clean worktree on canonical `main`), then `lint`, `test:all`, `build` and
-`check:publish`, then prints the release plan and the exact execute command:
+clean worktree on canonical `main`), then the quality gate in this order:
+`lint`, `eslint`, `knip`, `bun audit --audit-level=high`, `build`, `test:all`,
+`test:e2e` and `check:publish`. It refuses to go on if those checks changed
+the worktree, then prints the release plan and the exact execute command:
 
 ```bash
 bun run publish -- all --execute --confirm all@vX.Y.Z:<40-char-commit>
 ```
 
+It also prints the checks to run once npm serves the release, which install
+the published packages from the public registry:
+
+```bash
+SCHMOCK_VERSION=X.Y.Z bun run test:smoke
+SCHMOCK_VERSION=X.Y.Z bun run test:consumer
+```
+
 The confirmation token names the version and the release commit so that the
 person releasing affirms both; nothing derives it for you. Any arguments are
 passed through to `.agents/skills/devops/scripts/publish.sh`, which owns the
-guarantees: it skips a package only when npm reports the same package contents
-already published, and it pushes `main` and creates one unified `vX.Y.Z`
-release after all 12 packages are published.
+guarantees and runs the same quality gate before it publishes: it skips a
+package only when npm reports the same package contents already published, and
+it pushes `main` and creates one unified `vX.Y.Z` release after all 12
+packages are published. Publishing a single package (`bun run publish --
+openapi --execute ...`) refuses unless npm already has every `@schmock/*`
+dependency and peer of that package at the same version, since the package
+could not be installed otherwise; it neither pushes nor creates a release.
