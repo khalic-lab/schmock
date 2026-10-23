@@ -1,13 +1,14 @@
 import { resolve } from "node:path";
 import type * as Schmock from "@schmock/core";
 import { schmock } from "@schmock/core";
+import { generateFromSchema } from "@schmock/faker";
 import Ajv2020 from "ajv/dist/2020.js";
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import { findArrayProperty } from "./generators";
 import { collectAccessModes, normalizeSchema } from "./normalizer";
 import { openapi } from "./plugin";
-import { hasType } from "./utils";
+import { hasType, isRecord } from "./utils";
 
 function json(schema: object) {
   return { "application/json": { schema } };
@@ -171,6 +172,40 @@ describe("normalizeSchema", () => {
       });
       expect(response.status).toBe(204);
     });
+
+    it.each([
+      ["a typed", { type: "object" }],
+      ["an untyped", {}],
+    ])(
+      "rolls %s nullable allOf property to null about as often as any nullable value",
+      async (_, typing) => {
+        const owner = {
+          type: "object",
+          required: ["name"],
+          properties: { name: { type: "string" } },
+        };
+        const pet = normalizeSchema(
+          {
+            type: "object",
+            required: ["owner"],
+            properties: {
+              owner: { ...typing, nullable: true, allOf: [owner] },
+            },
+          },
+          "response",
+        );
+
+        let nulls = 0;
+        const runs = 300;
+        for (let seed = 0; seed < runs; seed++) {
+          const body = await generateFromSchema({ schema: pet, seed });
+          if (isRecord(body) && body.owner === null) nulls++;
+        }
+        // NULLABLE_NULL_PROBABILITY is 5%: 15 of 300 on average.
+        expect(nulls).toBeGreaterThan(runs * 0.01);
+        expect(nulls).toBeLessThan(runs * 0.12);
+      },
+    );
 
     it("leaves a typeless composition-free schema alone but marks it", () => {
       const result = normalizeSchema({ nullable: true }, "response");
