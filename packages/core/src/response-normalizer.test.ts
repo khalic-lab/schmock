@@ -471,6 +471,39 @@ describe("response normalization", () => {
     });
 
     it.each([
+      ["Date", new Date(0), '"1970-01-01T00:00:00.000Z"'],
+      ["money class", { toJSON: () => "$12.34" }, '"$12.34"'],
+    ] satisfies Array<[string, unknown, string]>)(
+      "keeps a top-level %s that serializes to a JSON string as its JSON text",
+      (_label, body, json) => {
+        const normalized = normalizeResponse(
+          createResponse(body, {
+            headers: { "content-type": "application/json" },
+          }),
+          "GET",
+        );
+
+        // A string body is sent verbatim, so the quotes must already be in it.
+        expect(normalized.body).toBe(json);
+        expect(serializedText(normalized)).toBe(json);
+        const wire = serializedText(normalized);
+        expect(wire === undefined ? undefined : JSON.parse(wire)).toBe(
+          JSON.parse(json),
+        );
+      },
+    );
+
+    it("keeps a top-level toJSON number as a number", () => {
+      const normalized = normalizeResponse(
+        createResponse({ toJSON: () => 42 }),
+        "GET",
+      );
+
+      expect(normalized.body).toBe(42);
+      expect(serializedText(normalized)).toBe("42");
+    });
+
+    it.each([
       ["function", () => "value"],
       ["symbol", Symbol("value")],
       ["bigint", 1n],

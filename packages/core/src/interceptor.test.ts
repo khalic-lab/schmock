@@ -1062,6 +1062,22 @@ describe("mock.intercept()", () => {
     }
   });
 
+  it("sends a top-level Date body as a JSON string literal", async () => {
+    mock("GET /api/time", () => new Date(0));
+    mock("GET /api/static-time", new Date(0));
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      for (const path of ["/api/time", "/api/static-time"]) {
+        const response = await fetch(`http://localhost${path}`);
+        expect(response.headers.get("content-type")).toBe("application/json");
+        expect(await response.json()).toBe("1970-01-01T00:00:00.000Z");
+      }
+    } finally {
+      handle.restore();
+    }
+  });
+
   it("emits bare tuple strings as untyped raw text", async () => {
     mock("GET /api/tuple-string", () => [200, "hello"]);
     const handle = mock.intercept({ passthrough: false });

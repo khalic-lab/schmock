@@ -296,7 +296,12 @@ function stringifyJsonBody(body: unknown): string {
 function normalizeBody(body: unknown): unknown {
   if (body === undefined || typeof body === "string") return body;
   if (isBinaryBody(body)) return copyBinaryBody(body);
-  return JSON.parse(stringifyJsonBody(body));
+  const json = stringifyJsonBody(body);
+  const parsed: unknown = JSON.parse(json);
+  // A value whose toJSON yields a string (a Date, a money or ID class) must
+  // stay JSON text: every string body is sent verbatim as pre-serialized
+  // bytes, so the bare string would go out unquoted under a JSON type.
+  return typeof parsed === "string" ? json : parsed;
 }
 
 function removeFramingHeaders(
