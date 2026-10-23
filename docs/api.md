@@ -1120,6 +1120,18 @@ toError(value: unknown): Error
 buildJsonErrorResponse(options: JsonErrorResponseOptions): Response
 isCredentialName(name: string): boolean
 
+requestBodyKindOf(contentType: string | null | undefined): RequestBodyKind
+parseJsonBody(text: string): unknown          // throws HttpIngressError
+parseFormBody(text: string): Record<string, string>
+
+type RequestBodyKind = 'json' | 'form' | 'text' | 'multipart' | 'binary'
+
+class HttpIngressError extends Error {
+  readonly status: 400 | 413
+  readonly code: HttpIngressErrorCode
+}
+type HttpIngressErrorCode = 'MALFORMED_JSON' | 'JSON_TOO_DEEP' | 'MALFORMED_MULTIPART' | 'PAYLOAD_TOO_LARGE'
+
 interface JsonErrorResponseOptions {
   status: number
   error: string                                // the envelope's message
@@ -1150,6 +1162,24 @@ string, is wrapped in a new `Error` whose `message` describes it (a string as
 is, a plain object as its JSON, truncated at 200 characters, `Unknown error`
 for `null`, `undefined` or a value that cannot be stringified) and whose
 `cause` is the original value. It never throws.
+
+`requestBodyKindOf`, `parseJsonBody` and `parseFormBody` are how `mock.listen()`,
+the CLI and the fetch interceptor read a request body, so a transport that
+decodes one itself (the Angular adapter does) hands a route the same value.
+`requestBodyKindOf(contentType)` names the shape a media type decodes to,
+ignoring parameters and case: `json` for `application/json` and any `+json`
+type (the parsed value), `form` for `application/x-www-form-urlencoded` (a flat
+object), `text` for `text/*` (a string), `multipart` for `multipart/*`
+(`FormData`), and `binary` for anything else, no content type included (an
+`ArrayBuffer`). `parseJsonBody(text)` parses a JSON body, or throws
+`HttpIngressError` with status 400 and code `MALFORMED_JSON` when the text does
+not parse, or `JSON_TOO_DEEP` when it nests deeper than 256 levels. Core
+answers either with that status and a `{ error, code }` envelope when it owns
+the request, and routes the text when the fetch interceptor passes unmatched
+requests through. An empty JSON body is no body at all to every transport, so
+check for `""` before calling it. `parseFormBody(text)` reads urlencoded fields
+into a flat object of own properties, so a `__proto__` field stays an entry; a
+repeated name keeps its last value.
 
 The entry also re-exports the `InterceptOptions`, `InterceptHandle` and
 `CallableMockInstance` types, so it compiles when imported alone.

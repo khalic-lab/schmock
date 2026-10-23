@@ -400,6 +400,7 @@ describe("fetch relay hold and router", () => {
   it("F21 the adapter entry re-exports the relay functions", async () => {
     const adapter = await import("./adapter.js");
     expect(Object.keys(adapter).sort()).toEqual([
+      "HttpIngressError",
       "abortReason",
       "acquireFetchRelay",
       "acquireRequestAdmission",
@@ -407,6 +408,9 @@ describe("fetch relay hold and router", () => {
       "buildJsonErrorResponse",
       "createFetchInterceptor",
       "isCredentialName",
+      "parseFormBody",
+      "parseJsonBody",
+      "requestBodyKindOf",
       "routeRelayedRequest",
       "toError",
     ]);

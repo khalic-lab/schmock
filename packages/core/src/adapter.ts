@@ -16,6 +16,10 @@
  *   `buildJsonErrorResponse` builds the `{ error, code }` envelope core
  *   answers a failure with.
  * - `isCredentialName` is the rule core's debug log masks query parameters by.
+ * - `requestBodyKindOf`, `parseJsonBody` and `parseFormBody` decode a request
+ *   body the way `mock.listen()` and the fetch interceptor do, and
+ *   `parseJsonBody` throws `HttpIngressError` (400) for a JSON body that does
+ *   not parse or nests too deep.
  *
  * @packageDocumentation
  */
@@ -37,6 +41,14 @@ export {
   createFetchInterceptor,
   routeRelayedRequest,
 } from "./interceptor.js";
+export {
+  HttpIngressError,
+  type HttpIngressErrorCode,
+  parseFormBody,
+  parseJsonBody,
+  type RequestBodyKind,
+  requestBodyKindOf,
+} from "./request-body.js";
 export { buildJsonErrorResponse } from "./response-normalizer.js";
 export type {
   FetchRelay,
