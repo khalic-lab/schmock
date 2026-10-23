@@ -36,7 +36,10 @@ bun .agents/skills/devops/scripts/bump.ts check-lockfile
 ```
 
 CI is defined in `.github/workflows/ci.yml` for pushes and pull requests to
-`develop` and `main`.
+`develop` and `main`, and `.github/workflows/registry-verification.yml` installs
+a published release from npm. Do not count on either having run: the release
+gate below runs ESLint, knip and the e2e suite itself, and step 8 runs the
+registry checks locally.
 
 `bun run publish` (`scripts/publish.sh`) is the local entry point: with no
 arguments it runs steps 1, 4 and 5 below — preflight, the full quality gate, and
@@ -84,6 +87,16 @@ reachable as `bun run publish -- <args>`.
      --confirm all@vX.Y.Z:<40-character-full-commit-sha>
    ```
 
+8. Check what npm now serves. Both suites copy their fixtures to a temporary
+   directory and install the exact released version from the public registry:
+
+   ```bash
+   SCHMOCK_VERSION=X.Y.Z bun run test:smoke
+   SCHMOCK_VERSION=X.Y.Z bun run test:consumer
+   ```
+
+   Add `-- <fixture> ...` to limit either suite to some packages.
+
 For an explicitly requested single-package repair publish, replace `all` with
 the workspace name. A single-package publish never pushes or creates a GitHub
 release, but still requires the exact confirmation token.
@@ -101,9 +114,9 @@ release, but still requires the exact confirmation token.
 - Execute mode requires
   `--confirm <scope>@v<live-version>:<full-commit-sha>`, a clean worktree, and
   the `main` branch.
-- Execute mode runs lint, the build, the full test suite, then `check:publish`
-  before publication. The build runs first so dist-bound tests check the
-  JavaScript being released.
+- Execute mode runs lint, ESLint and knip, the build, the full test suite and
+  the e2e suite, then `check:publish` before publication. The build runs first
+  so dist-bound tests check the JavaScript being released.
 - Existing npm versions are skipped only when the registry query succeeds.
   Registry or authentication errors stop the release instead of being treated
   as an unpublished version.

@@ -198,8 +198,11 @@ print_dry_run() {
   echo "DRY RUN: no registry queries, package publication, push, or GitHub calls will run."
   echo "Would validate and build:"
   echo "  bun run lint"
+  echo "  bun run eslint"
+  echo "  bun run knip"
   echo "  bun run build"
   echo "  bun run test:all"
+  echo "  bun run test:e2e"
   echo "  bun run check:publish"
   echo "Would verify release access:"
   echo "  npm whoami --registry ${NPM_REGISTRY}"
@@ -401,12 +404,17 @@ case "$MODE" in
     ;;
 esac
 
+# ESLint, knip and the e2e suite are not in the pre-commit hook. CI runs them,
+# but a release must not depend on a workflow having run, so run them here.
 echo "Running validation..."
 bun run lint
+bun run eslint
+bun run knip
 # Build first: dist-bound suites (dist shape, browser compatibility, entry
 # parity) must test the JS being released, not whatever was built last.
 bun run build
 bun run test:all
+bun run test:e2e
 bun run check:publish
 
 if [ -n "$(git status --porcelain)" ]; then
@@ -453,6 +461,12 @@ if [ "$TARGET" = "all" ]; then
   else
     create_release
   fi
+  # The Registry Verification workflow runs these on a published release, but
+  # nothing else installs the published tarballs, so name them here as well.
+  echo ""
+  echo "Verify what npm now serves (installs from the public registry):"
+  echo "  SCHMOCK_VERSION=${VERSION} bun run test:smoke"
+  echo "  SCHMOCK_VERSION=${VERSION} bun run test:consumer"
 else
   echo "Single-package publish complete; no push or GitHub release was performed."
 fi

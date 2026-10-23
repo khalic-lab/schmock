@@ -107,8 +107,17 @@ esac`,
     const log = commands();
     assert.match(log, /guarded all --preflight/);
     assert.match(log, /guarded all --dry-run/);
-    for (const gate of ["lint", "test:all", "build", "check:publish"]) {
-      assert.match(log, new RegExp(`bun run ${gate}`));
+    // eslint, knip and test:e2e are otherwise enforced only by CI.
+    for (const gate of [
+      "lint",
+      "eslint",
+      "knip",
+      "test:all",
+      "test:e2e",
+      "build",
+      "check:publish",
+    ]) {
+      assert.match(log, new RegExp(`^bun run ${gate}$`, "m"));
     }
     // The wrapper itself must reach neither npm nor the remote.
     assert.doesNotMatch(log, /npm publish/);
@@ -127,6 +136,13 @@ esac`,
     );
     assert.match(result.stdout, /Nothing has been published/);
     assert.doesNotMatch(commands(), /guarded all --execute/);
+    // Nothing else installs the published tarballs, so name the registry
+    // checks to run once the release is out.
+    assert.match(result.stdout, /SCHMOCK_VERSION=9\.9\.9 bun run test:smoke/);
+    assert.match(
+      result.stdout,
+      /SCHMOCK_VERSION=9\.9\.9 bun run test:consumer/,
+    );
   });
 
   it("hands any arguments straight to the guarded script", () => {

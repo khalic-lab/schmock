@@ -257,7 +257,10 @@ describe("publish.sh", () => {
     expect(result.stdout).toContain("git push origin main");
     expect(result.stdout).toContain("gh release create v2.2.3");
     expect(result.stdout).toContain("bun run lint");
+    expect(result.stdout).toContain("bun run eslint");
+    expect(result.stdout).toContain("bun run knip");
     expect(result.stdout).toContain("bun run test:all");
+    expect(result.stdout).toContain("bun run test:e2e");
     expect(result.stdout).toContain("bun run build");
     expect(result.stdout).toContain("bun run check:publish");
     expect(result.stdout).toContain("https://registry.npmjs.org/");
@@ -356,6 +359,16 @@ describe("publish.sh", () => {
     expect(views).toHaveLength(12);
     expect(publishes).toHaveLength(12);
     expect(Math.max(...views)).toBeLessThan(Math.min(...publishes));
+    // eslint, knip and test:e2e are otherwise enforced only by CI.
+    for (const gate of ["eslint", "knip", "test:e2e"]) {
+      const index = lines.indexOf(`bun run ${gate}`);
+      expect(index, gate).toBeGreaterThanOrEqual(0);
+      expect(index, gate).toBeLessThan(Math.min(...publishes));
+    }
+    expect(result.stdout).toContain("SCHMOCK_VERSION=2.2.3 bun run test:smoke");
+    expect(result.stdout).toContain(
+      "SCHMOCK_VERSION=2.2.3 bun run test:consumer",
+    );
     expect(lines).toContain("git push --dry-run origin main");
     expect(lines).toContain("git push origin main");
     expect(lines).toContain(

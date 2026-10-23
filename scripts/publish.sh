@@ -11,7 +11,7 @@ set -euo pipefail
 # With no arguments this runs every check a release runs — the release preflight
 # (12 synchronized manifests, lockfile parity, clean canonical `main`), the full
 # quality gate, and the dry-run plan — then prints the exact execute command and
-# stops. Nothing is published, pushed, or tagged.
+# the registry checks for after it. Nothing is published, pushed, or tagged.
 #
 # Checking and publishing are deliberately separate. The confirmation token
 # names both the version and the release commit so that a human, not a script,
@@ -49,10 +49,15 @@ bash "$GUARDED_SCRIPT" all --preflight
 echo ""
 echo "==> Quality gate (the same commands --execute runs)"
 bun run lint
+# ESLint, knip and the e2e suite are not in the pre-commit hook. CI runs them,
+# but a release must not depend on a workflow having run, so run them here.
+bun run eslint
+bun run knip
 # Build first: dist-bound suites (dist shape, browser compatibility, entry
 # parity) must test the JS being released, not whatever was built last.
 bun run build
 bun run test:all
+bun run test:e2e
 bun run check:publish
 
 if [ -n "$(git status --porcelain)" ]; then
@@ -74,4 +79,9 @@ echo "All checks passed. Nothing has been published, pushed, or tagged."
 echo "To publish all 12 packages at ${VERSION}, push main and create the v${VERSION} release:"
 echo ""
 echo "    bun run publish -- all --execute --confirm all@v${VERSION}:${HEAD_SHA}"
+echo ""
+echo "Then check what npm serves, by installing the released packages from the public registry:"
+echo ""
+echo "    SCHMOCK_VERSION=${VERSION} bun run test:smoke"
+echo "    SCHMOCK_VERSION=${VERSION} bun run test:consumer"
 echo ""
