@@ -7,10 +7,9 @@ import type {
   CrudRouteDescriptor,
 } from "./crud-detector.js";
 import { successStatusOrder } from "./crud-detector.js";
+import { idCounter } from "./crud-ids.js";
 import type { CrudGenerationHooks, GenerationHooks } from "./generators.js";
 import {
-  arrayPropertyPath,
-  collectSchemaProperties,
   createCreateGenerator,
   createDeleteGenerator,
   createListGenerator,
@@ -18,10 +17,13 @@ import {
   createReadGenerator,
   createStaticGenerator,
   createUpdateGenerator,
-  findArrayProperty,
-  idCounter,
-  listArrayHints,
 } from "./generators.js";
+import {
+  arrayPropertyPath,
+  collectSchemaProperties,
+  findArrayProperty,
+  listArrayHints,
+} from "./list-envelope.js";
 import { OWNER_KEY } from "./owner.js";
 import type { ParsedPath } from "./parser.js";
 import {

@@ -11,7 +11,7 @@ import {
   registerCrudRoutes,
   registerNonCrudRoutes,
 } from "./crud-registration.js";
-import { createHeaderSeed, PENDING_MUTATIONS_KEY } from "./generators.js";
+import { PENDING_MUTATIONS_KEY } from "./generators.js";
 import { createOwnerToken, isOwnedRoute } from "./owner.js";
 import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
 import { convertPathTemplate, parseSpec } from "./parser.js";
@@ -30,6 +30,7 @@ import {
   validateResponse,
   validateSecurity,
 } from "./request-pipeline.js";
+import { createHeaderSeed } from "./response-headers.js";
 import {
   CREATE_SUCCESS_STATUS_ORDER,
   findSuccessResponse,

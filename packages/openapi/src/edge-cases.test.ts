@@ -10,9 +10,9 @@ import {
   createListGenerator,
   createReadGenerator,
   createUpdateGenerator,
-  findArrayProperty,
 } from "./generators.js";
 import { MAX_SEED_ITEMS_PER_RESOURCE, MAX_SEED_ITEMS_TOTAL } from "./limits.js";
+import { findArrayProperty } from "./list-envelope.js";
 import {
   processContentNegotiation,
   processPreferHeader,

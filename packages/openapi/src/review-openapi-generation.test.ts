@@ -6,16 +6,12 @@ import { describe, expect, it } from "vitest";
 import type { CrudResource } from "./crud-detector";
 import { detectCrudResources } from "./crud-detector";
 import { applyOverrides } from "./crud-registration";
-import {
-  arrayPropertyPath,
-  createUpdateGenerator,
-  findArrayProperty,
-  generateHeaderValues,
-  PENDING_MUTATIONS_KEY,
-} from "./generators";
+import { createUpdateGenerator, PENDING_MUTATIONS_KEY } from "./generators";
+import { arrayPropertyPath, findArrayProperty } from "./list-envelope";
 import { collectAccessModes, normalizeSchema } from "./normalizer";
 import { parseSpec } from "./parser";
 import { openapi } from "./plugin";
+import { generateHeaderValues } from "./response-headers";
 
 const ajv = new Ajv2020({ strictSchema: false, strictTypes: false });
 

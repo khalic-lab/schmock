@@ -5,10 +5,8 @@ import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import { detectCrudResources } from "./crud-detector.js";
 import { applyOverrides } from "./crud-registration.js";
-import {
-  asSchemaGenerationError,
-  collectSchemaProperties,
-} from "./generators.js";
+import { asSchemaGenerationError } from "./generators.js";
+import { collectSchemaProperties } from "./list-envelope.js";
 import { parseSpec } from "./parser.js";
 import { openapi } from "./plugin.js";
 

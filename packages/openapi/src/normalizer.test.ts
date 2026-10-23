@@ -5,7 +5,7 @@ import { generateFromSchema } from "@schmock/faker";
 import Ajv2020 from "ajv/dist/2020.js";
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
-import { findArrayProperty } from "./generators";
+import { findArrayProperty } from "./list-envelope";
 import { collectAccessModes, normalizeSchema } from "./normalizer";
 import { openapi } from "./plugin";
 import { hasType, isRecord } from "./utils";

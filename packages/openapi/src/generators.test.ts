@@ -5,17 +5,16 @@ import {
   buildResponse,
   createCreateGenerator,
   createDeleteGenerator,
-  createHeaderSeed,
   createListGenerator,
   createReadGenerator,
   createStaticGenerator,
   createUpdateGenerator,
-  findArrayProperty,
-  generateHeaderValues,
   generateSeedItems,
 } from "./generators";
+import { findArrayProperty } from "./list-envelope";
 import type { ParsedPath } from "./parser";
 import { openapi } from "./plugin";
+import { createHeaderSeed, generateHeaderValues } from "./response-headers";
 
 function makeResource(overrides?: Partial<CrudResource>): CrudResource {
   return {
