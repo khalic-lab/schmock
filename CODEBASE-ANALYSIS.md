@@ -1075,6 +1075,8 @@ Status: implemented and locally verified in the post-review worktree; fresh remo
 
 ### Phase 3: Make OpenAPI operations transactional and owned
 
+Status: implemented on 2026-08-10 as seven ordered OpenAPI clusters and released in v2.4.0; see "Phase 3 Remediation And Review".
+
 1. Tag routes with plugin/resource identity.
 2. Preserve exact declared HTTP methods.
 3. Apply schema overrides before detection/seeding.
@@ -1086,6 +1088,8 @@ Status: implemented and locally verified in the post-review worktree; fresh remo
 
 ### Phase 4: Repair adapters and exposed server behavior
 
+Status: implemented on 2026-08-10 as five adapter and CLI clusters and released in v2.4.0; see "Phase 4 Remediation And Review".
+
 1. Complete Angular HttpClient `responseType` and URL semantics.
 2. Define explicit Vue SSR behavior.
 3. Secure/cap CLI admin and history.
@@ -1094,7 +1098,7 @@ Status: implemented and locally verified in the post-review worktree; fresh remo
 
 ### Phase 5: Tighten plugins, tests, and documentation
 
-Status: partially started for public documentation only. Six of 13 baseline drift rows are resolved; the remaining corrections, executable documentation tests, and other Phase 5 work are still open.
+Status: implemented on 2026-08-10 in three waves and released in v2.4.0, including all thirteen baseline drift rows and the executable getting-started snippets; see "Phase 5 Remediation And Review".
 
 1. Replace Faker's multiple walkers with one exhaustive traversal.
 2. Validate Query/Validation numeric and own-property boundaries.
