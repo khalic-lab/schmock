@@ -62,7 +62,7 @@ export interface SpecResolver {
    *
    * Used to attribute a dereferenced `oneOf` branch back to the named schema
    * it came from, which object identity alone cannot do once a branch arrives
-   * from a different file.
+   * from a different file. The root may be missing; `loadDocument` adds it.
    */
   documents(): unknown;
 

@@ -46,14 +46,13 @@ function animal(sound: string): Record<string, unknown> {
 /**
  * A `oneOf` with a `discriminator` carrying NO explicit `mapping`.
  *
- * This is the case that pins `resolver.browser.ts`'s `documents: () => ({})`.
- * The Node entry hands `parser.$refs.values()` to
+ * The Node entry lists the documents ref-parser read for
  * `markDereferencedDiscriminatorValues`, which attributes a dereferenced branch
- * back to the component name it came from; the browser entry hands it nothing,
- * on the reasoning that the pre-dereference `markDiscriminatorValues` pass
- * already covers every branch a single-document spec can have. If that
- * reasoning is wrong, the implicit `petType` values differ between the entries
- * and this test says so.
+ * back to the component name it came from; the browser entry lists none, and
+ * `loadDocument` adds the root for both. A branch spelled as a `$ref` is named
+ * before dereferencing on either entry; {@link aliasedDiscriminatorSpec} covers
+ * the branch that is the component object itself. If the entries attribute
+ * differently, the implicit `petType` values differ and these tests say so.
  */
 const DISCRIMINATOR_SPEC = {
   openapi: "3.0.3",
@@ -88,6 +87,27 @@ const DISCRIMINATOR_SPEC = {
     },
   },
 };
+
+/**
+ * The same discriminator, with branches that ARE the `Cat` and `Dog` objects
+ * rather than `$ref`s to them, as a JS-built spec or a YAML alias produces.
+ * Nothing names them before dereferencing, so this is the case that used to
+ * come out constrained on Node and open in a browser.
+ */
+function aliasedDiscriminatorSpec(): Record<string, unknown> {
+  const cat = animal("meow");
+  const dog = animal("bark");
+  return {
+    ...DISCRIMINATOR_SPEC,
+    components: {
+      schemas: {
+        Pet: { oneOf: [cat, dog], discriminator: { propertyName: "petType" } },
+        Cat: cat,
+        Dog: dog,
+      },
+    },
+  };
+}
 
 /** One component referenced from two places, so identity sharing is exercised. */
 const SHARED_SPEC = {
@@ -188,6 +208,19 @@ describe("Node and browser entries agree", () => {
     expect(browser).toEqual(node);
     // Not a vacuous match on two empty bodies: the branch has to have been
     // chosen and stamped with the component's own name.
+    const pet = node.body as Record<string, unknown>;
+    expect(["Cat", "Dog"]).toContain(pet.petType);
+  });
+
+  it("resolve discriminator branches that are component objects to the same values", async () => {
+    const [node, browser] = await Promise.all(
+      ENTRIES.map(([, file]) =>
+        responseFrom(file, aliasedDiscriminatorSpec(), "/pets"),
+      ),
+    );
+
+    expect(node.status).toBe(200);
+    expect(browser).toEqual(node);
     const pet = node.body as Record<string, unknown>;
     expect(["Cat", "Dog"]).toContain(pet.petType);
   });

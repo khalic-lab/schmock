@@ -167,7 +167,10 @@ export async function loadDocument(
     source,
     diagnostics: refDiagnostics,
   });
-  markDereferencedDiscriminatorValues(api, resolver.documents());
+  markDereferencedDiscriminatorValues(
+    api,
+    withRootDocument(resolver.documents(), api),
+  );
 
   // Defence in depth for refs reached through a nested document: only
   // reachable once external resolution is on, and skipping the walk otherwise
@@ -470,7 +473,40 @@ function valuesForDereferencedBranch(
   return implicit ? [implicit] : null;
 }
 
-/** Fill markers on discriminator schemas that originated in external documents. */
+/**
+ * The key the root document is listed under when the resolver did not list
+ * it. Only `#…` mapping targets can name a schema in it, and those resolve
+ * against any key alike.
+ */
+const ROOT_DOCUMENT_URI = "schmock:root";
+
+/**
+ * Every document a dereferenced `oneOf` branch can come from, root included.
+ *
+ * The Node resolver lists the root only when the spec went through it: a
+ * ref-free object spec takes the fast path in `dereferenceDocument`, and the
+ * browser resolver lists nothing. A branch that IS a component object rather
+ * than a `$ref` to one — a JS-built spec reusing an object, or a YAML alias —
+ * was therefore constrained to its component name on Node and left open in a
+ * browser, and on Node only when some unrelated `$ref` sent the spec through
+ * the resolver.
+ */
+function withRootDocument(
+  documents: unknown,
+  root: OpenAPI.Document,
+): Record<string, unknown> {
+  const all: Record<string, unknown> = isRecord(documents)
+    ? { ...documents }
+    : {};
+  if (!Object.values(all).includes(root)) all[ROOT_DOCUMENT_URI] = root;
+  return all;
+}
+
+/**
+ * Fill markers on discriminator branches the pre-dereference pass could not
+ * name: ones that arrived from another document, or that are a component
+ * object rather than a `$ref` to it.
+ */
 function markDereferencedDiscriminatorValues(
   root: unknown,
   resolvedValues: unknown,

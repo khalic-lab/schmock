@@ -19,3 +19,9 @@ Feature: OpenAPI spec loading
     When I create an openapi plugin from the spec expecting a failure
     Then creating the plugin fails with code "OPENAPI_INVALID_REF"
     And the failure names the missing token "Missing"
+
+  Scenario: Discriminator branches that are component objects agree across builds
+    Given an inline spec whose discriminator branches are the component objects themselves
+    When I request "/pets" from a mock made by the Node build and by the browser build
+    Then both builds answer with the same pet
+    And the pet's discriminator names one of the components

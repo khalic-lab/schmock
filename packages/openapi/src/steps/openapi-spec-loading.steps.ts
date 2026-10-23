@@ -1,5 +1,6 @@
+import { resolve } from "node:path";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
-import { SchmockError } from "@schmock/core";
+import { SchmockError, schmock } from "@schmock/core";
 import { expect } from "vitest";
 import { openapi } from "../plugin";
 
@@ -8,6 +9,26 @@ const feature = await loadFeature(
 );
 
 const MARKER = "x-schmock-discriminator-values";
+
+/**
+ * The BUILT entries, for the scenario comparing them: `scripts/build.ts` swaps
+ * the resolver in the browser one, so importing `src/` would compare the Node
+ * build with itself.
+ */
+const BUILT_ENTRIES = {
+  node: resolve(import.meta.dirname, "../../dist/index.js"),
+  browser: resolve(import.meta.dirname, "../../dist/index.browser.js"),
+};
+
+type OpenApiFn = (options: Record<string, unknown>) => Promise<unknown>;
+
+function animal(sound: string): Record<string, unknown> {
+  return {
+    type: "object",
+    required: ["petType", sound],
+    properties: { petType: { type: "string" }, [sound]: { type: "boolean" } },
+  };
+}
 
 async function failureOf(promise: Promise<unknown>): Promise<unknown> {
   try {
@@ -133,6 +154,77 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
           expect((failure as Error).message).toContain(`"${token}"`);
         },
       );
+    },
+  );
+
+  Scenario(
+    "Discriminator branches that are component objects agree across builds",
+    ({ Given, When, Then, And }) => {
+      const responses: Record<string, { status: number; body: unknown }> = {};
+
+      Given(
+        "an inline spec whose discriminator branches are the component objects themselves",
+        () => {
+          // Shared objects, as a JS-built spec or a YAML alias produces: no
+          // branch is a `$ref` that names its component before dereferencing.
+          const cat = animal("meow");
+          const dog = animal("bark");
+          spec = {
+            openapi: "3.0.3",
+            info: { title: "Loading", version: "1.0.0" },
+            paths: {
+              "/pets": {
+                get: {
+                  responses: {
+                    "200": {
+                      description: "OK",
+                      content: {
+                        "application/json": {
+                          schema: { $ref: "#/components/schemas/Pet" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            components: {
+              schemas: {
+                Pet: {
+                  oneOf: [cat, dog],
+                  discriminator: { propertyName: "petType" },
+                },
+                Cat: cat,
+                Dog: dog,
+              },
+            },
+          };
+        },
+      );
+
+      When(
+        "I request {string} from a mock made by the Node build and by the browser build",
+        async (_, path: string) => {
+          for (const [build, entry] of Object.entries(BUILT_ENTRIES)) {
+            const { openapi: built } = (await import(entry)) as {
+              openapi: OpenApiFn;
+            };
+            const mock = schmock({ state: {} });
+            mock.pipe((await built({ spec, fakerSeed: 424_242 })) as never);
+            responses[build] = await mock.handle("GET", path);
+          }
+        },
+      );
+
+      Then("both builds answer with the same pet", () => {
+        expect(responses.node.status).toBe(200);
+        expect(responses.browser).toEqual(responses.node);
+      });
+
+      And("the pet's discriminator names one of the components", () => {
+        const pet = responses.node.body as Record<string, unknown>;
+        expect(["Cat", "Dog"]).toContain(pet.petType);
+      });
     },
   );
 });

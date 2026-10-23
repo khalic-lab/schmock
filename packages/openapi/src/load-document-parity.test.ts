@@ -70,6 +70,47 @@ function specWithResponseSchema(
   };
 }
 
+function animal(sound: string): Record<string, unknown> {
+  return {
+    type: "object",
+    required: ["petType", sound],
+    properties: { petType: { type: "string" }, [sound]: { type: "boolean" } },
+  };
+}
+
+/**
+ * `Pet`'s `oneOf` branches ARE the `Cat` and `Dog` component objects, as a
+ * JS-built spec or a YAML alias produces, not `$ref`s to them. With
+ * `unrelatedRef`, the response reaches `Pet` through a `$ref`, which is what
+ * used to send the Node build through the resolver and change its answer.
+ */
+function aliasedDiscriminatorSpec(
+  unrelatedRef: boolean,
+): Record<string, unknown> {
+  const cat = animal("meow");
+  const dog = animal("bark");
+  const pet = { oneOf: [cat, dog], discriminator: { propertyName: "petType" } };
+  return specWithResponseSchema(
+    unrelatedRef ? { $ref: "#/components/schemas/Pet" } : pet,
+    { Pet: pet, Cat: cat, Dog: dog },
+  );
+}
+
+const MARKER = "x-schmock-discriminator-values";
+
+async function discriminatorValuesFor(
+  build: (typeof BUILDS)[number],
+  spec: object,
+): Promise<unknown> {
+  const loadDocument = await loadDocumentFor(build);
+  const api = (await loadDocument(spec, {})) as unknown as {
+    components: {
+      schemas: { Pet: { discriminator: Record<string, unknown> } };
+    };
+  };
+  return api.components.schemas.Pet.discriminator[MARKER];
+}
+
 afterEach(() => {
   vi.doUnmock("./resolver.js");
   vi.resetModules();
@@ -98,4 +139,16 @@ describe("loadDocument agrees under the Node and browser resolvers", () => {
     expect(node).toEqual({ name: "SchmockError", code: "OPENAPI_INVALID_REF" });
     expect(browser).toEqual(node);
   });
+
+  for (const unrelatedRef of [true, false]) {
+    it(`names discriminator branches that are component objects ${unrelatedRef ? "with" : "without"} a $ref elsewhere`, async () => {
+      const spec = aliasedDiscriminatorSpec(unrelatedRef);
+
+      const node = await discriminatorValuesFor("node", spec);
+      const browser = await discriminatorValuesFor("browser", spec);
+
+      expect(node).toEqual([["Cat"], ["Dog"]]);
+      expect(browser).toEqual(node);
+    });
+  }
 });

@@ -74,10 +74,9 @@ export function createResolver(): SpecResolver {
       );
     },
 
-    // Only ever consulted to attribute a `oneOf` branch that arrived from
-    // another document, and this build resolves no other documents. The
-    // pre-dereference `markDiscriminatorValues` pass already covers every
-    // branch a single-document spec can have.
+    // This build reads no document but the root, and `loadDocument` adds the
+    // root itself whenever a resolver does not list it, so a `oneOf` branch
+    // that is a component object is attributed the same way on both builds.
     documents: (): unknown => ({}),
   };
 }
