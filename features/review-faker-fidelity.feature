@@ -31,3 +31,15 @@ Feature: Faker output honours every keyword of its schema
       | untyped-address-object  |
       | untyped-emails-array    |
       | untyped-price-bounds    |
+
+  # Review 2026-10-23 faker-6: json-schema-faker infers properties from unknown keys
+  Scenario Outline: An object without properties never echoes schema keywords into the body
+    Given the fidelity schema "<case>"
+    When I generate it with 40 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                       |
+      | map-with-definitions       |
+      | closed-object-with-example |
+      | map-with-dependencies      |

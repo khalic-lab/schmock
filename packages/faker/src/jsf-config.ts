@@ -454,7 +454,46 @@ function normalizeSchemaNodeForJsf(
     }
   }
 
+  if (normalized.properties === undefined && describesObject(normalized)) {
+    normalized.properties = {};
+  }
+  // On an untyped node JSF would read an object `example` as a property to
+  // generate. It never uses `example` itself (Schmock does not set
+  // `useExamplesValue`), so the copy goes without it.
+  if (normalized.type === undefined && normalized.properties === undefined) {
+    delete normalized.example;
+  }
+
   return normalized;
+}
+
+/** Keywords that make an untyped node an object for json-schema-faker. */
+const OBJECT_KEYWORDS = [
+  "required",
+  "additionalProperties",
+  "patternProperties",
+  "propertyNames",
+  "minProperties",
+  "maxProperties",
+  "dependencies",
+  "dependentRequired",
+  "dependentSchemas",
+];
+
+/**
+ * True for a node json-schema-faker generates as an object. When such a node
+ * has no `properties`, JSF infers one required property from every key it
+ * does not know as a keyword. `definitions`, `dependencies` and `example` are
+ * forwarded but not on its list, so their schema text would appear in the
+ * body; an empty `properties` switches that inference off.
+ */
+function describesObject(normalized: JsfObjectSchema): boolean {
+  if (normalized.$ref !== undefined) return false;
+  const { type } = normalized;
+  if (type === "object") return true;
+  if (Array.isArray(type)) return type.includes("object");
+  if (type !== undefined) return false;
+  return OBJECT_KEYWORDS.some((keyword) => normalized[keyword] !== undefined);
 }
 
 /** Lower and upper numeric bounds, from the inclusive or numeric exclusive form. */

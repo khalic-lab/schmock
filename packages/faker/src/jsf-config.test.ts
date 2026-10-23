@@ -319,3 +319,130 @@ describe("format registry isolation", () => {
     expect(afterRegistration).toMatch(DOTTED_QUAD);
   });
 });
+
+/** `schema` with `extra` set as plain keys, for keywords JSONSchema7 lacks. */
+function withKeys(
+  schema: JSONSchema7,
+  extra: Record<string, unknown>,
+): JSONSchema7 {
+  const copy: JSONSchema7 = { ...schema };
+  for (const [key, value] of Object.entries(extra)) {
+    Reflect.set(copy, key, value);
+  }
+  return copy;
+}
+
+async function generateSeeds(
+  schema: JSONSchema7,
+  seeds = 40,
+): Promise<unknown[]> {
+  const values: unknown[] = [];
+  for (let seed = 1; seed <= seeds; seed += 1) {
+    values.push(await generateFromSchema({ schema, seed }));
+  }
+  return values;
+}
+
+function objectOf(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Expected an object, got ${JSON.stringify(value)}`);
+  }
+  return value as Record<string, unknown>;
+}
+
+describe("object nodes without properties (faker-6)", () => {
+  it("gives an object node without properties an empty properties map", () => {
+    for (const schema of [
+      { type: "object", additionalProperties: false },
+      { type: ["object", "null"], additionalProperties: { type: "string" } },
+      { additionalProperties: { type: "integer" } },
+      { minProperties: 1 },
+    ] satisfies JSONSchema7[]) {
+      expect(normalizeSchemaForJsf(schema).properties).toEqual({});
+    }
+  });
+
+  it("leaves nodes that are not objects, or already declare properties, alone", () => {
+    for (const schema of [
+      { type: "string" },
+      { type: "array", items: { type: "string" } },
+      { $ref: "#/$defs/A", $defs: { A: { type: "string" } } },
+      {},
+    ] satisfies JSONSchema7[]) {
+      expect(normalizeSchemaForJsf(schema).properties).toBeUndefined();
+    }
+    const declared = normalizeSchemaForJsf({
+      type: "object",
+      properties: { a: { type: "string" } },
+    });
+    expect(Object.keys(Object(declared.properties))).toEqual(["a"]);
+  });
+
+  it("never emits definitions, dependencies or example as generated keys", async () => {
+    const cases: JSONSchema7[] = [
+      {
+        type: "object",
+        additionalProperties: { $ref: "#/definitions/Item" },
+        definitions: { Item: { type: "integer" } },
+      },
+      withKeys(
+        { type: "object", additionalProperties: false },
+        { example: {} },
+      ),
+      withKeys(
+        { type: "object", additionalProperties: { type: "string" } },
+        { example: { a: 1 } },
+      ),
+      {
+        type: "object",
+        additionalProperties: { type: "string" },
+        dependencies: { a: ["b"] },
+      },
+    ];
+    for (const schema of cases) {
+      for (const value of await generateSeeds(schema)) {
+        const generated = objectOf(value);
+        for (const key of ["definitions", "dependencies", "example"]) {
+          expect(Object.hasOwn(generated, key)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("keeps an untyped node's object example out of the body", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: {
+        meta: withKeys({ description: "Free-form" }, { example: { k: "v" } }),
+      },
+      required: ["meta"],
+    };
+    for (const value of await generateSeeds(schema)) {
+      const { meta } = objectOf(value);
+      expect(meta).not.toEqual({ example: { k: "v" } });
+      if (typeof meta === "object" && meta !== null) {
+        expect(Object.hasOwn(meta, "example")).toBe(false);
+      }
+    }
+  });
+
+  it("keeps a nested map's example out of the body", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: {
+        meta: withKeys(
+          { type: "object", additionalProperties: { type: "string" } },
+          { example: { k: "v" } },
+        ),
+      },
+      required: ["meta"],
+    };
+    for (const value of await generateSeeds(schema)) {
+      const meta = objectOf(objectOf(value).meta);
+      expect(Object.hasOwn(meta, "example")).toBe(false);
+      for (const entry of Object.values(meta)) {
+        expect(typeof entry).toBe("string");
+      }
+    }
+  });
+});

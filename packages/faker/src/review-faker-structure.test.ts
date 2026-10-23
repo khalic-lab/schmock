@@ -641,7 +641,9 @@ describe("review R14: array-valued maps are walked by every walker", () => {
       normalizeSchemaForJsf(
         schemaWith({ dependentSchemas: [{ type: "string", extra: 1 }] }),
       ),
-    ).toEqual({ dependentSchemas: { 0: { type: "string" } } });
+      // dependentSchemas makes the node an object, so it also gets an empty
+      // properties map (faker-6).
+    ).toEqual({ dependentSchemas: { 0: { type: "string" } }, properties: {} });
   });
 
   it("smart mapping drops a map entry whose value is undefined", () => {

@@ -41,6 +41,26 @@ function expectStatus(value: unknown): void {
   expect(["open", "closed"]).toContain(value);
 }
 
+/** No generated object holds a key copied from the schema's own keywords. */
+function expectNoSchemaKeys(value: unknown): void {
+  const generated = record(value);
+  for (const key of ["definitions", "dependencies", "example"]) {
+    expect(Object.hasOwn(generated, key)).toBe(false);
+  }
+}
+
+/** `schema` with `extra` set as plain keys, for keywords JSONSchema7 lacks. */
+function withKeys(
+  schema: JSONSchema7,
+  extra: Record<string, unknown>,
+): JSONSchema7 {
+  const copy: JSONSchema7 = { ...schema };
+  for (const [key, value] of Object.entries(extra)) {
+    Reflect.set(copy, key, value);
+  }
+  return copy;
+}
+
 const CASES: Record<string, FidelityCase> = {
   "root-string-one-of-const": {
     schema: STATUS,
@@ -152,6 +172,34 @@ const CASES: Record<string, FidelityCase> = {
       expect(price).toBeLessThanOrEqual(5);
     },
   },
+  "map-with-definitions": {
+    schema: {
+      type: "object",
+      additionalProperties: { $ref: "#/definitions/Item" },
+      definitions: { Item: { type: "integer" } },
+    },
+    fits: (value) => {
+      expectNoSchemaKeys(value);
+      for (const entry of Object.values(record(value))) {
+        expect(Number.isInteger(entry)).toBe(true);
+      }
+    },
+  },
+  "closed-object-with-example": {
+    schema: withKeys(
+      { type: "object", additionalProperties: false },
+      { example: {} },
+    ),
+    fits: (value) => expect(value).toEqual({}),
+  },
+  "map-with-dependencies": {
+    schema: {
+      type: "object",
+      additionalProperties: { type: "string" },
+      dependencies: { a: ["b"] },
+    },
+    fits: expectNoSchemaKeys,
+  },
 };
 
 function fidelityCase(name: string): FidelityCase {
@@ -164,6 +212,7 @@ function fidelityCase(name: string): FidelityCase {
 const OUTLINES = [
   "A composed node is generated from its composition",
   "An untyped node keeps the shape and bounds its keywords declare",
+  "An object without properties never echoes schema keywords into the body",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {
