@@ -229,7 +229,7 @@ a reset. See the [DevTools guide](./devtools.md).
 
 To list mocked requests in the Network panel itself, XHR included, start the
 service-worker relay before the first render. Copy the worker script once with
-`npx schmock-devtools init public`, then:
+`npx @schmock/devtools init public`, then:
 
 ```typescript
 import { createRoot } from 'react-dom/client'
@@ -244,8 +244,10 @@ createRoot(document.getElementById('root')!).render(
 )
 ```
 
-The relay routes every lease on the page, the provider's included, so the
-provider needs no new prop. Mocked requests then show as Network rows with
+The relay routes every lease of the page's current interception, the
+provider's included, so the provider needs no new prop (a lease taken before
+another library wrapped `fetch` is not routed; see
+[Hazards](./devtools.md#hazards), "A lease behind another `fetch` wrapper"). Mocked requests then show as Network rows with
 Size `(ServiceWorker)`. A relay that cannot start warns once, and the provider
 keeps answering `fetch` in the page. See
 [Network panel relay](./devtools.md#network-panel-relay).

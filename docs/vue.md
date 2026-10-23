@@ -198,7 +198,7 @@ stays, so pipe it again after a reset. See the [DevTools guide](./devtools.md).
 
 To list mocked requests in the Network panel itself, XHR included, start the
 service-worker relay before mounting. Copy the worker script once with
-`npx schmock-devtools init public`, then:
+`npx @schmock/devtools init public`, then:
 
 ```typescript
 import { startServiceWorkerRelay } from '@schmock/devtools'

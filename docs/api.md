@@ -1075,8 +1075,8 @@ getHeader(headers: Readonly<Record<string, string>> | undefined, name: string): 
 
 `SENSITIVE_HEADER_NAMES` holds the seven credential headers, in lowercase:
 `authorization`, `proxy-authorization`, `cookie`, `set-cookie`, `x-api-key`,
-`x-auth-token` and `x-schmock-admin-token`. Debug logs and the CLI's admin
-history mask this set. `redactHeaders()` replaces their values with
+`x-auth-token` and `x-schmock-admin-token`. Debug logs, the CLI's admin
+history and `devtoolsPlugin`'s console groups mask this set. `redactHeaders()` replaces their values with
 `"[redacted]"`, matching names case-insensitively. It is copy-on-write: the
 input is never mutated, and when nothing is sensitive the same object comes
 back. `getHeader()` looks a header up case-insensitively and returns the first
@@ -2195,8 +2195,10 @@ The promise rejects only for a caller error:
 
 - `SchmockError` `DEVTOOLS_CONFIG_INVALID`, context `{ option, received }`,
   naming the first failure in this order: `options` must be an object, `url`
-  and `scope` non-empty strings, `timeout` a positive finite number, and `url`
-  and `scope` must resolve against the page URL. Options are checked before
+  and `scope` non-empty strings, `timeout` a positive finite number of at most
+  `2147483647` (a larger one rejects with
+  `timeout must be at most 2147483647 (received N)`), and `url` and `scope`
+  must resolve against the page URL. Options are checked before
   anything else, even where service workers are unavailable.
 - `SchmockError` `DEVTOOLS_RELAY_ALREADY_STARTED`, context
   `{ running, requested }`, when a relay with other resolved options is
@@ -2214,7 +2216,7 @@ fallback warnings and the hazards.
 ### `schmock-devtools init <publicDir>`
 
 ```sh
-npx schmock-devtools init public
+npx @schmock/devtools init public
 ```
 
 Copies the packaged `dist/schmock-sw.js` to `<publicDir>/schmock-sw.js`,
@@ -2222,7 +2224,9 @@ creating the directory and replacing an older copy, then prints the next step.
 It exits 0 on success, and for `--help` or `-h`, which print
 `Usage: schmock-devtools init <publicDir>`. It exits 1 with a message on stderr
 for a missing or extra argument, a command other than `init`, a missing
-packaged worker, or a failed copy.
+packaged worker, or a failed copy. It also exits 1, and writes nothing, when
+`<publicDir>/schmock-sw.js` is a symbolic link: copying through it would
+overwrite the file the link points to, so remove the link and run it again.
 
 ---
 

@@ -459,9 +459,14 @@ service-worker objects in process (the registration lifecycle, scope matching,
 claims, the client message queue, fetch events and Cache Storage) on top of
 Node's real `MessageChannel`, `Request`, `Response` and `AbortController`. Its
 self-test, `relay-harness.test.ts`, pins each modelled behaviour before the
-worker and page tests rely on it. The harness forwards a page's abort to the
-worker's request signal. In real Chrome the mock did not see the abort, so the
-499 that the abort scenarios assert is the harness's behaviour, not Chrome's.
+worker and page tests rely on it. By default the harness does not forward a
+page's abort to the worker's request signal, as Chrome, Firefox and WebKit do
+not: the page's `fetch` rejects while the worker's copy of the request runs
+on. `createRelayHarness({ forwardAborts: true })` follows the spec's Handle
+Fetch instead and aborts the worker's signal too. Only the 499 abort
+scenario opts in (with the worker test and harness self-test that check the
+same forwarding), so the 499 it asserts is the spec's behaviour, not a
+browser's.
 What only a real browser shows (Network rows, browser default headers, hard
 reload, abort) was checked once by hand in headless Chrome over the DevTools
 protocol, and the results are recorded in

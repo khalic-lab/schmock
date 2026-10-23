@@ -332,7 +332,7 @@ directory your app serves at the site root, then start the relay before
 bootstrapping:
 
 ```sh
-npx schmock-devtools init public
+npx @schmock/devtools init public
 ```
 
 ```typescript
