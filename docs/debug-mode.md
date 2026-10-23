@@ -57,6 +57,13 @@ so it is logged as `RESPONSE`, recorded in history, and reported to
 [SCHMOCK:LIFECYCLE] Mock fully reset
 ```
 
+The bracketed id (`abc123` above) is a v4 UUID that ties one request's lines
+together. It comes from `crypto.randomUUID()` where that exists. Browsers
+expose it only in secure contexts, so on a page served over plain http (a LAN
+address, a docker hostname, `ng serve --host`) the id is built from
+`crypto.getRandomValues()` instead, and from `Math.random()` on a runtime
+without Web Crypto. Generating it never fails a request.
+
 ## Log Categories
 
 | Category | What it logs |

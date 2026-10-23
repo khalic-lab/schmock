@@ -7,7 +7,7 @@ import {
   normalizePath,
   parsePathPrefix,
 } from "./constants.js";
-import { DebugLogger } from "./debug-logger.js";
+import { createRequestId, DebugLogger } from "./debug-logger.js";
 import { applyResponseDelay } from "./delay.js";
 import {
   errorMessage,
@@ -492,7 +492,7 @@ export class CallableMockInstance {
       admission,
       signal,
       handleStart: performance.now(),
-      requestId: this.globalConfig.debug ? crypto.randomUUID() : "",
+      requestId: this.globalConfig.debug ? createRequestId() : "",
       query: { ...(options?.query ?? {}) },
       headers: { ...(options?.headers ?? {}) },
       body: options?.body,

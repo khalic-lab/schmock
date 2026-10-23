@@ -1,5 +1,5 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
-import { expect } from "vitest";
+import { expect, vi } from "vitest";
 import { RouteDefinitionError, schmock, toHttpMethod } from "../index";
 
 const feature = await loadFeature(
@@ -25,6 +25,8 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let handled: Schmock.Response | undefined;
   let thrown: unknown;
   let endStatuses: number[] = [];
+  let statuses: number[] = [];
+  let logLines: string[] = [];
 
   AfterEachScenario(() => {
     intercept?.restore();
@@ -34,6 +36,10 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     handled = undefined;
     thrown = undefined;
     endStatuses = [];
+    statuses = [];
+    logLines = [];
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   function currentMock(): Schmock.CallableMockInstance {
@@ -54,6 +60,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   async function handleRequest(request: string): Promise<void> {
     const { method, path } = parseRequest(request);
     handled = await currentMock().handle(method, path);
+    statuses.push(handled.status);
   }
 
   function expectStatusAndCode(status: number, code: string): void {
@@ -211,6 +218,55 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
           expect(await currentResponse().json()).toEqual({ reason });
         },
       );
+    },
+  );
+
+  // ── Debug mode ─────────────────────────────────────────────────────────
+
+  Scenario(
+    "Debug mode answers requests where crypto.randomUUID is unavailable",
+    ({ Given, And, When, Then }) => {
+      Given(
+        "a runtime whose Web Crypto has getRandomValues but no randomUUID",
+        () => {
+          const webCrypto = globalThis.crypto;
+          vi.stubGlobal("crypto", {
+            getRandomValues: (array: Uint8Array<ArrayBuffer>) =>
+              webCrypto.getRandomValues(array),
+          });
+        },
+      );
+
+      And('a debug mock with a route "GET /users"', () => {
+        vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+          logLines.push(args.map(String).join(" "));
+        });
+        vi.spyOn(console, "time").mockImplementation(() => {});
+        vi.spyOn(console, "timeEnd").mockImplementation(() => {});
+        mock = schmock({ debug: true });
+        mock("GET /users", [{ id: 1 }]);
+      });
+
+      When("I request {string}", async (_, request: string) => {
+        await handleRequest(request);
+      });
+
+      And("I request {string}", async (_, request: string) => {
+        await handleRequest(request);
+      });
+
+      Then("the two statuses are 200 and 404", () => {
+        expect(statuses).toEqual([200, 404]);
+      });
+
+      And("the request log carries a v4 request id", () => {
+        const requestLine = logLines.find((line) =>
+          line.includes("[SCHMOCK:REQUEST]"),
+        );
+        expect(requestLine).toMatch(
+          /\[[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\] GET \/users/,
+        );
+      });
     },
   );
 

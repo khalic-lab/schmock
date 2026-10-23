@@ -215,6 +215,53 @@ describe("debug functionality", () => {
     });
   });
 
+  describe("request ids outside a secure context", () => {
+    const UUID_V4 =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    function loggedRequestId(): string | undefined {
+      const requestLog = consoleLogs.find((args) =>
+        String(args[0]).includes("[SCHMOCK:REQUEST]"),
+      );
+      return /\[([^\]]+)\] GET/.exec(String(requestLog?.[0]))?.[1];
+    }
+
+    // A browser exposes crypto.randomUUID only in secure contexts: a page on
+    // plain http (a LAN address, a docker hostname) has getRandomValues alone.
+    it("answers and logs a v4 request id when crypto.randomUUID is missing", async () => {
+      const webCrypto = globalThis.crypto;
+      vi.stubGlobal("crypto", {
+        getRandomValues: (array: Uint8Array<ArrayBuffer>) =>
+          webCrypto.getRandomValues(array),
+      });
+      const mock = schmock({ debug: true });
+      mock("GET /users", [{ id: 1 }]);
+
+      const hit = await mock.handle("GET", "/users");
+      const id = loggedRequestId();
+      const miss = await mock.handle("GET", "/missing");
+
+      expect(hit.status).toBe(200);
+      expect(miss.status).toBe(404);
+      expect(id).toMatch(UUID_V4);
+    });
+
+    it("still answers when the runtime has no Web Crypto at all", async () => {
+      vi.stubGlobal("crypto", undefined);
+      const mock = schmock({ debug: true });
+      mock("GET /users", [{ id: 1 }]);
+
+      const response = await mock.handle("GET", "/users");
+
+      expect(response.status).toBe(200);
+      expect(loggedRequestId()).toMatch(UUID_V4);
+    });
+  });
+
   describe("credential redaction", () => {
     function serializedLogs(): string {
       return consoleLogs

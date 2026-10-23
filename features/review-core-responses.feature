@@ -33,6 +33,16 @@ Feature: Core response and error-path review fixes
     Then the fetched status is 500
     And the fetched body is the thrown object with reason "quota exceeded"
 
+  # ── Debug mode ───────────────────────────────────────────────────────────
+
+  Scenario: Debug mode answers requests where crypto.randomUUID is unavailable
+    Given a runtime whose Web Crypto has getRandomValues but no randomUUID
+    And a debug mock with a route "GET /users"
+    When I request "GET /users"
+    And I request "GET /missing"
+    Then the two statuses are 200 and 404
+    And the request log carries a v4 request id
+
   Scenario: Static JSON data every request would reject fails when the route is defined
     Given an empty mock
     When I define "GET /profile" with static data holding a Map
