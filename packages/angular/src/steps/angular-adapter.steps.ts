@@ -1003,4 +1003,62 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       });
     },
   );
+
+  Scenario(
+    "A spec helper builds the interceptor from the openapi peer passed to it",
+    ({ Given, When, Then, And }) => {
+      let specInterceptor: HttpInterceptor | undefined;
+
+      Given(
+        'I create an Angular interceptor from spec with baseUrl "/api" and the openapi peer passed in',
+        async () => {
+          resetState();
+          // The app's own import of the peer, which the helper is handed.
+          const { openapi } = await import("@schmock/openapi");
+          const InterceptorClass = await createSchmockInterceptorFromSpec(
+            { spec: inlineSpec },
+            { baseUrl: "/api" },
+            { openapi },
+          );
+          specInterceptor = new InterceptorClass();
+        },
+      );
+
+      When(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          const interceptor = specInterceptor;
+          if (!interceptor) throw new Error("No spec interceptor was built");
+          await new Promise<void>((resolve) => {
+            interceptor
+              .intercept(new HttpRequest<unknown>(method, path, null), mockNext)
+              .subscribe({
+                next: (event: HttpEvent<unknown>) => {
+                  if (event instanceof HttpResponse) {
+                    response = event;
+                    resolve();
+                  }
+                },
+                error: (error: unknown) => {
+                  errorResponse =
+                    error instanceof HttpErrorResponse
+                      ? error
+                      : new HttpErrorResponse({ error });
+                  resolve();
+                },
+              });
+          });
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And("the status should be {int}", (_, status: number) => {
+        expect(response?.status).toBe(status);
+      });
+    },
+  );
 });

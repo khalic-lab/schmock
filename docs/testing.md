@@ -281,11 +281,13 @@ beforeEach(async () => {
 ```
 
 Under Karma or another browser runner the tests are a bundled browser app. The
-`FromSpec` helpers reject there with `OPENAPI_PEER_UNAVAILABLE` (see
-[the Angular guide](./angular.md#the-fromspec-helpers-node-and-test-runners-only)),
-and a file path throws `OPENAPI_NODE_ONLY` (see
-[Running in a browser](./openapi.md#running-in-a-browser)). Pipe the plugin
-into a mock yourself, with the spec fetched or imported as JSON:
+`FromSpec` helpers reject there with `OPENAPI_PEER_UNAVAILABLE` unless you
+hand them your own `openapi` import as the third argument (see
+[the Angular guide](./angular.md#the-fromspec-helpers)), and a file path
+throws `OPENAPI_NODE_ONLY` (see
+[Running in a browser](./openapi.md#running-in-a-browser)). Pass the spec
+fetched or imported as JSON, and either hand the helper `{ openapi }` or pipe
+the plugin into a mock yourself:
 
 ```typescript
 import { schmock } from '@schmock/core'

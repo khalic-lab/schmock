@@ -200,3 +200,11 @@ Feature: Angular Adapter
     Given I create an Angular interceptor from spec with baseUrl "/api"
     When I make an Angular request to "GET /external/data"
     Then the request should pass through to the real backend
+
+  # Wave-3 #41: the caller's own `import { openapi }` is what a bundler can
+  # resolve, so the helpers take it instead of importing the peer at runtime.
+  Scenario: A spec helper builds the interceptor from the openapi peer passed to it
+    Given I create an Angular interceptor from spec with baseUrl "/api" and the openapi peer passed in
+    When I make an Angular request to "GET /api/items"
+    Then the response should be an HttpResponse
+    And the status should be 200

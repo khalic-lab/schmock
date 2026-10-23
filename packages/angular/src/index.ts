@@ -1090,6 +1090,32 @@ type OpenapiFactory = (
 ) => Promise<Schmock.Plugin>;
 
 /**
+ * The `@schmock/openapi` peer, passed to the spec helpers by the caller:
+ * `{ openapi }` from the caller's own `import { openapi } from
+ * '@schmock/openapi'`. The bundler resolves that static import like any
+ * other, so with it the helpers work in a bundled browser app, where the
+ * runtime import they fall back to cannot be resolved.
+ */
+export interface OpenApiPeer {
+  openapi: OpenapiFactory;
+}
+
+/** The `openapi()` factory: the injected peer's, or the runtime import's. */
+async function resolveOpenapi(peer?: OpenApiPeer): Promise<OpenapiFactory> {
+  if (peer === undefined) return loadOptionalOpenapi();
+  // Checked at runtime too: an untyped caller may pass the module itself
+  // or a misspelled key.
+  const factory: unknown = peer?.openapi;
+  if (typeof factory !== "function") {
+    throw new SchmockError(
+      "The peer passed to the spec helpers has no openapi() factory",
+      OPENAPI_PEER_UNAVAILABLE,
+    );
+  }
+  return (options) => Reflect.apply(factory, peer, [options]);
+}
+
+/**
  * Load the optional `@schmock/openapi` peer at call time.
  *
  * The specifier is assembled at runtime on purpose. A string constant is not
@@ -1130,21 +1156,28 @@ async function loadOptionalOpenapi(): Promise<OpenapiFactory> {
  * Create an Angular HTTP interceptor from an OpenAPI spec.
  * Auto-registers all routes from the spec with full CRUD support.
  *
- * Requires `@schmock/openapi` to be installed.
+ * Requires `@schmock/openapi` to be installed. Without `peer`, it is loaded
+ * through a runtime import that only Node and test runners resolve; pass
+ * `{ openapi }` from your own import to use the helper in a bundled browser
+ * app.
  *
  * @example
  * ```typescript
+ * import { openapi } from '@schmock/openapi';
+ *
  * const Interceptor = await createSchmockInterceptorFromSpec(
- *   { spec: './assets/api.yaml', seed: { pets: { count: 10 } } },
+ *   { spec, seed: { pets: { count: 10 } } },
  *   { baseUrl: '/api' },
+ *   { openapi },
  * );
  * ```
  */
 export async function createSchmockInterceptorFromSpec(
   openapiOptions: Schmock.OpenApiOptions,
   adapterOptions?: AngularAdapterOptions,
+  peer?: OpenApiPeer,
 ): Promise<new () => HttpInterceptor> {
-  const openapi = await loadOptionalOpenapi();
+  const openapi = await resolveOpenapi(peer);
   const mock = schmock({ debug: openapiOptions.debug, state: {} });
   mock.pipe(await openapi(openapiOptions));
   return createSchmockInterceptor(mock, adapterOptions);
@@ -1153,14 +1186,18 @@ export async function createSchmockInterceptorFromSpec(
 /**
  * Angular provider that creates a Schmock interceptor from an OpenAPI spec.
  *
- * Requires `@schmock/openapi` to be installed.
+ * Requires `@schmock/openapi` to be installed; `peer` works as in
+ * {@link createSchmockInterceptorFromSpec}.
  *
  * @example
  * ```typescript
+ * import { openapi } from '@schmock/openapi';
+ *
  * providers: [
  *   await provideSchmockInterceptorFromSpec(
  *     { spec: mySpec, fakerSeed: 42 },
  *     { baseUrl: '/api' },
+ *     { openapi },
  *   ),
  * ]
  * ```
@@ -1168,11 +1205,13 @@ export async function createSchmockInterceptorFromSpec(
 export async function provideSchmockInterceptorFromSpec(
   openapiOptions: Schmock.OpenApiOptions,
   adapterOptions?: AngularAdapterOptions,
+  peer?: OpenApiPeer,
 ) {
   // See `provideSchmockInterceptor` — `useFactory` keeps this AOT-safe.
   const Interceptor = await createSchmockInterceptorFromSpec(
     openapiOptions,
     adapterOptions,
+    peer,
   );
   return {
     provide: HTTP_INTERCEPTORS,

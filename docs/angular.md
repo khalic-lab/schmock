@@ -177,14 +177,28 @@ object, fetched or imported as JSON: in the browser a file path or URL throws
 `OPENAPI_NODE_ONLY` (see
 [Running in a browser](./openapi.md#running-in-a-browser)).
 
-### The `FromSpec` helpers: Node and test runners only
+### The `FromSpec` helpers
 
 `provideSchmockInterceptorFromSpec` and `createSchmockInterceptorFromSpec`
-build that mock for you, but they load `@schmock/openapi` through a specifier
-computed at runtime. A bundler leaves that import in place, so in a bundled
-browser app (`ng build`, Karma or another browser test runner) they reject with
-`SchmockError` code `OPENAPI_PEER_UNAVAILABLE` even when the package is
-installed. Use the recipe above there. Under a Node test runner (Vitest, Jest),
+build that mock for you. Hand them your own `openapi` import as the third
+argument and they work wherever that import does, a bundled app included:
+
+```typescript
+import { openapi } from '@schmock/openapi'
+import { provideSchmockInterceptorFromSpec } from '@schmock/angular'
+
+const provider = await provideSchmockInterceptorFromSpec(
+  { spec, seed: { users: { count: 10 } } },
+  { baseUrl: '/api' },
+  { openapi },
+)
+```
+
+Without it they load `@schmock/openapi` through a specifier computed at
+runtime, which is for Node and test runners only. A bundler leaves that import
+in place, so in a bundled browser app (`ng build`, Karma or another browser
+test runner) they reject with `SchmockError` code `OPENAPI_PEER_UNAVAILABLE`
+even when the package is installed. Under a Node test runner (Vitest, Jest),
 where the import resolves from `node_modules`, they work, and a spec file path
 is read from disk:
 
