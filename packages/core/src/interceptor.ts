@@ -593,15 +593,6 @@ function routeProbeOf(
   };
 }
 
-function isAbortError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "name" in error &&
-    error.name === "AbortError"
-  );
-}
-
 /**
  * Build the fetch Response from an already-normalized Schmock response.
  */
@@ -941,10 +932,11 @@ export function createFetchLease(
         }
         return toFetchResponse(response, context);
       } catch (error) {
+        // Every cancellation on this path rejects with the request signal's
+        // reason, so this rethrows a real abort. An AbortError a hook raises
+        // for its own reasons, with the request still live, is a failure like
+        // any other and goes to errorFormatter, as in Express and Angular.
         throwIfAborted(request.signal);
-        if (isAbortError(error)) {
-          throw error;
-        }
         if (errorFormatter) {
           // A formatter that throws here propagates and rejects the fetch; a
           // body it returns that cannot be serialized falls back to the same

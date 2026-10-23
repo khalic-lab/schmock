@@ -658,6 +658,49 @@ describe("mock.intercept()", () => {
     handle.restore();
   });
 
+  // Only the request's own signal cancels a request. An AbortError a hook
+  // raises for its own reasons (an inner fetch it gave up on) is a failure
+  // like any other, as the Express and Angular adapters treat it.
+  it("formats an AbortError a hook throws while the request is live", async () => {
+    mock("GET /api/users", [{ id: 1 }]);
+    const formatted: Error[] = [];
+    const handle = mock.intercept({
+      beforeRequest: () => {
+        throw new DOMException("inner call gave up", "AbortError");
+      },
+      errorFormatter: (err) => {
+        formatted.push(err);
+        return { custom: err.message };
+      },
+    });
+
+    try {
+      const res = await fetch("http://localhost/api/users");
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ custom: "inner call gave up" });
+      expect(formatted).toHaveLength(1);
+      expect(formatted[0].name).toBe("AbortError");
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("still rejects with a hook's AbortError when no errorFormatter is set", async () => {
+    mock("GET /api/users", [{ id: 1 }]);
+    const hookError = new DOMException("inner call gave up", "AbortError");
+    const handle = mock.intercept({
+      beforeResponse: () => {
+        throw hookError;
+      },
+    });
+
+    try {
+      await expect(fetch("http://localhost/api/users")).rejects.toBe(hookError);
+    } finally {
+      handle.restore();
+    }
+  });
+
   it("normalizes header keys to lowercase", async () => {
     mock("POST /api/data", ({ headers }) => [
       200,

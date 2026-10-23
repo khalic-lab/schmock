@@ -357,6 +357,12 @@ wherever it was thrown: the message describes it (a string as is, a plain
 object as its JSON) and `error.cause` is the thrown value itself, so a
 formatter can read its fields.
 
+Only the request's own `signal` cancels it: an aborted request rejects with
+the signal's reason and never reaches `errorFormatter`. An `AbortError` a hook
+throws for its own reasons while the request is still live (an inner call it
+gave up on) is an ordinary failure and is formatted like any other, as the
+Express and Angular adapters do.
+
 An empty JSON body reaches the route as `undefined`. With `passthrough: false`,
 a JSON body that does not parse gets 400
 `{ error: 'Malformed JSON request body', code: 'MALFORMED_JSON' }` before any

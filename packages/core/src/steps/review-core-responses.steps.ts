@@ -1,6 +1,11 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect, vi } from "vitest";
-import { RouteDefinitionError, schmock, toHttpMethod } from "../index";
+import {
+  RouteDefinitionError,
+  schmock,
+  toHttpMethod,
+  toRouteKey,
+} from "../index";
 
 const feature = await loadFeature(
   "../../features/review-core-responses.feature",
@@ -228,6 +233,52 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         "the fetched body is the thrown object with reason {string}",
         async (_, reason: string) => {
           expect(await currentResponse().json()).toEqual({ reason });
+        },
+      );
+    },
+  );
+
+  // ── Fetch interception ─────────────────────────────────────────────────
+
+  Scenario(
+    "An AbortError a hook throws on a live request reaches the error formatter",
+    ({ Given, And, When, Then }) => {
+      Given("a mock with a route {string}", (_, route: string) => {
+        const { method, path } = parseRequest(route);
+        mock = schmock();
+        mock(toRouteKey(method, path), [{ id: 1 }]);
+      });
+
+      And(
+        "an intercept whose beforeRequest throws its own AbortError {string} and whose error formatter returns the message",
+        (_, message: string) => {
+          intercept = currentMock().intercept({
+            passthrough: false,
+            beforeRequest: () => {
+              throw new DOMException(message, "AbortError");
+            },
+            errorFormatter: (error) => ({ formatted: error.message }),
+          });
+        },
+      );
+
+      When(
+        "I fetch {string} through that intercept",
+        async (_, path: string) => {
+          fetched = await fetch(`http://localhost${path}`);
+        },
+      );
+
+      Then("the fetched status is {int}", (_, status: number) => {
+        expect(currentResponse().status).toBe(status);
+      });
+
+      And(
+        "the fetched body carries the formatted message {string}",
+        async (_, message: string) => {
+          expect(await currentResponse().json()).toEqual({
+            formatted: message,
+          });
         },
       );
     },

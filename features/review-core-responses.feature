@@ -33,6 +33,15 @@ Feature: Core response and error-path review fixes
     Then the fetched status is 500
     And the fetched body is the thrown object with reason "quota exceeded"
 
+  # ── Fetch interception ───────────────────────────────────────────────────
+
+  Scenario: An AbortError a hook throws on a live request reaches the error formatter
+    Given a mock with a route "GET /users"
+    And an intercept whose beforeRequest throws its own AbortError "inner call gave up" and whose error formatter returns the message
+    When I fetch "/users" through that intercept
+    Then the fetched status is 500
+    And the fetched body carries the formatted message "inner call gave up"
+
   # ── Debug mode ───────────────────────────────────────────────────────────
 
   Scenario: Debug mode answers requests where crypto.randomUUID is unavailable
