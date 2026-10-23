@@ -61,13 +61,15 @@ Feature: Faker creation-time checks
     Then the plugin generates a uuid for "n"
 
     Examples:
-      | reference           |
-      | anchor-ref          |
-      | dynamic-anchor-ref  |
-      | dynamic-ref         |
-      | plain-name-id       |
-      | embedded-id         |
-      | uri-against-root-id |
+      | reference              |
+      | anchor-ref             |
+      | dynamic-anchor-ref     |
+      | dynamic-ref            |
+      | plain-name-id          |
+      | embedded-id            |
+      | uri-against-root-id    |
+      | anchor-ref-to-faker    |
+      | registered-id-to-faker |
 
   Scenario: A JSON Pointer to the same definition still generates
     Given an object whose property "n" reaches a uuid definition through "pointer"

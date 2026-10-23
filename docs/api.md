@@ -1545,11 +1545,15 @@ register them the same way:
 - A `$ref` that names an `$anchor` or `$dynamicAnchor`, a `$dynamicRef`, and a
   `$ref` to an embedded `$id` (a draft-07 plain-name `$id` such as `#item`, an
   `$id` under `definitions`, or a relative `$id` named by a URI resolved
-  against the root `$id`) generate the schema they name, merged in as one
-  more `allOf` entry. A `$dynamicRef` that names no schema in the document is
-  rejected with `SCHEMA_VALIDATION_ERROR` at its own path, unless it sits
-  inside `not`, an `if` with no `then`, or an unreferenced definition. Any
-  other `$ref` that names nothing still fails each request.
+  against the root `$id`) generate the schema they name. The target is merged
+  into the node that holds the reference the way json-schema-faker merges a
+  JSON Pointer `$ref`: the target's keywords, `faker`, `not`,
+  `if`/`then`/`else` and `default` included, with the node's own keywords
+  over them, except that both `allOf` lists are kept. A `$dynamicRef` that
+  names no schema in the document is rejected with `SCHEMA_VALIDATION_ERROR`
+  at its own path, unless it sits inside `not`, an `if` with no `then`, or an
+  unreferenced definition. Any other `$ref` that names nothing still fails
+  each request.
 
 ### Generation limits
 

@@ -108,6 +108,30 @@ function referenceSchema(property: string, kind: string): JSONSchema7 {
           $defs: { S: { $id: "s.json", ...uuid } },
         },
       );
+    case "anchor-ref-to-faker":
+      return reachedThrough(
+        { $ref: "#sid" },
+        {
+          $defs: {
+            S: withKeywords(
+              { type: "string" },
+              { $anchor: "sid", faker: "string.uuid" },
+            ),
+          },
+        },
+      );
+    case "registered-id-to-faker":
+      return reachedThrough(
+        { $ref: "https://example.test/id" },
+        {
+          $defs: {
+            S: withKeywords(
+              { $id: "https://example.test/id", type: "string" },
+              { faker: "string.uuid" },
+            ),
+          },
+        },
+      );
     case "pointer":
       return reachedThrough({ $ref: "#/$defs/S" }, { $defs: { S: uuid } });
     default:

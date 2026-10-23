@@ -50,42 +50,99 @@ describe("inlineUnfollowedReferences", () => {
       { $anchor: "sid" },
     );
 
-    it("replaces an anchor $ref with its target as an allOf entry", () => {
+    it("merges an anchor $ref's target into the node, its own keywords over it", () => {
       const schema: JSONSchema7 = {
         type: "object",
-        properties: { n: { $ref: "#sid", description: "An id" } },
+        properties: {
+          n: { $ref: "#sid", format: "date", description: "An id" },
+        },
         $defs: { S: target },
       };
 
       const inlined = inlineUnfollowedReferences(schema);
 
-      const n = propertyOf(inlined, "n");
-      expect(n).not.toHaveProperty("$ref");
-      expect(n.description).toBe("An id");
-      expect(n.allOf).toHaveLength(1);
-      expect(n.allOf?.[0]).toBe(inlined.$defs?.S);
-      expect(n.allOf?.[0]).toEqual(target);
+      expect(propertyOf(inlined, "n")).toEqual({
+        type: "string",
+        format: "date",
+        description: "An id",
+      });
+      expect(inlined.$defs?.S).toEqual(target);
     });
 
-    it("replaces a $dynamicRef and appends to an allOf already there", () => {
+    it("keeps the target's faker, not, if, then and default", () => {
+      const carried = withKeywords(
+        {
+          type: "integer",
+          not: { const: 2 },
+          if: { minimum: 0 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { maximum: 3 },
+          default: 1,
+        },
+        { faker: "number.int", $anchor: "sid" },
+      );
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: { n: { $ref: "#sid" } },
+        $defs: { S: carried },
+      };
+
+      const n = propertyOf(inlineUnfollowedReferences(schema), "n");
+
+      const { $anchor: _identifier, ...expected } = carried as JSONSchema7 & {
+        $anchor?: string;
+      };
+      expect(n).toEqual(expected);
+    });
+
+    it("merges a $dynamicRef and appends the node's allOf to the target's", () => {
       const existing: JSONSchema7 = { minLength: 1 };
+      const inherited: JSONSchema7 = { maxLength: 9 };
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
           n: withKeywords({ allOf: [existing] }, { $dynamicRef: "#sid" }),
         },
         $defs: {
-          S: withKeywords({ type: "string" }, { $dynamicAnchor: "sid" }),
+          S: withKeywords(
+            { type: "string", allOf: [inherited] },
+            { $dynamicAnchor: "sid" },
+          ),
         },
       };
 
       const n = propertyOf(inlineUnfollowedReferences(schema), "n");
 
       expect(n).not.toHaveProperty("$dynamicRef");
-      expect(n.allOf).toEqual([
-        existing,
-        withKeywords({ type: "string" }, { $dynamicAnchor: "sid" }),
-      ]);
+      expect(n).toEqual({ type: "string", allOf: [inherited, existing] });
+    });
+
+    it("merges a root JSON Pointer beside a not, through a chain", () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: { o: { $ref: "#/$defs/A", not: { type: "string" } } },
+        $defs: {
+          A: { $ref: "#/$defs/U" },
+          U: { type: ["string", "integer"] },
+        },
+      };
+
+      const o = propertyOf(inlineUnfollowedReferences(schema), "o");
+
+      expect(o).toEqual({
+        type: ["string", "integer"],
+        not: { type: "string" },
+      });
+    });
+
+    it("merges a root JSON Pointer that is a not body", () => {
+      const schema: JSONSchema7 = {
+        type: "integer",
+        not: { $ref: "#/$defs/Two" },
+        $defs: { Two: { const: 2 } },
+      };
+
+      expect(inlineUnfollowedReferences(schema).not).toEqual({ const: 2 });
     });
 
     it("leaves the schema it was given unchanged", () => {

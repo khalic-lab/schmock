@@ -639,6 +639,99 @@ describe("validateSchema", () => {
       },
     );
 
+    describe("keywords the target carries", () => {
+      /** Every way of naming `$defs.T` that generation merges in itself. */
+      function throughEachReference(
+        target: JSONSchema7,
+      ): Array<[string, JSONSchema7]> {
+        return [
+          [
+            "a $ref to a registered $id",
+            uuidThrough(
+              { $ref: "https://example.com/t" },
+              { $defs: { T: { $id: "https://example.com/t", ...target } } },
+            ),
+          ],
+          [
+            "a $ref to an $anchor",
+            uuidThrough(
+              { $ref: "#t" },
+              { $defs: { T: withKeywords({ ...target }, { $anchor: "t" }) } },
+            ),
+          ],
+          [
+            "a $dynamicRef",
+            uuidThrough(withKeywords({}, { $dynamicRef: "#t" }), {
+              $defs: {
+                T: withKeywords({ ...target }, { $dynamicAnchor: "t" }),
+              },
+            }),
+          ],
+          [
+            "a draft-07 plain-name $id",
+            uuidThrough(
+              { $ref: "#t" },
+              { definitions: { T: { $id: "#t", ...target } } },
+            ),
+          ],
+        ];
+      }
+
+      async function generatedNs(schema: JSONSchema7): Promise<unknown[]> {
+        const values: unknown[] = [];
+        for (let seed = 1; seed <= 30; seed += 1) {
+          const { response } = await fakerPlugin({ schema, seed }).process(
+            context(),
+          );
+          values.push(Reflect.get(Object(response), "n"));
+        }
+        return values;
+      }
+
+      it.each(
+        throughEachReference(
+          withKeywords({ type: "string" }, { faker: "string.uuid" }),
+        ),
+      )("keeps the target's faker through %s", async (_, schema) => {
+        for (const n of await generatedNs(schema)) {
+          expect(n).toMatch(UUID);
+        }
+      });
+
+      it.each(
+        throughEachReference({
+          type: "integer",
+          minimum: 1,
+          maximum: 3,
+          not: { const: 2 },
+        }),
+      )("keeps the target's not through %s", async (_, schema) => {
+        expect(await generatedNs(schema)).not.toContain(2);
+      });
+
+      it.each(
+        throughEachReference({
+          type: "integer",
+          minimum: 0,
+          maximum: 9,
+          if: { minimum: 0 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { const: 3 },
+        }),
+      )("keeps the target's if and then through %s", async (_, schema) => {
+        expect(new Set(await generatedNs(schema))).toEqual(new Set([3]));
+      });
+
+      it.each(throughEachReference({ type: "string", default: "fixed" }))(
+        "keeps the target's default through %s",
+        async (_, schema) => {
+          expect(new Set(await generatedNs(schema))).toEqual(
+            new Set(["fixed"]),
+          );
+        },
+      );
+    });
+
     it("sizes a root array reached through an anchor with count", async () => {
       const plugin = fakerPlugin({
         schema: {
@@ -823,6 +916,59 @@ describe("validateSchema", () => {
         "$.properties.n.not",
       );
     });
+
+    it.each([
+      [
+        "a lone not.required, leaving the target's optional property out",
+        {
+          type: "object",
+          properties: { o: { $ref: "#/$defs/Obj", not: { required: ["a"] } } },
+          required: ["o"],
+          $defs: {
+            Obj: {
+              type: "object",
+              properties: { a: { type: "string" }, b: { type: "string" } },
+            },
+          },
+        },
+        (value: unknown) => expect(value).not.toHaveProperty("o.a"),
+      ],
+      [
+        "a lone not.type, narrowing the target's type union",
+        {
+          type: "object",
+          properties: { o: { $ref: "#/$defs/U", not: { type: "string" } } },
+          required: ["o"],
+          $defs: { U: { type: ["string", "integer"] } },
+        },
+        (value: unknown) =>
+          expect(typeof Reflect.get(Object(value), "o")).not.toBe("string"),
+      ],
+      [
+        "a lone not.type through a chain of JSON Pointers",
+        {
+          type: "object",
+          properties: { o: { $ref: "#/$defs/A", not: { type: "string" } } },
+          required: ["o"],
+          $defs: {
+            A: { $ref: "#/$defs/U" },
+            U: { type: ["string", "integer"] },
+          },
+        },
+        (value: unknown) =>
+          expect(typeof Reflect.get(Object(value), "o")).not.toBe("string"),
+      ],
+    ] satisfies Array<[string, JSONSchema7, (value: unknown) => void]>)(
+      "honours %s beside a JSON Pointer $ref",
+      async (_, schema, check) => {
+        for (let seed = 1; seed <= 40; seed += 1) {
+          const { response } = await fakerPlugin({ schema, seed }).process(
+            context(),
+          );
+          check(response);
+        }
+      },
+    );
 
     it.each([
       ["a not.const", { type: "boolean", not: { const: true } }],
