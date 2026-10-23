@@ -535,6 +535,13 @@ list in memory.
   network unmocked. Take every lease after the library installs its wrapper.
   The [API reference](./api.md#schmockcoreadapter) states the same limit
   for `routeRelayedRequest`.
+- **Cookie API keys.** The mock never sees a `Cookie` header, in either mode:
+  page code cannot set one, and the worker's copy of a request carries none,
+  because the browser attaches its cookie jar only after the service worker.
+  An OpenAPI operation secured only by a cookie API key answers 401 under
+  `security: true` even when the browser holds the cookie.
+  [Security Validation](./openapi.md#security-validation) shows how to add
+  the cookie in `beforeRequest`.
 
 ### Development only
 
