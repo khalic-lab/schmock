@@ -1589,6 +1589,12 @@ interface ValidationPluginOptions {
 `ValidationPluginOptions` and `ValidationRules` are exported from
 `@schmock/validation` for typing shared configuration objects.
 
+Each schema option must be a JSON Schema object. Anything else, including a
+boolean schema, `null` or an array, throws `SchmockError`
+`VALIDATION_CONFIG_INVALID` at creation time, with `context.option` naming the
+slot (`'request.body'`, `'request.query'`, `'request.headers'` or
+`'response.body'`) and `context.received` holding the value.
+
 Request rules run before the route generator. Set `bodyRequired: true` when an
 absent body must be rejected; supplied bodies are always validated.
 

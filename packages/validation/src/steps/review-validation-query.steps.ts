@@ -937,4 +937,38 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       });
     },
   );
+
+  // ── Schema option errors (review 2026-10-23) ─────────────────────────────
+
+  ScenarioOutline(
+    "A schema option that is not a JSON Schema object fails during plugin creation",
+    ({ When, Then }, variables) => {
+      When(
+        "I create a validation plugin whose <option> schema is <value>",
+        () => {
+          // `request.body` -> { request: { body: <value> } }, bypassing the
+          // JSONSchema7 type the way an untyped caller would.
+          const [slot, option] = variables.option.split(".");
+          const rules = {};
+          Reflect.set(rules, option, JSON.parse(variables.value));
+          const options: ValidationPluginOptions = {};
+          Reflect.set(options, slot, rules);
+          creationError = captureError(() => validationPlugin(options));
+        },
+      );
+
+      Then(
+        "plugin creation should fail with code {string} naming the option {string}",
+        (_, code: string) => {
+          expect(creationError).toMatchObject({
+            code,
+            context: {
+              option: variables.option,
+              received: JSON.parse(variables.value),
+            },
+          });
+        },
+      );
+    },
+  );
 });

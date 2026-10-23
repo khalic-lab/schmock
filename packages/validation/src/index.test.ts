@@ -1,4 +1,4 @@
-import { schmock } from "@schmock/core";
+import { SchmockError, schmock } from "@schmock/core";
 import { describe, expect, it } from "vitest";
 import { version as packageVersion } from "../package.json";
 import { type ValidationPluginOptions, validationPlugin } from "./index";
@@ -1493,6 +1493,42 @@ describe("validationPlugin", () => {
         }),
       ).not.toThrow();
     });
+  });
+
+  describe("schema configuration", () => {
+    function withRuntimeSchema(
+      slot: "request" | "response",
+      option: string,
+      value: unknown,
+    ): ValidationPluginOptions {
+      const rules = {};
+      Reflect.set(rules, option, value);
+      const options: ValidationPluginOptions = {};
+      Reflect.set(options, slot, rules);
+      return options;
+    }
+
+    it.each([
+      ["request", "body", true],
+      ["request", "query", null],
+      ["request", "headers", []],
+      ["response", "body", "x"],
+    ] as const)(
+      "rejects a non-object %s.%s schema with a structured error",
+      (slot, option, received) => {
+        expect.hasAssertions();
+        try {
+          validationPlugin(withRuntimeSchema(slot, option, received));
+        } catch (error) {
+          expect(error).toBeInstanceOf(SchmockError);
+          expect(error).toMatchObject({
+            code: "VALIDATION_CONFIG_INVALID",
+            message: `validationPlugin: ${slot}.${option} must be a JSON Schema object`,
+            context: { option: `${slot}.${option}`, received },
+          });
+        }
+      },
+    );
   });
 
   describe("failure modes", () => {

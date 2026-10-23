@@ -699,10 +699,19 @@ function validatedBody(body: unknown): unknown {
   );
 }
 
-function cloneSchema(schema: JSONSchema7 | undefined): JSONSchema7 | undefined {
+function cloneSchema(
+  schema: JSONSchema7 | undefined,
+  option: string,
+): JSONSchema7 | undefined {
   if (schema === undefined) return undefined;
   const clone = cloneGraph(schema);
-  if (!isSchema(clone)) throw new TypeError("Expected a schema object");
+  if (!isSchema(clone)) {
+    throw new SchmockError(
+      `validationPlugin: ${option} must be a JSON Schema object`,
+      "VALIDATION_CONFIG_INVALID",
+      { option, received: schema },
+    );
+  }
   return clone;
 }
 
@@ -718,10 +727,19 @@ export function validationPlugin(
   assertHttpStatus(requestErrorStatus, "requestErrorStatus");
   assertHttpStatus(responseErrorStatus, "responseErrorStatus");
 
-  const requestBodySchema = cloneSchema(options.request?.body);
-  const requestQuerySchema = cloneSchema(options.request?.query);
-  const requestHeadersSchema = cloneSchema(options.request?.headers);
-  const responseBodySchema = cloneSchema(options.response?.body);
+  const requestBodySchema = cloneSchema(options.request?.body, "request.body");
+  const requestQuerySchema = cloneSchema(
+    options.request?.query,
+    "request.query",
+  );
+  const requestHeadersSchema = cloneSchema(
+    options.request?.headers,
+    "request.headers",
+  );
+  const responseBodySchema = cloneSchema(
+    options.response?.body,
+    "response.body",
+  );
   const responseStatusScope = snapshotStatusScope(options.response?.statuses);
   const bodyRequired = options.request?.bodyRequired ?? false;
   const resolver = createAjv().opts.uriResolver;

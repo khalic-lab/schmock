@@ -185,3 +185,15 @@ Feature: Validation plugin review fixes
       | fields              | keyword  |
       | name=Ada&role=guest | enum     |
       | role=admin          | required |
+
+  # ── Schema option errors (review 2026-10-23) ─────────────────────────────
+
+  Scenario Outline: A schema option that is not a JSON Schema object fails during plugin creation
+    When I create a validation plugin whose <option> schema is <value>
+    Then plugin creation should fail with code "VALIDATION_CONFIG_INVALID" naming the option "<option>"
+
+    Examples:
+      | option          | value |
+      | request.body    | true  |
+      | request.headers | []    |
+      | response.body   | null  |
