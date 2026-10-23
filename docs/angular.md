@@ -473,14 +473,20 @@ describe('UserService', () => {
   interceptor runs before them: the `Accept` header
   (`application/json, text/plain, */*`) and the detected `Content-Type` the
   backends add when the caller set none are added, and the body is serialized
-  with `HttpRequest.serializeBody()`, then decoded by its content type as
-  `mock.listen()` and the fetch interceptor decode one. JSON is parsed, a
-  urlencoded form (an `HttpParams` body included) becomes a flat object,
-  `text/*` a string, `FormData` stays `FormData`, and anything else is an
-  `ArrayBuffer`. A bodyless request has no body (`undefined`, not `null`), and
-  a JSON-labelled body that does not parse arrives as its text. Angular labels
-  a `URLSearchParams` body `application/json`, as its backends do, so set
-  `Content-Type: application/x-www-form-urlencoded` to receive its fields
+  with `HttpRequest.serializeBody()`, then decoded by its content type with
+  the media-type table `mock.listen()` and the fetch interceptor use. JSON is
+  parsed, a urlencoded form (an `HttpParams` body included) becomes a flat
+  object, `text/*` a string, `FormData` stays `FormData`, and anything else is
+  an `ArrayBuffer`. A bodyless request has no body (`undefined`, not `null`).
+  The adapter decodes with its own copy of that table, which differs from
+  core's in three ways. A JSON-labelled body that does not parse arrives as its
+  text even with `passthrough: false`, where `mock.listen()` and a strict fetch
+  interceptor answer 400 `MALFORMED_JSON`. JSON nested deeper than 256 levels
+  is parsed, not refused with `JSON_TOO_DEEP`. And a `multipart/*`-labelled
+  string or `Blob` arrives as text or an `ArrayBuffer`, not as `FormData`.
+  Angular labels a `URLSearchParams` body `application/json`, as its backends
+  do, so set `Content-Type: application/x-www-form-urlencoded` to receive its
+  fields
 - Bodies are shaped to the request's `responseType`: `text` yields a string,
   `arraybuffer` an `ArrayBuffer`, `blob` a `Blob`. `json` passes the value
   through untouched — a route returning a pre-serialized string stays a string,
