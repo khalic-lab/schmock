@@ -130,6 +130,71 @@ describe("failed requests", () => {
   });
 });
 
+describe("a route object a plugin returns in place of the matched one", () => {
+  function textPlainRoute(
+    context: Schmock.PluginContext,
+  ): Schmock.PluginContext {
+    return {
+      ...context,
+      route: { ...context.route, contentType: "text/plain" },
+    };
+  }
+
+  it.each([
+    [
+      "process",
+      {
+        name: "replacer",
+        process: (context: Schmock.PluginContext, response?: unknown) => ({
+          context: textPlainRoute(context),
+          response,
+        }),
+      },
+    ],
+    [
+      "beforeRequest",
+      {
+        name: "replacer",
+        beforeRequest: (context: Schmock.PluginContext) => ({
+          context: textPlainRoute(context),
+        }),
+        process: (context: Schmock.PluginContext, response?: unknown) => ({
+          context,
+          response,
+        }),
+      },
+    ],
+  ] satisfies Array<[string, Schmock.Plugin]>)(
+    "sets the content type when %s returns it",
+    async (_label, plugin) => {
+      const mock = schmock();
+      mock("GET /doc", () => ({ a: 1 })).pipe(plugin);
+
+      const response = await mock.handle("GET", "/doc");
+
+      expect(response.headers["content-type"]).toBe("text/plain");
+      expect(response.body).toBe('{"a":1}');
+    },
+  );
+
+  it("keeps the matched route when a plugin returns a context without one", async () => {
+    const mock = schmock();
+    mock("GET /doc", () => ({ a: 1 })).pipe({
+      name: "route-dropper",
+      process: (context, upstream) => {
+        const withoutRoute = { ...context };
+        Reflect.deleteProperty(withoutRoute, "route");
+        return { context: withoutRoute, response: upstream };
+      },
+    });
+
+    const response = await mock.handle("GET", "/doc");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toBe("application/json");
+  });
+});
+
 describe("@schmock/core/adapter error helpers", () => {
   it("exports the JSON error envelope core answers failures with", async () => {
     const { buildJsonErrorResponse } = adapterEntry;

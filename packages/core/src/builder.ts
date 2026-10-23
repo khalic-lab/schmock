@@ -119,6 +119,13 @@ interface RequestScope {
    * like a successful one: its own delay override and a history record.
    */
   match?: RouteMatch;
+  /**
+   * The latest plugin context, from the preflight on: the one each stage
+   * returned last. Its `route` is the one the response is parsed and delayed
+   * with, so a plugin that returns a replaced route object is honoured just
+   * like one that edits the route in place.
+   */
+  context?: Schmock.PluginContext;
 }
 
 /** A matched request's response between pipeline stages. */
@@ -131,6 +138,22 @@ interface ResponseDraft {
 
 /** `request:end` status for a request its caller cancelled. */
 const ABORTED_REQUEST_STATUS = 499;
+
+/**
+ * The route config a request is answered with: the one on its latest plugin
+ * context, or the matched copy when no plugin ran yet or a plugin returned a
+ * context without a usable route.
+ */
+function effectiveRouteConfig(
+  scope: RequestScope,
+  match: RouteMatch,
+): Schmock.RouteConfig {
+  // Checked at runtime: a plugin may return a context that breaks its type.
+  const route = scope.context?.route;
+  return typeof route === "object" && route !== null && !Array.isArray(route)
+    ? route
+    : match.routeConfig;
+}
 
 /**
  * Callable mock instance that implements the new API.
@@ -659,6 +682,7 @@ export class CallableMockInstance {
       routeState: scope.admission.state,
       signal,
     };
+    scope.context = pluginContext;
 
     const preflight = await runPluginBeforeRequest(
       scope.admission.plugins,
@@ -667,11 +691,13 @@ export class CallableMockInstance {
       signal,
     );
     throwIfAborted(signal);
+    const context =
+      preflight.requestShortCircuited === true
+        ? { ...preflight.context, requestShortCircuited: true }
+        : preflight.context;
+    scope.context = context;
     return {
-      context:
-        preflight.requestShortCircuited === true
-          ? { ...preflight.context, requestShortCircuited: true }
-          : preflight.context,
+      context,
       result: preflight.response,
       recovered: preflight.recoveredFromError === true,
     };
@@ -726,6 +752,7 @@ export class CallableMockInstance {
         signal,
       );
       throwIfAborted(signal);
+      scope.context = recovery.context;
       return {
         context: recovery.context,
         result: recovery.response,
@@ -759,6 +786,7 @@ export class CallableMockInstance {
           scope.signal,
         );
         throwIfAborted(scope.signal);
+        scope.context = pipelineResult.context;
         result = pipelineResult.response;
       }
     } catch (error) {
@@ -770,7 +798,7 @@ export class CallableMockInstance {
     }
 
     return normalizeResponse(
-      parseResponse(result, match.routeConfig),
+      parseResponse(result, effectiveRouteConfig(scope, match)),
       scope.method,
     );
   }
@@ -831,7 +859,10 @@ export class CallableMockInstance {
 
     // Apply delay (route-level overrides global)
     await applyResponseDelay({
-      routeDelay: match?.routeConfig.delay,
+      routeDelay:
+        match === undefined
+          ? undefined
+          : effectiveRouteConfig(scope, match).delay,
       globalDelay: admission.globalDelay,
       signal,
     });

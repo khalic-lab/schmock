@@ -558,7 +558,10 @@ per-request copies. Editing them in place changes only the current response
 and request, never the registered route or later requests. Static data is
 copied deeply, but only its arrays and plain objects; Dates, binary values and
 class instances are passed by reference. `context.route` is a shallow copy, so
-custom route data nested inside it is shared.
+custom route data nested inside it is shared. A hook may also return a context
+whose `route` is a new object: core answers with the route on the latest
+context, so its `contentType` and `delay` apply exactly as an in-place edit
+would.
 
 `onExchange` observes what a fetch caller finally received. Core calls it once
 for each request the mock settled through `mock.intercept()` (answered, failed,

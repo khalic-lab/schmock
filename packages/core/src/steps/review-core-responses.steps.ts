@@ -125,6 +125,47 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   );
 
   Scenario(
+    "A plugin that returns a replaced route object sets the response content type",
+    ({ Given, And, When, Then }) => {
+      Given(
+        'a mock whose route "GET /doc" returns an object with a equal to 1',
+        () => {
+          mock = schmock();
+          mock("GET /doc", () => ({ a: 1 }));
+        },
+      );
+
+      And(
+        "a plugin whose process returns a copy of the route with content type {string}",
+        (_, contentType: string) => {
+          currentMock().pipe({
+            name: "route-replacer",
+            process: (context, upstream) => ({
+              context: { ...context, route: { ...context.route, contentType } },
+              response: upstream,
+            }),
+          });
+        },
+      );
+
+      When("I request {string}", async (_, request: string) => {
+        await handleRequest(request);
+      });
+
+      Then(
+        "the response content type header is {string}",
+        (_, contentType: string) => {
+          expect(currentHandled().headers["content-type"]).toBe(contentType);
+        },
+      );
+
+      And("the response body is that object's JSON text", () => {
+        expect(currentHandled().body).toBe(JSON.stringify({ a: 1 }));
+      });
+    },
+  );
+
+  Scenario(
     "A text/plain route rejects an object body a JSON route would reject",
     ({ Given, When, Then }) => {
       Given(

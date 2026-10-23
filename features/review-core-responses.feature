@@ -11,6 +11,13 @@ Feature: Core response and error-path review fixes
     Then the response content type is "application/json"
     And the response body parses as the JSON string "1970-01-01T00:00:00.000Z"
 
+  Scenario: A plugin that returns a replaced route object sets the response content type
+    Given a mock whose route "GET /doc" returns an object with a equal to 1
+    And a plugin whose process returns a copy of the route with content type "text/plain"
+    When I request "GET /doc"
+    Then the response content type header is "text/plain"
+    And the response body is that object's JSON text
+
   Scenario: A text/plain route rejects an object body a JSON route would reject
     Given a mock whose text/plain route "GET /note" returns an object with an undefined field
     When I request "GET /note"
