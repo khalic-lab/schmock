@@ -1409,8 +1409,8 @@ function validateTemplateArguments(method: string, args: unknown[]): void {
 
 /**
  * `helpers.fake` evaluates each `{{module.method(args)}}` placeholder with
- * JSON-parsed arguments, so every placeholder is held to the same allocation
- * policy as the method called directly.
+ * JSON-parsed arguments, so every placeholder is held to the same method path
+ * rule and allocation policy as the method called directly.
  */
 function validateFakeTemplates(templates: unknown): void {
   const candidates = Array.isArray(templates) ? templates : [templates];
@@ -1421,8 +1421,10 @@ function validateFakeTemplates(templates: unknown): void {
       const open = expression.indexOf("(");
       const close = expression.lastIndexOf(")");
       if (open === -1 || close < open) continue;
+      const method = expression.slice(0, open).trim();
+      validateFakerMethod(method);
       validateFakerAllocationArguments(
-        expression.slice(0, open).trim(),
+        method,
         parseFakeArguments(expression.slice(open + 1, close)),
       );
     }
@@ -1887,9 +1889,11 @@ function capped(value: number): number {
  * @throws {SchemaValidationError} When faker method format or namespace is invalid
  */
 export function validateFakerMethod(fakerMethod: string): void {
-  // Check if faker method follows valid format (namespace.method)
+  // Every faker 10 method is `namespace.method`. A longer path can only reach
+  // through a module's `faker` back-reference (`person.faker.string.alpha`),
+  // an alias no entry in FAKER_ALLOCATION_POLICIES is keyed by.
   const parts = fakerMethod.split(".");
-  if (parts.length < 2) {
+  if (parts.length !== 2) {
     throw new SchemaValidationError(
       "$.faker",
       `Invalid faker method format: "${fakerMethod}"`,

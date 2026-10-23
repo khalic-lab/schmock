@@ -1,8 +1,9 @@
-import { ResourceLimitError } from "@schmock/core";
+import { ResourceLimitError, SchemaValidationError } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import { MAX_ARRAY_SIZE } from "./constants.js";
 import { fakerPlugin } from "./index.js";
+import { validateFakerMethod } from "./validation.js";
 
 function captureFailure(run: () => unknown): unknown {
   try {
@@ -22,6 +23,14 @@ function expectResource(
     throw new Error(`Expected a resource limit error, got ${String(error)}`);
   }
   expect(error.context).toMatchObject(expected);
+}
+
+function expectSchemaError(error: unknown, schemaPath: string): void {
+  expect(error).toBeInstanceOf(SchemaValidationError);
+  if (!(error instanceof SchemaValidationError)) {
+    throw new Error(`Expected a schema validation error, got ${String(error)}`);
+  }
+  expect(error.context).toMatchObject({ schemaPath });
 }
 
 function withKeywords(
@@ -404,5 +413,73 @@ describe("validateSchema", () => {
         expect(() => fakerPlugin({ schema: rowsOf(item, 300) })).not.toThrow();
       },
     );
+  });
+
+  describe("faker method paths", () => {
+    it.each([
+      "person.faker.string.alpha",
+      "lorem.faker.lorem.paragraphs",
+      "person.faker.seed",
+      "helpers.faker.helpers.multiple",
+    ])("rejects %s, which reaches through the faker back-reference", (path) => {
+      expect(() => validateFakerMethod(path)).toThrow(SchemaValidationError);
+    });
+
+    it("rejects an aliased method whose arguments the allocation policy would refuse", () => {
+      const schema = withKeywords(
+        { type: "string" },
+        {
+          faker: { "person.faker.string.alpha": [{ length: 5_000_000 }] },
+        },
+      );
+
+      expectSchemaError(
+        captureFailure(() => fakerPlugin({ schema })),
+        "$.faker",
+      );
+    });
+
+    it("rejects an aliased helpers.fake placeholder", () => {
+      const schema = withKeywords(
+        { type: "string" },
+        {
+          faker: {
+            "helpers.fake": [
+              '{{person.faker.string.alpha({"length":5000000})}}',
+            ],
+          },
+        },
+      );
+
+      expectSchemaError(
+        captureFailure(() => fakerPlugin({ schema })),
+        "$.faker",
+      );
+    });
+
+    it("accepts module.method paths and placeholders", async () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: {
+          name: withKeywords({ type: "string" }, { faker: "person.firstName" }),
+          code: withKeywords(
+            { type: "string" },
+            {
+              faker: {
+                "helpers.fake": ["{{string.alpha(5)}}-{{person.firstName}}"],
+              },
+            },
+          ),
+        },
+        required: ["name", "code"],
+      };
+
+      const generated = await generateOnce(schema);
+
+      expect(generated).toMatchObject({
+        name: expect.any(String),
+        code: expect.stringMatching(/^[A-Za-z]{5}-/),
+      });
+    });
   });
 });

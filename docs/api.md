@@ -1525,8 +1525,12 @@ Faker arguments that set a size are held to the string limit:
 | `lorem.sentences`, `lorem.lines`, `lorem.paragraph` | 9,362 sentences |
 | `lorem.paragraphs` | 3,120 paragraphs |
 
-`helpers.fake` placeholders are checked like direct calls. The expanded
-`helpers.mustache` output and the explicit upper quantifier in
+These limits are keyed by the method's own `module.method` name, and a faker
+method given by any longer path is rejected with `SCHEMA_VALIDATION_ERROR`:
+every faker module carries a `faker` back-reference, so
+`person.faker.string.alpha` would otherwise reach `string.alpha` unchecked.
+`helpers.fake` placeholders are checked like direct calls, their method path
+included. The expanded `helpers.mustache` output and the explicit upper quantifier in
 `helpers.fromRegExp` must fit in 65,536 characters, and a schema `pattern`
 whose shortest match is longer than that is rejected at creation.
 

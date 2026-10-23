@@ -36,3 +36,20 @@ Feature: Faker creation-time checks
     Given an object holding 300 strings whose pattern needs 60000 characters but whose maxLength is 10
     When I create a faker plugin for it
     Then plugin creation succeeds
+
+  # Review 2026-10-23 faker-13: allocation limits are keyed by module.method
+  Scenario Outline: A faker method reached through the faker back-reference is rejected at construction
+    Given a string schema whose faker is "<faker>"
+    When I create a faker plugin for it
+    Then plugin creation fails with a schema validation error at "$.faker"
+
+    Examples:
+      | faker                                                         |
+      | person.faker.string.alpha                                     |
+      | {"person.faker.string.alpha": [{"length": 5000000}]}          |
+      | {"helpers.fake": ["{{person.faker.string.alpha(5000000)}}"]}  |
+
+  Scenario: A helpers.fake template of module.method placeholders still generates
+    Given a string schema whose helpers.fake template calls string.alpha with 5 and then person.firstName
+    When I create a faker plugin for it
+    Then the plugin generates 5 letters, a dash and a name

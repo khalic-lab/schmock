@@ -1,5 +1,5 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
-import { ResourceLimitError } from "@schmock/core";
+import { ResourceLimitError, SchemaValidationError } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { expect } from "vitest";
 import { fakerPlugin } from "../index";
@@ -188,6 +188,61 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
         expect(creationError).toBeUndefined();
         expect(plugin).toBeDefined();
       });
+    },
+  );
+
+  ScenarioOutline(
+    "A faker method reached through the faker back-reference is rejected at construction",
+    ({ Given, When, Then }, variables) => {
+      Given("a string schema whose faker is {string}", () => {
+        const faker: unknown = variables.faker.startsWith("{")
+          ? JSON.parse(variables.faker)
+          : variables.faker;
+        schema = withKeywords({ type: "string" }, { faker });
+      });
+      When("I create a faker plugin for it", createPlugin);
+      Then(
+        "plugin creation fails with a schema validation error at {string}",
+        (_, path: string) => {
+          expect(creationError).toBeInstanceOf(SchemaValidationError);
+          expect(creationError).toMatchObject({
+            context: { schemaPath: path },
+          });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A helpers.fake template of module.method placeholders still generates",
+    ({ Given, When, Then }) => {
+      Given(
+        "a string schema whose helpers.fake template calls string.alpha with {int} and then person.firstName",
+        (_, length: number) => {
+          schema = withKeywords(
+            { type: "string" },
+            {
+              faker: {
+                "helpers.fake": [
+                  `{{string.alpha(${length})}}-{{person.firstName}}`,
+                ],
+              },
+            },
+          );
+        },
+      );
+      When("I create a faker plugin for it", createPlugin);
+      Then(
+        "the plugin generates {int} letters, a dash and a name",
+        async (_, length: number) => {
+          expect(creationError).toBeUndefined();
+          const response = await generate();
+          expect(response).toEqual(expect.any(String));
+          expect(String(response)).toMatch(
+            new RegExp(`^[A-Za-z]{${length}}-\\S+`),
+          );
+        },
+      );
     },
   );
 });
