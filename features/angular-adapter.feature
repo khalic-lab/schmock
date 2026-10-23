@@ -152,6 +152,12 @@ Feature: Angular Adapter
     Then the response should be an HttpResponse
     And the echoed request should have no body and no content type
 
+  Scenario: A URL fragment does not affect routing or the query
+    Given I create a strict Angular mock that echoes the query for "GET /echo" under baseUrl "/api"
+    When I make an Angular request to "GET /api/echo?a=1#top"
+    Then the response should be an HttpResponse
+    And the echoed query should be a = "1"
+
   Scenario: responseType text yields a string body
     Given I create an Angular mock returning an object for "GET /api/users"
     When I make an Angular request to "GET /api/users" with responseType "text"

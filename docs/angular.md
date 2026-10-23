@@ -384,6 +384,9 @@ describe('UserService', () => {
 - The query is read from the URL string first, then from `HttpParams`, the
   order Angular writes them into `urlWithParams`. A repeated key resolves to its
   last value, as in the other adapters and the CLI
+- A URL fragment is dropped before routing, as Angular's backends never send
+  it: `/api/users#top` is routed as `/api/users`, and `?a=1#top` gives `a` the
+  value `1`
 
 `errorFormatter` formats core-marked internal exceptions and thrown handling
 errors. It does not reinterpret an ordinary route response such as

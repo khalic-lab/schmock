@@ -747,6 +747,63 @@ describe("Angular Adapter", () => {
         expect.objectContaining({ query: { page: "1", limit: "10" } }),
       );
     });
+
+    async function routed(
+      url: string,
+      options?: Parameters<typeof createSchmockInterceptor>[1],
+      params?: HttpParams,
+    ): Promise<{ path: string; query: Record<string, string> }> {
+      mockInstance.handle = vi
+        .fn()
+        .mockResolvedValue({ status: 200, body: "ok", headers: {} });
+      const InterceptorClass = createSchmockInterceptor(mockInstance, options);
+      const request = new HttpRequest("GET", url, null, { params });
+
+      await new Promise<void>((resolve, reject) => {
+        new InterceptorClass()
+          .intercept(request, { handle: vi.fn() })
+          .subscribe({ complete: resolve, error: reject });
+      });
+
+      const [, path, requestOptions] = vi.mocked(mockInstance.handle).mock
+        .calls[0] as [string, string, { query: Record<string, string> }];
+      return { path, query: requestOptions.query };
+    }
+
+    it("routes a relative URL without its fragment", async () => {
+      expect(await routed("/api/users#top")).toEqual({
+        path: "/api/users",
+        query: {},
+      });
+      expect(await routed("/api/users#top", { baseUrl: "/api" })).toEqual({
+        path: "/users",
+        query: {},
+      });
+    });
+
+    it("keeps the fragment out of the last query value", async () => {
+      expect((await routed("/api/echo?a=1#top")).query).toEqual({ a: "1" });
+      expect((await routed("http://h/api/echo?a=1#top")).query).toEqual({
+        a: "1",
+      });
+    });
+
+    it("reads a '?' inside the fragment as fragment, not query", async () => {
+      expect(await routed("/api/echo#a?b=1")).toEqual({
+        path: "/api/echo",
+        query: {},
+      });
+    });
+
+    it("joins HttpParams to a URL that carries a fragment", async () => {
+      expect(
+        await routed(
+          "/api/echo#top",
+          undefined,
+          new HttpParams().set("b", "2"),
+        ),
+      ).toEqual({ path: "/api/echo", query: { b: "2" } });
+    });
   });
 
   describe("subscription teardown", () => {

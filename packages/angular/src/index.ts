@@ -321,7 +321,7 @@ export interface AngularAdapterOptions {
 function extractQueryParams(
   request: HttpRequest<unknown>,
 ): Record<string, string> {
-  const url = request.url;
+  const url = withoutFragment(request.url);
   const queryStart = url.indexOf("?");
   const entries: Array<[string, string]> =
     queryStart === -1
@@ -340,18 +340,31 @@ function extractQueryParams(
 }
 
 /**
+ * The URL without its fragment. Angular's backends, like any HTTP client,
+ * never send the fragment, so it is neither path nor query: `/users#top` is
+ * routed as `/users`, and `?a=1#top` gives `a` the value "1".
+ */
+function withoutFragment(url: string): string {
+  const fragmentStart = url.indexOf("#");
+  return fragmentStart === -1 ? url : url.slice(0, fragmentStart);
+}
+
+/**
  * Split an Angular request URL into its origin (null for a relative URL) and
- * its pathname, dropping the query:
+ * its pathname, dropping the query and the fragment:
  * - "http://localhost:4200/api/users" → origin "http://localhost:4200", "/api/users"
  * - "/api/users?foo=bar" → origin null, "/api/users"
+ * - "/api/users#top" → origin null, "/api/users"
  * - "api/users" → origin null, "/api/users"
  *
  * The query is dropped before looking for "://", so a relative URL carrying an
  * absolute one in its query (`/r?to=https://x`) stays relative.
  */
 function splitRequestUrl(url: string): { origin: string | null; path: string } {
-  const queryStart = url.indexOf("?");
-  const urlWithoutQuery = queryStart === -1 ? url : url.slice(0, queryStart);
+  const target = withoutFragment(url);
+  const queryStart = target.indexOf("?");
+  const urlWithoutQuery =
+    queryStart === -1 ? target : target.slice(0, queryStart);
 
   if (urlWithoutQuery.includes("://")) {
     try {

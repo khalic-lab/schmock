@@ -723,6 +723,36 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   );
 
   Scenario(
+    "A URL fragment does not affect routing or the query",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'I create a strict Angular mock that echoes the query for "GET /echo" under baseUrl "/api"',
+        () => {
+          resetState();
+          interceptorOptions = { baseUrl: "/api", passthrough: false };
+          mock("GET /echo", ({ query }) => [200, { query }]);
+        },
+      );
+
+      When(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          await makeRequest(method, path);
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And('the echoed query should be a = "1"', () => {
+        expect(response?.body).toEqual({ query: { a: "1" } });
+      });
+    },
+  );
+
+  Scenario(
     "responseType text yields a string body",
     ({ Given, When, Then, And }) => {
       Given(
