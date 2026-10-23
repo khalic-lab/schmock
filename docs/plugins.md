@@ -13,12 +13,15 @@ interface Plugin {
   beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
-  onExchange?(exchange: Exchange): void | Promise<void>
+  onExchange?(exchange: Exchange): unknown   // return value ignored
 }
 ```
 
 `onExchange` observes what a fetch caller finally received. See
-[Observing exchanges](#observing-exchanges).
+[Observing exchanges](#observing-exchanges). It returns `unknown` because core
+ignores the value, so an expression-bodied observer such as
+`onExchange: (exchange) => seen.push(exchange)` type-checks, and so does an
+`async` one.
 
 `install()` and `uninstall()` return `PluginHookResult`, exported from
 `@schmock/core`: any value that is not a thenable, and the value is ignored. An

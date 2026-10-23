@@ -203,9 +203,10 @@ declare namespace Schmock {
      * or before this plugin was piped. Observation only: each observer gets its
      * own frozen snapshot (bodies are copies), the return value is ignored, and
      * a throw or rejection is logged under the `plugin` debug category without
-     * reaching the client.
+     * reaching the client. Typed `unknown` because the value is discarded, so an
+     * expression-bodied observer such as `(e) => seen.push(e)` type-checks.
      */
-    onExchange?(exchange: Exchange): void | Promise<void>;
+    onExchange?(exchange: Exchange): unknown;
   }
 
   /**
@@ -1092,7 +1093,12 @@ declare namespace Schmock {
 
   /** Explicit application-owned delivery for OpenAPI callbacks. */
   interface OpenApiCallbackOptions {
-    dispatch(request: OpenApiCallbackRequest): void | Promise<void>;
+    /**
+     * Deliver one callback. What it returns is discarded and a throw or
+     * rejection is caught, hence `unknown`, so an expression-bodied
+     * dispatcher such as `(request) => fetch(request.url)` type-checks.
+     */
+    dispatch(request: OpenApiCallbackRequest): unknown;
   }
 
   /**

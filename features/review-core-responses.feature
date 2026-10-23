@@ -79,3 +79,12 @@ Feature: Core response and error-path review fixes
     When I define "GET /profile" with static data holding a Map
     Then the definition throws a RouteDefinitionError mentioning "unsupported object"
     And the mock has no routes
+
+  # ── Hook types ───────────────────────────────────────────────────────────
+
+  Scenario: Observers and callback dispatchers whose value is discarded may be expression-bodied
+    Given a plugin whose onExchange is an expression-bodied arrow that returns a number
+    And OpenAPI callback options whose dispatch is an expression-bodied arrow that returns a number
+    When I pipe the plugin into a mock with a route "GET /users" and fetch it through intercept
+    Then the observer saw one answered exchange with status 200
+    And the dispatcher records the request it is given

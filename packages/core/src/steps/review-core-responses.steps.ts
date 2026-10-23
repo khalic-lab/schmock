@@ -15,6 +15,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// Compile-time pins, checked by typecheck:bdd. Core discards what onExchange
+// and an OpenAPI dispatcher return, so their types must not reject an
+// expression-bodied arrow that happens to produce a value.
+const observedExchanges: Schmock.Exchange[] = [];
+const expressionObserver: Schmock.Plugin = {
+  name: "expression-observer",
+  process: (context, response) => ({ context, response }),
+  onExchange: (exchange) => observedExchanges.push(exchange),
+};
+const dispatchedCallbacks: Schmock.OpenApiCallbackRequest[] = [];
+const expressionDispatch: Schmock.OpenApiCallbackOptions = {
+  dispatch: (request) => dispatchedCallbacks.push(request),
+};
+
 function parseRequest(request: string): {
   method: Schmock.HttpMethod;
   path: string;
@@ -505,6 +519,60 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
       And("the mock has no routes", () => {
         expect(currentMock().getRoutes()).toEqual([]);
+      });
+    },
+  );
+
+  // ── Hook types ─────────────────────────────────────────────────────────
+
+  Scenario(
+    "Observers and callback dispatchers whose value is discarded may be expression-bodied",
+    ({ Given, And, When, Then }) => {
+      Given(
+        "a plugin whose onExchange is an expression-bodied arrow that returns a number",
+        () => {
+          observedExchanges.length = 0;
+          expect(typeof expressionObserver.onExchange).toBe("function");
+        },
+      );
+
+      And(
+        "OpenAPI callback options whose dispatch is an expression-bodied arrow that returns a number",
+        () => {
+          dispatchedCallbacks.length = 0;
+          expect(typeof expressionDispatch.dispatch).toBe("function");
+        },
+      );
+
+      When(
+        'I pipe the plugin into a mock with a route "GET /users" and fetch it through intercept',
+        async () => {
+          mock = schmock();
+          mock("GET /users", [{ id: 1 }]).pipe(expressionObserver);
+          await fetchThroughIntercept("/users");
+        },
+      );
+
+      Then(
+        "the observer saw one answered exchange with status {int}",
+        (_, status: number) => {
+          expect(observedExchanges).toHaveLength(1);
+          const [exchange] = observedExchanges;
+          expect(exchange.outcome).toBe("answered");
+          expect(
+            exchange.outcome === "answered" ? exchange.response.status : 0,
+          ).toBe(status);
+        },
+      );
+
+      And("the dispatcher records the request it is given", () => {
+        const request: Schmock.OpenApiCallbackRequest = {
+          url: "https://hooks.example.test/pets",
+          method: "POST",
+          headers: {},
+        };
+        expect(expressionDispatch.dispatch(request)).toBe(1);
+        expect(dispatchedCallbacks).toEqual([request]);
       });
     },
   );

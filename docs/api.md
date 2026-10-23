@@ -494,7 +494,7 @@ interface Plugin {
   beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
-  onExchange?(exchange: Exchange): void | Promise<void>
+  onExchange?(exchange: Exchange): unknown   // return value ignored
 }
 
 interface PluginContext {
