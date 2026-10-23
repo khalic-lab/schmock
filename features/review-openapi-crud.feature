@@ -40,3 +40,10 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     When I patch pet 1 with name "max" and an undeclared field
     Then the patch response is 200 with only the declared pet fields
     And reading pet 1 answers 200 with only the declared pet fields
+
+  # ── Composition-only create contracts ──────────────────────────────────────
+
+  Scenario: A create whose contract is a oneOf of objects answers a generated branch
+    Given a validating sources mock whose create response is a oneOf of bank account and card
+    When I create a source with no body
+    Then the create response is 201 with id 1 and a bank account or card object

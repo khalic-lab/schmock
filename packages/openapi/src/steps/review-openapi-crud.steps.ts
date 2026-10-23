@@ -174,6 +174,46 @@ const widgetsSpec = spec({
   },
 });
 
+// ── Composition-only create contracts ───────────────────────────────────────
+
+const bankAccount = {
+  type: "object",
+  required: ["id", "object", "routing_number"],
+  properties: {
+    id: { type: "integer" },
+    object: { type: "string", enum: ["bank_account"] },
+    routing_number: { type: "string" },
+  },
+};
+
+const card = {
+  type: "object",
+  required: ["id", "object", "last4"],
+  properties: {
+    id: { type: "integer" },
+    object: { type: "string", enum: ["card"] },
+    last4: { type: "string" },
+  },
+};
+
+const source = { oneOf: [bankAccount, card] };
+
+const sourcesSpec = spec({
+  "/sources": {
+    get: {
+      responses: {
+        "200": {
+          description: "list",
+          content: json({ type: "array", items: source }),
+        },
+      },
+    },
+    post: {
+      responses: { "201": { description: "created", content: json(source) } },
+    },
+  },
+});
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -323,6 +363,32 @@ describeFeature(feature, ({ Scenario }) => {
           const read = await mock.handle("GET", "/pets/1");
           expect(read.status).toBe(200);
           expect(read.body).toEqual({ id: 1, name: "max" });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A create whose contract is a oneOf of objects answers a generated branch",
+    ({ Given, When, Then }) => {
+      Given(
+        "a validating sources mock whose create response is a oneOf of bank account and card",
+        async () => {
+          await validatingMock(sourcesSpec);
+        },
+      );
+
+      When("I create a source with no body", async () => {
+        response = await mock.handle("POST", "/sources");
+      });
+
+      Then(
+        "the create response is 201 with id 1 and a bank account or card object",
+        () => {
+          expect(response.status).toBe(201);
+          expect(response.body).toMatchObject({ id: 1 });
+          const object = (response.body as Record<string, unknown>).object;
+          expect(["bank_account", "card"]).toContain(object);
         },
       );
     },

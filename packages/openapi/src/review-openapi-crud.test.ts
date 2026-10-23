@@ -365,4 +365,131 @@ describe("CRUD review fixes", () => {
       expect(read.body).toEqual({ id: 1, name: "max" });
     });
   });
+
+  describe("composition-only and nullable create contracts", () => {
+    const bank = {
+      type: "object",
+      required: ["id", "object", "routing_number"],
+      properties: {
+        id: { type: "integer" },
+        object: { type: "string", enum: ["bank_account"] },
+        routing_number: { type: "string" },
+      },
+    };
+    const card = {
+      type: "object",
+      required: ["id", "object", "last4"],
+      properties: {
+        id: { type: "integer" },
+        object: { type: "string", enum: ["card"] },
+        last4: { type: "string" },
+      },
+    };
+    const sourcesSpec = (source: Record<string, unknown>) =>
+      spec({
+        "/sources": {
+          get: {
+            responses: {
+              "200": {
+                description: "list",
+                content: json({ type: "array", items: source }),
+              },
+            },
+          },
+          post: {
+            responses: {
+              "201": { description: "created", content: json(source) },
+            },
+          },
+        },
+        "/sources/{id}": {
+          get: {
+            responses: { "200": { description: "s", content: json(source) } },
+          },
+        },
+      });
+
+    for (const keyword of ["anyOf", "oneOf"]) {
+      it(`generates a top-level ${keyword} create contract instead of echoing the request`, async () => {
+        const mock = await mockOf(sourcesSpec({ [keyword]: [bank, card] }), {
+          validateResponses: true,
+          fakerSeed: 3,
+        });
+
+        const created = await mock.handle("POST", "/sources");
+        expect(created.status).toBe(201);
+        const body = created.body as Record<string, unknown>;
+        expect(body.id).toBe(1);
+        expect(["bank_account", "card"]).toContain(body.object);
+
+        const read = await mock.handle("GET", "/sources/1");
+        expect(read.status).toBe(200);
+        expect(read.body).toEqual(body);
+      });
+    }
+
+    const nullablePet = {
+      type: "object",
+      nullable: true,
+      additionalProperties: false,
+      required: ["name", "tag"],
+      properties: {
+        id: { type: "integer" },
+        name: { type: "string" },
+        tag: { type: "string" },
+      },
+      allOf: [{ required: ["id"] }],
+    };
+
+    it("reads a nullable allOf item through the normalizer's wrapper", async () => {
+      const mock = await mockOf(
+        spec({
+          "/pets": {
+            get: {
+              responses: {
+                "200": {
+                  description: "list",
+                  content: json({ type: "array", items: nullablePet }),
+                },
+              },
+            },
+            post: {
+              responses: {
+                "201": { description: "created", content: json(nullablePet) },
+              },
+            },
+          },
+        }),
+        { validateResponses: true },
+      );
+
+      const created = await mock.handle("POST", "/pets", {
+        body: { name: "rex", extra: "dropped" },
+      });
+      expect(created.status).toBe(201);
+      expect(created.body).toEqual({
+        id: 1,
+        name: "rex",
+        tag: expect.any(String),
+      });
+    });
+
+    it("collects the properties inside the nullable wrapper", () => {
+      const wrapped = {
+        anyOf: [
+          { type: "null" },
+          {
+            type: "object",
+            properties: { id: { type: "integer" } },
+            allOf: [{ properties: { name: { type: "string" } } }],
+          },
+        ],
+        schmockNullable: true,
+      } as Record<string, unknown>;
+      expect(Object.keys(collectSchemaProperties(wrapped))).toEqual([
+        "id",
+        "name",
+      ]);
+    });
+  });
 });

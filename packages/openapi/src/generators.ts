@@ -93,17 +93,61 @@ const CONVENTIONAL_LIST_KEYS = new Set([
 
 const PRIMITIVE_TYPES = ["string", "number", "integer", "boolean", "null"];
 
+/** The `{ type: "null" }` branch a nullable composition carries. */
+function isNullBranch(branch: JSONSchema7): boolean {
+  return branch.type === "null" && Object.keys(branch).length === 1;
+}
+
 /**
- * Object-shaped by declaration: `type: object` (alone or in a union), or no
- * `type` at all with `properties`/`allOf`. The same rule `generateContractBase`
- * uses — a wrapper that omits `type` is still an object envelope.
+ * The node inside the normalizer's composition-only nullable wrapper,
+ * `{ anyOf: [{ type: "null" }, node], schmockNullable: true }`, or the schema
+ * itself. The node is returned as declared, not copied, so identity-keyed
+ * lookups (`collectAccessModes`) still find it.
  */
-function isObjectShaped(schema: JSONSchema7): boolean {
-  if (hasType(schema, "object")) return true;
-  return (
-    schema.type === undefined &&
-    (isRecord(schema.properties) || Array.isArray(schema.allOf))
+function unwrapNullable(schema: JSONSchema7): JSONSchema7 {
+  if (
+    typeof schema !== "object" ||
+    schema === null ||
+    !("schmockNullable" in schema) ||
+    schema.schmockNullable !== true
+  ) {
+    return schema;
+  }
+  const branches = (schema.anyOf ?? []).filter(
+    (branch): branch is JSONSchema7 =>
+      typeof branch === "object" && !isNullBranch(branch),
   );
+  return branches.length === 1 ? branches[0] : schema;
+}
+
+/**
+ * Object-shaped by declaration: `type: object` (alone or in a union), no
+ * `type` at all with `properties`/`allOf`, or an `anyOf`/`oneOf` whose every
+ * non-null branch is object-shaped — a polymorphic `oneOf: [Cat, Dog]`, or the
+ * normalizer's nullable wrapper around an object. The same rule
+ * `generateContractBase` uses: a wrapper that omits `type` is still an object.
+ */
+function isObjectShaped(
+  schema: JSONSchema7,
+  seen: Set<object> = new Set(),
+): boolean {
+  if (hasType(schema, "object")) return true;
+  if (schema.type !== undefined || seen.has(schema)) return false;
+  if (isRecord(schema.properties) || Array.isArray(schema.allOf)) return true;
+  seen.add(schema);
+  for (const keyword of ["anyOf", "oneOf"] as const) {
+    const branches = (schema[keyword] ?? []).filter(
+      (branch): branch is JSONSchema7 =>
+        typeof branch === "object" && !isNullBranch(branch),
+    );
+    if (
+      branches.length > 0 &&
+      branches.every((branch) => isObjectShaped(branch, seen))
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** First items schema of an array, as declared (no copy). */
@@ -206,7 +250,9 @@ export function collectSchemaProperties(
     }
   };
 
-  visit(schema);
+  // A nullable item (`type: object, nullable: true, allOf: […]`) arrives
+  // wrapped as `anyOf: [{type:"null"}, node]`; its properties are the node's.
+  visit(schema && unwrapNullable(schema));
   return out;
 }
 
@@ -1232,9 +1278,10 @@ function requiredProperties(schema: JSONSchema7): Set<string> {
  * treated as describing the row.
  */
 function describesRow(
-  contract: JSONSchema7,
+  schema: JSONSchema7,
   row: Record<string, unknown>,
 ): boolean {
+  const contract = unwrapNullable(schema);
   if (!isObjectShaped(contract)) return true;
   for (const name of requiredProperties(contract)) {
     if (!Object.hasOwn(row, name)) return false;
@@ -1423,7 +1470,9 @@ function acceptedFields(
 ): Array<[string, unknown]> {
   const declared = collectSchemaProperties(contract);
   const noContract = Object.keys(declared).length === 0;
-  const open = contract?.additionalProperties !== false;
+  const open =
+    contract === undefined ||
+    unwrapNullable(contract).additionalProperties !== false;
   return Object.entries(body).filter(
     ([property, value]) =>
       value !== undefined &&
@@ -1446,18 +1495,14 @@ async function generateContractBase(
   seed?: number,
 ): Promise<Record<string, unknown>> {
   if (!schema || typeof schema === "boolean") return {};
-  if (Object.keys(schema).length === 0) return {};
-
-  const type = Array.isArray(schema.type)
-    ? schema.type.find((t) => t !== "null")
-    : schema.type;
-  const objectish =
-    type === "object" ||
-    (type === undefined && (schema.properties !== undefined || schema.allOf));
-  if (!objectish) return {};
+  // Generated from the node inside a nullable wrapper: the wrapper's null
+  // branch is a valid value for faker to pick, and no base at all.
+  const contract = unwrapNullable(schema);
+  if (Object.keys(contract).length === 0) return {};
+  if (!isObjectShaped(contract)) return {};
 
   try {
-    const generated = await generateFromSchema({ schema, seed });
+    const generated = await generateFromSchema({ schema: contract, seed });
     return isRecord(generated) ? { ...generated } : {};
   } catch (error) {
     console.warn(
