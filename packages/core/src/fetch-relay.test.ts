@@ -404,6 +404,7 @@ describe("fetch relay hold and router", () => {
       "acquireFetchRelay",
       "acquireRequestAdmission",
       "awaitWithAbort",
+      "buildJsonErrorResponse",
       "createFetchInterceptor",
       "routeRelayedRequest",
       "toError",

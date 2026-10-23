@@ -808,6 +808,23 @@ declare namespace Schmock {
     method: string;
   }
 
+  /**
+   * Input to `buildJsonErrorResponse()` from `@schmock/core/adapter`: the
+   * `{ "error": error, "code": code }` envelope every transport answers a
+   * failure with.
+   */
+  interface JsonErrorResponseOptions {
+    status: number;
+    /** The envelope's human-readable `error` message. */
+    error: string;
+    /** The envelope's machine-readable `code`. */
+    code: string;
+    /** Request method; a HEAD response carries no body. */
+    method: string;
+    /** Headers added after the JSON content type, such as a 405's `allow`. */
+    headers?: Readonly<Record<string, string>>;
+  }
+
   // ===== Lifecycle Events =====
 
   /**

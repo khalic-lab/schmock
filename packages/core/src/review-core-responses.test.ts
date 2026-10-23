@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as adapterEntry from "./adapter.js";
 import { schmock } from "./index";
 
 function errorWithMessage(message: unknown): Error {
@@ -125,5 +126,48 @@ describe("failed requests", () => {
       expect(seen[0].message).toBe(JSON.stringify(thrown));
       expect(seen[0].cause).toBe(thrown);
     });
+  });
+});
+
+describe("@schmock/core/adapter error helpers", () => {
+  it("exports the JSON error envelope core answers failures with", async () => {
+    const { buildJsonErrorResponse } = adapterEntry;
+    const mock = schmock();
+
+    const coreMiss = await mock.handle("GET", "/nowhere");
+    const built = buildJsonErrorResponse({
+      status: 404,
+      error: "Route not found: GET /nowhere",
+      code: "ROUTE_NOT_FOUND",
+      method: "GET",
+    });
+
+    expect(built).toEqual({
+      status: coreMiss.status,
+      body: coreMiss.body,
+      headers: coreMiss.headers,
+    });
+  });
+
+  it("adds extra headers after the JSON content type and strips a HEAD body", () => {
+    const built = adapterEntry.buildJsonErrorResponse({
+      status: 405,
+      error: "Unsupported HTTP method: PROPFIND",
+      code: "METHOD_NOT_ALLOWED",
+      method: "HEAD",
+      headers: { allow: "GET, HEAD" },
+    });
+
+    expect(built).toEqual({
+      status: 405,
+      body: undefined,
+      headers: { "content-type": "application/json", allow: "GET, HEAD" },
+    });
+  });
+
+  it("exports toError", () => {
+    const error = adapterEntry.toError("boom");
+    expect(error.message).toBe("boom");
+    expect(error.cause).toBe("boom");
   });
 });

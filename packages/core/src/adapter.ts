@@ -11,7 +11,9 @@
  *   built on.
  * - `acquireFetchRelay` / `routeRelayedRequest` let a relay transport (a
  *   service worker) deliver intercepted requests itself.
- * - `toError` turns any thrown value into an `Error` the way core does.
+ * - `toError` turns any thrown value into an `Error` the way core does, and
+ *   `buildJsonErrorResponse` builds the `{ error, code }` envelope core
+ *   answers a failure with.
  *
  * @packageDocumentation
  */
@@ -32,8 +34,10 @@ export {
   createFetchInterceptor,
   routeRelayedRequest,
 } from "./interceptor.js";
+export { buildJsonErrorResponse } from "./response-normalizer.js";
 export type {
   FetchRelay,
+  JsonErrorResponseOptions,
   MockRequestHandler,
   RequestAdmission,
 } from "./types.js";

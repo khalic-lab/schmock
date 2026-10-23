@@ -442,15 +442,12 @@ function withJsonContentType(
  * The JSON error envelope `{ "error": message, "code": code }` every transport
  * answers a failure with, normalized for `method`. `headers` are added after
  * the JSON content type (a 405's `allow`). The one constructor of that shape,
- * so `handle()`, `listen()` and `intercept()` cannot drift apart.
+ * so `handle()`, `listen()`, `intercept()` and the adapters built on
+ * `@schmock/core/adapter` cannot drift apart.
  */
-export function buildJsonErrorResponse(input: {
-  status: number;
-  error: string;
-  code: string;
-  method: string;
-  headers?: Readonly<Record<string, string>>;
-}): Schmock.Response {
+export function buildJsonErrorResponse(
+  input: Schmock.JsonErrorResponseOptions,
+): Schmock.Response {
   return normalizeResponse(
     {
       status: input.status,

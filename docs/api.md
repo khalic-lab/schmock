@@ -1033,7 +1033,22 @@ interface FetchRelay {
 }
 
 toError(value: unknown): Error
+buildJsonErrorResponse(options: JsonErrorResponseOptions): Response
+
+interface JsonErrorResponseOptions {
+  status: number
+  error: string                                // the envelope's message
+  code: string                                 // the envelope's code
+  method: string                               // a HEAD response carries no body
+  headers?: Readonly<Record<string, string>>   // added after the JSON content type
+}
 ```
+
+`buildJsonErrorResponse(options)` builds the `{ "error": error, "code": code }`
+envelope that `handle()`, `listen()` and `intercept()` answer a failure with,
+labelled `application/json` and normalized for `method`. A transport that
+writes its own failure answers uses it so its envelope cannot drift from
+core's.
 
 `toError(value)` turns a thrown value into an `Error` the way core does on
 every error path. An `Error` whose `message` is a string comes back as is.
@@ -1054,8 +1069,8 @@ Admissions from `schmock()` always carry it. An admission passed to
 `createFetchInterceptor` without it has every request body read, and its
 responses are normalized like a mock's own: hop-by-hop headers are dropped and
 a HEAD body is stripped.
-`RequestAdmission`, `MockRequestHandler` and `FetchRelay` are also on the
-ambient `Schmock` namespace.
+`RequestAdmission`, `MockRequestHandler`, `FetchRelay` and
+`JsonErrorResponseOptions` are also on the ambient `Schmock` namespace.
 
 `acquireRequestAdmission(mock)` pins one request to the mock's routes, plugins
 and state as they are on arrival. Route it with `admission.handle`, then call
