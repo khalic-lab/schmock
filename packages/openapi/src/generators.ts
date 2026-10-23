@@ -969,9 +969,10 @@ type PendingMutation = () => void;
 /**
  * Defer a collection mutation until the plugin knows the final response status.
  *
- * A `Prefer: code=400`, a 406 from response content negotiation, or a response
- * validation failure must not leave a half-applied write behind. The plugin's
- * `process()` commits the queue on success and discards it otherwise.
+ * A `Prefer: code=400`, a 406 from response content negotiation, a response
+ * validation failure, or a 500 from a plugin piped later must not leave a
+ * half-applied write behind. The plugin's `afterResponse` hook commits the
+ * queue once the final status is a success and discards it otherwise.
  *
  * When a generator is invoked outside the request pipeline (unit tests calling
  * it directly) there is no `pluginState`, so the mutation is applied
@@ -1672,8 +1673,9 @@ export function createUpdateGenerator(
     // seeder can replace the array object, another request can shift indices,
     // and a concurrent update can commit between this generator and its
     // commit — writing the merge taken above would erase that update. The
-    // response object is rebuilt in place, so the body the client receives is
-    // the row that was actually stored.
+    // object is rebuilt in place, so it is the row that was stored. Through
+    // the plugin the commit runs once the response is final, after its body
+    // was serialized, so the client sees the merge taken above.
     stageMutation(ctx, () => {
       const live = getCollection(ctx.state, key);
       const liveIndex = findIndexById(live, resource.idProperty, idValue);

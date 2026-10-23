@@ -700,15 +700,12 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
         expect(responses.map((r) => r.status)).toEqual([200, 200]);
       });
 
-      And("the PATCH that committed last answered with both updates", () => {
-        // Whichever commit ran second merged onto the first, and its response
-        // is the row it stored.
-        expect(responses.map((r) => r.body)).toContainEqual({
-          id: 1,
-          name: "rex",
-          tag: "new",
-          age: 9,
-        });
+      And("each PATCH answered with its own update", () => {
+        // The commit runs once the response is final, so a response shows its
+        // own update merged onto the row as it was read; whether it also shows
+        // the other one depends on which request read the row first.
+        expect(responses[0].body).toMatchObject({ id: 1, tag: "new" });
+        expect(responses[1].body).toMatchObject({ id: 1, age: 9 });
       });
 
       And('pet 1 is stored with tag "new" and age 9', expectStoredRex);

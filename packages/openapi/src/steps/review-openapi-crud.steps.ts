@@ -490,6 +490,10 @@ describeFeature(feature, ({ Scenario }) => {
 
   let dispatched: Schmock.OpenApiCallbackRequest[] = [];
 
+  function storedPets(): unknown {
+    return mock.getState()["openapi:collections:/pets"] ?? [];
+  }
+
   async function validatingMock(document: Record<string, unknown>) {
     mock = schmock({ state: {} });
     mock.pipe(await openapi({ spec: document, validateResponses: true }));
@@ -1000,6 +1004,89 @@ describeFeature(feature, ({ Scenario }) => {
 
       And("no callback was dispatched", () => {
         expect(dispatched).toEqual([]);
+      });
+    },
+  );
+
+  Scenario(
+    "A plugin piped after openapi that answers 500 leaves the collection unchanged",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a pets mock with a create callback, and a plugin piped after it that answers every request with 500",
+        async () => {
+          dispatched = [];
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: petCallbackSpec,
+              callbacks: {
+                dispatch: (request) => {
+                  dispatched.push(request);
+                },
+              },
+            }),
+          );
+          mock.pipe({
+            name: "downstream-500",
+            process: (context) => ({
+              context,
+              response: [500, { error: "downstream" }],
+            }),
+          });
+        },
+      );
+
+      When('I create a pet named "rex"', async () => {
+        response = await mock.handle("POST", "/pets", {
+          body: { name: "rex" },
+        });
+      });
+
+      Then("the create response status is 500", () => {
+        expect(response.status).toBe(500);
+      });
+
+      And("the pets collection is empty", () => {
+        expect(storedPets()).toEqual([]);
+      });
+
+      And("no callback was dispatched", () => {
+        expect(dispatched).toEqual([]);
+      });
+    },
+  );
+
+  Scenario(
+    "A create aborted during its delay stores nothing",
+    ({ Given, When, Then, And }) => {
+      let outcome: Promise<Schmock.Response>;
+
+      Given("a pets mock with a 1000 ms response delay", async () => {
+        mock = schmock({ state: {}, delay: 1000 });
+        mock.pipe(await openapi({ spec: petCallbackSpec }));
+      });
+
+      When(
+        'I create a pet named "rex" and abort it during the delay',
+        async () => {
+          const controller = new AbortController();
+          outcome = mock.handle("POST", "/pets", {
+            body: { name: "rex" },
+            signal: controller.signal,
+          });
+          // Settle the rejection now, so it is never reported as unhandled.
+          outcome.catch(() => undefined);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          controller.abort();
+        },
+      );
+
+      Then("the create is rejected with an AbortError", async () => {
+        await expect(outcome).rejects.toMatchObject({ name: "AbortError" });
+      });
+
+      And("the pets collection is empty", () => {
+        expect(storedPets()).toEqual([]);
       });
     },
   );

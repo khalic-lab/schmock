@@ -6,11 +6,14 @@ Feature: OpenAPI generation review fixes
 
   # ── Concurrent updates merge at commit time ────────────────────────────────
 
+  # Writes commit once each response is final (afterResponse, decision #39),
+  # after the body was serialized, so a response shows the merge made when
+  # its request was generated; the stored row merges every committed update.
   Scenario: Concurrent PATCHes to one item keep both updates
     Given a pets mock seeded with pet 1 named "rex" with tag "old" and age 1
     When two PATCH requests to pet 1 run concurrently, one setting tag "new" and one setting age 9
     Then both PATCH responses have status 200
-    And the PATCH that committed last answered with both updates
+    And each PATCH answered with its own update
     And pet 1 is stored with tag "new" and age 9
 
   Scenario: Concurrent PATCHes through the fetch interceptor keep both updates

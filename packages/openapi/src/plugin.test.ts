@@ -341,8 +341,8 @@ describe("openapi plugin", () => {
   describe("transactional mutations", () => {
     it("commits a create exactly once when two plugins are piped", async () => {
       // The second instance owns none of the routes (first registration wins),
-      // so it early-returns before settling; the queue is cleared by the first
-      // process() either way.
+      // so both its process() and its afterResponse return early; only the
+      // owner's afterResponse commits the queue.
       const mock = schmock({ state: {} });
       mock.pipe(
         await openapi({ spec: `${fixturesDir}/petstore-swagger2.json` }),

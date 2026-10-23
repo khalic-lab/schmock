@@ -104,3 +104,22 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     When I patch pet 9, which does not exist
     Then the patch response status is 404
     And no callback was dispatched
+
+  # ── Settling once the response is final (decision #39) ─────────────────────
+
+  # Design Decision #39: the plugin commits staged CRUD writes and dispatches
+  # callbacks in its afterResponse hook, after every piped plugin has run and
+  # the response delay has passed, by the final status.
+
+  Scenario: A plugin piped after openapi that answers 500 leaves the collection unchanged
+    Given a pets mock with a create callback, and a plugin piped after it that answers every request with 500
+    When I create a pet named "rex"
+    Then the create response status is 500
+    And the pets collection is empty
+    And no callback was dispatched
+
+  Scenario: A create aborted during its delay stores nothing
+    Given a pets mock with a 1000 ms response delay
+    When I create a pet named "rex" and abort it during the delay
+    Then the create is rejected with an AbortError
+    And the pets collection is empty

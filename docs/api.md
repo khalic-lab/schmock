@@ -1943,7 +1943,7 @@ interface OpenApiOptions {
   strict?: boolean                   // validate the spec at load time (default: false)
   refs?: OpenApiRefPolicy            // external $ref policy (external refs off by default)
   callbacks?: {
-    dispatch(request: OpenApiCallbackRequest): void | Promise<void>
+    dispatch(request: OpenApiCallbackRequest): unknown  // awaited before handle() resolves
   }
 }
 
@@ -1985,6 +1985,14 @@ are followed, and each hop is checked against the policy again.
 Callbacks are disabled by default and never issue implicit network requests.
 The legacy `queryFeatures` option is unsupported and throws
 `OPENAPI_UNSUPPORTED_OPTION` when supplied.
+
+The plugin commits CRUD writes and dispatches callbacks in its
+[`afterResponse`](#plugin-interface) hook, once the response is final and only
+when its status is below 400 (a `Prefer`-simulated status still dispatches).
+A plugin piped after it that answers 500 or throws therefore leaves the
+collection unchanged, and the dispatcher's promise is awaited before
+`handle()` resolves. See
+[Transactional mutations](./openapi.md#transactional-mutations).
 
 Invalid `seed` and `resources` options throw `SchmockError` when the plugin is
 created, and so does a `spec` that is neither a path string nor a document

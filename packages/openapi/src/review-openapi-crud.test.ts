@@ -1,6 +1,7 @@
 /// <reference path="../../core/schmock.d.ts" />
 
 import { SchemaGenerationError, schmock } from "@schmock/core";
+import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import {
   asSchemaGenerationError,
@@ -396,13 +397,15 @@ describe("CRUD review fixes", () => {
     });
 
     it("collects declared properties named after Object.prototype members", () => {
-      const declared = collectSchemaProperties({
+      const text: JSONSchema7 = { type: "string" };
+      const schema: JSONSchema7 = {
         properties: {
           id: { type: "integer" },
-          constructor: { type: "string" },
-          toString: { type: "string" },
+          constructor: text,
+          toString: text,
         },
-      });
+      };
+      const declared = collectSchemaProperties(schema);
       expect(Object.keys(declared)).toEqual(["id", "constructor", "toString"]);
       expect("hasOwnProperty" in declared).toBe(false);
     });
@@ -1013,7 +1016,7 @@ describe("status-less schema overrides on a POST declaring 200 and 201", () => {
     type: "object",
     properties: { id: { type: "integer" }, old: { type: "string" } },
   };
-  const patched = {
+  const patched: JSONSchema7 = {
     type: "object",
     required: ["patched"],
     properties: {
@@ -1083,5 +1086,237 @@ describe("asSchemaGenerationError", () => {
       originalError: Error;
     };
     expect(context.originalError).toBe(thrown);
+  });
+});
+
+describe("settling a request once its response is final (#39)", () => {
+  const openPet = {
+    type: "object",
+    properties: { id: { type: "integer" }, name: { type: "string" } },
+  };
+  const hook = (url: string) => ({
+    notify: {
+      [url]: { post: { responses: { "200": { description: "ok" } } } },
+    },
+  });
+  const petsSpec = spec({
+    "/pets": {
+      get: {
+        responses: {
+          "200": {
+            description: "list",
+            content: json({ type: "array", items: openPet }),
+          },
+        },
+      },
+      post: {
+        responses: { "201": { description: "c", content: json(openPet) } },
+        callbacks: hook("https://hooks.example/created"),
+      },
+    },
+    "/pets/{petId}": {
+      get: {
+        responses: { "200": { description: "p", content: json(openPet) } },
+      },
+      patch: {
+        responses: { "200": { description: "p", content: json(openPet) } },
+      },
+      delete: {
+        responses: { "204": { description: "gone" } },
+      },
+    },
+  });
+
+  const failingPlugin = (
+    name: string,
+    fail: () => unknown,
+  ): Schmock.Plugin => ({
+    name,
+    process(context) {
+      return { context, response: fail() };
+    },
+  });
+
+  async function pipedMock(
+    options: Partial<Schmock.OpenApiOptions> = {},
+    after?: Schmock.Plugin,
+    config: Schmock.GlobalConfig = {},
+  ) {
+    const urls: string[] = [];
+    const mock = schmock({ state: {}, ...config });
+    mock.pipe(
+      await openapi({
+        spec: petsSpec,
+        callbacks: {
+          dispatch: (request) => {
+            urls.push(request.url);
+          },
+        },
+        ...options,
+      }),
+    );
+    if (after) mock.pipe(after);
+    return { mock, urls };
+  }
+
+  function stored(mock: Schmock.CallableMockInstance): unknown {
+    return mock.getState()["openapi:collections:/pets"] ?? [];
+  }
+
+  it("stores nothing, and notifies no one, when a later plugin answers 500", async () => {
+    const { mock, urls } = await pipedMock(
+      {},
+      failingPlugin("downstream-500", () => [500, { error: "downstream" }]),
+    );
+
+    const created = await mock.handle("POST", "/pets", {
+      body: { name: "rex" },
+    });
+    expect(created.status).toBe(500);
+    expect(stored(mock)).toEqual([]);
+    expect(urls).toEqual([]);
+  });
+
+  it("stores nothing when a later plugin throws", async () => {
+    const { mock, urls } = await pipedMock(
+      {},
+      failingPlugin("downstream-throw", () => {
+        throw new Error("boom");
+      }),
+    );
+
+    const created = await mock.handle("POST", "/pets", {
+      body: { name: "rex" },
+    });
+    expect(created.status).toBe(500);
+    expect(stored(mock)).toEqual([]);
+    expect(urls).toEqual([]);
+  });
+
+  it("keeps a row a later 500 would have kept out of an update and a delete", async () => {
+    let fail = false;
+    const { mock } = await pipedMock(
+      {},
+      {
+        name: "toggle",
+        process(context, response) {
+          return {
+            context,
+            response: fail ? [500, { error: "downstream" }] : response,
+          };
+        },
+      },
+    );
+    await mock.handle("POST", "/pets", { body: { name: "rex" } });
+    fail = true;
+    await mock.handle("PATCH", "/pets/1", { body: { name: "max" } });
+    await mock.handle("DELETE", "/pets/1");
+    expect(stored(mock)).toEqual([{ id: 1, name: "rex" }]);
+  });
+
+  it("stores nothing for a request aborted during its delay", async () => {
+    const { mock, urls } = await pipedMock({}, undefined, { delay: 1_000 });
+    const controller = new AbortController();
+
+    const pending = mock.handle("POST", "/pets", {
+      body: { name: "rex" },
+      signal: controller.signal,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(stored(mock)).toEqual([]);
+    expect(urls).toEqual([]);
+  });
+
+  it("commits before the callbacks, so a dispatcher that reads the mock sees the row", async () => {
+    let seen: unknown;
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: petsSpec,
+        callbacks: {
+          dispatch: async () => {
+            seen = (await mock.handle("GET", "/pets/1")).body;
+          },
+        },
+      }),
+    );
+
+    await mock.handle("POST", "/pets", { body: { name: "rex" } });
+    expect(seen).toEqual({ id: 1, name: "rex" });
+  });
+
+  it("stops delivering once the request is aborted during a pending dispatcher", async () => {
+    const twoHooks = spec({
+      "/pets": {
+        get: {
+          responses: {
+            "200": {
+              description: "list",
+              content: json({ type: "array", items: openPet }),
+            },
+          },
+        },
+        post: {
+          responses: { "201": { description: "c", content: json(openPet) } },
+          callbacks: {
+            ...hook("https://hooks.example/first"),
+            second: hook("https://hooks.example/second").notify,
+          },
+        },
+      },
+    });
+    let started: () => void = () => {};
+    const dispatchStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let release: () => void = () => {};
+    const urls: string[] = [];
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: twoHooks,
+        callbacks: {
+          dispatch: (request) => {
+            urls.push(request.url);
+            started();
+            return new Promise<void>((resolve) => {
+              release = resolve;
+            });
+          },
+        },
+      }),
+    );
+    const controller = new AbortController();
+
+    const pending = mock.handle("POST", "/pets", {
+      body: { name: "rex" },
+      signal: controller.signal,
+    });
+    await dispatchStarted;
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(urls).toEqual(["https://hooks.example/first"]);
+  });
+
+  it("answers each of two concurrent PATCHes with its own merge and stores both", async () => {
+    const mock = schmock({
+      state: { "openapi:collections:/pets": [{ id: 1, name: "rex" }] },
+      delay: 20,
+    });
+    mock.pipe(await openapi({ spec: petsSpec }));
+
+    const [a, b] = await Promise.all([
+      mock.handle("PATCH", "/pets/1", { body: { tag: "new" } }),
+      mock.handle("PATCH", "/pets/1", { body: { age: 9 } }),
+    ]);
+    expect(a.body).toEqual({ id: 1, name: "rex", tag: "new" });
+    expect(b.body).toEqual({ id: 1, name: "rex", age: 9 });
+    expect(stored(mock)).toEqual([{ id: 1, name: "rex", tag: "new", age: 9 }]);
   });
 });

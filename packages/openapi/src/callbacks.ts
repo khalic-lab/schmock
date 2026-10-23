@@ -41,6 +41,9 @@ export async function dispatchCallbacks(
   { seed, debug = false }: DispatchCallbackOptions = {},
 ): Promise<void> {
   for (const callback of callbacks) {
+    // A request aborted while an earlier dispatcher was pending has already
+    // been answered with its abort; the callbacks after it are not delivered.
+    if (context.signal?.aborted) return;
     const resolved = resolveCallbackUrl(
       callback.urlExpression,
       context,

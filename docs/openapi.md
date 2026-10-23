@@ -319,10 +319,14 @@ The plugin analyzes path patterns to detect CRUD resources. Given a spec with `/
 | Delete | `DELETE /users/:id` | Removes from collection and uses the declared success status (commonly 204; `200` wins when both are declared) |
 
 Concurrent updates to one item are merged when they commit, onto the row as it
-is at that moment, so two in-flight PATCHes to different fields both survive,
-and each response is the row as its commit stored it. Deletes remain
-last-writer-wins: a PATCH racing a DELETE of the same item answers 200 without
-resurrecting it, and two concurrent DELETEs both answer 204.
+is at that moment, so two in-flight PATCHes to different fields both survive.
+A write commits once its response is final (see
+[Transactional mutations](#transactional-mutations)), so each response shows
+its own update merged onto the row as its request read it. A PATCH that read
+the row before another one committed does not show that other update, though
+the stored row has both. Deletes remain last-writer-wins: a PATCH racing a
+DELETE of the same item answers 200 without resurrecting it, and two
+concurrent DELETEs both answer 204.
 
 **Only methods your spec declares are registered.** A spec that declares `put`
 but not `patch` on the item path serves `PUT /users/:id` and answers
@@ -519,9 +523,11 @@ counters restart per scope, so two owners can each hold a pet with id `1`.
 
 ### Transactional mutations
 
-Create, update and delete stage their write and apply it only once the plugin
-knows the final response status. If the response the plugin returns is 400 or
-above, the write is discarded:
+Create, update and delete stage their write and apply it only once the
+response is final: in the plugin's `afterResponse` hook, after every plugin in
+the pipe has run and after the response delay, before the request enters
+history and before `handle()` resolves. If the final status is 400 or above,
+the write is discarded:
 
 - `Prefer: code=400` on a `POST` returns the declared 400 **and stores nothing**.
 - Any `Prefer` directive that takes effect (`code=N` naming a declared status,
@@ -536,13 +542,17 @@ above, the write is discarded:
   item unchanged.
 - A `validateResponses: true` failure returns 500 and leaves the collection
   unchanged.
+- A plugin piped *after* `@schmock/openapi` that answers 400 or above, or
+  throws (a 500), leaves the collection unchanged too. Such a plugin no longer
+  sees the write committed while its own `process()` runs; it is stored only
+  once the response is final.
+- A request aborted before its response is final (during a route or global
+  `delay`, say) stores nothing.
 
 Ids are still allocated eagerly, so a rejected create burns an id: the sequence
-can have gaps, but never duplicates. Plugins that run *after* `@schmock/openapi`
-in the pipe see the mutation already committed, and a 4xx/5xx response or a
-throw from such a plugin does **not** roll the write back. Use openapi's own
-`validateResponses` rather than a validation plugin piped after it, or keep
-openapi the last response-altering plugin.
+can have gaps, but never duplicates. The adapter hooks that run after
+`handle()` returns (`beforeResponse`, `errorFormatter`) can still change what
+the client receives without changing what was stored.
 
 ### Methods a CRUD resource cannot serve
 
@@ -1091,9 +1101,21 @@ The dispatcher runs only after request and response validation succeed. The
 application therefore controls whether delivery uses an in-memory queue, a
 test spy, or an explicitly secured network client.
 
-Callbacks report something that happened, so a response with a status of 400 or
-above dispatches none: a CRUD `PATCH` or `DELETE` of a missing item (404) fires
-nothing. The exception is a status a `Prefer` directive simulated, such as
+Callbacks are dispatched once the response is final, like the CRUD write
+([Transactional mutations](#transactional-mutations)), and after that write is
+committed, so a dispatcher that reads the mock sees it. The response waits for
+the dispatcher: callbacks are dispatched one after another, and a dispatcher's
+promise is awaited before `handle()` resolves and before the next callback is
+dispatched. A dispatcher that should not hold the response can start its
+delivery and return without awaiting it. When the request is aborted while a
+dispatcher is pending, `handle()` rejects with the abort as usual and the
+callbacks after that one are not dispatched. The dispatcher is not handed the
+request's abort signal.
+
+Callbacks report something that happened, so a response whose final status is
+400 or above dispatches none: a CRUD `PATCH` or `DELETE` of a missing item
+(404) fires nothing, and neither does a request a plugin piped later answered
+with a 500. The exception is a status a `Prefer` directive simulated, such as
 `Prefer: code=404`: the client asked for that simulation, so its callbacks
 fire with the simulated body.
 

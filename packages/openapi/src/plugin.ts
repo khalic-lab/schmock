@@ -51,6 +51,8 @@ export type ResourceOverride = Schmock.ResourceOverride;
 export type CrudOperationMeta = Schmock.CrudOperationMeta;
 
 const REQUEST_REJECTED_STATE = "openapi:requestRejected";
+/** The status an applied Prefer directive answered with, for afterResponse. */
+const PREFER_STATUS_STATE = "openapi:preferStatus";
 
 /**
  * Create an OpenAPI plugin that auto-registers CRUD routes from a spec.
@@ -226,7 +228,6 @@ export async function openapi(
         context.requestShortCircuited === true ||
         context.state.get(REQUEST_REJECTED_STATE) === true
       ) {
-        settlePendingMutations(context, incomingResponse);
         return { context, response: incomingResponse };
       }
 
@@ -240,15 +241,18 @@ export async function openapi(
         // A Prefer response is a pure simulation: its body was generated or
         // taken from an example, not from the write the generator staged, so
         // committing that write would store an item the client never saw and
-        // hand the client an id that does not exist.
+        // hand the client an id that does not exist. Its status is recorded
+        // because afterResponse sees only the final one, and a simulated
+        // status still fires its callbacks.
         discardPendingMutations(context);
+        context.state.set(
+          PREFER_STATUS_STATE,
+          getResponseStatus(result.response),
+        );
       }
       const negotiated = applyResponseContentType(context, result.response);
       const response = negotiated.response;
-      if (negotiated.rejected) {
-        settlePendingMutations(context, response);
-        return { context, response };
-      }
+      if (negotiated.rejected) return { context, response };
 
       if (options.validateResponses) {
         const validationResult = validateResponse(
@@ -256,36 +260,43 @@ export async function openapi(
           response,
           responseValidatorCtx,
         );
-        if (validationResult) {
-          settlePendingMutations(context, validationResult.response);
-          return validationResult;
-        }
-      }
-
-      // Commit before callbacks so a callback that re-enters the mock observes
-      // committed state.
-      settlePendingMutations(context, response);
-
-      // A callback reports something that happened. A 404 or 409 did not
-      // happen, so it fires none, while a Prefer-simulated status is the
-      // simulation the client asked for and fires with the simulated body.
-      if (
-        options.callbacks &&
-        (result.applied || getResponseStatus(response) < 400)
-      ) {
-        const callbacks = getRouteCallbacks(context.route);
-        if (callbacks && callbacks.length > 0) {
-          await dispatchCallbacks(
-            callbacks,
-            options.callbacks.dispatch,
-            context,
-            response,
-            { seed: options.fakerSeed, debug: options.debug === true },
-          );
-        }
+        if (validationResult) return validationResult;
       }
 
       return { context, response };
+    },
+
+    // Staged writes are committed, and callbacks dispatched, only here: once
+    // the whole pipeline has run and the response is final. Inside process()
+    // a plugin piped later could still answer 500 or throw after the row was
+    // stored, and an aborted request kept its write. Core skips this hook for
+    // a request aborted before it settled, so that write is never committed.
+    afterResponse(
+      context: Schmock.PluginContext,
+      response: Readonly<Schmock.Response>,
+    ): Promise<void> | undefined {
+      if (!isOwnedRoute(context.route, ownerToken)) return undefined;
+
+      // Commit before callbacks so a callback that re-enters the mock observes
+      // committed state.
+      settlePendingMutations(context, response.status);
+
+      if (!options.callbacks) return undefined;
+      const callbacks = getRouteCallbacks(context.route);
+      if (!callbacks || callbacks.length === 0) return undefined;
+      if (!shouldDispatchCallbacks(context, response.status)) return undefined;
+
+      // Returned, so the response waits for delivery and an abort of the
+      // request while the dispatcher is pending still rejects it. A
+      // dispatcher that should not hold the response returns without
+      // awaiting its own delivery.
+      return dispatchCallbacks(
+        callbacks,
+        options.callbacks.dispatch,
+        context,
+        response,
+        { seed: options.fakerSeed, debug: options.debug === true },
+      );
     },
   };
 }
@@ -296,30 +307,46 @@ function discardPendingMutations(context: Schmock.PluginContext): void {
 }
 
 /**
- * Apply or discard the mutations a CRUD generator staged for this request.
+ * Apply or discard the mutations a CRUD generator staged for this request, by
+ * the request's final status.
  *
- * The pending queue is always cleared first, so a second `openapi()` instance
- * later in the pipe cannot re-commit it. The queue is then applied only when the
- * response the plugin is about to return is a success: a `Prefer: code=400`, a
- * `Prefer: example=<4xx>`, a 406 from response content negotiation and a 500
- * from response validation all leave the collection untouched. Any applied
- * Prefer directive has already discarded the queue (see `process()`), so a
- * `Prefer: code=201` on a create stores nothing either.
+ * The pending queue is always cleared first. It is applied only when the
+ * response the client receives is a success: a `Prefer: code=400`, a 406 from
+ * response content negotiation, a 500 from response validation, and a 4xx or
+ * 500 that a plugin piped after this one answered with all leave the
+ * collection untouched. Any applied Prefer directive has already discarded
+ * the queue (see `process()`), so a `Prefer: code=201` on a create stores
+ * nothing either.
  *
- * Not called on the not-owned early return: clearing another instance's queue
- * there would drop a mutation its owner still has to commit.
+ * Only the instance that owns the route settles: clearing another instance's
+ * queue would drop a mutation its owner still has to commit.
  */
 function settlePendingMutations(
   context: Schmock.PluginContext,
-  response: unknown,
+  status: number,
 ): void {
   const pending = context.state.get(PENDING_MUTATIONS_KEY);
   discardPendingMutations(context);
   if (!Array.isArray(pending) || pending.length === 0) return;
-  if (getResponseStatus(response) >= 400) return;
+  if (status >= 400) return;
   for (const commit of pending) {
     if (typeof commit === "function") commit();
   }
+}
+
+/**
+ * A callback reports something that happened. A rejected request, a 404 or
+ * 409 from a CRUD handler, a validation 500 and a failure a later plugin
+ * answered with did not happen, so they fire none. A status a Prefer
+ * directive simulated is the simulation the client asked for, and fires with
+ * the simulated body.
+ */
+function shouldDispatchCallbacks(
+  context: Schmock.PluginContext,
+  status: number,
+): boolean {
+  if (context.state.get(REQUEST_REJECTED_STATE) === true) return false;
+  return status < 400 || context.state.get(PREFER_STATUS_STATE) === status;
 }
 
 /**
