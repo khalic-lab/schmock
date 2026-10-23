@@ -4,6 +4,7 @@ import {
   SchemaGenerationError,
   SchmockError,
 } from "@schmock/core";
+import { toError } from "@schmock/core/adapter";
 import { generateFromSchema } from "@schmock/faker";
 import type { JSONSchema7 } from "json-schema";
 import { selectResponseMediaType } from "./content-negotiation.js";
@@ -22,7 +23,9 @@ import { hasType, isRecord, toJsonSchema } from "./utils.js";
  * A `SchmockError` already carries a meaningful code (`RESOURCE_LIMIT_ERROR`,
  * `SCHEMA_VALIDATION_ERROR`, …) and is rethrown untouched, so the root cause is
  * not laundered into a generic one. Everything else becomes a
- * `SchemaGenerationError`, whose message names the route.
+ * `SchemaGenerationError`, whose message names the route. A non-Error throw
+ * goes through core's `toError`, so its message is readable (`String()` gave
+ * `[object Object]`) and the thrown value stays reachable as `cause`.
  */
 export function asSchemaGenerationError(
   error: unknown,
@@ -30,11 +33,7 @@ export function asSchemaGenerationError(
   schema?: unknown,
 ): Error {
   if (error instanceof SchmockError) return error;
-  return new SchemaGenerationError(
-    route,
-    error instanceof Error ? error : new Error(String(error)),
-    schema,
-  );
+  return new SchemaGenerationError(route, toError(error), schema);
 }
 
 /**

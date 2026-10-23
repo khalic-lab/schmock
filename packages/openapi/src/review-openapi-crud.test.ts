@@ -1,8 +1,11 @@
 /// <reference path="../../core/schmock.d.ts" />
 
-import { schmock } from "@schmock/core";
+import { SchemaGenerationError, schmock } from "@schmock/core";
 import { describe, expect, it } from "vitest";
-import { collectSchemaProperties } from "./generators.js";
+import {
+  asSchemaGenerationError,
+  collectSchemaProperties,
+} from "./generators.js";
 import { openapi } from "./plugin.js";
 
 const json = (schema: Record<string, unknown>) => ({
@@ -1056,5 +1059,29 @@ describe("status-less schema overrides on a POST declaring 200 and 201", () => {
     const response = await mock.handle("POST", "/login");
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ patched: true });
+  });
+});
+
+describe("asSchemaGenerationError", () => {
+  it("describes a non-Error throw and keeps it as the cause", () => {
+    const thrown = { reason: "faker gave up" };
+    const error = asSchemaGenerationError(thrown, "GET /things");
+    expect(error).toBeInstanceOf(SchemaGenerationError);
+    expect(error.message).toBe(
+      'Schema generation failed for route GET /things: {"reason":"faker gave up"}',
+    );
+    const context = (error as SchemaGenerationError).context as {
+      originalError: Error;
+    };
+    expect(context.originalError.cause).toBe(thrown);
+  });
+
+  it("keeps an Error as the original error", () => {
+    const thrown = new Error("boom");
+    const error = asSchemaGenerationError(thrown, "GET /things");
+    const context = (error as SchemaGenerationError).context as {
+      originalError: Error;
+    };
+    expect(context.originalError).toBe(thrown);
   });
 });
