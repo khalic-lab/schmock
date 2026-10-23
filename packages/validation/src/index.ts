@@ -287,12 +287,12 @@ function compileSchema({
 
   // Nested resources are discovered after their parents. Registering them in
   // reverse lets Ajv attach a parent without re-registering its child IDs.
+  // Siblings stay uncompiled here: Ajv compiles the ones the target reaches
+  // while compiling the target, once the target's own IDs are registered, so
+  // a sibling may in turn reference the target slot.
   for (let index = registrations.length - 1; index >= 0; index -= 1) {
     const registration = registrations[index];
     if (registration) ajv.addSchema(registration[1], registration[0]);
-  }
-  for (const [id] of registrations) {
-    ajv.getSchema(id);
   }
   return ajv.compile(target.schema);
 }

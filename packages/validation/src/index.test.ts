@@ -876,6 +876,67 @@ describe("validationPlugin", () => {
       });
     });
 
+    // The referencing slot carries its own root $id, so it is registered in
+    // the target slot's registry before the target's own IDs are.
+    it.each([
+      [
+        "absolute",
+        "https://example.com/user.json",
+        "https://example.com/users.json",
+      ],
+      ["relative", "User", "UserList"],
+    ])(
+      "resolves a sibling slot's $ref into the target's %s root $id",
+      async (_, userId, listId) => {
+        const user = {
+          $id: userId,
+          type: "object" as const,
+          properties: { id: { type: "integer" as const } },
+          required: ["id"],
+        };
+        const list = {
+          $id: listId,
+          type: "array" as const,
+          items: { $ref: userId },
+        };
+        const context: Schmock.PluginContext = {
+          path: "/test",
+          route: {},
+          method: "POST",
+          params: {},
+          query: {},
+          headers: {},
+          state: new Map(),
+        };
+
+        const listResponse = validationPlugin({
+          request: { body: user },
+          response: { body: list },
+        });
+        const listRequest = validationPlugin({
+          request: { body: list },
+          response: { body: user },
+        });
+
+        const accepted = await listResponse.process(context, [{ id: 1 }]);
+        const rejected = await listResponse.process(context, [{ id: "1" }]);
+        const preflight = await runBeforeRequest(listRequest, {
+          ...context,
+          body: [{}],
+        });
+
+        expect(accepted.response).toEqual([{ id: 1 }]);
+        expect(rejected.response).toMatchObject({
+          status: 500,
+          body: { code: "RESPONSE_VALIDATION_ERROR" },
+        });
+        expect(preflight.response).toMatchObject({
+          status: 400,
+          body: { code: "REQUEST_VALIDATION_ERROR" },
+        });
+      },
+    );
+
     it("resolves a nested sibling resource without a root $id", async () => {
       const nestedId = "https://example.com/nested-user.json";
       const plugin = validationPlugin({

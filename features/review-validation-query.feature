@@ -129,3 +129,15 @@ Feature: Validation plugin review fixes
       | Infinity  |
       | -Infinity |
       | 1e400     |
+
+  # ── Cross-slot references (review 2026-10-23) ────────────────────────────
+
+  Scenario Outline: A response schema with its own $id references the request body schema
+    Given a request body schema "User" and a response list schema "UserList" whose items reference it
+    When the user list route returns <users>
+    Then the user list response status should be <status>
+
+    Examples:
+      | users         | status |
+      | [{"id": 1}]   | 200    |
+      | [{"id": "1"}] | 500    |

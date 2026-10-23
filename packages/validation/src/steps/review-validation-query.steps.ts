@@ -731,4 +731,44 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       );
     },
   );
+
+  // ── Cross-slot references (review 2026-10-23) ────────────────────────────
+
+  ScenarioOutline(
+    "A response schema with its own $id references the request body schema",
+    ({ Given, When, Then }, variables) => {
+      let users: unknown;
+
+      Given(
+        "a request body schema {string} and a response list schema {string} whose items reference it",
+        (_, userId: string, listId: string) => {
+          mock = schmock();
+          mock("GET /users", () => users).pipe(
+            validationPlugin({
+              request: {
+                body: {
+                  $id: userId,
+                  type: "object",
+                  properties: { id: { type: "integer" } },
+                  required: ["id"],
+                },
+              },
+              response: {
+                body: { $id: listId, type: "array", items: { $ref: userId } },
+              },
+            }),
+          );
+        },
+      );
+
+      When("the user list route returns <users>", async () => {
+        users = JSON.parse(variables.users);
+        response = await mock.handle("GET", "/users");
+      });
+
+      Then("the user list response status should be <status>", () => {
+        expect(response.status).toBe(Number(variables.status));
+      });
+    },
+  );
 });
