@@ -700,6 +700,8 @@ function effectiveRequestKey(method: string, path: string): string {
 
 /**
  * Create a fetch interceptor that routes requests through mock.handle().
+ * It is the lease `mock.intercept()` is built on, without the exchange
+ * observation that adds: no plugin's `onExchange` is called for it.
  *
  * `owner` identifies the mock behind the lease. Leases sharing an owner ask it
  * each distinct effective request (method and path after the lease's own

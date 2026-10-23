@@ -609,7 +609,7 @@ interface AnsweredExchange {
 interface FailedExchange {
   readonly outcome: 'failed'
   readonly request: ExchangeRequest
-  readonly error: unknown               // exactly what the caller's fetch rejected with
+  readonly error: unknown               // what the mock rejected with; a direct fetch rejects with exactly this
   readonly startTime: number
   readonly endTime: number
 }
@@ -623,7 +623,13 @@ interface AbortedExchange {
 ```
 
 An answered exchange includes the 404 for an unrouted request and the 400 for
-a malformed JSON body when `passthrough` is `false`. Requests passed on to the
+a malformed JSON body when `passthrough` is `false`. It also includes the 500
+for a route, plugin or response that threw: core answers those itself, so they
+are never `failed`. An exchange is `failed` only when an adapter `beforeRequest`
+or `beforeResponse` hook threw and no `errorFormatter` replaced the error, or
+when the formatter itself threw. `error` is the value the mock rejected with,
+which is what a direct `fetch` rejects with; under the service-worker relay
+the page's fetch rejects with a `TypeError` instead. Requests passed on to the
 network are not observed, nor are `mock.handle()` calls, nor requests that
 reached the mock before the observer was piped or before the last `reset()`.
 Each observer gets its own snapshot: the exchange, `request`, `response` and
@@ -1128,8 +1134,10 @@ signal's `reason`, or a generic `AbortError` on runtimes whose signals predate
 `reason`.
 
 `createFetchInterceptor(handle, options?, admitRequest?)` is the lease
-`mock.intercept()` holds. Pass `admitRequest` to admit each fetch against the
-mock on arrival.
+`mock.intercept()` is built on, without the exchange observation
+`mock.intercept()` adds: a transport built on it never calls a plugin's
+`onExchange`. Pass `admitRequest` to admit each fetch against the mock on
+arrival.
 
 ```typescript
 import { schmock } from '@schmock/core'

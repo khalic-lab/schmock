@@ -283,9 +283,14 @@ outcomes:
 - `'answered'`: `response` (`{ status, headers, body? }`) is what the caller
   received, after the adapter's `beforeResponse` and `errorFormatter`. With
   `passthrough: false` that includes the 404 for an unrouted request and the
-  400 for a malformed JSON body.
-- `'failed'`: the caller's `fetch` rejected, and `error` is the value it
-  rejected with.
+  400 for a malformed JSON body. A route or plugin that throws is answered
+  too, with the mock's 500.
+- `'failed'`: the mock rejected the request, because an adapter
+  `beforeRequest` or `beforeResponse` hook threw and no `errorFormatter`
+  replaced the error, or the formatter itself threw. `error` is the value the
+  mock rejected with. A direct `fetch` rejects with exactly that value; under
+  the service-worker relay the page's fetch rejects with a `TypeError`
+  instead.
 - `'aborted'`: the caller aborted while this mock was answering.
 
 Every exchange also has `request` (`{ method, url, headers, body? }`, as the
@@ -317,7 +322,7 @@ How it runs:
   are `structuredClone` copies, so an observer that edits one changes neither
   the route's data nor another observer's view. A body that cannot be cloned
   arrives as an `unavailable` descriptor, and `FormData` is copied entry by
-  entry. `error` is not copied: it is the exact value the fetch rejected with.
+  entry. `error` is not copied: it is the exact value the mock rejected with.
 - **In isolation.** A throw or a rejected promise never reaches the caller and
   never stops the next observer. It is logged under the `PLUGIN` debug
   category, which prints only with `schmock({ debug: true })`.
@@ -329,6 +334,9 @@ How it runs:
 - **Never for `mock.handle()`.** Requests passed through to the network are not
   observed either, and neither are the transports built on `mock.handle()`:
   `mock.listen()`, Express, the CLI and Angular's `provideSchmockInterceptor`.
+  Nor is a transport built on `createFetchInterceptor` from
+  `@schmock/core/adapter`: it is the same lease without the observation
+  `mock.intercept()` adds.
 
 When no piped plugin has an `onExchange`, core builds no exchange at all.
 `@schmock/devtools` is a complete observer: see the [DevTools guide](./devtools.md).

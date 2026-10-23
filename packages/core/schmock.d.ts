@@ -907,10 +907,19 @@ declare namespace Schmock {
     readonly response: ExchangeResponse;
   }
 
-  /** The client's request rejected with `error` (a hook or handler threw and no errorFormatter replaced it, or the formatter threw). */
+  /**
+   * The mock rejected the request with `error`: an adapter `beforeRequest` or
+   * `beforeResponse` hook threw and no `errorFormatter` replaced the error, or
+   * the formatter itself threw. A throwing route or plugin is not a failure:
+   * the mock answers it with a 500, reported as `answered`.
+   */
   interface FailedExchange extends ExchangeBase {
     readonly outcome: "failed";
-    /** Exactly the value the client's request rejected with. */
+    /**
+     * The value the mock rejected with. A direct `fetch` rejects with exactly
+     * this; under the service-worker relay the page's fetch rejects with a
+     * `TypeError` instead.
+     */
     readonly error: unknown;
   }
 

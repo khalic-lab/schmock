@@ -8,7 +8,8 @@
  * - `awaitWithAbort` / `abortReason` race a hook or handler against the
  *   request's abort signal.
  * - `createFetchInterceptor` is the fetch interception `mock.intercept()` is
- *   built on.
+ *   built on, without its exchange observation: `onExchange` is never called
+ *   for a transport built on it.
  * - `acquireFetchRelay` / `routeRelayedRequest` let a relay transport (a
  *   service worker) deliver intercepted requests itself.
  * - `toError` turns any thrown value into an `Error` the way core does, and
