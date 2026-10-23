@@ -474,6 +474,11 @@ describe('UserService', () => {
 - A URL fragment is dropped before routing, as Angular's backends never send
   it: `/api/users#top` is routed as `/api/users`, and `?a=1#top` gives `a` the
   value `1`
+- Dot segments are resolved before `baseUrl` is matched and routing begins, as
+  the browser resolves them before it sends the request:
+  `/api/v1/../users` is routed as `/api/users`, `%2e%2e` included. In a
+  relative URL the rest of the path keeps the spelling the request used; an
+  absolute URL is read with `new URL()`, as before
 
 `errorFormatter` formats core-marked internal exceptions and thrown handling
 errors. It does not reinterpret an ordinary route response such as

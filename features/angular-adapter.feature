@@ -166,6 +166,14 @@ Feature: Angular Adapter
     Then the response should be an HttpResponse
     And the echoed query should be a = "1"
 
+  # Decision 57: the browser resolves a relative URL's dot segments before it
+  # sends the request, so the adapter routes the resolved path too.
+  Scenario: Dot segments in a relative URL are resolved before routing
+    Given I create a strict Angular mock that echoes the query for "GET /echo" under baseUrl "/api"
+    When I make an Angular request to "GET /api/v1/../echo?a=1"
+    Then the response should be an HttpResponse
+    And the echoed query should be a = "1"
+
   Scenario: responseType text yields a string body
     Given I create an Angular mock returning an object for "GET /api/users"
     When I make an Angular request to "GET /api/users" with responseType "text"

@@ -136,6 +136,19 @@ Feature: Express Adapter
     And the fallback middleware should not have handled the request
     And the named void response hook should not have run
 
+  # Decision 57: every transport routes a path with its dot segments resolved.
+  # A raw socket sends the target as written, which no client URL parser does.
+  Scenario Outline: Dot segments are resolved as mock.listen() resolves them
+    Given the same pet routes served by Express middleware and by mock.listen()
+    When the raw target "<target>" is sent to both servers
+    Then both servers should answer with the route "<route>"
+
+    Examples:
+      | target         | route    |
+      | /a/../pets     | GET /pets |
+      | /a/%2e%2e/pets | GET /pets |
+      | /pets/..       | GET /     |
+
   Scenario: A non-Error hook failure is answered as mock.handle() answers it
     Given I create an Express middleware whose beforeRequest throws a plain object with passErrorsToNext disabled
     When a request is made to "GET /failure"

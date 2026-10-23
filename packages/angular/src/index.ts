@@ -377,12 +377,52 @@ function withoutFragment(url: string): string {
   return fragmentStart === -1 ? url : url.slice(0, fragmentStart);
 }
 
+/** `.` or its percent-encoded spelling, as the WHATWG URL parser reads one. */
+function isSingleDotSegment(segment: string): boolean {
+  return segment === "." || segment.toLowerCase() === "%2e";
+}
+
+/** `..` in any mix of raw and percent-encoded dots. */
+function isDoubleDotSegment(segment: string): boolean {
+  const lower = segment.toLowerCase();
+  return (
+    lower === ".." || lower === ".%2e" || lower === "%2e." || lower === "%2e%2e"
+  );
+}
+
+/**
+ * Resolve the dot segments of an absolute path the way the WHATWG URL parser
+ * does (`/a/../pets` → `/pets`, `/pets/..` → `/`), and nothing else. The
+ * browser resolves them before sending a relative URL, as `new URL()` does
+ * for an absolute one, and `mock.listen()`, the CLI and Express route the
+ * resolved path. Unlike `new URL()`, this does not percent-encode, so the
+ * routed path keeps the spelling the request used.
+ */
+function removeDotSegments(path: string): string {
+  const segments = path.split("/").slice(1);
+  const output: string[] = [];
+  segments.forEach((segment, index) => {
+    const isLast = index === segments.length - 1;
+    if (isSingleDotSegment(segment)) {
+      if (isLast) output.push("");
+    } else if (isDoubleDotSegment(segment)) {
+      output.pop();
+      if (isLast) output.push("");
+    } else {
+      output.push(segment);
+    }
+  });
+  return `/${output.join("/")}`;
+}
+
 /**
  * Split an Angular request URL into its origin (null for a relative URL) and
- * its pathname, dropping the query and the fragment:
+ * its pathname, dropping the query and the fragment and resolving dot
+ * segments:
  * - "http://localhost:4200/api/users" → origin "http://localhost:4200", "/api/users"
  * - "/api/users?foo=bar" → origin null, "/api/users"
  * - "/api/users#top" → origin null, "/api/users"
+ * - "/api/../users" → origin null, "/users"
  * - "api/users" → origin null, "/api/users"
  *
  * The query is dropped before looking for "://", so a relative URL carrying an
@@ -405,9 +445,9 @@ function splitRequestUrl(url: string): { origin: string | null; path: string } {
 
   return {
     origin: null,
-    path: urlWithoutQuery.startsWith("/")
-      ? urlWithoutQuery
-      : `/${urlWithoutQuery}`,
+    path: removeDotSegments(
+      urlWithoutQuery.startsWith("/") ? urlWithoutQuery : `/${urlWithoutQuery}`,
+    ),
   };
 }
 

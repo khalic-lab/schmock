@@ -1,3 +1,5 @@
+import { request as httpRequest, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import type { CallableMockInstance } from "@schmock/core";
 import { schmock } from "@schmock/core";
@@ -25,6 +27,39 @@ function parseJson(text: string): unknown {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** GET a raw request target, which no client-side URL parsing rewrites. */
+function rawGet(
+  port: number,
+  target: string,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const outgoing = httpRequest(
+      { host: "127.0.0.1", port, path: target, method: "GET" },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => {
+          body += chunk;
+        });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      },
+    );
+    outgoing.on("error", reject);
+    outgoing.end();
+  });
+}
+
+function petRoutes(): CallableMockInstance {
+  const mock = schmock();
+  mock("GET /", { route: "GET /" });
+  mock("GET /pets", { route: "GET /pets" });
+  mock("GET /pets/:id", ({ params }) => ({
+    route: "GET /pets/:id",
+    id: params.id,
+  }));
+  return mock;
 }
 
 let namedResponseHookCalls = 0;
@@ -810,6 +845,58 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
 
       And("the named void response hook should not have run", () => {
         expect(namedResponseHookCalls).toBe(0);
+      });
+    },
+  );
+
+  ScenarioOutline(
+    "Dot segments are resolved as mock.listen() resolves them",
+    ({ Given, When, Then }, variables) => {
+      const closers: Array<() => void> = [];
+      let expressPort = 0;
+      let listenPort = 0;
+      let answers: Array<{ status: number; body: string }> = [];
+
+      Given(
+        "the same pet routes served by Express middleware and by mock.listen()",
+        async () => {
+          const petApp = express();
+          petApp.use(toExpress(petRoutes()));
+          petApp.use((_req, res) => {
+            res.status(418).json({ route: "next()" });
+          });
+          const server: Server = await new Promise((resolve) => {
+            const listening = petApp.listen(0, "127.0.0.1", () =>
+              resolve(listening),
+            );
+          });
+          closers.push(() => server.close());
+          expressPort = (server.address() as AddressInfo).port;
+
+          const listened = petRoutes();
+          listenPort = (await listened.listen(0, "127.0.0.1")).port;
+          closers.push(() => listened.close());
+        },
+      );
+
+      When("the raw target {string} is sent to both servers", async () => {
+        try {
+          answers = [
+            await rawGet(expressPort, variables.target),
+            await rawGet(listenPort, variables.target),
+          ];
+        } finally {
+          for (const close of closers.splice(0)) close();
+        }
+      });
+
+      Then("both servers should answer with the route {string}", () => {
+        const [viaExpress, viaListen] = answers;
+        expect(viaExpress?.status).toBe(200);
+        expect(parseJson(viaExpress?.body ?? "")).toMatchObject({
+          route: variables.route,
+        });
+        expect(viaExpress).toEqual(viaListen);
       });
     },
   );

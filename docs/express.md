@@ -181,6 +181,15 @@ turns `filter[name]=rex` into `[object Object]`. The default ignores a
 sanitizer middleware, for example). Pass `transformQuery` to receive `req.query`
 as Express, or that middleware, left it; its return value replaces the default.
 
+### Routed path
+
+The mock routes the path of `req.url` (the URL `req.path` comes from, so a
+mount point or an earlier rewrite still applies) with its dot segments
+resolved, as `mock.listen()` and the CLI route it: `/a/../pets` is routed as
+`/pets`, `/a/%2e%2e/pets` too, and `/pets/..` as `/`. Express's own `req.path`
+keeps them raw under Node, so the sibling Express routes of the same app still
+match the raw path. Under Bun, `node:http` resolves them before Express runs.
+
 ## Response Behavior
 
 - Final statuses must be integers from 200 through 599.

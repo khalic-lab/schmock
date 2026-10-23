@@ -798,6 +798,31 @@ describe("Angular Adapter", () => {
       });
     });
 
+    it("resolves the dot segments of a relative URL, as the browser sends it", async () => {
+      expect((await routed("/a/../pets")).path).toBe("/pets");
+      expect((await routed("/a/%2e%2e/pets")).path).toBe("/pets");
+      expect((await routed("/a/.%2E/pets")).path).toBe("/pets");
+      expect((await routed("/a/./pets")).path).toBe("/a/pets");
+      expect((await routed("/pets/..")).path).toBe("/");
+      expect((await routed("/pets/.")).path).toBe("/pets/");
+      expect((await routed("/..")).path).toBe("/");
+    });
+
+    it("resolves dot segments before matching and stripping baseUrl", async () => {
+      expect((await routed("/api/v1/../users", { baseUrl: "/api" })).path).toBe(
+        "/users",
+      );
+      expect(
+        (await routed("/api/../api/users", { baseUrl: "/api" })).path,
+      ).toBe("/users");
+    });
+
+    it("keeps the spelling and the '//' of a relative path otherwise", async () => {
+      expect((await routed("/a/../café")).path).toBe("/café");
+      expect((await routed("//users")).path).toBe("//users");
+      expect((await routed("/a/..b/c")).path).toBe("/a/..b/c");
+    });
+
     it("joins HttpParams to a URL that carries a fragment", async () => {
       expect(
         await routed(

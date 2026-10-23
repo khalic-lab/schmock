@@ -282,6 +282,36 @@ function defaultQuery(req: Request): Record<string, string> {
 }
 
 /**
+ * The origin a request target is appended to before parsing, as core's Node
+ * ingress does: resolving `//users` against a base would read it as a host.
+ */
+const REQUEST_TARGET_ORIGIN = "http://schmock.invalid";
+
+/**
+ * The path a request is routed under: the pathname of `req.url` (the URL
+ * `req.path` comes from, so a mount or rewrite still applies) parsed as
+ * `mock.listen()` and the CLI parse a request target. That resolves `.`, `..`
+ * and their percent-encoded spellings, which Express's own `req.path` keeps
+ * raw under Node; Bun's node:http resolves them before Express runs, so this
+ * also makes the routed path the same on both runtimes. A hand-built request
+ * without a URL, or a target that does not parse, keeps `req.path`.
+ */
+function routedPath(req: Request): string {
+  const target: unknown = req.url;
+  if (typeof target === "string") {
+    try {
+      if (target.startsWith("/")) {
+        return new URL(`${REQUEST_TARGET_ORIGIN}${target}`).pathname;
+      }
+      return new URL(target).pathname;
+    } catch {
+      // Not a parseable target: route the path Express derived.
+    }
+  }
+  return req.path;
+}
+
+/**
  * Convert a Schmock mock instance to Express middleware
  */
 export function toExpress(
@@ -334,7 +364,7 @@ export function toExpress(
       // Run request interceptor if provided
       let requestData = {
         method,
-        path: req.path,
+        path: routedPath(req),
         headers: transformHeaders(req.headers),
         body: req.body,
         query: transformQuery ? transformQuery(req.query) : defaultQuery(req),
