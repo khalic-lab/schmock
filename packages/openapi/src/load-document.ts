@@ -192,6 +192,9 @@ export async function loadDocument(
     source,
     diagnostics: refDiagnostics,
   });
+  // `assertInternalRefs` keeps the root document's pointers on keys the
+  // document holds; a pointer into another document is ref-parser's alone.
+  if (policy.external) assertNoBuiltIns(api, source);
   markDereferencedDiscriminatorValues(
     api,
     withRootDocument(resolver.documents(), api),
@@ -233,24 +236,65 @@ export async function loadDocument(
 const DISCRIMINATOR_VALUES_MARKER = "x-schmock-discriminator-values";
 
 /**
+ * Whether `value` is a function or a built-in prototype, which a pointer
+ * through an inherited name (`#/__proto__`, `#/a/constructor`) dereferences
+ * to. Every built-in prototype owns a function-valued `constructor`; data
+ * parsed from JSON or YAML, or copied by `structuredClone`, never holds a
+ * function.
+ */
+function isBuiltIn(value: unknown): boolean {
+  if (typeof value === "function") return true;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Object.hasOwn(value, "constructor") &&
+    typeof Reflect.get(value, "constructor") === "function"
+  );
+}
+
+/**
  * Whether `value` is an object the document holds, rather than a built-in
  * prototype that a pointer through an inherited name dereferenced to.
  *
- * `assertInternalRefs` refuses such a pointer inside the root document, but a
- * pointer into an external document is resolved by ref-parser alone, and the
- * marker written on what `discriminator: { $ref: "other.yaml#/__proto__" }`
- * dereferenced to would be a key on every object in the process. Every
- * built-in prototype owns a function-valued `constructor`; data parsed from
- * JSON or YAML, or copied by `structuredClone`, never holds a function.
+ * `assertInternalRefs` refuses such a pointer inside the root document and
+ * {@link assertNoBuiltIns} refuses one into another document, but the marker
+ * written on what `discriminator: { $ref: "other.yaml#/__proto__" }`
+ * dereferenced to would be a key on every object in the process, so the
+ * write site holds on its own as well.
  */
 function isDocumentObject(value: unknown): value is Record<string, unknown> {
-  return (
-    isRecord(value) &&
-    !(
-      Object.hasOwn(value, "constructor") &&
-      typeof value.constructor === "function"
-    )
-  );
+  return isRecord(value) && !isBuiltIn(value);
+}
+
+/**
+ * Refuse a dereferenced document that holds a built-in prototype or a
+ * function, which only a pointer through an inherited name into another
+ * document puts there. Left in, it failed `openapi()` with an uncoded
+ * `DataCloneError` rather than as the bad `$ref` it is.
+ */
+function assertNoBuiltIns(api: unknown, source: string | object): void {
+  const seen = new WeakSet<object>();
+  const stack: Array<[unknown, string]> = [[api, ""]];
+  for (let entry = stack.pop(); entry !== undefined; entry = stack.pop()) {
+    const [node, key] = entry;
+    if (isBuiltIn(node)) {
+      throw new SchmockError(
+        `OpenAPI spec has a $ref that resolved to a built-in object under "${key}": ` +
+          "a pointer may only name keys its document declares, not inherited ones such as __proto__ or constructor.",
+        "OPENAPI_INVALID_REF",
+        { key, spec: typeof source === "string" ? source : undefined },
+      );
+    }
+    if (typeof node !== "object" || node === null || seen.has(node)) continue;
+    seen.add(node);
+    for (const [childKey, child] of Object.entries(node)) {
+      if (
+        (typeof child === "object" && child !== null) ||
+        typeof child === "function"
+      )
+        stack.push([child, childKey]);
+    }
+  }
 }
 
 /**

@@ -512,18 +512,39 @@ describe("loadDocument", () => {
         rmSync(dir, { recursive: true, force: true });
       });
 
-      it("never writes the discriminator marker onto a built-in prototype", async () => {
-        // The preflight only sees the root document; ref-parser resolves a
-        // pointer into another file on its own, so the write site has to hold.
-        const spec = specWithDiscriminatorRef(
-          `${join(dir, "other.json")}#/__proto__`,
+      for (const pointer of [
+        "#/__proto__",
+        "#/a/constructor/prototype",
+        "#/a/constructor",
+      ]) {
+        it(`refuses ${pointer} without writing onto a built-in`, async () => {
+          // The preflight only sees the root document; ref-parser resolves a
+          // pointer into another file on its own, so the result is checked.
+          const spec = specWithDiscriminatorRef(
+            `${join(dir, "other.json")}${pointer}`,
+          );
+
+          const error = await failureOf(
+            loadDocument(spec, { refs: { external: true } }),
+          );
+
+          expect(codeOf(error)).toBe("OPENAPI_INVALID_REF");
+          expect(isPolluted()).toBe(false);
+          expect(Object.hasOwn(Number.prototype, MARKER)).toBe(false);
+        });
+      }
+
+      it("refuses one through the public openapi() entry point", async () => {
+        const error = await failureOf(
+          openapi({
+            spec: specWithDiscriminatorRef(
+              `${join(dir, "other.json")}#/__proto__`,
+            ),
+            refs: { external: true },
+          }),
         );
 
-        await loadDocument(spec, { refs: { external: true } }).catch(
-          () => undefined,
-        );
-
-        expect(isPolluted()).toBe(false);
+        expect(codeOf(error)).toBe("OPENAPI_INVALID_REF");
       });
     });
   });
