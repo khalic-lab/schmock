@@ -139,9 +139,12 @@ if (admission) {
 
 It exports `acquireRequestAdmission`, `awaitWithAbort`, `abortReason`,
 `createFetchInterceptor`, the relay pair `acquireFetchRelay` and
-`routeRelayedRequest`, and the error and redaction helpers `toError`,
-`buildJsonErrorResponse` and `isCredentialName`, with the `RequestAdmission`,
-`MockRequestHandler`, `FetchRelay` and `JsonErrorResponseOptions` types. See
+`routeRelayedRequest`, the error and redaction helpers `toError`,
+`buildJsonErrorResponse` and `isCredentialName`, and the request-body helpers
+`requestBodyKindOf`, `parseJsonBody`, `parseFormBody` and `HttpIngressError`,
+with the `RequestAdmission`, `MockRequestHandler`, `FetchRelay`,
+`JsonErrorResponseOptions`, `RequestBodyKind` and `HttpIngressErrorCode`
+types. See
 [`@schmock/core/adapter`](https://github.com/khalic-lab/schmock/blob/main/docs/api.md#schmockcoreadapter)
 for each signature.
 
