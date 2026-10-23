@@ -137,7 +137,8 @@ function urlSegment(value: unknown): string | undefined {
  * (`{$request.body#/callbackUrl}`) and is spliced as it is. Every later one is
  * a value inside a URL the template fixes, so it is percent-encoded: spliced
  * raw, a client's `a/../../admin?x=1#` walked out of the template's path, and
- * `&`, `+`, `#` or a space in an ordinary value broke the query.
+ * `&`, `+`, `#` or a space in an ordinary value broke the query. A value that
+ * cannot be encoded (a lone surrogate) leaves the URL unresolved.
  */
 function resolveCallbackUrl(
   expression: string,
@@ -153,7 +154,17 @@ function resolveCallbackUrl(
         unresolved ??= expr;
         return "";
       }
-      return offset === 0 ? segment : encodeURIComponent(segment);
+      if (offset === 0) return segment;
+      try {
+        return encodeURIComponent(segment);
+      } catch {
+        // A lone UTF-16 surrogate (`"\ud800"` in a JSON body) has no UTF-8
+        // form, and encodeURIComponent throws URIError for it. It has no URL
+        // form either, so the expression is unresolved, like a missing value,
+        // instead of aborting every callback after this one.
+        unresolved ??= expr;
+        return "";
+      }
     },
   );
   return unresolved === undefined ? { url } : { unresolved };

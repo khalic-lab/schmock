@@ -1166,7 +1166,11 @@ because it sits inside a URL the template fixes. A client's
 `https://hooks.example.com/orders/{$request.body#/note}`, and the spec's own
 `?transactionId={$request.body#/id}&email={$request.body#/email}` delivers an
 email containing `+` or `&` intact. A template that needs to splice a path
-fragment with its slashes has to take it from the leading expression.
+fragment with its slashes, or a host or port (`http://{$request.body#/host}/hook`
+with `localhost:3000` encodes the colon and yields an invalid URL), has to take
+it from the leading expression. A value with no URL form at all, such as a lone
+UTF-16 surrogate (`"\ud800"`) in a JSON body, skips that callback like a missing
+value, and the operation's other callbacks still dispatch.
 
 `$response.body#/…` and the fallback payload below read the body the client
 actually receives. A `{ status, body, headers }` object is unwrapped only when

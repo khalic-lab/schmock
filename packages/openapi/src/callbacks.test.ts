@@ -440,5 +440,27 @@ describe("dispatchCallbacks", () => {
       );
       expect(url).toBe("https://hooks.example/v1?key=a/pets/p%2F1");
     });
+
+    it("skips a callback whose value cannot be encoded and still dispatches the rest", async () => {
+      const urls: string[] = [];
+      await dispatchCallbacks(
+        [
+          {
+            urlExpression: "https://hooks.example/{$request.body#/id}",
+            method: "POST",
+          },
+          {
+            urlExpression: "https://hooks.example/after/{$request.body#/n}",
+            method: "POST",
+          },
+        ],
+        (request) => {
+          urls.push(request.url);
+        },
+        makeContext({ body: { id: "\uD800x", n: "ok" } }),
+        { id: 1 },
+      );
+      expect(urls).toEqual(["https://hooks.example/after/ok"]);
+    });
   });
 });
