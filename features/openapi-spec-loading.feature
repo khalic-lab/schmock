@@ -8,3 +8,8 @@ Feature: OpenAPI spec loading
     When I create an openapi plugin from the spec expecting a failure
     Then creating the plugin fails with code "OPENAPI_INVALID_REF"
     And no object in the process gained the discriminator marker
+
+  Scenario: A $ref pointer with too many tokens is refused
+    Given a spec whose response schema is a reference with 100 tokens
+    When I create an openapi plugin from the spec expecting a failure
+    Then creating the plugin fails with code "OPENAPI_INVALID_REF"

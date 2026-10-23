@@ -195,6 +195,10 @@ not in the browser build.
   `#/constructor/prototype`, fails with `OPENAPI_INVALID_REF` on both builds.
   Only keys the document declares are followed, so a schema the document names
   `constructor` still resolves.
+- **A pointer of more than 64 tokens** fails with `OPENAPI_INVALID_REF` on
+  both builds. Real pointers have a handful; the limit keeps a crafted one
+  from stalling the load, since an unescaped `/` in a key makes the resolvers
+  retry runs of the tokens that follow it.
 
 ### Running in a browser
 

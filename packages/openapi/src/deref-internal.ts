@@ -68,6 +68,19 @@ const NULL_TARGET = Symbol("null");
  */
 const MAX_REF_HOPS = 100;
 
+/**
+ * Ceiling on the tokens in one internal `$ref` pointer.
+ *
+ * On a missing token ref-parser re-joins runs of the tokens after it, trying
+ * every run from the longest down (see {@link rejoinedKey}). That is quadratic
+ * per miss and cubic over a pointer that keeps re-joining: 2,000 tokens in a
+ * 24 KB spec held the event loop for half a minute. This module's own walk no
+ * longer pays that, but ref-parser's is not ours to change, so the cap is what
+ * bounds the Node build. Real pointers stay far below it: none in the fixture
+ * corpus, Stripe's spec included, has more than three.
+ */
+const MAX_POINTER_TOKENS = 64;
+
 /** One pointer's resolution, shared across the recursion a chain triggers. */
 interface PointerWalk {
   /** Hops taken so far. */
@@ -80,6 +93,12 @@ interface PointerWalk {
    * to report.
    */
   preflight: boolean;
+  /**
+   * The longest slash-bearing key of each container a re-join has looked at,
+   * 0 for none. Shared across one pass so N pointers into a container of K
+   * keys scan it once rather than N times; see {@link rejoinedKey}.
+   */
+  slashKeys: WeakMap<object, number>;
 }
 
 /** Ends a preflight walk that cannot rule on its pointer. */
@@ -185,6 +204,53 @@ function mergeExtendedRef(ref: RefObject, target: unknown): unknown {
 }
 
 /**
+ * The longest run of `tokens` from `start` that, re-joined with slashes, names
+ * a key of `container`, with the index of its last token.
+ *
+ * A key containing a literal slash is split across several tokens when a
+ * pointer does not escape it; ref-parser re-joins them and hand-written specs
+ * rely on it. ref-parser builds every run from the longest down on each miss,
+ * though, which a crafted pointer turns cubic. Only a key containing a slash
+ * can match, so runs are built only when the container has one, and never
+ * past the longest such key. Picking the last match keeps the longest run
+ * winning, as it does in ref-parser.
+ *
+ * The longest key is measured once per container per pass: neither resolver
+ * adds a key to a container it walks, and scanning on every miss made N
+ * pointers into one container of N slash keys quadratic.
+ */
+function rejoinedKey(
+  container: Record<string, unknown>,
+  tokens: string[],
+  start: number,
+  slashKeys: WeakMap<object, number>,
+): { key: string; end: number } | undefined {
+  let longest = slashKeys.get(container);
+  if (longest === undefined) {
+    longest = 0;
+    for (const key of Object.keys(container)) {
+      if (key.length > longest && key.includes("/")) longest = key.length;
+    }
+    slashKeys.set(container, longest);
+  }
+  if (longest === 0) return undefined;
+
+  let match: { key: string; end: number } | undefined;
+  let candidate = tokens[start];
+  for (let end = start + 1; end < tokens.length; end++) {
+    candidate += `/${tokens[end]}`;
+    if (candidate.length > longest) break;
+    if (
+      Object.hasOwn(container, candidate) &&
+      container[candidate] !== undefined
+    ) {
+      match = { key: candidate, end };
+    }
+  }
+  return match;
+}
+
+/**
  * Walk one pointer to its target, following any `$ref` met on the way.
  *
  * A `$ref` naming its own location ends the walk and reports `circular`
@@ -193,7 +259,11 @@ function mergeExtendedRef(ref: RefObject, target: unknown): unknown {
 function resolvePointer(
   document: unknown,
   refPath: string,
-  walk: PointerWalk = { hops: 0, preflight: false },
+  walk: PointerWalk = {
+    hops: 0,
+    preflight: false,
+    slashKeys: new WeakMap(),
+  },
 ): Resolved {
   const tokens = parseTokens(refPath);
   let value: unknown = document;
@@ -269,24 +339,13 @@ function resolvePointer(
       continue;
     }
 
-    // A key containing a literal slash was split across several tokens. Try
-    // re-joining the longest run that names a real key; ref-parser does the
-    // same and hand-written specs rely on it.
     const container = value;
-    let rejoined = false;
-    for (let j = tokens.length - 1; j > i; j--) {
-      const candidate = tokens.slice(i, j + 1).join("/");
-      if (
-        Object.hasOwn(container, candidate) &&
-        container[candidate] !== undefined
-      ) {
-        value = container[candidate];
-        i = j;
-        rejoined = true;
-        break;
-      }
+    const rejoined = rejoinedKey(container, tokens, i, walk.slashKeys);
+    if (rejoined !== undefined) {
+      value = container[rejoined.key];
+      i = rejoined.end;
+      continue;
     }
-    if (rejoined) continue;
 
     // A key that is present and explicitly `null` is a hit, not a miss.
     if (Object.hasOwn(container, token) && container[token] === null) {
@@ -329,6 +388,7 @@ export function dereferenceInternal<T>(document: T): T {
    * best-effort rather than guaranteed.
    */
   const cache = new Map<string, Dereferenced>();
+  const slashKeys = new WeakMap<object, number>();
 
   const expandRef = (ref: RefObject, pathFromRoot: string): Dereferenced => {
     const refPath = ref.$ref;
@@ -352,7 +412,11 @@ export function dereferenceInternal<T>(document: T): T {
       };
     }
 
-    const pointer = resolvePointer(document, refPath);
+    const pointer = resolvePointer(document, refPath, {
+      hops: 0,
+      preflight: false,
+      slashKeys,
+    });
     const directCircular = pointer.circular;
     const pointerValue = isWalkable(pointer.value) ? pointer.value : undefined;
     let circular =
@@ -487,13 +551,25 @@ function internalRefs(document: unknown): Set<string> {
  *   inherits (`#/__proto__`, `#/components/schemas/Pet/constructor`).
  *   ref-parser follows it to a built-in prototype, and the discriminator pass
  *   in `load-document.ts` then wrote its marker onto `Object.prototype`.
+ * - A pointer of more than {@link MAX_POINTER_TOKENS} tokens, which is what
+ *   keeps ref-parser's re-joining of slash-split keys from stalling a load.
  */
 export function assertInternalRefs(document: unknown): void {
   const refs = internalRefs(document);
+  for (const ref of refs) {
+    const tokens = parseTokens(ref).length;
+    if (tokens > MAX_POINTER_TOKENS) {
+      throw refError(
+        `$ref "${ref.slice(0, 80)}…" has ${tokens} tokens, more than the ${MAX_POINTER_TOKENS} a pointer may have`,
+        ref,
+      );
+    }
+  }
   assertNoRefRing(document, refs);
+  const slashKeys = new WeakMap<object, number>();
   for (const ref of refs) {
     try {
-      resolvePointer(document, ref, { hops: 0, preflight: true });
+      resolvePointer(document, ref, { hops: 0, preflight: true, slashKeys });
     } catch (error) {
       if (!(error instanceof WalkStopped)) throw error;
     }

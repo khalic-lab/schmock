@@ -67,6 +67,47 @@ describe("dereferenceInternal on documents outside the parity corpus", () => {
     expect(result.use).toEqual({ type: "string" });
   });
 
+  it("re-joins slash-split keys without trying every run of tokens", () => {
+    // `depth` nested `"a/a"` keys, reached by a pointer that leaves every
+    // slash unescaped: 2 * depth tokens, each pair re-joined into one key.
+    // Trying every run from the longest down took about three seconds here.
+    const depth = 1000;
+    let target: Record<string, unknown> = { leaf: true };
+    for (let i = 0; i < depth; i++) target = { "a/a": target };
+    const document = {
+      deep: target,
+      use: { $ref: `#/deep${"/a/a".repeat(depth)}` },
+    };
+
+    const started = performance.now();
+    const result = dereferenceInternal(document);
+    const elapsed = performance.now() - started;
+
+    expect(result.use).toEqual({ leaf: true });
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it("re-joins many pointers into one slash-keyed container in linear time", () => {
+    // Each pointer misses on "a" and re-joins "a/<i>". Scanning the
+    // container's keys on every miss made this quadratic: about four seconds
+    // here at this size, against a fraction of one.
+    const count = 50_000;
+    const keyed: Record<string, unknown> = {};
+    const refs: Array<{ $ref: string }> = [];
+    for (let i = 0; i < count; i++) {
+      keyed[`a/${i}`] = { const: i };
+      refs.push({ $ref: `#/keyed/a/${i}` });
+    }
+    const document = { keyed, refs };
+
+    const started = performance.now();
+    const result = dereferenceInternal(document);
+    const elapsed = performance.now() - started;
+
+    expect(result.refs[count - 1]).toEqual({ const: count - 1 });
+    expect(elapsed).toBeLessThan(1500);
+  });
+
   it("still returns the same object when the root is not a $ref", () => {
     const document = { a: { $ref: "#/b" }, b: { y: 2 } };
 

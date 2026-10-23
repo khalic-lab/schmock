@@ -255,6 +255,18 @@ describe("internal dereference parity with swagger-parser", () => {
     );
   });
 
+  it("re-joins the longest run of tokens that names a key with a slash", async () => {
+    // Both `a/b` and `a/b/c` match a run of `#/…/a/b/c`; the longest wins.
+    await expectParity(
+      specWith({
+        "a/b": { type: "object", properties: { c: { type: "string" } } },
+        "a/b/c": { type: "integer" },
+        Uses: { $ref: "#/components/schemas/a/b/c" },
+        Partial: { $ref: "#/components/schemas/a/b/properties/c" },
+      }),
+    );
+  });
+
   it("decodes percent-encoded pointer tokens", async () => {
     await expectParity(
       specWith({
