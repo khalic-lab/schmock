@@ -58,6 +58,14 @@ export type CrudOperationMeta = Schmock.CrudOperationMeta;
 const REQUEST_REJECTED_STATE = "openapi:requestRejected";
 /** The status an applied Prefer directive answered with, for afterResponse. */
 const PREFER_STATUS_STATE = "openapi:preferStatus";
+/**
+ * Set by `process()` once it handles the route's own response. It stays unset
+ * when a `beforeRequest` answered instead (this plugin's rejection, or another
+ * plugin's short-circuit) and when an `onError` hook recovered a failure, since
+ * core skips the response processors then: the operation did not run, or did
+ * not finish, so afterResponse commits nothing and dispatches no callback.
+ */
+const OPERATION_RAN_STATE = "openapi:operationRan";
 
 /**
  * Create an OpenAPI plugin that auto-registers CRUD routes from a spec.
@@ -239,6 +247,7 @@ export async function openapi(
       ) {
         return { context, response: incomingResponse };
       }
+      context.state.set(OPERATION_RAN_STATE, true);
 
       const result = await processPreferHeader(
         context,
@@ -288,12 +297,15 @@ export async function openapi(
 
       // Commit before callbacks so a callback that re-enters the mock observes
       // committed state.
-      settlePendingMutations(context, response.status);
+      const ran = context.state.get(OPERATION_RAN_STATE) === true;
+      settlePendingMutations(context, ran && response.status < 400);
 
       if (!options.callbacks) return undefined;
       const callbacks = getRouteCallbacks(context.route);
       if (!callbacks || callbacks.length === 0) return undefined;
-      if (!shouldDispatchCallbacks(context, response.status)) return undefined;
+      if (!ran || !shouldDispatchCallbacks(context, response.status)) {
+        return undefined;
+      }
 
       // Returned, so the response waits for delivery and an abort of the
       // request while the dispatcher is pending still rejects it. A
@@ -319,25 +331,27 @@ function discardPendingMutations(context: Schmock.PluginContext): void {
  * Apply or discard the mutations a CRUD generator staged for this request, by
  * the request's final status.
  *
- * The pending queue is always cleared first. It is applied only when the
- * response the client receives is a success: a `Prefer: code=400`, a 406 from
+ * The pending queue is always cleared first. It is applied only when
+ * `apply` says the operation ran to completion and the response the client
+ * receives is a success: a `Prefer: code=400`, a 406 from
  * response content negotiation, a 500 from response validation, and a 4xx or
  * 500 that a plugin piped after this one answered with all leave the
  * collection untouched. Any applied Prefer directive has already discarded
  * the queue (see `process()`), so a `Prefer: code=201` on a create stores
- * nothing either.
+ * nothing either. A generator failure an `onError` hook recovered, even with a
+ * 2xx, did not finish, so whatever it staged is dropped.
  *
  * Only the instance that owns the route settles: clearing another instance's
  * queue would drop a mutation its owner still has to commit.
  */
 function settlePendingMutations(
   context: Schmock.PluginContext,
-  status: number,
+  apply: boolean,
 ): void {
   const pending = context.state.get(PENDING_MUTATIONS_KEY);
   discardPendingMutations(context);
   if (!Array.isArray(pending) || pending.length === 0) return;
-  if (status >= 400) return;
+  if (!apply) return;
   for (const commit of pending) {
     if (typeof commit === "function") commit();
   }
@@ -346,7 +360,8 @@ function settlePendingMutations(
 /**
  * A callback reports something that happened. A rejected request, a 404 or
  * 409 from a CRUD handler, a validation 500 and a failure a later plugin
- * answered with did not happen, so they fire none. A status a Prefer
+ * answered with did not happen, so they fire none, and neither does a request
+ * whose operation never ran (see `OPERATION_RAN_STATE`). A status a Prefer
  * directive simulated is the simulation the client asked for, and fires with
  * the simulated body.
  */

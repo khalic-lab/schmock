@@ -1492,6 +1492,93 @@ describe("settling a request once its response is final (#39)", () => {
     expect(b.body).toEqual({ id: 1, name: "rex", age: 9 });
     expect(stored(mock)).toEqual([{ id: 1, name: "rex", tag: "new", age: 9 }]);
   });
+
+  it("fires no callback when a plugin piped earlier answers in beforeRequest", async () => {
+    const urls: string[] = [];
+    const mock = schmock({ state: {} });
+    mock.pipe({
+      name: "stub",
+      beforeRequest(context) {
+        return { context, response: [200, { stubbed: true }] };
+      },
+      process(context, response) {
+        return { context, response };
+      },
+    });
+    mock.pipe(
+      await openapi({
+        spec: petsSpec,
+        callbacks: { dispatch: (request) => void urls.push(request.url) },
+      }),
+    );
+
+    const answered = await mock.handle("POST", "/pets", {
+      body: { name: "rex" },
+    });
+    expect(answered).toMatchObject({ status: 200, body: { stubbed: true } });
+    expect(urls).toEqual([]);
+    expect(stored(mock)).toEqual([]);
+  });
+
+  it("commits nothing and fires no callback when onError recovers a failed operation", async () => {
+    const urls: string[] = [];
+    const envelopeSpec = spec({
+      "/pets": {
+        get: {
+          responses: {
+            "200": {
+              description: "list",
+              content: json({ type: "array", items: openPet }),
+            },
+          },
+        },
+      },
+      "/pets/{petId}": {
+        get: {
+          responses: { "200": { description: "p", content: json(openPet) } },
+        },
+        patch: {
+          responses: {
+            "200": {
+              description: "p",
+              content: json({ type: "object", properties: { data: openPet } }),
+            },
+          },
+          callbacks: hook("https://hooks.example/updated"),
+        },
+      },
+    });
+    const mock = schmock({
+      state: { "openapi:collections:/pets": [{ id: 1, name: "rex" }] },
+    });
+    mock.pipe(
+      await openapi({
+        spec: envelopeSpec,
+        callbacks: { dispatch: (request) => void urls.push(request.url) },
+        // Throws while the PATCH builds its envelope, after it staged the write.
+        onSchema: (schema, { method }) => {
+          if (method === "PATCH") throw new Error("hook failed");
+          return schema;
+        },
+      }),
+    );
+    mock.pipe({
+      name: "recover",
+      process(context, response) {
+        return { context, response };
+      },
+      onError() {
+        return { status: 200, body: { recovered: true } };
+      },
+    });
+
+    const answered = await mock.handle("PATCH", "/pets/1", {
+      body: { name: "max" },
+    });
+    expect(answered).toMatchObject({ status: 200, body: { recovered: true } });
+    expect(urls).toEqual([]);
+    expect(stored(mock)).toEqual([{ id: 1, name: "rex" }]);
+  });
 });
 
 describe("the errorSchema resource override", () => {
