@@ -53,6 +53,10 @@ bun run lint
 # but a release must not depend on a workflow having run, so run them here.
 bun run eslint
 bun run knip
+# bun.lock is not published, but every check here runs against it. Stop on
+# high and critical advisories; `bun update` usually resolves them within the
+# declared ranges.
+bun audit --audit-level=high
 # Build first: dist-bound suites (dist shape, browser compatibility, entry
 # parity) must test the JS being released, not whatever was built last.
 bun run build

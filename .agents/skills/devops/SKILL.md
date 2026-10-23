@@ -114,9 +114,15 @@ release, but still requires the exact confirmation token.
 - Execute mode requires
   `--confirm <scope>@v<live-version>:<full-commit-sha>`, a clean worktree, and
   the `main` branch.
-- Execute mode runs lint, ESLint and knip, the build, the full test suite and
-  the e2e suite, then `check:publish` before publication. The build runs first
-  so dist-bound tests check the JavaScript being released.
+- Execute mode runs lint, ESLint and knip, `bun audit --audit-level=high`, the
+  build, the full test suite and the e2e suite, then `check:publish` before
+  publication. The build runs first so dist-bound tests check the JavaScript
+  being released. A high or critical advisory in `bun.lock` stops the release:
+  run `bun update` (within the declared ranges) and commit the lockfile. When an
+  advisory has no fix inside those ranges, and only with the user's approval,
+  add `--ignore=<GHSA-or-CVE id>` to the `bun audit` line in both
+  `scripts/publish.sh` and `.agents/skills/devops/scripts/publish.sh` (neither
+  takes it as an argument) and record why in the commit.
 - Existing npm versions are skipped only when the registry query succeeds.
   Registry or authentication errors stop the release instead of being treated
   as an unpublished version.

@@ -1,0 +1,22 @@
+# Version updates are off: dependencies are kept current by hand as part of
+# the release flow (e85c4d3 removed the daily version updates), and
+# open-pull-requests-limit: 0 keeps it that way. This file does not turn
+# security-update PRs on. GitHub opens those only when "Dependabot security
+# updates" is enabled in the repository's code security settings, and only for
+# ecosystems that support them; Dependabot's bun support was announced for
+# version updates, and bun security updates are unconfirmed. The enforced
+# control is the `bun audit` step in both release gates (scripts/publish.sh
+# and .agents/skills/devops/scripts/publish.sh). If bun security updates
+# arrive, this entry supplies their label and commit prefix.
+version: 2
+enable-beta-ecosystems: true
+updates:
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"

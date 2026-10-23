@@ -119,6 +119,7 @@ esac`,
     ]) {
       assert.match(log, new RegExp(`^bun run ${gate}$`, "m"));
     }
+    assert.match(log, /^bun audit --audit-level=high$/m);
     // The wrapper itself must reach neither npm nor the remote.
     assert.doesNotMatch(log, /npm publish/);
     assert.doesNotMatch(log, /git push/);

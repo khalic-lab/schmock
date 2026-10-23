@@ -200,6 +200,7 @@ print_dry_run() {
   echo "  bun run lint"
   echo "  bun run eslint"
   echo "  bun run knip"
+  echo "  bun audit --audit-level=high"
   echo "  bun run build"
   echo "  bun run test:all"
   echo "  bun run test:e2e"
@@ -406,12 +407,18 @@ esac
 
 # ESLint, knip and the e2e suite are not in the pre-commit hook. CI runs them,
 # but a release must not depend on a workflow having run, so run them here.
+# bun.lock is not published, but every check here runs against it. Stop on
+# high and critical advisories; `bun update` usually resolves them within the
+# declared ranges.
+# Build first: dist-bound suites (dist shape, browser compatibility, entry
+# parity) must test the JS being released, not whatever was built last.
+# Keep these comments above the echo: the review-tooling BDD scenario reads
+# the first eight lines after it and expects the build and test:all there.
 echo "Running validation..."
 bun run lint
 bun run eslint
 bun run knip
-# Build first: dist-bound suites (dist shape, browser compatibility, entry
-# parity) must test the JS being released, not whatever was built last.
+bun audit --audit-level=high
 bun run build
 bun run test:all
 bun run test:e2e

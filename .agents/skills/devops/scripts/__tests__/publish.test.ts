@@ -259,6 +259,7 @@ describe("publish.sh", () => {
     expect(result.stdout).toContain("bun run lint");
     expect(result.stdout).toContain("bun run eslint");
     expect(result.stdout).toContain("bun run knip");
+    expect(result.stdout).toContain("bun audit --audit-level=high");
     expect(result.stdout).toContain("bun run test:all");
     expect(result.stdout).toContain("bun run test:e2e");
     expect(result.stdout).toContain("bun run build");
@@ -360,8 +361,13 @@ describe("publish.sh", () => {
     expect(publishes).toHaveLength(12);
     expect(Math.max(...views)).toBeLessThan(Math.min(...publishes));
     // eslint, knip and test:e2e are otherwise enforced only by CI.
-    for (const gate of ["eslint", "knip", "test:e2e"]) {
-      const index = lines.indexOf(`bun run ${gate}`);
+    for (const gate of [
+      "bun run eslint",
+      "bun run knip",
+      "bun audit --audit-level=high",
+      "bun run test:e2e",
+    ]) {
+      const index = lines.indexOf(gate);
       expect(index, gate).toBeGreaterThanOrEqual(0);
       expect(index, gate).toBeLessThan(Math.min(...publishes));
     }
@@ -374,6 +380,18 @@ describe("publish.sh", () => {
     expect(lines).toContain(
       `gh release create v2.2.3 --repo khalic-lab/schmock --target ${HEAD_SHA} --title v2.2.3 --notes Release v2.2.3 — all 12 @schmock/* packages.`,
     );
+  });
+
+  it("stops before any registry call when the dependency audit fails", () => {
+    const result = run(
+      ["all", "--execute", "--confirm", `all@v2.2.3:${HEAD_SHA}`],
+      { SCHMOCK_TEST_BUN_FAIL: "audit --audit-level=high" },
+    );
+    expect(result.exitCode).not.toBe(0);
+    expect(commands()).toContain("bun audit --audit-level=high");
+    expect(commands()).not.toContain("npm ");
+    expect(commands()).not.toContain("git push");
+    expect(commands()).not.toContain("gh ");
   });
 
   it("aborts before every publish when a later registry query fails", () => {
