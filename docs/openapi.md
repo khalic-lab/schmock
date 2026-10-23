@@ -732,11 +732,11 @@ mock.pipe(await openapi({
 }))
 
 // Missing auth → 401
-const res = await mock.handle('GET', '/protected-resource')
+const unauthenticated = await mock.handle('GET', '/protected-resource')
 // → { status: 401, body: { error: 'Unauthorized', code: 'UNAUTHORIZED' } }
 
 // With auth → success
-const res = await mock.handle('GET', '/protected-resource', {
+const authenticated = await mock.handle('GET', '/protected-resource', {
   headers: { authorization: 'Bearer my-token' },
 })
 ```
@@ -1444,7 +1444,7 @@ it('returns seeded data with valid auth', async () => {
   })
   expect(res.status).toBe(200)
   expect(res.body).toHaveLength(1)
-  expect(res.body[0].name).toBe('Test User')
+  expect(res.body).toMatchObject([{ name: 'Test User' }])
 })
 
 it('validates request bodies', async () => {
@@ -1453,7 +1453,7 @@ it('validates request bodies', async () => {
     headers: { authorization: 'Bearer test-token' },
   })
   expect(res.status).toBe(400)
-  expect(res.body.code).toBe('VALIDATION_ERROR')
+  expect(res.body).toMatchObject({ code: 'VALIDATION_ERROR' })
 })
 ```
 
