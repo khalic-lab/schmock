@@ -528,6 +528,23 @@ describe("parseSpec", () => {
       expect(spec.paths).toHaveLength(1);
       expect(spec.paths[0].path).toBe("/ok");
     });
+
+    it("reports a TRACE operation as unsupported rather than dropping it silently", async () => {
+      const ok = { responses: { "200": { description: "OK" } } };
+      const spec = await parseSpec({
+        openapi: "3.0.3",
+        info: { title: "Traced", version: "1.0.0" },
+        paths: { "/x": { get: ok, trace: ok, query: ok } },
+      });
+
+      expect(spec.paths.map((p) => `${p.method} ${p.path}`)).toEqual([
+        "GET /x",
+      ]);
+      expect(spec.warnings).toEqual([
+        "TRACE /x: TRACE is not supported, skipped",
+        'path /x: "query" is not an HTTP method, skipped',
+      ]);
+    });
   });
 
   describe("CRUD collection splits", () => {

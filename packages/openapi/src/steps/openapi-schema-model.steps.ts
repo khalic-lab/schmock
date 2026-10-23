@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
-import { expect } from "vitest";
+import { expect, type MockInstance, vi } from "vitest";
 import { openapi } from "../plugin";
 
 const feature = await loadFeature(
@@ -115,9 +115,13 @@ const accountSchemas = {
   },
 };
 
-describeFeature(feature, ({ Scenario }) => {
+describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
+
+  AfterEachScenario(() => {
+    vi.restoreAllMocks();
+  });
 
   async function build(options: Schmock.OpenApiOptions): Promise<void> {
     mock = schmock({ state: {} });
@@ -634,6 +638,41 @@ describeFeature(feature, ({ Scenario }) => {
         const read = await mock.handle("GET", `/sources/${createdId}`);
         expect(read.status).toBe(200);
         expect(read.body).toMatchObject({ id: createdId, last4: "4242" });
+      });
+    },
+  );
+
+  Scenario(
+    "A TRACE operation is reported in debug mode instead of dropped silently",
+    ({ Given, When, Then, And }) => {
+      let traced: Record<string, unknown>;
+      let warnSpy: MockInstance<typeof console.warn>;
+
+      Given('a spec whose path "/x" declares GET and TRACE', () => {
+        const ok = { responses: { "200": { description: "OK" } } };
+        traced = specWith({ "/x": { get: ok, trace: ok } });
+      });
+
+      When("I load it in debug mode", async () => {
+        warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        vi.spyOn(console, "log").mockImplementation(() => {});
+        await build({ spec: traced, debug: true });
+      });
+
+      Then(
+        'a warning says the TRACE operation on "/x" is not supported',
+        () => {
+          const messages = warnSpy.mock.calls.map((call) =>
+            call.map(String).join(" "),
+          );
+          expect(messages).toContain(
+            "[@schmock/openapi] TRACE /x: TRACE is not supported, skipped",
+          );
+        },
+      );
+
+      And('GET "/x" still answers 200', async () => {
+        expect((await mock.handle("GET", "/x")).status).toBe(200);
       });
     },
   );

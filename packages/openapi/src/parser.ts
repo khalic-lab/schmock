@@ -116,8 +116,13 @@ const NON_METHOD_PATH_ITEM_KEYS = new Set([
   "description",
   "servers",
   "$ref",
-  "trace",
 ]);
+
+/**
+ * An OAS path-item operation the route grammar has no method for, so it is
+ * skipped, with its own warning rather than "not an HTTP method".
+ */
+const UNSUPPORTED_OPERATION_KEY = "trace";
 
 function isExtensionKey(key: string): boolean {
   return key.startsWith("x-");
@@ -193,6 +198,10 @@ export async function parseSpec(
     );
 
     for (const methodKey of Object.keys(pathItem)) {
+      if (methodKey === UNSUPPORTED_OPERATION_KEY) {
+        warnings.push(`TRACE ${pathTemplate}: TRACE is not supported, skipped`);
+        continue;
+      }
       if (!HTTP_METHOD_KEYS.has(methodKey)) {
         if (
           !NON_METHOD_PATH_ITEM_KEYS.has(methodKey) &&

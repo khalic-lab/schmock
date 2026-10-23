@@ -88,3 +88,11 @@ Feature: OpenAPI schema model fixes
     When I create a source with last4 "4242"
     Then the created source has status 201 and a string id
     And reading the source by that id returns last4 "4242"
+
+  # ── Parse warnings ────────────────────────────────────────────────────────
+
+  Scenario: A TRACE operation is reported in debug mode instead of dropped silently
+    Given a spec whose path "/x" declares GET and TRACE
+    When I load it in debug mode
+    Then a warning says the TRACE operation on "/x" is not supported
+    And GET "/x" still answers 200
