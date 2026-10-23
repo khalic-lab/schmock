@@ -1,5 +1,5 @@
 import { HTTP_METHODS, isHttpMethod } from "./constants.js";
-import { SchmockError } from "./errors.js";
+import { errorMessage, SchmockError, toError } from "./errors.js";
 import { getHeader, hasHeader } from "./headers.js";
 import {
   buildJsonErrorResponse,
@@ -283,7 +283,7 @@ export function collectBody(
           decodeRequestBody(bytes, getHeader(headers, "content-type") ?? ""),
         );
       } catch (error) {
-        rejectOnce(error instanceof Error ? error : new Error(String(error)));
+        rejectOnce(toError(error));
       }
     });
   });
@@ -603,7 +603,10 @@ function defaultErrorReply(error: unknown): HttpErrorReply {
   return {
     status: 500,
     code: "SERVER_ERROR",
-    message: error instanceof Error ? error.message : "Internal Server Error",
+    // errorMessage, not error.message: a custom handler can throw an Error
+    // whose message is not a string, which the JSON envelope would reject.
+    message:
+      error instanceof Error ? errorMessage(error) : "Internal Server Error",
   };
 }
 

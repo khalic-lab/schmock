@@ -7,8 +7,32 @@ function truncateThrownValue(text: string): string {
     : text;
 }
 
+function describeThrownValue(value: unknown): string {
+  if (value === null || value === undefined) return "Unknown error";
+  if (typeof value === "string") return truncateThrownValue(value);
+
+  try {
+    const text =
+      typeof value === "object" ? JSON.stringify(value) : String(value);
+    if (typeof text !== "string" || text.length === 0) return "Unknown error";
+    return truncateThrownValue(text);
+  } catch {
+    return "Unknown error";
+  }
+}
+
+/** An Error's `message` when it is a string; `undefined` otherwise, or when reading it throws. */
+function stringMessageOf(error: Error): string | undefined {
+  try {
+    const message: unknown = error.message;
+    return typeof message === "string" ? message : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Describe a thrown value.
+ * Describe a thrown value. Total: always a string, never a throw.
  *
  * Non-Error throws keep whatever they carry — a bare string, a primitive or the
  * JSON of a plain object — because "Unknown error" is useless while debugging a
@@ -16,21 +40,35 @@ function truncateThrownValue(text: string): string {
  * stringified safely fall back to "Unknown error"; a throwing `toString`, a
  * throwing getter or a circular reference must never turn the error path into a
  * second exception. Long stringifications are truncated so 500 bodies and debug
- * logs stay bounded.
+ * logs stay bounded. An Error whose `message` is not a string (a class that
+ * redeclares the field, a message assigned later) has that message described
+ * the same way.
  */
 export function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (error === null || error === undefined) return "Unknown error";
-  if (typeof error === "string") return truncateThrownValue(error);
-
+  if (!(error instanceof Error)) return describeThrownValue(error);
+  const message = stringMessageOf(error);
+  if (message !== undefined) return message;
   try {
-    const text =
-      typeof error === "object" ? JSON.stringify(error) : String(error);
-    if (typeof text !== "string" || text.length === 0) return "Unknown error";
-    return truncateThrownValue(text);
+    return describeThrownValue(error.message);
   } catch {
     return "Unknown error";
   }
+}
+
+/**
+ * The thrown value as an `Error` whose `message` is a string.
+ *
+ * An Error with a string message is returned as is, so its identity, class and
+ * stack survive. Anything else, a non-Error throw or an Error whose message is
+ * not a string, is wrapped in a new `Error` whose message is
+ * {@link errorMessage}'s description and whose `cause` is the original value,
+ * so an `errorFormatter` can still read what was thrown.
+ */
+export function toError(value: unknown): Error {
+  if (value instanceof Error && stringMessageOf(value) !== undefined) {
+    return value;
+  }
+  return new Error(errorMessage(value), { cause: value });
 }
 
 /**

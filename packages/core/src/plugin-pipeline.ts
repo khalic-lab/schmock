@@ -1,5 +1,5 @@
 import { awaitWithAbort, throwIfAborted } from "./abort.js";
-import { errorMessage, PluginError } from "./errors.js";
+import { errorMessage, PluginError, toError } from "./errors.js";
 
 /** Structural typing — DebugLogger satisfies this without an import */
 interface PipelineLogger {
@@ -66,8 +66,7 @@ async function recoverPluginError(
 ): Promise<
   { handled: true; response: unknown } | { handled: false; error: Error }
 > {
-  let currentError =
-    error instanceof Error ? error : new Error(errorMessage(error));
+  let currentError = toError(error);
 
   for (let index = startIndex; index < plugins.length; index += 1) {
     throwIfAborted(signal);
@@ -90,10 +89,7 @@ async function recoverPluginError(
       }
     } catch (hookError) {
       throwIfAborted(signal);
-      currentError =
-        hookError instanceof Error
-          ? hookError
-          : new Error(errorMessage(hookError));
+      currentError = toError(hookError);
       logger.log(
         "pipeline",
         `Plugin ${plugin.name} error handler failed: ${errorMessage(hookError)}`,

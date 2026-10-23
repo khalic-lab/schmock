@@ -351,6 +351,12 @@ failure there still rejects or goes to `errorFormatter`.
 pre-hook request when the hook threw, and the incoming request without a body
 when the body itself could not be read. One-argument formatters still work.
 
+`error` is always an `Error` with a string `message`. A value that is not one,
+thrown by a route, a plugin or an adapter hook, arrives wrapped the same way
+wherever it was thrown: the message describes it (a string as is, a plain
+object as its JSON) and `error.cause` is the thrown value itself, so a
+formatter can read its fields.
+
 An empty JSON body reaches the route as `undefined`. With `passthrough: false`,
 a JSON body that does not parse gets 400
 `{ error: 'Malformed JSON request body', code: 'MALFORMED_JSON' }` before any
@@ -639,7 +645,11 @@ plain `Error`, not `SchmockError`. See
 `ResponseGenerationError` was removed: a failing generator now surfaces as the
 same structured 500 (`INTERNAL_ERROR`) as any other unhandled exception, and a
 non-`Error` throw keeps its own value in the response body (truncated at 200
-characters) instead of being flattened to `Unknown error`.
+characters) instead of being flattened to `Unknown error`. An `Error` whose
+`message` is not a string (a class that redeclares the field) is described the
+same way, so the 500's `error` field is always a string. `onError` hooks and
+`errorFormatter` receive a non-`Error` throw as an `Error` whose `cause` is the
+thrown value.
 
 ### Constants
 
@@ -1021,7 +1031,17 @@ interface FetchRelay {
   release(): void           // idempotent
   readonly active: boolean  // false once released
 }
+
+toError(value: unknown): Error
 ```
+
+`toError(value)` turns a thrown value into an `Error` the way core does on
+every error path. An `Error` whose `message` is a string comes back as is.
+Anything else, a non-`Error` throw or an `Error` whose `message` is not a
+string, is wrapped in a new `Error` whose `message` describes it (a string as
+is, a plain object as its JSON, truncated at 200 characters, `Unknown error`
+for `null`, `undefined` or a value that cannot be stringified) and whose
+`cause` is the original value. It never throws.
 
 The entry also re-exports the `InterceptOptions`, `InterceptHandle` and
 `CallableMockInstance` types, so it compiles when imported alone.

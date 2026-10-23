@@ -504,6 +504,20 @@ describe("serveNodeRequest", () => {
     expect(bodyCode(response)).toBe("METHOD_NOT_ALLOWED");
   });
 
+  it("answers 500 when a custom handler throws an Error without a string message", async () => {
+    const port = await serve(schmock(), {
+      handle: () => {
+        const error = new Error("ignored");
+        Object.defineProperty(error, "message", { value: 10n });
+        throw error;
+      },
+    });
+    const response = await fetch(`http://127.0.0.1:${port}/x`);
+    expect(response.status).toBe(500);
+    const body: unknown = await response.json();
+    expect(body).toMatchObject({ code: "SERVER_ERROR", error: "10" });
+  });
+
   it("answers a missing or malformed Host header with 400", async () => {
     const port = await serve(schmock());
     const missing = await sendRaw(port, "GET /x HTTP/1.0\r\n\r\n");

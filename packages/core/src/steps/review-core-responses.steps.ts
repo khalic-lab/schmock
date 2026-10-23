@@ -24,6 +24,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let fetched: Response | undefined;
   let handled: Schmock.Response | undefined;
   let thrown: unknown;
+  let endStatuses: number[] = [];
 
   AfterEachScenario(() => {
     intercept?.restore();
@@ -32,6 +33,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     fetched = undefined;
     handled = undefined;
     thrown = undefined;
+    endStatuses = [];
   });
 
   function currentMock(): Schmock.CallableMockInstance {
@@ -119,6 +121,94 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         "I receive status {int} with code {string}",
         (_, status: number, code: string) => {
           expectStatusAndCode(status, code);
+        },
+      );
+    },
+  );
+
+  // ── Error paths ────────────────────────────────────────────────────────
+
+  Scenario(
+    "A route throwing an Error without a string message still answers a JSON 500",
+    ({ Given, And, When, Then }) => {
+      Given(
+        'a mock whose route "GET /broken" throws an Error whose message is undefined',
+        () => {
+          mock = schmock();
+          mock("GET /broken", () => {
+            const error = new Error("replaced");
+            Object.defineProperty(error, "message", { value: undefined });
+            throw error;
+          });
+        },
+      );
+
+      And("a request:end listener", () => {
+        currentMock().on("request:end", (event) => {
+          endStatuses.push(event.status);
+        });
+      });
+
+      When("I request {string}", async (_, request: string) => {
+        await handleRequest(request);
+      });
+
+      Then(
+        "I receive status {int} with code {string}",
+        (_, status: number, code: string) => {
+          expectStatusAndCode(status, code);
+        },
+      );
+
+      And("the response error is the string {string}", (_, message: string) => {
+        const { body } = currentHandled();
+        expect(isRecord(body) ? body.error : undefined).toBe(message);
+      });
+
+      And(
+        "exactly one request:end with status {int} was emitted",
+        (_, status: number) => {
+          expect(endStatuses).toEqual([status]);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "An error formatter can read a non-Error value a route threw",
+    ({ Given, And, When, Then }) => {
+      Given(
+        'a mock whose route "GET /quota" throws a plain object with reason {string}',
+        (_, reason: string) => {
+          mock = schmock();
+          mock("GET /quota", () => {
+            throw { reason };
+          });
+        },
+      );
+
+      And(
+        "an intercept with an error formatter that returns the error's cause",
+        () => {
+          intercept = currentMock().intercept({
+            passthrough: false,
+            errorFormatter: (error) => error.cause,
+          });
+        },
+      );
+
+      When('I fetch "/quota" through that intercept', async () => {
+        fetched = await fetch("http://localhost/quota");
+      });
+
+      Then("the fetched status is {int}", (_, status: number) => {
+        expect(currentResponse().status).toBe(status);
+      });
+
+      And(
+        "the fetched body is the thrown object with reason {string}",
+        async (_, reason: string) => {
+          expect(await currentResponse().json()).toEqual({ reason });
         },
       );
     },

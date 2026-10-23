@@ -9,7 +9,12 @@ import {
 } from "./constants.js";
 import { DebugLogger } from "./debug-logger.js";
 import { applyResponseDelay } from "./delay.js";
-import { errorMessage, RouteNotFoundError, SchmockError } from "./errors.js";
+import {
+  errorMessage,
+  RouteNotFoundError,
+  SchmockError,
+  toError,
+} from "./errors.js";
 import { MockEvents } from "./events.js";
 import type { RequestGeneration } from "./generations.js";
 import { RequestGenerations } from "./generations.js";
@@ -786,8 +791,9 @@ export class CallableMockInstance {
       error,
     );
 
-    const responseError =
-      error instanceof Error ? error : new Error(errorMessage(error));
+    // Always a string message (the envelope's `error`), and a non-Error throw
+    // stays reachable for errorFormatter as the error's `cause`.
+    const responseError = toError(error);
     const errorResponse = markResponseException(
       buildJsonErrorResponse({
         status: 500,

@@ -9,6 +9,7 @@ import {
   SchemaGenerationError,
   SchemaValidationError,
   SchmockError,
+  toError,
 } from "./errors";
 
 describe("errorMessage", () => {
@@ -62,6 +63,65 @@ describe("errorMessage", () => {
     const result = errorMessage(long);
     expect(result.length).toBeLessThanOrEqual(220);
     expect(result.endsWith("…")).toBe(true);
+  });
+
+  it.each([
+    ["undefined", undefined, "Unknown error"],
+    ["bigint", 10n, "10"],
+    ["number", 42, "42"],
+    ["object", { code: 1 }, '{"code":1}'],
+  ] satisfies Array<[string, unknown, string]>)(
+    "describes an Error whose message is a %s the way it describes a thrown one",
+    (_label, message, expected) => {
+      const error = new Error("replaced");
+      Object.defineProperty(error, "message", { value: message });
+
+      expect(errorMessage(error)).toBe(expected);
+    },
+  );
+
+  it("survives an Error whose message getter throws", () => {
+    const error = new Error("replaced");
+    Object.defineProperty(error, "message", {
+      get() {
+        throw new Error("no message");
+      },
+    });
+
+    expect(errorMessage(error)).toBe("Unknown error");
+  });
+});
+
+describe("toError", () => {
+  it("returns an Error with a string message as is", () => {
+    const error = new SchmockError("boom", "E_BOOM");
+    expect(toError(error)).toBe(error);
+  });
+
+  it.each([
+    ["string", "boom", "boom"],
+    ["object", { reason: "quota" }, '{"reason":"quota"}'],
+    ["null", null, "Unknown error"],
+  ] satisfies Array<[string, unknown, string]>)(
+    "wraps a thrown %s, keeping it as the cause",
+    (_label, value, message) => {
+      const error = toError(value);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toBe(message);
+      expect(error.cause).toBe(value);
+    },
+  );
+
+  it("wraps an Error whose message is not a string, keeping it as the cause", () => {
+    const original = new Error("replaced");
+    Object.defineProperty(original, "message", { value: undefined });
+
+    const error = toError(original);
+
+    expect(error).not.toBe(original);
+    expect(error.message).toBe("Unknown error");
+    expect(error.cause).toBe(original);
   });
 });
 

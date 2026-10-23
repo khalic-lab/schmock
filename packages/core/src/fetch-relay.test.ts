@@ -406,6 +406,7 @@ describe("fetch relay hold and router", () => {
       "awaitWithAbort",
       "createFetchInterceptor",
       "routeRelayedRequest",
+      "toError",
     ]);
     expect(adapter.acquireFetchRelay).toBe(interceptor.acquireFetchRelay);
     expect(adapter.routeRelayedRequest).toBe(interceptor.routeRelayedRequest);

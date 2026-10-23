@@ -16,6 +16,23 @@ Feature: Core response and error-path review fixes
     When I request "GET /note"
     Then I receive status 500 with code "INVALID_RESPONSE"
 
+  # ── Error paths ──────────────────────────────────────────────────────────
+
+  Scenario: A route throwing an Error without a string message still answers a JSON 500
+    Given a mock whose route "GET /broken" throws an Error whose message is undefined
+    And a request:end listener
+    When I request "GET /broken"
+    Then I receive status 500 with code "INTERNAL_ERROR"
+    And the response error is the string "Unknown error"
+    And exactly one request:end with status 500 was emitted
+
+  Scenario: An error formatter can read a non-Error value a route threw
+    Given a mock whose route "GET /quota" throws a plain object with reason "quota exceeded"
+    And an intercept with an error formatter that returns the error's cause
+    When I fetch "/quota" through that intercept
+    Then the fetched status is 500
+    And the fetched body is the thrown object with reason "quota exceeded"
+
   Scenario: Static JSON data every request would reject fails when the route is defined
     Given an empty mock
     When I define "GET /profile" with static data holding a Map

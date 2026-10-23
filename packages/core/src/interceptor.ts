@@ -9,6 +9,7 @@ import {
   matchPathPrefix,
   parsePathPrefix,
 } from "./constants.js";
+import { toError } from "./errors.js";
 import {
   buildFormattedErrorResponse,
   buildJsonErrorResponse,
@@ -948,8 +949,8 @@ export function createFetchLease(
           // A formatter that throws here propagates and rejects the fetch; a
           // body it returns that cannot be serialized falls back to the same
           // INTERNAL_ERROR body the core-marked path uses.
-          const failure =
-            error instanceof Error ? error : new Error(String(error));
+          // Described as a route's throw is, with the thrown value as cause.
+          const failure = toError(error);
           // No request was built when the body itself could not be read.
           const formatted = errorFormatter(
             failure,
