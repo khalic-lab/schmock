@@ -82,3 +82,9 @@ Feature: OpenAPI schema model fixes
     When I read pet 999
     Then the read response has status 404
     And the error body has a numeric "code" and a string "message"
+
+  Scenario: A polymorphic item schema whose variants declare a string id mints string ids
+    Given a response-validating sources mock whose item is an anyOf of two variants with a string id
+    When I create a source with last4 "4242"
+    Then the created source has status 201 and a string id
+    And reading the source by that id returns last4 "4242"

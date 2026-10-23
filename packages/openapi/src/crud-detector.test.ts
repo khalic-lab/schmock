@@ -529,4 +529,136 @@ describe("identifier resolution", () => {
     expect(resource.idProperty).toBe("id");
     expect(resource.idKind).toBe("uuid");
   });
+
+  describe("polymorphic item schemas", () => {
+    const variant = (id: Record<string, unknown>, extra: string) => ({
+      type: "object",
+      properties: { id, [extra]: { type: "string" } },
+    });
+
+    it("reads a string id every anyOf branch declares", () => {
+      const resource = detectOne("/sources", "sourceId", {
+        anyOf: [
+          variant({ type: "string" }, "last4"),
+          variant({ type: "string" }, "brand"),
+        ],
+      });
+
+      expect(resource.idProperty).toBe("id");
+      expect(resource.idKind).toBe("string");
+    });
+
+    it("reads a uuid id every oneOf branch declares, behind a nullable wrapper", () => {
+      const resource = detectOne("/pets", "petId", {
+        anyOf: [
+          { type: "null" },
+          {
+            oneOf: [
+              variant({ type: "string", format: "uuid" }, "meow"),
+              variant({ type: "string", format: "uuid" }, "bark"),
+            ],
+          },
+        ],
+      });
+
+      expect(resource.idParam).toBe("petId");
+      expect(resource.idProperty).toBe("id");
+      expect(resource.idKind).toBe("uuid");
+    });
+
+    it("settles for the string kind when only some branches say uuid", () => {
+      const resource = detectOne("/sources", "sourceId", {
+        oneOf: [
+          variant({ type: "string", format: "uuid" }, "last4"),
+          variant({ type: "string" }, "brand"),
+        ],
+      });
+
+      expect(resource.idKind).toBe("string");
+    });
+
+    it("mints integers when any branch declares a non-string id", () => {
+      const resource = detectOne("/sources", "sourceId", {
+        oneOf: [
+          variant({ type: "string" }, "last4"),
+          variant({ type: "integer" }, "brand"),
+        ],
+      });
+
+      expect(resource.idProperty).toBe("id");
+      expect(resource.idKind).toBe("integer");
+    });
+
+    it("keeps the path parameter when a branch declares it", () => {
+      const resource = detectOne("/sources", "sourceId", {
+        oneOf: [
+          variant({ type: "string" }, "sourceId"),
+          variant({ type: "string" }, "brand"),
+        ],
+      });
+
+      expect(resource.idProperty).toBe("sourceId");
+      expect(resource.idKind).toBe("string");
+    });
+  });
+
+  it("stores a polymorphic create under a minted string id", async () => {
+    const json = (schema: object) => ({ "application/json": { schema } });
+    const source = {
+      anyOf: [
+        {
+          type: "object",
+          properties: { id: { type: "string" }, last4: { type: "string" } },
+        },
+        {
+          type: "object",
+          properties: { id: { type: "string" }, brand: { type: "string" } },
+        },
+      ],
+    };
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: {
+          openapi: "3.0.3",
+          info: { title: "Sources", version: "1.0.0" },
+          paths: {
+            "/sources": {
+              post: {
+                requestBody: { content: json(source) },
+                responses: {
+                  "201": { description: "ok", content: json(source) },
+                },
+              },
+            },
+            "/sources/{sourceId}": {
+              parameters: [
+                {
+                  name: "sourceId",
+                  in: "path",
+                  required: true,
+                  schema: { type: "string" },
+                },
+              ],
+              get: {
+                responses: {
+                  "200": { description: "ok", content: json(source) },
+                },
+              },
+            },
+          },
+        },
+        validateResponses: true,
+      }),
+    );
+
+    const created = await mock.handle("POST", "/sources", {
+      body: { last4: "4242" },
+    });
+    expect(created.status).toBe(201);
+    const id = (created.body as Record<string, unknown>).id;
+    expect(typeof id).toBe("string");
+    const read = await mock.handle("GET", `/sources/${id}`);
+    expect(read.body).toMatchObject({ id, last4: "4242" });
+  });
 });

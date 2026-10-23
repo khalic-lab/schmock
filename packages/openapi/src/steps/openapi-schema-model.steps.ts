@@ -573,4 +573,68 @@ describeFeature(feature, ({ Scenario }) => {
       });
     },
   );
+
+  Scenario(
+    "A polymorphic item schema whose variants declare a string id mints string ids",
+    ({ Given, When, Then, And }) => {
+      let createdId: unknown;
+
+      Given(
+        "a response-validating sources mock whose item is an anyOf of two variants with a string id",
+        async () => {
+          const variant = (extra: string) => ({
+            type: "object",
+            properties: { id: { type: "string" }, [extra]: { type: "string" } },
+          });
+          const source = { anyOf: [variant("last4"), variant("brand")] };
+          await build({
+            spec: specWith({
+              "/sources": {
+                post: {
+                  requestBody: { content: json(source) },
+                  responses: {
+                    "201": { description: "Created", content: json(source) },
+                  },
+                },
+              },
+              "/sources/{sourceId}": {
+                parameters: [
+                  {
+                    name: "sourceId",
+                    in: "path",
+                    required: true,
+                    schema: { type: "string" },
+                  },
+                ],
+                get: {
+                  responses: {
+                    "200": { description: "OK", content: json(source) },
+                  },
+                },
+              },
+            }),
+            validateResponses: true,
+          });
+        },
+      );
+
+      When('I create a source with last4 "4242"', async () => {
+        response = await mock.handle("POST", "/sources", {
+          body: { last4: "4242" },
+        });
+      });
+
+      Then("the created source has status 201 and a string id", () => {
+        expect(response.status).toBe(201);
+        createdId = isRecord(response.body) ? response.body.id : undefined;
+        expect(typeof createdId).toBe("string");
+      });
+
+      And('reading the source by that id returns last4 "4242"', async () => {
+        const read = await mock.handle("GET", `/sources/${createdId}`);
+        expect(read.status).toBe(200);
+        expect(read.body).toMatchObject({ id: createdId, last4: "4242" });
+      });
+    },
+  );
 });

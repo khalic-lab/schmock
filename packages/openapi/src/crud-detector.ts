@@ -345,19 +345,53 @@ function resolveIdentifier(
   schema: JSONSchema7 | undefined,
   idParam: string,
 ): { idProperty: string; idKind: IdKind } {
-  const props = collectSchemaProperties(schema);
-  const idProperty =
-    idParam in props ? idParam : "id" in props ? "id" : idParam;
-  const declared = props[idProperty];
-  const type = Array.isArray(declared?.type)
-    ? declared.type.find((t) => t !== "null")
-    : declared?.type;
+  const declares = (name: string) => declarationsOf(schema, name).length > 0;
+  const idProperty = declares(idParam)
+    ? idParam
+    : declares("id")
+      ? "id"
+      : idParam;
 
-  if (type !== "string") return { idProperty, idKind: "integer" };
+  // A union item schema (Stripe's `anyOf: [bank_account, card]`) mints
+  // strings only when every branch declaring the id says string.
+  const declared = declarationsOf(schema, idProperty);
+  const types = declared.map((d) =>
+    Array.isArray(d.type) ? d.type.find((t) => t !== "null") : d.type,
+  );
+  if (declared.length === 0 || types.some((type) => type !== "string")) {
+    return { idProperty, idKind: "integer" };
+  }
   return {
     idProperty,
-    idKind: declared?.format === "uuid" ? "uuid" : "string",
+    idKind: declared.every((d) => d.format === "uuid") ? "uuid" : "string",
   };
+}
+
+/**
+ * Every declaration of property `name` an item can carry: the schema's own
+ * (through `allOf`, as {@link collectSchemaProperties} flattens it), or else
+ * one per `oneOf`/`anyOf` branch that declares it. The nullable wrapper is an
+ * `anyOf` too, so it is looked through the same way.
+ */
+function declarationsOf(
+  schema: JSONSchema7 | undefined,
+  name: string,
+  seen: Set<object> = new Set(),
+): JSONSchema7[] {
+  if (!schema || seen.has(schema)) return [];
+  seen.add(schema);
+  const own = collectSchemaProperties(schema)[name];
+  if (own) return [own];
+
+  const found: JSONSchema7[] = [];
+  for (const keyword of ["allOf", "oneOf", "anyOf"] as const) {
+    for (const branch of schema[keyword] ?? []) {
+      if (typeof branch === "object") {
+        found.push(...declarationsOf(branch, name, seen));
+      }
+    }
+  }
+  return found;
 }
 
 function buildOperationMeta(
