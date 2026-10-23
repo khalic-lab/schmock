@@ -416,6 +416,32 @@ const CASES: Record<string, FidelityCase> = {
     schema: { type: "integer", minimum: 0, maximum: 10, multipleOf: 0.5 },
     fits: (value) => expect(Number.isInteger(value)).toBe(true),
   },
+  "unique-nullable-integers": {
+    schema: {
+      type: "array",
+      items: { type: ["integer", "null"] },
+      uniqueItems: true,
+      minItems: 20,
+      maxItems: 20,
+    },
+    fits: (value) => {
+      const nulls = list(value).filter((item) => item === null);
+      expect(nulls.length).toBeLessThanOrEqual(1);
+    },
+  },
+  "unique-nullable-any-of": {
+    schema: {
+      type: "array",
+      items: { anyOf: [{ type: "integer" }, { type: "null" }] },
+      uniqueItems: true,
+      minItems: 20,
+      maxItems: 20,
+    },
+    fits: (value) => {
+      const nulls = list(value).filter((item) => item === null);
+      expect(nulls.length).toBeLessThanOrEqual(1);
+    },
+  },
   "inclusive-maximum-tighter-than-exclusive": {
     schema: { type: "number", minimum: 0, maximum: 5, exclusiveMaximum: 100 },
     fits: (value) => {
@@ -444,6 +470,7 @@ const OUTLINES = [
   "A duration string is a valid ISO 8601 duration",
   "An explicit faker date is the UTC calendar date on every machine",
   "A decimal multipleOf yields exact multiples without float noise",
+  "A uniqueItems array never receives two rolled nulls",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {

@@ -1399,7 +1399,8 @@ Both extensions apply wherever the value is generated. Boolean weighting, from
 inside `allOf`/`anyOf`/`oneOf` branches, `$ref` targets and
 `additionalProperties` values. The null roll also applies through `$ref`,
 `allOf`, `additionalProperties`/`patternProperties`, and the single
-`anyOf`/`oneOf` branch a value matches.
+`anyOf`/`oneOf` branch a value matches. A `uniqueItems` array gets at most one
+null.
 
 `faker`, `schmockNullable` and `schmockTrueProbability` are Schmock's own
 keywords and are not part of `JSONSchema7`. `fakerPlugin` and

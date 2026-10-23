@@ -48,10 +48,16 @@ interface Applicable {
 /** How deep `couldMatch` looks into a candidate branch before giving up. */
 const MATCH_DEPTH = 4;
 
+/**
+ * `rollAllowed` is false for an item of a `uniqueItems` array that already
+ * holds a null elsewhere: json-schema-faker made the items unique before the
+ * roll, and a second null would duplicate the first.
+ */
 function visit(
   data: unknown,
   schemas: JSONSchema7[],
   context: WalkContext,
+  rollAllowed = true,
 ): unknown {
   if (data === null || data === undefined) return data;
 
@@ -62,7 +68,7 @@ function visit(
   }
   if (found.length === 0) return data;
 
-  if (acceptsRolledNull(found)) {
+  if (rollAllowed && acceptsRolledNull(found)) {
     if (context.random() < NULLABLE_NULL_PROBABILITY) return null;
   }
 
@@ -77,12 +83,16 @@ function visit(
       }
     }
   } else if (Array.isArray(data)) {
+    const unique = applicable.some((schema) => schema.uniqueItems === true);
+    // A null item is never visited, so it never rolls a second null itself.
+    let holdsNull = unique && data.includes(null);
     for (let index = 0; index < data.length; index++) {
       const children = applicable.flatMap((schema) =>
         itemSchemas(schema, index),
       );
       if (children.length > 0) {
-        data[index] = visit(data[index], children, context);
+        data[index] = visit(data[index], children, context, !holdsNull);
+        holdsNull ||= unique && data[index] === null;
       }
     }
   }

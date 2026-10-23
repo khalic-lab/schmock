@@ -217,3 +217,54 @@ describe("applyNullableRolls — patternProperties keys", () => {
     expect(escaped).toEqual(plain);
   });
 });
+
+describe("applyNullableRolls — uniqueItems (faker-9)", () => {
+  /** Arrays generated from `schema` over `seeds` seeds. */
+  async function arraysFrom(
+    schema: JSONSchema7,
+    seeds: number,
+  ): Promise<unknown[][]> {
+    const arrays: unknown[][] = [];
+    for (let seed = 1; seed <= seeds; seed += 1) {
+      const value = await generateFromSchema({ schema, seed });
+      if (!Array.isArray(value)) throw new Error("Expected an array");
+      arrays.push(value);
+    }
+    return arrays;
+  }
+
+  const nullCount = (items: unknown[]) =>
+    items.filter((item) => item === null).length;
+
+  it.each([
+    ["a type union", { type: ["integer", "null"] }],
+    ["an anyOf union", { anyOf: [{ type: "integer" }, { type: "null" }] }],
+    ["a uuid union", { type: ["string", "null"], format: "uuid" }],
+  ] satisfies [string, JSONSchema7][])(
+    "rolls at most one null into a uniqueItems array of %s",
+    async (_, items) => {
+      const arrays = await arraysFrom(
+        { type: "array", items, uniqueItems: true, minItems: 20, maxItems: 20 },
+        100,
+      );
+      for (const array of arrays) {
+        expect(nullCount(array)).toBeLessThanOrEqual(1);
+      }
+      // Nulls are still rolled, just never twice in one array.
+      expect(arrays.some((array) => nullCount(array) === 1)).toBe(true);
+    },
+  );
+
+  it("still rolls several nulls into an array that allows duplicates", async () => {
+    const arrays = await arraysFrom(
+      {
+        type: "array",
+        items: { type: ["integer", "null"] },
+        minItems: 20,
+        maxItems: 20,
+      },
+      100,
+    );
+    expect(arrays.some((array) => nullCount(array) > 1)).toBe(true);
+  });
+});

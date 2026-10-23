@@ -138,3 +138,14 @@ Feature: Faker output honours every keyword of its schema
       | decimal-step-tenths    |
       | decimal-step-cents     |
       | integer-with-half-step |
+
+  # Review 2026-10-23 faker-9: the null roll ran after json-schema-faker made items unique
+  Scenario Outline: A uniqueItems array never receives two rolled nulls
+    Given the fidelity schema "<case>"
+    When I generate it with 100 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                     |
+      | unique-nullable-integers |
+      | unique-nullable-any-of   |
