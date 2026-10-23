@@ -2,6 +2,7 @@ import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import type { JSONSchema7 } from "json-schema";
 import { expect } from "vitest";
 import { generateFromSchema } from "../index";
+import { createFakerInstance, DETERMINISTIC_REF_DATE } from "../jsf-config";
 
 const feature = await loadFeature(
   "../../features/review-faker-fidelity.feature",
@@ -34,7 +35,8 @@ function numeric(value: unknown): number {
 /** A schema, and what every value generated from it must satisfy. */
 interface FidelityCase {
   schema: JSONSchema7;
-  fits: (value: unknown) => void;
+  /** Checks one value; `seed` is the seed it was generated with. */
+  fits: (value: unknown, seed: number) => void;
 }
 
 const STATUS: JSONSchema7 = {
@@ -383,6 +385,17 @@ const CASES: Record<string, FidelityCase> = {
     },
     fits: (value) => expect(text(record(value).ttl)).toMatch(ISO_DURATION),
   },
+  "explicit-faker-date": {
+    schema: withKeys(
+      { type: "string", format: "date" },
+      { faker: "date.past" },
+    ),
+    fits: (value, seed) => {
+      // Generation is seeded, so faker's first call returns the same instant.
+      const faker = createFakerInstance(seed, DETERMINISTIC_REF_DATE);
+      expect(value).toBe(faker.date.past().toISOString().slice(0, 10));
+    },
+  },
   "inclusive-maximum-tighter-than-exclusive": {
     schema: { type: "number", minimum: 0, maximum: 5, exclusiveMaximum: 100 },
     fits: (value) => {
@@ -409,6 +422,7 @@ const OUTLINES = [
   "Composition beside allOf is generated with it",
   "A byte string with length bounds is valid padded base64 within them",
   "A duration string is a valid ISO 8601 duration",
+  "An explicit faker date is the UTC calendar date on every machine",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {
@@ -432,7 +446,10 @@ describeFeature(feature, ({ ScenarioOutline }) => {
         await generateWithSeeds(seeds);
       });
       Then("every generated value fits {string}", () => {
-        for (const value of results) fidelityCase(variables.case).fits(value);
+        const { fits } = fidelityCase(variables.case);
+        results.forEach((value, index) => {
+          fits(value, index + 1);
+        });
       });
     });
   }

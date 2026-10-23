@@ -1437,6 +1437,8 @@ register them the same way:
   under `validateResponses`. With `minLength`/`maxLength` they are whole
   four-character blocks inside the bounds, when the bounds hold one.
 - `format: 'duration'` strings are ISO 8601 durations that pass `ajv-formats`.
+- An explicit `faker` under `format: 'date'` yields the UTC calendar date of
+  faker's value, so seeded output does not depend on the machine time zone.
 - `patternProperties` generate at least one key matching a pattern, and enough
   keys to reach `minProperties` without passing `maxProperties`.
 - A lone `minimum`/`exclusiveMinimum` of 1000 or more, or a lone

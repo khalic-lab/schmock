@@ -498,8 +498,85 @@ export function normalizeSchemaForJsf(
   for (const copy of copies) dropMergedPropertyFakers(copy, resolve, replaced);
   for (const copy of [...copies, ...replaced]) {
     carryCompositionThroughAllOf(copy);
+    // After the merge pass, which may drop this `faker` and must then leave
+    // the `format` in place.
+    pinFakerDateToUtc(copy);
   }
   return normalized;
+}
+
+/**
+ * For a node with `faker` and `format: "date"`, json-schema-faker turns
+ * faker's value into a date with local-time getters, so one seed gave a
+ * different calendar date on machines in different time zones. Route the
+ * call through `schmock.utcDate` (see `fakerExtension`) instead, which
+ * returns the UTC calendar date, and drop the format JSF would reapply.
+ */
+function pinFakerDateToUtc(copy: JsfObjectSchema): void {
+  if (copy.faker === undefined || copy.format !== "date") return;
+  copy.faker = { [UTC_DATE_METHOD]: [copy.faker] };
+  delete copy.format;
+}
+
+/** The `schmock.utcDate` helper's path on the faker extension. */
+const UTC_DATE_METHOD = "schmock.utcDate";
+
+/**
+ * Call a `faker` keyword's method on `faker`, read the way json-schema-faker
+ * reads it: a dotted method path, or an object whose first key is the path
+ * and whose value lists the arguments.
+ */
+function callFakerMethod(faker: Faker, spec: unknown): unknown {
+  const [path, args] =
+    typeof spec === "string"
+      ? [spec, []]
+      : isJsfObject(spec)
+        ? (Object.entries(spec)[0] ?? ["", []])
+        : ["", []];
+  let method: unknown = faker;
+  for (const part of path.split("."))
+    method = Reflect.get(Object(method), part);
+  if (typeof method !== "function") {
+    throw new Error(`cannot resolve faker method ${path}`);
+  }
+  return method(...(Array.isArray(args) ? args : []));
+}
+
+/** The UTC calendar date of a faker value, or the value as text. */
+function utcCalendarDate(value: unknown): string {
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * The UTC calendar date of the faker call `spec`. When the call throws (a
+ * method that needs arguments the schema does not give), json-schema-faker
+ * would fall back to its default generation, which no longer sees the
+ * `format` `pinFakerDateToUtc` dropped. Fall back to a date from the same
+ * seeded instance instead, as the `format: date` fallback did.
+ */
+function utcDateOf(faker: Faker, spec: unknown): string {
+  let value: unknown;
+  try {
+    value = callFakerMethod(faker, spec);
+  } catch {
+    value = faker.date.anytime();
+  }
+  return utcCalendarDate(value);
+}
+
+/**
+ * The `faker` extension handed to json-schema-faker: the per-call Faker
+ * instance, with Schmock's own helpers under `schmock`. Only the JSF copy
+ * names them; `validateFakerMethod` resolves a schema's methods on a plain
+ * instance, so a schema cannot.
+ */
+function fakerExtension(faker: Faker): Faker {
+  const helpers = {
+    utcDate: (spec: unknown) => utcDateOf(faker, spec),
+  };
+  return Object.create(faker, { schmock: { value: helpers } });
 }
 
 function isJsfObject(value: unknown): value is JsfObjectSchema {
@@ -1058,7 +1135,7 @@ export async function generateWithJsf(
     // format registry is module-global, so a consumer's own registration
     // would otherwise change Schmock's generation.
     formats: { ...SCHMOCK_FORMATS },
-    extensions: { faker: createFakerInstance(seed, refDate) },
+    extensions: { faker: fakerExtension(createFakerInstance(seed, refDate)) },
   };
 
   // Cloned on the way out so nothing generated stays aliased to the schema, to

@@ -116,3 +116,13 @@ Feature: Faker output honours every keyword of its schema
     Examples:
       | case              |
       | duration-property |
+
+  # Review 2026-10-23 faker-16: json-schema-faker formatted the date with local-time getters
+  Scenario Outline: An explicit faker date is the UTC calendar date on every machine
+    Given the fidelity schema "<case>"
+    When I generate it with 50 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                |
+      | explicit-faker-date |

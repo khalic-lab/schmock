@@ -3,7 +3,11 @@ import { registerFormat } from "json-schema-faker";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_NESTING_DEPTH } from "./constants.js";
 import { generateFromSchema } from "./index.js";
-import { normalizeSchemaForJsf } from "./jsf-config.js";
+import {
+  createFakerInstance,
+  DETERMINISTIC_REF_DATE,
+  normalizeSchemaForJsf,
+} from "./jsf-config.js";
 
 const tuple: JSONSchema7 = {
   type: "array",
@@ -793,6 +797,64 @@ describe("byte strings with length bounds (faker-14)", () => {
       { type: "string", format: "byte", maxLength: 8, pattern: "^QQ==$" },
     ] satisfies JSONSchema7[]) {
       expect(normalizeSchemaForJsf(schema)).toEqual(schema);
+    }
+  });
+});
+
+describe("an explicit faker under format date (faker-16)", () => {
+  const schema = withKeys(
+    { type: "string", format: "date" },
+    { faker: "date.past" },
+  );
+
+  /** Seeded dates generated while the process runs in time zone `zone`. */
+  async function datesIn(zone: string): Promise<unknown[]> {
+    const previous = process.env.TZ;
+    process.env.TZ = zone;
+    try {
+      return await generateSeeds(schema, 50);
+    } finally {
+      if (previous === undefined) delete process.env.TZ;
+      else process.env.TZ = previous;
+    }
+  }
+
+  it("generates the same calendar date in every time zone", async () => {
+    const utc = await datesIn("UTC");
+    expect(await datesIn("Pacific/Kiritimati")).toEqual(utc);
+    expect(await datesIn("America/Los_Angeles")).toEqual(utc);
+  });
+
+  it("generates the UTC calendar date of the faker value", async () => {
+    const dates = await datesIn("Pacific/Kiritimati");
+    dates.forEach((date, index) => {
+      const faker = createFakerInstance(index + 1, DETERMINISTIC_REF_DATE);
+      expect(date).toBe(faker.date.past().toISOString().slice(0, 10));
+    });
+  });
+
+  it("keeps a non-date faker value as it is", async () => {
+    const word = withKeys(
+      { type: "string", format: "date" },
+      { faker: "lorem.word" },
+    );
+    const value = await generateFromSchema({ schema: word, seed: 3 });
+    const faker = createFakerInstance(3, DETERMINISTIC_REF_DATE);
+    expect(value).toBe(faker.lorem.word());
+  });
+
+  it("falls back to a valid date when the faker method throws", async () => {
+    // `date.between` throws without its `from`/`to` arguments.
+    const throwing = withKeys(
+      { type: "string", format: "date" },
+      { faker: "date.between" },
+    );
+    for (const value of await generateSeeds(throwing)) {
+      if (typeof value !== "string") throw new Error("Expected a string");
+      expect(value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10)).toBe(
+        value,
+      );
     }
   });
 });
