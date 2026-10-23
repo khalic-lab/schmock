@@ -1,3 +1,4 @@
+import { SchemaGenerationError } from "@schmock/core";
 import { describe, expect, it } from "vitest";
 import { version as packageVersion } from "../package.json";
 import { fakerPlugin } from "./index";
@@ -309,6 +310,43 @@ describe("Schema Plugin Integration", () => {
         expect(error).toBeDefined();
         expect(error.name).toContain("Error");
       }
+    });
+
+    it("describes a thrown non-Error the way core does and keeps it as the cause", async () => {
+      const thrown = { code: "STATE_UNAVAILABLE" };
+      const plugin = fakerPlugin({
+        schema: schemas.simple.object({ owner: { type: "string" } }),
+        overrides: { owner: "{{state.user.name}}" },
+      });
+      const routeState = {
+        get user(): never {
+          throw thrown;
+        },
+      };
+
+      const failure = await plugin
+        .process({
+          method: "GET",
+          path: "/api/owner",
+          params: {},
+          query: {},
+          state: new Map(),
+          routeState,
+          headers: {},
+          body: null,
+          route: {},
+        })
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+
+      expect(failure).toBeInstanceOf(SchemaGenerationError);
+      if (!(failure instanceof SchemaGenerationError)) return;
+      expect(failure.message).toContain('{"code":"STATE_UNAVAILABLE"}');
+      expect(failure.context).toMatchObject({
+        originalError: { cause: thrown },
+      });
     });
 
     it("handles null or undefined context properties", async () => {

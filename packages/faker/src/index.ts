@@ -4,6 +4,7 @@ import {
   SchemaGenerationError,
   SchemaValidationError,
 } from "@schmock/core";
+import { toError } from "@schmock/core/adapter";
 import type { JSONSchema7 } from "json-schema";
 import { version as packageVersion } from "../package.json";
 import {
@@ -125,12 +126,8 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
           throw error;
         }
 
-        // Wrap other errors
-        throw new SchemaGenerationError(
-          context.path,
-          error instanceof Error ? error : new Error(String(error)),
-          schema,
-        );
+        // Wrap other errors, describing a non-Error throw the way core does
+        throw new SchemaGenerationError(context.path, toError(error), schema);
       }
     },
   };
