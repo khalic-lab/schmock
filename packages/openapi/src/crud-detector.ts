@@ -391,12 +391,13 @@ const ITEM_ENVELOPE_KEYS = new Set([
  *
  * The slot is found by the rule create finds it by (`findResourceWrapper`):
  * the response declares neither the path parameter nor `id` at its top
- * level, and exactly one of its properties declares one of them. That rule
- * alone also fits an item with a nested object, `User { userId, team: { id }
- * }` on `/users/{id}`, so the slot must be corroborated: it is the list GET's
- * item schema (by identity or by its top-level property names), or its name
- * is a conventional envelope key. An item GET that answers the list's item
- * itself is never an envelope. Anything else is returned as declared.
+ * level, and one of its properties declares one of them. That rule alone
+ * also fits an item with a nested object, `User { userId, team: { id } }` on
+ * `/users/{id}`, so only corroborated properties count: the list GET's item
+ * schema (by identity or by its top-level property names), or a conventional
+ * envelope key. Exactly one property must be both, so `{ data: Pet, meta: {
+ * id } }` unwraps `data`. An item GET that answers the list's item itself is
+ * never an envelope. Anything else is returned as declared.
  */
 function unwrapItemEnvelope(
   readSchema: JSONSchema7,
@@ -411,18 +412,21 @@ function unwrapItemEnvelope(
   if (declaresId(readSchema)) return readSchema;
   if (listItemSchema && sameItem(readSchema, listItemSchema)) return readSchema;
 
+  const corroborated = (key: string, slot: JSONSchema7) =>
+    (listItemSchema !== undefined && sameItem(slot, listItemSchema)) ||
+    ITEM_ENVELOPE_KEYS.has(key);
   const slots = new Map<string, JSONSchema7>();
+  const seen = new Set<string>();
   for (const [key, declared] of propertyDeclarations(
     unwrapNullable(readSchema),
   )) {
-    if (!slots.has(key) && declaresId(declared)) slots.set(key, declared);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (declaresId(declared) && corroborated(key, declared)) {
+      slots.set(key, declared);
+    }
   }
-  if (slots.size !== 1) return readSchema;
-  const [[key, slot]] = slots;
-  const corroborated =
-    (listItemSchema !== undefined && sameItem(slot, listItemSchema)) ||
-    ITEM_ENVELOPE_KEYS.has(key);
-  return corroborated ? slot : readSchema;
+  return slots.size === 1 ? [...slots.values()][0] : readSchema;
 }
 
 /**

@@ -443,17 +443,17 @@ resource schema comes from whichever of the list `GET` and the item `GET` is
 declared first. When it comes from the item `GET` (declared first, or with no
 list `GET` at all) and that response is an envelope, the resource is what the
 envelope wraps: the response declares neither the path parameter nor `id` at
-its top level, exactly one of its properties declares one of them, and that
-property either is the list's item (the same schema, or the same top-level
+its top level, and exactly one of its properties both declares one of them
+and either is the list's item (the same schema, or the same top-level
 property names) or has a conventional envelope name (`data`, `item`,
 `result`, `resource`, `record`, `entity` or `payload`). So
-`GET /pets/{petId}` answering `{ data: Pet }` stores a `Pet`, while the
-`User` above stays the resource in either order. When the operation declares no response schema
-(or a non-object one), create falls back to echoing the request body and
-stamping the id. An object contract may omit `type`: `properties` or `allOf`
-alone, a polymorphic `oneOf`/`anyOf` whose branches are all objects (Stripe's
-`anyOf: [bank_account, card]`), and a `nullable: true` object all count, so
-their created bodies are generated too.
+`GET /pets/{petId}` answering `{ data: Pet }` or `{ data: Pet, meta: { id } }`
+stores a `Pet`, while the `User` above stays the resource in either order.
+When the operation declares no response schema (or a non-object one), create
+falls back to echoing the request body and stamping the id. An object contract
+may omit `type`: `properties` or `allOf` alone, a polymorphic `oneOf`/`anyOf`
+whose branches are all objects (Stripe's `anyOf: [bank_account, card]`), and a
+`nullable: true` object all count, so their created bodies are generated too.
 
 A `DELETE` usually answers with the deleted row. When its response declares a
 confirmation object that the row does not satisfy, such as Stripe's

@@ -725,6 +725,19 @@ describe("item envelopes on the item GET", () => {
     required: [key],
     properties: { [key]: item },
   });
+  // `meta` declares an `id` too, but only `data` is corroborated.
+  const withMeta = {
+    type: "object",
+    required: ["data", "meta"],
+    properties: {
+      data: pet,
+      meta: {
+        type: "object",
+        required: ["id"],
+        properties: { id: { type: "string" } },
+      },
+    },
+  };
   const pets = (item: Record<string, unknown>) =>
     makePath("GET", "/pets", {
       type: "object",
@@ -775,6 +788,41 @@ describe("item envelopes on the item GET", () => {
 
       expect(resource.schema).toBe(owned);
       expect(resource.idProperty).toBe("petId");
+    });
+
+    for (const [ordering, paths] of [
+      [
+        "the item path first",
+        [
+          makePath("GET", "/pets/:petId", withMeta),
+          pets(pet),
+          makePath("POST", "/pets"),
+        ],
+      ],
+      [
+        "no list GET",
+        [makePath("POST", "/pets"), makePath("GET", "/pets/:petId", withMeta)],
+      ],
+    ] satisfies Array<[string, ParsedPath[]]>) {
+      it(`takes the one corroborated slot beside another id-declaring one (${ordering})`, () => {
+        const resource = detect(paths);
+
+        expect(resource.schema).toBe(pet);
+        expect(resource.idProperty).toBe("id");
+      });
+    }
+
+    it("keeps an envelope whose two slots are both corroborated", () => {
+      const twice = {
+        type: "object",
+        properties: { data: pet, item: pet },
+      };
+      const resource = detect([
+        makePath("POST", "/pets"),
+        makePath("GET", "/pets/:petId", twice),
+      ]);
+
+      expect(resource.schema).toBe(twice);
     });
 
     for (const [ordering, paths] of [
@@ -883,6 +931,50 @@ describe("item envelopes on the item GET", () => {
           const deleted = await mock.handle("DELETE", "/pets/1");
           expect(deleted.body).toEqual({ data: { id: 1, name: "max" } });
           expect((await mock.handle("GET", "/pets/1")).status).toBe(404);
+        });
+      }
+    }
+
+    const metaItemPath = {
+      parameters: petId,
+      get: {
+        responses: { ...ok(withMeta), "404": { description: "missing" } },
+      },
+    };
+    const metaPost = {
+      requestBody: { content: json(pet) },
+      responses: {
+        "201": { description: "created", content: json(withMeta) },
+      },
+    };
+    for (const [ordering, paths] of [
+      [
+        "the item path first",
+        {
+          "/pets/{petId}": metaItemPath,
+          "/pets": { get: list, post: metaPost },
+        },
+      ],
+      [
+        "no list GET",
+        { "/pets/{petId}": metaItemPath, "/pets": { post: metaPost } },
+      ],
+    ] satisfies Array<[string, Record<string, unknown>]>) {
+      for (const validate of [false, true]) {
+        it(`stores the data slot of an envelope that also carries meta.id (${ordering}, validateResponses: ${validate})`, async () => {
+          const mock = await mockOf(paths, validate);
+
+          const created = await mock.handle("POST", "/pets", {
+            body: { name: "rex" },
+          });
+          expect(created.status).toBe(201);
+          expect(created.body).toMatchObject({ data: { id: 1, name: "rex" } });
+
+          const read = await mock.handle("GET", "/pets/1");
+          expect(read.status).toBe(200);
+          expect(read.body).toMatchObject({ data: { id: 1, name: "rex" } });
+          expect(Object.keys(read.body.data).sort()).toEqual(["id", "name"]);
+          expect(typeof read.body.meta.id).toBe("string");
         });
       }
     }
