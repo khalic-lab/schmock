@@ -1,4 +1,5 @@
 import type * as Schmock from "@schmock/core";
+import { toError } from "@schmock/core/adapter";
 import { isRecord } from "./utils.js";
 
 /**
@@ -325,7 +326,7 @@ function isTimeoutReason(reason: unknown): boolean {
  * `ECONNREFUSED` / certificate problem only on the cause.
  */
 function describeError(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
+  if (!(error instanceof Error)) return toError(error).message;
   const cause = error.cause;
   const detail =
     cause instanceof Error

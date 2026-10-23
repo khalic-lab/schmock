@@ -1,5 +1,6 @@
 import type * as Schmock from "@schmock/core";
 import { ResourceLimitError, SchmockError } from "@schmock/core";
+import { toError } from "@schmock/core/adapter";
 import type { CrudResource } from "./crud-detector.js";
 import { generateSeedItems } from "./generators.js";
 import { MAX_SEED_ITEMS_PER_RESOURCE, MAX_SEED_ITEMS_TOTAL } from "./limits.js";
@@ -146,7 +147,7 @@ export async function loadSeed(
       } catch (error) {
         // The parser's own words say where the file breaks — a trailing
         // comma, an unquoted key — and Node adds the line and column.
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = toError(error).message;
         throw invalidSeedEntry(
           `Seed file "${source}" for resource "${resourceName}" contains invalid JSON: ${reason}`,
           resourceName,

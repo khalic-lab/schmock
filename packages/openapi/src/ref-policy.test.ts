@@ -199,6 +199,22 @@ describe("http resolver redirect handling", () => {
     }
   });
 
+  it("describes a fetch that rejects with a non-Error as core does", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue({ code: "EOFFLINE" });
+    try {
+      const http = httpResolver({ external: true, allowHttp: true });
+      await expect(
+        http.read({ url: "https://schemas.example.com/m.json" }),
+      ).rejects.toThrow(
+        'external $ref https://schemas.example.com/m.json could not be fetched: {"code":"EOFFLINE"}',
+      );
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it("follows a redirect that stays on an allowed host", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")

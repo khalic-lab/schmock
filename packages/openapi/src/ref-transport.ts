@@ -2,6 +2,7 @@ import type { IncomingMessage } from "node:http";
 import type { LookupFunction } from "node:net";
 import type { Readable } from "node:stream";
 import { SchmockError } from "@schmock/core";
+import { toError } from "@schmock/core/adapter";
 import { isUnsafeHost, type RefFetch } from "./ref-policy.js";
 
 /**
@@ -117,7 +118,7 @@ function guardedLookup({
         else callback(null, usable[0].address, usable[0].family);
       },
       (error: unknown) => {
-        callback(error instanceof Error ? error : new Error(String(error)), []);
+        callback(toError(error), []);
       },
     );
   };

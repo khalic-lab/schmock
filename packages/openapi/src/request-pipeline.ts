@@ -1,5 +1,6 @@
 import type * as Schmock from "@schmock/core";
 import { getHeader, getResponseParts } from "@schmock/core";
+import { toError } from "@schmock/core/adapter";
 import { generateFromSchema } from "@schmock/faker";
 import type { CodeOptions, ValidateFunction } from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -398,8 +399,7 @@ function getValidator(
     validatorCtx.cache.set(schema, validate);
     return validate;
   } catch (error) {
-    const compileError =
-      error instanceof Error ? error : new Error(String(error));
+    const compileError = toError(error);
     validatorCtx.failures.set(schema, compileError);
     throw compileError;
   }

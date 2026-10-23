@@ -3,7 +3,7 @@ import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import { MAX_ARRAY_SIZE } from "./constants.js";
 import { fakerPlugin } from "./index.js";
-import { validateFakerMethod } from "./validation.js";
+import { validateFakerMethod, validateSchema } from "./validation.js";
 
 function captureFailure(run: () => unknown): unknown {
   try {
@@ -463,6 +463,30 @@ describe("validateSchema", () => {
         captureFailure(() => fakerPlugin({ schema })),
         "$.faker",
       );
+    });
+
+    it("describes a non-Error a faker value throws as core does, keeping it as the cause", () => {
+      const thrown = { reason: "trap" };
+      const faker = new Proxy(
+        {},
+        {
+          ownKeys() {
+            throw thrown;
+          },
+        },
+      );
+
+      // Straight to the walk: the plugin snapshots its schema first, which
+      // turns every faker value into plain data.
+      const error = captureFailure(() =>
+        validateSchema(withKeywords({ type: "string" }, { faker })),
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toMatchObject({
+        message: '{"reason":"trap"}',
+        cause: thrown,
+      });
     });
 
     it("accepts module.method paths and placeholders", async () => {

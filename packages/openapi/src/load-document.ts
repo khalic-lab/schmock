@@ -1,4 +1,5 @@
 import { SchmockError } from "@schmock/core";
+import { toError } from "@schmock/core/adapter";
 import type { OpenAPI } from "openapi-types";
 import { assertInternalRefs } from "./deref-internal.js";
 import {
@@ -699,7 +700,7 @@ async function dereferenceDocument({
     const error = enrichResolverError(rawError, diagnostics);
     if (!strict) throw error;
     throw new SchmockError(
-      `OpenAPI spec failed validation: ${error instanceof Error ? error.message : String(error)}`,
+      `OpenAPI spec failed validation: ${toError(error).message}`,
       "OPENAPI_INVALID_SPEC",
       { spec: typeof source === "string" ? source : undefined },
     );

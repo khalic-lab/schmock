@@ -1,4 +1,5 @@
 import { ResourceLimitError, SchemaValidationError } from "@schmock/core";
+import { toError } from "@schmock/core/adapter";
 import type { JSONSchema7 } from "json-schema";
 import {
   DEFAULT_ARRAY_COUNT,
@@ -932,8 +933,7 @@ function validateNode(
       if (error instanceof ResourceLimitError) {
         throw withResourcePath(error, `${path}.faker`);
       }
-      if (error instanceof Error) throw error;
-      throw new Error(String(error));
+      throw toError(error);
     }
   }
 }
