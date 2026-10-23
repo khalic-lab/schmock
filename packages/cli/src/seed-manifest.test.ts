@@ -302,7 +302,7 @@ describe("loadSeedFile", () => {
       expect(error).toMatchObject({
         code: "OPENAPI_INVALID_OPTION",
         message: `Seed file "${manifestPath}" is not a regular file`,
-        context: { option: "seed" },
+        context: { option: "seed", file: manifestPath },
       });
     });
 
@@ -312,6 +312,7 @@ describe("loadSeedFile", () => {
       expect(error).toMatchObject({
         code: "OPENAPI_INVALID_OPTION",
         message: 'Seed file "/dev/null" is not a regular file',
+        context: { option: "seed", file: "/dev/null" },
       });
     });
 

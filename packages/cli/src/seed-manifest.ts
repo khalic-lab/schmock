@@ -123,7 +123,9 @@ function readManifest(manifestPath: string, seedPath: string): string {
     // A FIFO, a device or a procfs-style file reports a size of 0, which the
     // check below would wave through whatever it then streams.
     if (!stat.isFile()) {
-      throw invalidSeed(`Seed file "${seedPath}" is not a regular file`);
+      throw invalidSeed(`Seed file "${seedPath}" is not a regular file`, {
+        file: seedPath,
+      });
     }
     // Measured *before* the read: a read-then-measure check does not prevent
     // the allocation it exists to bound.

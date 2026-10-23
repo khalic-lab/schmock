@@ -216,11 +216,13 @@ Manifest mistakes (a manifest that is not a regular file, invalid JSON, a
 manifest that is not an object, an entry of the wrong shape, a missing file, an
 entry that cannot be resolved, an entry that escapes the directory) are
 `SchmockError` with code `OPENAPI_INVALID_OPTION` and context
-`{ option: 'seed', resource?, reason? }`: the code the openapi plugin raises
-for the same mistakes in its `seed` option. `reason` carries the parser's or
-the operating system's message for invalid JSON and for an entry that cannot be
-resolved. The same code, with `file` in the context, covers a referenced seed
-file that is not valid JSON or not a JSON array.
+`{ option: 'seed', resource?, file?, reason? }`: the code the openapi plugin
+raises for the same mistakes in its `seed` option. `reason` carries the
+parser's or the operating system's message for invalid JSON and for an entry
+that cannot be resolved. `file` names the manifest that is not a regular file,
+as the openapi plugin names a seed file that is not one. The same code, with
+`file` in the context, covers a referenced seed file that is not valid JSON or
+not a JSON array.
 
 ### CORS for frontend development
 
