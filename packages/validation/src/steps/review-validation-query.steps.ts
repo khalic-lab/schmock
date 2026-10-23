@@ -849,4 +849,92 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       });
     },
   );
+
+  // ── Multipart request bodies (review 2026-10-23) ─────────────────────────
+
+  let receivedForm: unknown;
+
+  function formRoute(nameField: string, roleField: string, roles: string[]) {
+    receivedForm = undefined;
+    mock = schmock();
+    mock("POST /people", ({ body }) => {
+      receivedForm = body;
+      return [201, { ok: true }];
+    }).pipe(
+      validationPlugin({
+        request: {
+          body: {
+            type: "object",
+            properties: {
+              [nameField]: { type: "string", minLength: 1 },
+              [roleField]: { enum: roles },
+            },
+            required: [nameField, roleField],
+          },
+        },
+      }),
+    );
+  }
+
+  /** `name=Ada&role=admin` as the multipart form a browser would send. */
+  async function postForm(fields: string): Promise<void> {
+    const body = new FormData();
+    for (const [name, value] of new URLSearchParams(fields)) {
+      body.append(name, value);
+    }
+    response = await mock.handle("POST", "/people", { body });
+  }
+
+  Scenario(
+    "A multipart body that satisfies the request schema reaches the route",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a route whose request body schema requires a {string} and a {string} of {string} or {string}",
+        (_, name: string, role: string, first: string, second: string) => {
+          formRoute(name, role, [first, second]);
+        },
+      );
+
+      When(
+        "I post a multipart form with {string}",
+        async (_, fields: string) => {
+          await postForm(fields);
+        },
+      );
+
+      Then("the form response status should be {int}", (_, status) => {
+        expect(response.status).toBe(status);
+      });
+
+      And("the route should have received the form as FormData", () => {
+        expect(receivedForm).toBeInstanceOf(FormData);
+      });
+    },
+  );
+
+  ScenarioOutline(
+    "A multipart body is rejected on the field that breaks the request schema",
+    ({ Given, When, Then, And }, variables) => {
+      Given(
+        "a route whose request body schema requires a {string} and a {string} of {string} or {string}",
+        (_, name: string, role: string, first: string, second: string) => {
+          formRoute(name, role, [first, second]);
+        },
+      );
+
+      When("I post a multipart form with {string}", async () => {
+        await postForm(variables.fields);
+      });
+
+      Then("the form response status should be {int}", (_, status) => {
+        expect(response.status).toBe(status);
+      });
+
+      And("the form rejection should report only the {string} keyword", () => {
+        expect(bodyRecord(response).details).toEqual([
+          expect.objectContaining({ keyword: variables.keyword }),
+        ]);
+      });
+    },
+  );
 });

@@ -670,6 +670,35 @@ function numericCoercionErrors(
   return errors;
 }
 
+/**
+ * Core delivers a `multipart/*` body as `FormData`, which has no own
+ * properties for Ajv to judge. Its fields are validated as a record instead:
+ * each name maps to its value, a repeated name to an array of its values in
+ * order, and a file part to its `File`. Any other body is validated as is.
+ */
+function validatedBody(body: unknown): unknown {
+  if (typeof FormData === "undefined" || !(body instanceof FormData)) {
+    return body;
+  }
+  const fields = new Map<string, FormDataEntryValue[]>();
+  for (const [name, value] of body.entries()) {
+    const values = fields.get(name);
+    if (values) {
+      values.push(value);
+    } else {
+      fields.set(name, [value]);
+    }
+  }
+  // `Object.fromEntries` defines own data properties, so a field named
+  // `__proto__` is judged like any other field.
+  return Object.fromEntries(
+    Array.from(fields, ([name, values]) => [
+      name,
+      values.length === 1 ? values[0] : values,
+    ]),
+  );
+}
+
 function cloneSchema(schema: JSONSchema7 | undefined): JSONSchema7 | undefined {
   if (schema === undefined) return undefined;
   const clone = cloneGraph(schema);
@@ -805,7 +834,7 @@ export function validationPlugin(
       // Optional bodies are skipped when absent, but every supplied body is
       // validated before route code can observe or mutate state from it.
       if (validators.requestBody && context.body !== undefined) {
-        if (!validators.requestBody(context.body)) {
+        if (!validators.requestBody(validatedBody(context.body))) {
           return rejectRequest(
             context,
             "Request validation failed",

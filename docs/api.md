@@ -1592,6 +1592,13 @@ interface ValidationPluginOptions {
 Request rules run before the route generator. Set `bodyRequired: true` when an
 absent body must be rejected; supplied bodies are always validated.
 
+A `multipart/*` body arrives as `FormData`, so `request.body` validates a
+record of its fields instead: each name maps to its value, a name sent more
+than once maps to an array of its values in order, and a file part maps to its
+`File`. Field values are strings and bodies keep strict typing, so describe a
+numeric field as `type: 'string'` with a `pattern`, and a file field as
+`type: 'object'` or `{}`. The route still receives the original `FormData`.
+
 Query and header values always arrive as strings, so their schemas coerce
 scalar types: `'2'` satisfies `type: 'integer'`, `'25'` satisfies
 `type: 'number'` with `maximum: 50`, and `'true'` satisfies `type: 'boolean'`.

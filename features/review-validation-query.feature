@@ -166,3 +166,22 @@ Feature: Validation plugin review fixes
       | 19.99  | 201    |
       | 0.07   | 201    |
       | 19.995 | 400    |
+
+  # ── Multipart request bodies (review 2026-10-23) ─────────────────────────
+
+  Scenario: A multipart body that satisfies the request schema reaches the route
+    Given a route whose request body schema requires a "name" and a "role" of "admin" or "user"
+    When I post a multipart form with "name=Ada&role=admin"
+    Then the form response status should be 201
+    And the route should have received the form as FormData
+
+  Scenario Outline: A multipart body is rejected on the field that breaks the request schema
+    Given a route whose request body schema requires a "name" and a "role" of "admin" or "user"
+    When I post a multipart form with "<fields>"
+    Then the form response status should be 400
+    And the form rejection should report only the "<keyword>" keyword
+
+    Examples:
+      | fields              | keyword  |
+      | name=Ada&role=guest | enum     |
+      | role=admin          | required |

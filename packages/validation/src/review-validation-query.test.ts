@@ -630,6 +630,138 @@ describe("validationPlugin query and header coercion", () => {
   });
 });
 
+describe("validationPlugin multipart bodies", () => {
+  function form(entries: Array<[string, string | Blob]>): FormData {
+    const body = new FormData();
+    for (const [name, value] of entries) body.append(name, value);
+    return body;
+  }
+
+  async function validateForm(
+    schema: NonNullable<ValidationPluginOptions["request"]>["body"],
+    body: FormData,
+  ): Promise<Schmock.PluginResult> {
+    const plugin = validationPlugin({ request: { body: schema } });
+    return runBeforeRequest(plugin, context({ method: "POST", body }));
+  }
+
+  it("lets a FormData field satisfy required", async () => {
+    const body = form([["name", "Ada"]]);
+    const result = await validateForm(
+      {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      },
+      body,
+    );
+    expect(result.response).toBeUndefined();
+    expect(result.context.body).toBe(body);
+  });
+
+  it("applies property rules to FormData fields", async () => {
+    const result = await validateForm(
+      { type: "object", properties: { age: { type: "integer" } } },
+      form([["age", "x"]]),
+    );
+    expect(result.response).toMatchObject({
+      status: 400,
+      body: {
+        code: "REQUEST_VALIDATION_ERROR",
+        details: [{ instancePath: "/age", keyword: "type" }],
+      },
+    });
+  });
+
+  it("validates a repeated field as an array of its values in order", async () => {
+    const schema = {
+      type: "object" as const,
+      properties: {
+        tags: {
+          type: "array" as const,
+          items: [{ const: "a" }, { const: "b" }],
+          minItems: 2,
+        },
+      },
+    };
+    const repeated = await validateForm(
+      schema,
+      form([
+        ["tags", "a"],
+        ["tags", "b"],
+      ]),
+    );
+    const single = await validateForm(schema, form([["tags", "a"]]));
+
+    expect(repeated.response).toBeUndefined();
+    expect(single.response).toMatchObject({
+      status: 400,
+      body: { details: [{ instancePath: "/tags", keyword: "type" }] },
+    });
+  });
+
+  it("validates a file part as its File object", async () => {
+    const body = form([["avatar", new Blob(["png"])]]);
+    const asObject = await validateForm(
+      {
+        type: "object",
+        properties: { avatar: { type: "object" } },
+        required: ["avatar"],
+      },
+      body,
+    );
+    const asString = await validateForm(
+      { type: "object", properties: { avatar: { type: "string" } } },
+      body,
+    );
+
+    expect(asObject.response).toBeUndefined();
+    expect(asString.response).toMatchObject({ status: 400 });
+  });
+
+  it("hands the route the original FormData after validating it", async () => {
+    let received: unknown;
+    const mock = schmock();
+    mock("POST /people", (route) => {
+      received = route.body;
+      return [201, { ok: true }];
+    }).pipe(
+      validationPlugin({
+        request: {
+          body: {
+            type: "object",
+            properties: { name: { type: "string", minLength: 1 } },
+            required: ["name"],
+          },
+        },
+      }),
+    );
+
+    const accepted = await mock.handle("POST", "/people", {
+      body: form([["name", "Ada"]]),
+    });
+    const rejected = await mock.handle("POST", "/people", {
+      body: form([["name", ""]]),
+    });
+
+    expect(accepted.status).toBe(201);
+    expect(received).toBeInstanceOf(FormData);
+    expect(received instanceof FormData && received.get("name")).toBe("Ada");
+    expect(rejected.status).toBe(400);
+  });
+
+  it("keeps a field named __proto__ as an own field", async () => {
+    const result = await validateForm(
+      { type: "object", additionalProperties: false },
+      form([["__proto__", "x"]]),
+    );
+    expect(result.response).toMatchObject({
+      status: 400,
+      body: { details: [{ keyword: "additionalProperties" }] },
+    });
+  });
+});
+
 describe("validationPlugin decimal multipleOf", () => {
   const price = {
     type: "object" as const,
