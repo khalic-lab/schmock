@@ -1275,6 +1275,40 @@ describe("normalizeSchema", () => {
   });
 
   describe("discriminator", () => {
+    it("pins the mapping values on anyOf branches the way it does on oneOf", () => {
+      const branch = (name: string) => ({
+        type: "object",
+        properties: {
+          petType: { type: "string" },
+          [name]: { type: "boolean" },
+        },
+      });
+      for (const keyword of ["oneOf", "anyOf"]) {
+        const result = normalizeSchema(
+          {
+            discriminator: {
+              propertyName: "petType",
+              "x-schmock-discriminator-values": [["cat"], ["dog", "puppy"]],
+            },
+            [keyword]: [branch("meow"), branch("bark")],
+          },
+          "response",
+        );
+
+        expect(result).not.toHaveProperty("discriminator");
+        const [cat, dog] = result[keyword as "oneOf"] as JSONSchema7[];
+        expect(cat.required).toEqual(["petType"]);
+        expect(cat.properties?.petType).toEqual({
+          type: "string",
+          enum: ["cat"],
+        });
+        expect(dog.properties?.petType).toEqual({
+          type: "string",
+          enum: ["dog", "puppy"],
+        });
+      }
+    });
+
     it("requires inline discriminator properties without inventing enum values", () => {
       const result = normalizeSchema(
         {

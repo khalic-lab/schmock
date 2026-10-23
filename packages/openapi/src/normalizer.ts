@@ -104,7 +104,7 @@ function isPrimitive(value: unknown): boolean {
  *   `anyOf: [{type:"null"}, rest]` for any schema that composes, typed or
  *   not) plus the `schmockNullable` marker the faker plugin uses to roll nulls
  *   at ~5%
- * - discriminator -> required + enum on branches
+ * - discriminator beside oneOf or anyOf -> required + enum on branches
  * - readOnly/writeOnly -> strip based on direction (names recorded, see
  *   {@link collectAccessModes})
  * - example, or else the first entry of a 3.1 `examples` array -> default (if
@@ -398,13 +398,18 @@ function normalizeNode(
   const readOnlyNames: string[] = [];
   const writeOnlyNames: string[] = [];
 
-  // Handle discriminator
-  let discriminated: "oneOf" | undefined;
+  // Handle discriminator, which OAS allows beside oneOf or anyOf
+  let discriminated: "oneOf" | "anyOf" | undefined;
   if (node.discriminator && isRecord(node.discriminator)) {
     const disc = node.discriminator;
     const propName = disc.propertyName;
-    const branches = node.oneOf;
-    if (typeof propName === "string" && Array.isArray(branches)) {
+    const keyword = Array.isArray(node.oneOf)
+      ? "oneOf"
+      : Array.isArray(node.anyOf)
+        ? "anyOf"
+        : undefined;
+    const branches = keyword ? node[keyword] : undefined;
+    if (typeof propName === "string" && keyword && Array.isArray(branches)) {
       // Explicit mapping keys or implicit `$ref` component names are resolved
       // BEFORE dereference in load-document.ts (`markDiscriminatorValues` /
       // `markDereferencedDiscriminatorValues`) and handed over index-aligned
@@ -412,7 +417,7 @@ function normalizeNode(
       const resolvedRaw = disc[DISCRIMINATOR_VALUES_MARKER];
       const resolved = Array.isArray(resolvedRaw) ? resolvedRaw : undefined;
 
-      node.oneOf = branches.map((branch: unknown, index) =>
+      node[keyword] = branches.map((branch: unknown, index) =>
         isRecord(branch)
           ? pinDiscriminator(
               normalizeNode(branch, pass),
@@ -421,7 +426,7 @@ function normalizeNode(
             )
           : branch,
       );
-      discriminated = "oneOf";
+      discriminated = keyword;
     }
     delete node.discriminator;
   }
