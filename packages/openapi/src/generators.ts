@@ -502,16 +502,27 @@ function findResourceWrapper(
 /**
  * The envelope property an operation's response wraps the resource in, if any.
  *
- * Only trusted when a resolved item schema exists to store; without one
- * (incomplete specs) the response schema is treated as the item, so nothing
- * that worked before is re-shaped.
+ * Only trusted when a resolved item schema exists to store and declares the id
+ * property at its own top level. Without one (incomplete specs) the response
+ * schema is treated as the item, so nothing that worked before is re-shaped.
+ * When the item schema does not declare the id, the id is the path
+ * parameter's fallback: a response without it at the top is then the plain
+ * item, and a nested object that declares an `id` of its own (`team: { id }`
+ * on a `User { userId }`) is a field of that item, not an envelope slot.
  */
 function resourceWrapperProperty(
   resource: CrudResource,
   responseSchema: JSONSchema7 | undefined,
 ): string | undefined {
-  if (!resource.schema) return undefined;
+  const item = resource.schema;
+  if (!item || !responseSchema || responseSchema === item) return undefined;
+  if (!declaresTopLevel(item, resource.idProperty)) return undefined;
   return findResourceWrapper(responseSchema, resource.idProperty).property;
+}
+
+/** Whether `schema` declares `property` at its top level (`allOf` included). */
+function declaresTopLevel(schema: JSONSchema7, property: string): boolean {
+  return Object.hasOwn(collectSchemaProperties(schema), property);
 }
 
 /**

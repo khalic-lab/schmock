@@ -433,7 +433,10 @@ envelope. Read, update and delete follow their own response contracts the same
 way: when `GET`, `PUT`, `PATCH` or `DELETE /widgets/{id}` declares
 `{ data: <Resource> }`, the stored row is answered inside that envelope, and
 when it declares the resource itself, the row is answered bare. The envelope's
-other properties are generated. When the operation declares no response schema
+other properties are generated. A response counts as an envelope only when the
+resource schema declares the id property at its top level and the response
+does not: on `/users/{id}` with a `User { userId, team: { id } }`, the id falls
+back to the path parameter's `id`, and `team` stays a field of the user. When the operation declares no response schema
 (or a non-object one), create falls back to echoing the request body and
 stamping the id. An object contract may omit `type`: `properties` or `allOf`
 alone, a polymorphic `oneOf`/`anyOf` whose branches are all objects (Stripe's

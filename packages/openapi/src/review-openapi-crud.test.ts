@@ -265,6 +265,60 @@ describe("CRUD review fixes", () => {
       const read = await mock.handle("GET", "/pets/1");
       expect(read.body).toEqual({ id: 1, name: "rex" });
     });
+
+    it("does not read a nested object's id as an envelope when the item has no top-level id", async () => {
+      // `/users/{id}` with an item that declares `userId`, not `id`: the id
+      // property falls back to `id`, which only the nested `team` declares.
+      const user = {
+        type: "object",
+        properties: {
+          userId: { type: "integer" },
+          name: { type: "string" },
+          team: {
+            type: "object",
+            properties: { id: { type: "integer" }, label: { type: "string" } },
+          },
+        },
+      };
+      const parameters = [
+        { name: "id", in: "path", required: true, schema: { type: "integer" } },
+      ];
+      const ok = { "200": { description: "u", content: json(user) } };
+      const mock = await mockOf(
+        spec({
+          "/users": {
+            get: {
+              responses: {
+                "200": {
+                  description: "list",
+                  content: json({ type: "array", items: user }),
+                },
+              },
+            },
+            post: {
+              responses: { "201": { description: "c", content: json(user) } },
+            },
+          },
+          "/users/{id}": {
+            get: { parameters, responses: ok },
+            patch: { parameters, responses: ok },
+            delete: { parameters, responses: ok },
+          },
+        }),
+      );
+      const row = { userId: 7, name: "ann", team: { id: 3, label: "core" } };
+
+      const created = await mock.handle("POST", "/users", { body: row });
+      expect(created.body).toEqual({ ...row, id: 1 });
+      const read = await mock.handle("GET", "/users/1");
+      expect(read.body).toEqual({ ...row, id: 1 });
+      const patched = await mock.handle("PATCH", "/users/1", {
+        body: { name: "bob" },
+      });
+      expect(patched.body).toEqual({ ...row, id: 1, name: "bob" });
+      const deleted = await mock.handle("DELETE", "/users/1");
+      expect(deleted.body).toEqual({ ...row, id: 1, name: "bob" });
+    });
   });
 
   describe("delete confirmation contracts", () => {
