@@ -1,5 +1,16 @@
 import type { CacheLike, CacheStorageLike } from "./types.js";
 
+/** The string ids in a stored list; none when it is not a JSON array. */
+function parseIds(text: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is string => typeof entry === "string");
+  } catch {
+    return [];
+  }
+}
+
 /**
  * The set of client ids that are relaying, kept durable in the Cache API so a
  * restarted worker still knows them. Every failure degrades to memory-only.
@@ -7,16 +18,18 @@ import type { CacheLike, CacheStorageLike } from "./types.js";
 export class ClientRegistry {
   readonly ready: Promise<void>;
   private readonly ids = new Set<string>();
-  private cache: CacheLike | undefined;
+  /** False once Cache Storage failed: the registry then lives in memory only. */
+  private persistent: boolean;
   private isLoaded = false;
   private queue: Promise<unknown>;
 
   constructor(
-    storage: CacheStorageLike | undefined,
-    cacheName: string,
+    private readonly storage: CacheStorageLike | undefined,
+    private readonly cacheName: string,
     private readonly key: string,
   ) {
-    this.ready = this.load(storage, cacheName).then(() => {
+    this.persistent = storage !== undefined;
+    this.ready = this.load().then(() => {
       this.isLoaded = true;
     });
     this.queue = this.ready;
@@ -51,37 +64,42 @@ export class ClientRegistry {
     });
   }
 
-  private async load(
-    storage: CacheStorageLike | undefined,
-    cacheName: string,
-  ): Promise<void> {
-    if (storage === undefined) return;
+  private async load(): Promise<void> {
+    for (const id of (await this.readStored()) ?? []) this.ids.add(id);
+  }
+
+  /**
+   * The named cache, opened again for every use: app code that deletes it
+   * leaves an earlier handle working but orphaned, so writes through that
+   * handle would never be read back. Undefined once Cache Storage failed.
+   */
+  private async open(): Promise<CacheLike | undefined> {
+    if (!this.persistent || this.storage === undefined) return undefined;
     try {
-      const cache = await storage.open(cacheName);
-      const stored = await cache.match(this.key);
-      this.cache = cache;
-      if (stored === undefined) return;
-      const text = await stored.text();
-      try {
-        const parsed: unknown = JSON.parse(text);
-        if (Array.isArray(parsed)) {
-          for (const entry of parsed) {
-            if (typeof entry === "string") this.ids.add(entry);
-          }
-        }
-      } catch {
-        this.ids.clear();
-      }
+      return await this.storage.open(this.cacheName);
     } catch {
-      this.cache = undefined;
-      this.ids.clear();
+      this.persistent = false;
+      return undefined;
+    }
+  }
+
+  /** The stored ids, [] when none are stored; undefined once Cache Storage failed. */
+  private async readStored(): Promise<string[] | undefined> {
+    const cache = await this.open();
+    if (cache === undefined) return undefined;
+    try {
+      const stored = await cache.match(this.key);
+      return stored === undefined ? [] : parseIds(await stored.text());
+    } catch {
+      this.persistent = false;
+      return undefined;
     }
   }
 
   private enqueue(mutate: () => void): Promise<void> {
     const run = async (): Promise<void> => {
       mutate();
-      const cache = this.cache;
+      const cache = await this.open();
       if (cache === undefined) return;
       try {
         await cache.put(
@@ -91,7 +109,7 @@ export class ClientRegistry {
           }),
         );
       } catch {
-        this.cache = undefined;
+        this.persistent = false;
       }
     };
     const next = this.queue.then(run, run);

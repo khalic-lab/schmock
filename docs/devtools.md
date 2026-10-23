@@ -479,7 +479,9 @@ list in memory.
   thread blocks while the worker waits for the page to answer. It is not
   supported under the relay.
 - **Cleared Cache Storage.** App code that deletes every cache also deletes
-  the worker's list of pages. Once the worker restarts, it forgets the page
+  the worker's list of pages. The running worker still holds the list in
+  memory and writes all of it back the next time a page starts, stops or
+  unloads its relay. If the worker restarts before that, it forgets the page
   while the page still holds the relay, and the page's `fetch` requests and
   XHRs reach the network unmocked, silently. Reload the page, or call `stop()`
   and start the relay again.

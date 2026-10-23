@@ -863,6 +863,23 @@ describe("cache storage", () => {
     ]);
   });
 
+  it("delete() drops the name; a handle opened before keeps working, orphaned", async () => {
+    const h = setUp();
+    const before = await h.caches.open("c");
+    await before.put("http://localhost/k", new Response("old"));
+
+    expect(await h.caches.delete("c")).toBe(true);
+    expect(await h.caches.delete("c")).toBe(false);
+    await before.put("http://localhost/k", new Response("orphaned"));
+    const after = await h.caches.open("c");
+
+    expect(after).not.toBe(before);
+    expect(await after.match("http://localhost/k")).toBeUndefined();
+    expect(await (await before.match("http://localhost/k"))?.text()).toBe(
+      "orphaned",
+    );
+  });
+
   it("keeps a hold across restartWorker()", async () => {
     const h = setUp();
     h.installWorker(claimingWorker());

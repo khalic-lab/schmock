@@ -171,14 +171,32 @@ describe("ClientRegistry writes", () => {
     expect(registry.has("b")).toBe(true);
   });
 
-  it("R14 opens the cache exactly once across writes", async () => {
+  it("R14 opens the named cache again for every write", async () => {
     const fake = createFakeStorage();
     const registry = new ClientRegistry(fake.storage, cacheName, key);
     await registry.add("a");
     await registry.add("b");
     await registry.delete("a");
     expect(fake.puts).toHaveLength(3);
-    expect(fake.opened).toEqual(["test-cache"]);
+    expect(fake.opened).toEqual([
+      "test-cache",
+      "test-cache",
+      "test-cache",
+      "test-cache",
+    ]);
+  });
+
+  it("R15 writes the whole list under the name again once app code deleted the cache", async () => {
+    const fake = createFakeStorage();
+    const registry = new ClientRegistry(fake.storage, cacheName, key);
+    await registry.add("a");
+    fake.data.delete(cacheName);
+    await registry.add("b");
+    expect(fake.stored()).toEqual(["a", "b"]);
+    const next = new ClientRegistry(fake.storage, cacheName, key);
+    await next.ready;
+    expect(next.has("a")).toBe(true);
+    expect(next.has("b")).toBe(true);
   });
 });
 

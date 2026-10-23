@@ -617,6 +617,25 @@ describe("restarts", () => {
   });
 });
 
+describe("cleared cache storage", () => {
+  it("W19 writes the list under its name again once app code deleted the cache", async () => {
+    await relayWorker();
+    const a = h.openPage();
+    await a.respondToRelaysWith({ tab: "A" });
+    expect(await h.caches.delete(REGISTRY_CACHE)).toBe(true);
+
+    const b = h.openPage();
+    await b.respondToRelaysWith({ tab: "B" });
+    await h.flush();
+    expect(await stored()).toEqual([a.id, b.id]);
+
+    h.restartWorker();
+    const response = await a.xhr("/api/users");
+    expect(await response.json()).toEqual({ tab: "A" });
+    expect(a.browserLog.at(-1)?.servedBy).toBe("worker");
+  });
+});
+
 describe("registry location", () => {
   it("W18 stores under the cache name and a key derived from the scope", async () => {
     await relayWorker();

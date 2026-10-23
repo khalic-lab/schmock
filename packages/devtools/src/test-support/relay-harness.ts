@@ -41,6 +41,13 @@ export interface FakeWorkerScope extends RelayWorkerScope {
 interface FakeCacheStorage extends CacheStorageLike {
   /** Pause every open(), and every match()/put() on an opened cache, until the returned release function is called; survives restartWorker(). */
   hold(): () => void;
+  /**
+   * As app code's caches.delete(name): true when the cache existed. As the
+   * spec's note says, a handle opened before keeps working, orphaned: what
+   * it writes is never read back through the name, and the next open()
+   * creates a fresh, empty cache.
+   */
+  delete(name: string): Promise<boolean>;
 }
 
 export interface RelayHarness {
@@ -534,6 +541,10 @@ export function createRelayHarness(settings?: {
         cacheStore.set(name, cache);
       }
       return cache;
+    },
+    async delete(name) {
+      await whenUnheld();
+      return cacheStore.delete(name);
     },
     hold() {
       holds += 1;
