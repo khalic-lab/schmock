@@ -536,6 +536,54 @@ describe("CRUD review fixes", () => {
       expect(read.status).toBe(200);
       expect(read.body).toEqual({ id: 1, name: "max" });
     });
+
+    it("judges an update answering a closed confirmation by the resource contract", async () => {
+      const confirmation = {
+        type: "object",
+        additionalProperties: false,
+        properties: { updated: { type: "boolean" } },
+      };
+      const mock = await mockOf(
+        spec({
+          "/pets": {
+            get: {
+              responses: {
+                "200": {
+                  description: "list",
+                  content: json({ type: "array", items: closedPet }),
+                },
+              },
+            },
+            post: {
+              responses: {
+                "201": { description: "c", content: json(closedPet) },
+              },
+            },
+          },
+          "/pets/{petId}": {
+            get: {
+              responses: {
+                "200": { description: "p", content: json(closedPet) },
+              },
+            },
+            patch: {
+              responses: {
+                "200": { description: "ok", content: json(confirmation) },
+              },
+            },
+          },
+        }),
+      );
+      await mock.handle("POST", "/pets", { body: { name: "rex" } });
+
+      const patched = await mock.handle("PATCH", "/pets/1", {
+        body: { name: "max", undeclared: "dropped" },
+      });
+      expect(patched.status).toBe(200);
+
+      const read = await mock.handle("GET", "/pets/1");
+      expect(read.body).toEqual({ id: 1, name: "max" });
+    });
   });
 
   describe("composition-only and nullable create contracts", () => {

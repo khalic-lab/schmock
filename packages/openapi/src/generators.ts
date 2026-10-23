@@ -944,13 +944,19 @@ export function createUpdateGenerator(
     }
 
     const responseSchema = metaSchema(meta, ctx.headers, headers);
-    // Request fields are judged by create's rule against the item contract:
-    // the resource when the response is an envelope or declares nothing (a
-    // 204), so an undeclared field on a closed contract is dropped here as it
-    // is on create, instead of being stored and failing every later read.
-    const itemSchema = resourceWrapperProperty(resource, responseSchema)
-      ? resource.schema
-      : (responseSchema ?? resource.schema);
+    // Request fields are judged by create's rule against the item contract, so
+    // an undeclared field on a closed contract is dropped here as it is on
+    // create, instead of being stored and failing every later read. The
+    // response is that contract only when it is item-shaped (it declares the
+    // id property at its top level). An envelope, a 204, or a confirmation
+    // such as a closed `{ updated: boolean }` is not: judged by one, every
+    // field would be dropped and the update would silently do nothing. The
+    // resource schema stands in, then the request schema, then nothing.
+    const itemSchema =
+      responseSchema && declaresTopLevel(responseSchema, resource.idProperty)
+        ? responseSchema
+        : (resource.schema ??
+          hooks?.requestSchema?.(getHeader(ctx.headers, "content-type")));
     const modes = accessModesFor(resource, itemSchema);
     const submitted = readSubmittedBody(ctx, hooks, itemSchema);
     const updates = isRecord(submitted)
