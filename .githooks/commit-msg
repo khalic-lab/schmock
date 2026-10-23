@@ -1,9 +1,9 @@
 #!/bin/sh
 # Conventional Commit validation hook
 # Format: type(scope): description
-# Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
+# Types: feat, fix, docs, style, refactor, perf, test, chore, ci, build, revert
 
-commit_regex='^(feat|fix|docs|style|refactor|perf|test|chore|ci|build|revert)(\(.+\))?: .{1,50}'
+commit_regex='^(feat|fix|docs|style|refactor|perf|test|chore|ci|build|revert)(\(.+\))?: .+'
 merge_regex='^Merge (branch|pull request)'
 
 error_msg="Commit message format error!
@@ -19,7 +19,26 @@ Examples:
   docs: update README with examples
   chore: bump dependencies"
 
-if ! grep -qE "$commit_regex" "$1" && ! grep -qE "$merge_regex" "$1"; then
+# Check the subject only: a conventional-looking line in the body must not
+# pass for one. Git runs this hook before it strips comment lines and leading
+# blank lines, so the subject is the first line that is neither. Comments start
+# with core.commentString or core.commentChar (default "#"); with "auto", git
+# picks one of the characters listed below, so treat all of them as comments.
+comment=$(git config core.commentString 2>/dev/null ||
+    git config core.commentChar 2>/dev/null || echo '#')
+case "$comment" in
+    "" | auto) comment='#;@!$%^&|:' ; auto=1 ;;
+    *) auto=0 ;;
+esac
+subject=$(awk -v c="$comment" -v auto="$auto" '
+    /^[[:space:]]*$/ { next }
+    auto == 1 && index(c, substr($0, 1, 1)) > 0 { next }
+    auto == 0 && index($0, c) == 1 { next }
+    { print; exit }
+' "$1")
+
+if ! printf '%s\n' "$subject" | grep -qE "$commit_regex" &&
+    ! printf '%s\n' "$subject" | grep -qE "$merge_regex"; then
     echo "$error_msg" >&2
     exit 1
 fi
