@@ -78,11 +78,12 @@ interface AjvOptions {
 
 /**
  * With this precision, Ajv accepts a `multipleOf` when `value / multipleOf`
- * is within 1e-9 of an integer. Without it, floating-point division rejects
+ * is within 1e-6 of an integer. Without it, floating-point division rejects
  * exact values: 19.99 / 0.01 is 1998.9999999999998, so `multipleOf: 0.01`
- * would reject 19.99. Very large values can still miss the tolerance.
+ * would reject 19.99. The quotient's error grows with the value, so 1e-9
+ * still refused 1234567.89; 1e-6 matches @schmock/openapi's validator.
  */
-const MULTIPLE_OF_PRECISION = 9;
+const MULTIPLE_OF_PRECISION = 6;
 
 function createAjv({ coerceTypes }: AjvOptions = { coerceTypes: false }): Ajv {
   // `ownProperties` keeps validation aligned with the transport: JSON.stringify

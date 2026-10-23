@@ -162,10 +162,11 @@ Feature: Validation plugin review fixes
     Then the price response status should be <status>
 
     Examples:
-      | price  | status |
-      | 19.99  | 201    |
-      | 0.07   | 201    |
-      | 19.995 | 400    |
+      | price      | status |
+      | 19.99      | 201    |
+      | 0.07       | 201    |
+      | 1234567.89 | 201    |
+      | 19.995     | 400    |
 
   # ── Multipart request bodies (review 2026-10-23) ─────────────────────────
 

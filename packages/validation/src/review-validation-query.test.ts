@@ -874,6 +874,18 @@ describe("validationPlugin decimal multipleOf", () => {
     expect(response.response).toEqual({ price: 19.99 });
   });
 
+  // 1234567.89 / 0.01 is 123456788.99999999, outside a 1e-9 tolerance.
+  it("accepts a large exact multiple", async () => {
+    const request = await runBeforeRequest(
+      plugin,
+      context({ method: "POST", body: { price: 1234567.89 } }),
+    );
+    const response = await plugin.process(context(), { price: 1234567.89 });
+
+    expect(request.response).toBeUndefined();
+    expect(response.response).toEqual({ price: 1234567.89 });
+  });
+
   it("still rejects a value that is not a multiple", async () => {
     const request = await runBeforeRequest(
       plugin,

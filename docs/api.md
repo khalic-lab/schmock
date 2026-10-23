@@ -1651,10 +1651,11 @@ original strings in `context.query`. Other request bodies and response bodies
 keep strict typing, so in a JSON body `'3'` does not satisfy `type: 'integer'`.
 
 `multipleOf` tolerates floating-point error in every slot: a value passes when
-`value / multipleOf` is within `1e-9` of an integer. That accepts exact
-amounts of ordinary size, so `19.99` satisfies `multipleOf: 0.01` even though
-`19.99 / 0.01` is `1998.9999999999998`. Very large values can still be
-rejected: `1234567.89 / 0.01` is `123456788.99999999`, too far from an integer.
+`value / multipleOf` is within `1e-6` of an integer, the same tolerance
+`@schmock/openapi` uses. So `19.99` satisfies `multipleOf: 0.01` even though
+`19.99 / 0.01` is `1998.9999999999998`, and so does `1234567.89`, whose
+quotient is `123456788.99999999`. The cost is that a value within a
+millionth of a step of a multiple also passes.
 
 Header schemas may spell names in any case (`'X-Api-Key'`). Incoming header
 names are matched case-insensitively against every name declared in
