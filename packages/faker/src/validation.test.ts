@@ -642,4 +642,56 @@ describe("validateSchema", () => {
       },
     );
   });
+
+  describe("count on a root array reached through a wrapper", () => {
+    const list: JSONSchema7 = { type: "array", items: { type: "integer" } };
+
+    it.each([
+      ["a $ref", { $ref: "#/$defs/List", $defs: { List: list } }],
+      [
+        "a definitions $ref",
+        { $ref: "#/definitions/List", definitions: { List: list } },
+      ],
+      [
+        "a single-entry allOf",
+        { description: "Wrapped", allOf: [{ $ref: "#/$defs/List" }] },
+      ],
+      ["an anyOf null union", { anyOf: [list, { type: "null" }] }],
+      ["a oneOf null union", { oneOf: [{ type: "null" }, list] }],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "rejects a count above the array limit through %s at creation",
+      (_, wrapper) => {
+        const schema: JSONSchema7 = { $defs: { List: list }, ...wrapper };
+
+        expectResource(
+          captureFailure(() =>
+            fakerPlugin({ schema, count: MAX_ARRAY_SIZE + 1 }),
+          ),
+          { resource: "array_size", actual: MAX_ARRAY_SIZE + 1 },
+        );
+      },
+    );
+
+    it("accepts a count within the limit and generates that many items", async () => {
+      const plugin = fakerPlugin({
+        schema: { $ref: "#/$defs/List", $defs: { List: list } },
+        count: 7,
+        seed: 3,
+      });
+
+      const { response } = await plugin.process(context());
+
+      expect(response).toHaveLength(7);
+    });
+
+    it("leaves a union with a second non-null branch alone", () => {
+      const schema: JSONSchema7 = {
+        anyOf: [list, { type: "string" }],
+      };
+
+      expect(() =>
+        fakerPlugin({ schema, count: MAX_ARRAY_SIZE + 1 }),
+      ).not.toThrow();
+    });
+  });
 });

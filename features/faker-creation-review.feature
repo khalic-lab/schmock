@@ -70,3 +70,15 @@ Feature: Faker creation-time checks
     Given an object whose property "n" reaches a uuid definition through "pointer"
     When I create a faker plugin for it
     Then the plugin generates a uuid for "n"
+
+  # Review 2026-10-23 faker-17: count sizes a root array behind $ref, allOf or a null union
+  Scenario Outline: A count above the array limit through a wrapping root is rejected at construction
+    Given a root that reaches an integer array through "<wrapper>"
+    When I create a faker plugin for it with count 10001
+    Then plugin creation fails with resource "array_size"
+
+    Examples:
+      | wrapper    |
+      | ref        |
+      | allof      |
+      | anyof-null |

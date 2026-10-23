@@ -25,6 +25,7 @@ import {
 import { assertOutputWithinLimits } from "./output-limits.js";
 import { applyOverrides, determineArrayCount } from "./overrides.js";
 import { applyNullableRolls, resolveLocalRef } from "./post-process.js";
+import { findRootArray, NULLABLE_MARKERS } from "./root-array.js";
 import { enhanceSchemaWithSmartMapping } from "./schema-enhancement.js";
 import { isJSONSchema7, isRecord } from "./utils.js";
 import { hasType, validateSchema } from "./validation.js";
@@ -150,59 +151,10 @@ export async function generateFromSchema(
   );
 }
 
-/** The enhancer's null-roll markers, which a resized root must keep. */
-const NULLABLE_MARKERS = ["schmockNullable", "schmockNullAlternative"];
-
-/** Keys that leave a single-entry `allOf` root standing for its entry alone. */
-const ALLOF_WRAPPER_KEYS = new Set([
-  "allOf",
-  "$schema",
-  "$id",
-  "$comment",
-  "$defs",
-  "definitions",
-  "title",
-  "description",
-  "deprecated",
-  "readOnly",
-  "writeOnly",
-  "examples",
-  ...NULLABLE_MARKERS,
-]);
-
 /** An array json-schema-faker generates with items it can size. */
 function isSizableArray(schema: JSONSchema7): boolean {
   if (schema.items === undefined) return false;
   return hasType(schema, "array") || schema.type === undefined;
-}
-
-/**
- * The array node a root value is generated from: the root itself, or what a
- * root `$ref` (whose siblings JSF ignores) or a single-entry `allOf` with
- * nothing else to merge stands for. A null union is already unwrapped by the
- * enhancer. Undefined when the root is not such an array.
- */
-function findRootArray(root: JSONSchema7): JSONSchema7 | undefined {
-  const visited = new Set<JSONSchema7>();
-  let node: JSONSchema7 | undefined = root;
-  while (node && !visited.has(node)) {
-    visited.add(node);
-    if (isSizableArray(node)) return node;
-    if (typeof node.$ref === "string") {
-      node = resolveLocalRef(node, root);
-    } else if (
-      node.allOf?.length === 1 &&
-      Object.keys(node).every((key) => ALLOF_WRAPPER_KEYS.has(key)) &&
-      isJSONSchema7(node.allOf[0])
-    ) {
-      const [entry] = node.allOf;
-      node =
-        typeof entry.$ref === "string" ? resolveLocalRef(entry, root) : entry;
-    } else {
-      node = undefined;
-    }
-  }
-  return undefined;
 }
 
 /**
@@ -246,7 +198,11 @@ async function generateFromPrepared(
 
   // Resolve the top-level array size once, then let JSF generate the complete
   // array so tuple positions, uniqueness, and a seeded sequence are preserved.
-  const rootArray = findRootArray(enhancedSchema);
+  const root = enhancedSchema;
+  const rootArray = findRootArray(root, {
+    resolve: (reference) => resolveLocalRef(reference, root),
+    isArray: isSizableArray,
+  });
   if (rootArray) {
     const itemCount = determineArrayCount(rootArray, count, random);
 

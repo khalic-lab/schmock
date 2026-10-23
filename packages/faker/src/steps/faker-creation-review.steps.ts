@@ -94,6 +94,25 @@ function referenceSchema(property: string, kind: string): JSONSchema7 {
   }
 }
 
+/** A root that reaches an integer array through `wrapper`. */
+function wrappedArraySchema(wrapper: string): JSONSchema7 {
+  const list: JSONSchema7 = { type: "array", items: { type: "integer" } };
+  switch (wrapper) {
+    case "ref":
+      return { $ref: "#/$defs/List", $defs: { List: list } };
+    case "allof":
+      return {
+        description: "A wrapped list",
+        allOf: [{ $ref: "#/$defs/List" }],
+        $defs: { List: list },
+      };
+    case "anyof-null":
+      return { anyOf: [list, { type: "null" }] };
+    default:
+      throw new Error(`Unknown root wrapper: ${wrapper}`);
+  }
+}
+
 function expectResourceFailure(
   error: unknown,
   resource: string,
@@ -113,14 +132,18 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   let plugin: Schmock.Plugin | undefined;
   let creationError: unknown;
 
-  function createPlugin(): void {
+  function createPluginWith(count: number | undefined): void {
     plugin = undefined;
     creationError = undefined;
     try {
-      plugin = fakerPlugin({ schema, seed: 7 });
+      plugin = fakerPlugin({ schema, seed: 7, count });
     } catch (error) {
       creationError = error;
     }
+  }
+
+  function createPlugin(): void {
+    createPluginWith(undefined);
   }
 
   async function generate(): Promise<unknown> {
@@ -323,6 +346,27 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
               /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
             ),
           });
+        },
+      );
+    },
+  );
+
+  ScenarioOutline(
+    "A count above the array limit through a wrapping root is rejected at construction",
+    ({ Given, When, Then }, variables) => {
+      Given("a root that reaches an integer array through {string}", () => {
+        schema = wrappedArraySchema(variables.wrapper);
+      });
+      When(
+        "I create a faker plugin for it with count {int}",
+        (_, count: number) => {
+          createPluginWith(count);
+        },
+      );
+      Then(
+        "plugin creation fails with resource {string}",
+        (_, resource: string) => {
+          expectResourceFailure(creationError, resource);
         },
       );
     },

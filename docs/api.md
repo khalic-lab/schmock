@@ -1289,7 +1289,9 @@ interface FakerPluginOptions {
 ```
 
 `count` sizes the root array, including one the root reaches through a `$ref`,
-a single-entry `allOf` or an `anyOf`/`oneOf` union with `{ type: 'null' }`.
+a single-entry `allOf` or an `anyOf`/`oneOf` union with `{ type: 'null' }`. A
+`count` above `MAX_ARRAY_SIZE` for such a root is rejected with
+`ResourceLimitError` (`array_size`) when the plugin is created.
 
 ### `generateFromSchema(options)`
 

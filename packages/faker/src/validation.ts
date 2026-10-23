@@ -13,6 +13,7 @@ import {
 import { fakerLengthFloor, validateFakerConfig } from "./faker-allocation.js";
 import { createLocalRefResolver, type LocalRefResolver } from "./ref-index.js";
 import { regexLengthBounds } from "./regex-bounds.js";
+import { findRootArray } from "./root-array.js";
 import { capped } from "./saturating.js";
 import {
   collectSchemaChildren,
@@ -195,8 +196,8 @@ export function validateSchema(
 
   if (
     normalizedCount !== undefined &&
-    isArrayLike(schema) &&
-    normalizedCount > MAX_ARRAY_SIZE
+    normalizedCount > MAX_ARRAY_SIZE &&
+    countedArray(schema, state.refs) !== undefined
   ) {
     throw new ResourceLimitError("array_size", MAX_ARRAY_SIZE, normalizedCount);
   }
@@ -957,6 +958,27 @@ function effectiveArrayCount(schema: JSONSchema7): number {
   if (maxItems !== undefined) return maxItems;
   if (minItems !== undefined) return minItems;
   return DEFAULT_ARRAY_COUNT;
+}
+
+/**
+ * The array `count` sizes: the root, or the array a root `$ref`, wrapper-only
+ * `allOf` or null union stands for, as generation finds it (index.ts).
+ */
+function countedArray(
+  root: JSONSchema7,
+  refs: LocalRefResolver,
+): JSONSchema7 | undefined {
+  return findRootArray(root, {
+    resolve: (schema) => {
+      const target =
+        typeof schema.$ref === "string"
+          ? refs.resolve(schema, schema.$ref)
+          : undefined;
+      return isJSONSchema7(target) ? target : undefined;
+    },
+    isArray: isArrayLike,
+    throughNullUnions: true,
+  });
 }
 
 function normalizeExplicitCount(count: number | undefined): number | undefined {
