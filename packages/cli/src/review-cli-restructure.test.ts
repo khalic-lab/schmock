@@ -740,6 +740,10 @@ describe("CLI errors carry SchmockError codes", () => {
   it.each([
     ["https://specs.example.com/api.json"],
     ["HTTP://specs.example.com/api.yaml"],
+    // @schmock/openapi resolves these to an http(s) URL and reads them so.
+    ["//specs.example.com/api.json"],
+    ["\\\\specs.example.com\\api.json"],
+    ["http:specs.example.com/api.json"],
   ])(
     "createCliServer refuses to watch the spec URL %s, before reading it",
     async (spec) => {

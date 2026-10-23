@@ -254,8 +254,23 @@ export function serverUrl(address: { hostname: string; port: number }): string {
   return `http://${formatUrlHost(address.hostname)}:${address.port}`;
 }
 
-/** A spec the openapi plugin reads over http(s) rather than from disk. */
-const HTTP_SPEC = /^https?:/i;
+/** Stands in for "no host", as ref-parser's `url.resolve` does. */
+const NO_HOST = "aaa.nonexistanturl.com";
+
+/**
+ * Whether the openapi plugin reads `spec` over http(s) rather than from disk.
+ * Mirrors its `httpReadLocation(spec, undefined)`: WHATWG URL resolution turns
+ * `//host/x`, `\\host\x` and `http:host/x` into an http(s) URL as well.
+ */
+function isHttpSpec(spec: string): boolean {
+  const posix = spec.startsWith("\\\\?\\") ? spec : spec.split("\\").join("/");
+  try {
+    const url = new URL(posix, `https://${NO_HOST}/`);
+    return /^https?:$/i.test(url.protocol) && url.hostname !== NO_HOST;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * The checks `createCliServer` makes before it reads the spec. The flag parser
@@ -289,7 +304,7 @@ function assertServerOptions(options: CliOptions): void {
   // A URL has no directory to watch: the watcher resolved it as a local path
   // and reported a missing directory on every retry, and no edit to the
   // remote spec could ever reach it.
-  if (options.watch && HTTP_SPEC.test(options.spec)) {
+  if (options.watch && isHttpSpec(options.spec)) {
     throw new SchmockError(
       "Invalid watch. A spec read from a URL cannot be watched; watch a local copy instead.",
       "INVALID_CONFIG",
