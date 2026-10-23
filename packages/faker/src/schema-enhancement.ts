@@ -5,6 +5,7 @@ import {
   findBestMapping,
   GENERATABLE_FORMATS,
 } from "./field-name-matcher.js";
+import { INFERRED_FAKER_MARKER } from "./jsf-config.js";
 import { mapSchemaChildren, type SchemaChildSlot } from "./schema-children.js";
 import { isJSONSchema7 } from "./utils.js";
 import { validateFakerMethod } from "./validation.js";
@@ -22,6 +23,20 @@ interface FakerSchema extends JSONSchema7 {
    * post-process.ts); beside a type union they are conjuncts that can.
    */
   schmockNullAlternative?: boolean;
+  /**
+   * Set on the enhanced copy only, when the enhancer wrote this node's
+   * `faker` (see `INFERRED_FAKER_MARKER`).
+   */
+  schmockInferredFaker?: boolean;
+}
+
+/** Give `enhanced` a `faker` the enhancer chose, marked as inferred. */
+function inferFaker(
+  enhanced: FakerSchema,
+  faker: NonNullable<FakerSchema["faker"]>,
+): void {
+  enhanced.faker = faker;
+  Reflect.set(enhanced, INFERRED_FAKER_MARKER, true);
 }
 
 function needsStringFallback(schema: FakerSchema): boolean {
@@ -232,6 +247,8 @@ function enhanceSchema(
   if (cached) return cached;
 
   const enhanced = stripNullableForGeneration({ ...schema } as FakerSchema);
+  // Only the enhancer marks a faker as its own; a schema cannot.
+  Reflect.deleteProperty(enhanced, INFERRED_FAKER_MARKER);
   contexts.set(context, enhanced);
 
   if (context !== ROOT_CONTEXT && enhanced.faker) {
@@ -303,7 +320,7 @@ function applyNameMapping(
   context: EnhancementContext,
 ): void {
   if (context === ROOT_CONTEXT) {
-    if (needsStringFallback(enhanced)) enhanced.faker = "lorem.word";
+    if (needsStringFallback(enhanced)) inferFaker(enhanced, "lorem.word");
     return;
   }
 
@@ -312,7 +329,10 @@ function applyNameMapping(
   const match = findBestMapping(context, enhanced);
   if (match) {
     const { fakerMethod, format, trueProbability, fakerArgs } = match.mapping;
-    enhanced.faker = fakerArgs ? { [fakerMethod]: [fakerArgs] } : fakerMethod;
+    inferFaker(
+      enhanced,
+      fakerArgs ? { [fakerMethod]: [fakerArgs] } : fakerMethod,
+    );
     // A mapping only reaches a node whose declared format (if any) nothing can
     // generate, so the mapping's own format drives generation instead. It
     // matters for dates: JSF serializes a faker `Date` as ISO only under
@@ -332,7 +352,7 @@ function applyNameMapping(
       enhanced.schmockTrueProbability = trueProbability;
     }
   } else if (needsStringFallback(enhanced)) {
-    enhanced.faker = "lorem.word";
+    inferFaker(enhanced, "lorem.word");
   }
 }
 
@@ -358,5 +378,5 @@ function applyBooleanWeighting(enhanced: FakerSchema): void {
   ) {
     return;
   }
-  enhanced.faker = { "datatype.boolean": [{ probability }] };
+  inferFaker(enhanced, { "datatype.boolean": [{ probability }] });
 }

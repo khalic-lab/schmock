@@ -231,7 +231,11 @@ describe("enhanceSchemaWithSmartMapping", () => {
   it("adds useful text generation to an unconstrained root string", () => {
     const schema: JSONSchema7 = { type: "string" };
     const enhanced = enhanceSchemaWithSmartMapping(schema);
-    expect(enhanced).toEqual({ type: "string", faker: "lorem.word" });
+    expect(enhanced).toEqual({
+      type: "string",
+      faker: "lorem.word",
+      schmockInferredFaker: true,
+    });
   });
 
   it("preserves an explicit zero minimum length", () => {

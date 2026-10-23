@@ -78,6 +78,7 @@ Feature: Faker output honours every keyword of its schema
     Examples:
       | case                                 |
       | all-of-max-length-on-mapped-email    |
+      | all-of-max-length-on-nested-email    |
       | all-of-enum-on-ref-target-email      |
       | then-pattern-on-zip                  |
       | all-of-min-length-on-unmapped-string |

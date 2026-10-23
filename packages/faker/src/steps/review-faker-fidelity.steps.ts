@@ -301,6 +301,28 @@ const CASES: Record<string, FidelityCase> = {
       expect(text(record(value).email).length).toBeLessThanOrEqual(12);
     },
   },
+  "all-of-max-length-on-nested-email": {
+    schema: {
+      type: "object",
+      allOf: [
+        {
+          properties: {
+            user: {
+              type: "object",
+              properties: { email: { type: "string" } },
+              required: ["email"],
+            },
+          },
+          required: ["user"],
+        },
+        { properties: { user: { properties: { email: { maxLength: 12 } } } } },
+      ],
+    },
+    fits: (value) => {
+      const email = text(record(record(value).user).email);
+      expect(email.length).toBeLessThanOrEqual(12);
+    },
+  },
   "all-of-enum-on-ref-target-email": {
     schema: {
       allOf: [

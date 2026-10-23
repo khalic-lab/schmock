@@ -30,7 +30,17 @@ interface NormalizeContext {
   normalizedSchemas: Map<JSONSchema7, JsfObjectSchema>;
   patternKeySeed?: number;
   patternKeyCount: number;
+  /** JSF copies of nodes whose `faker` the enhancer wrote. */
+  inferredFakers: Set<JsfObjectSchema>;
 }
+
+/**
+ * Set by the enhancer on a node whose `faker` it wrote (a name mapping, the
+ * lorem fallback, boolean weighting) rather than the schema. Like the other
+ * `schmock` markers it never reaches json-schema-faker; it tells
+ * `dropOverriddenFakers` which fakers may yield to a merged constraint.
+ */
+export const INFERRED_FAKER_MARKER = "schmockInferredFaker";
 
 export interface NormalizeSchemaOptions {
   /** Seed for the keys generated to satisfy `patternProperties`. */
@@ -480,6 +490,7 @@ export function normalizeSchemaForJsf(
     normalizedSchemas: new Map(),
     patternKeySeed: options.patternKeySeed,
     patternKeyCount: 0,
+    inferredFakers: new Set(),
   };
   const normalized = normalizeSchemaNodeForJsf(schema, context);
   // Only once the walk is complete: resolving a `$ref` mid-walk would
@@ -494,9 +505,12 @@ export function normalizeSchemaForJsf(
   const copies = [...context.normalizedSchemas.values()];
   // Merge groups read the layout as written, so every node is grouped before
   // any node is restated; the members replaced along the way are restated too.
-  const replaced: JsfObjectSchema[] = [];
-  for (const copy of copies) dropMergedPropertyFakers(copy, resolve, replaced);
-  for (const copy of [...copies, ...replaced]) {
+  const state: MergeState = {
+    replaced: [],
+    inferredFakers: context.inferredFakers,
+  };
+  for (const copy of copies) dropMergedPropertyFakers(copy, resolve, state);
+  for (const copy of [...copies, ...state.replaced]) {
     carryCompositionThroughAllOf(copy);
     // After the merge pass, which may drop this `faker` and must then leave
     // the `format` in place.
@@ -627,17 +641,26 @@ function singleMember(
   };
 }
 
+/** What one `dropMergedPropertyFakers` pass reads and records. */
+interface MergeState {
+  /** Every replacement member, for the passes that restate the copies. */
+  replaced: JsfObjectSchema[];
+  /** JSF copies whose `faker` the enhancer wrote rather than the schema. */
+  inferredFakers: Set<JsfObjectSchema>;
+}
+
 /**
  * Group the members json-schema-faker merges into one node's value, in its
  * merge order and in the layout `carryCompositionThroughAllOf` gives the copy:
  * the base with every `allOf` entry, plus one `oneOf`/`anyOf` branch, or plus
  * `if` and `then` (or `else`). Then drop the fakers each merge would let
- * override a constraint; every replacement member is added to `replaced`.
+ * override a constraint; every replacement member is added to
+ * `state.replaced`.
  */
 function dropMergedPropertyFakers(
   copy: JsfObjectSchema,
   resolve: ResolveMember,
-  replaced: JsfObjectSchema[],
+  state: MergeState,
 ): void {
   // JSF resolves a `$ref` before merging only in `allOf` and `oneOf`; a
   // `$ref` anywhere else replaces the merge, so it has no properties here.
@@ -671,7 +694,7 @@ function dropMergedPropertyFakers(
     }
     if (conditionElse) groups.push([own, ...allOf, conditionElse]);
   }
-  for (const group of groups) dropOverriddenFakers(group, replaced);
+  for (const group of groups) dropOverriddenFakers(group, state);
 }
 
 /**
@@ -742,46 +765,91 @@ function addsConstraint(
   );
 }
 
+/** Put `next` in `member`'s place, recording it as a replacement. */
+function replaceMember(
+  member: MergeMember,
+  next: JsfObjectSchema,
+  state: MergeState,
+): void {
+  if (state.inferredFakers.has(member.schema)) state.inferredFakers.add(next);
+  member.replace(next);
+  member.schema = next;
+  state.replaced.push(next);
+}
+
+/** `member`'s declaration of property `name`, replaced through `member`. */
+function declarationMember(
+  member: MergeMember,
+  name: string,
+  state: MergeState,
+): MergeMember | undefined {
+  const schema = propertiesOf(member.schema)[name];
+  if (!isJsfObject(schema)) return undefined;
+  return {
+    schema,
+    replace: (next) => {
+      const properties = { ...propertiesOf(member.schema) };
+      Object.defineProperty(properties, name, {
+        value: next,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      replaceMember(member, { ...member.schema, properties }, state);
+    },
+  };
+}
+
 /**
  * json-schema-faker merges a property declared by several members of one
  * merge by copying the first declaration and merging the later ones'
- * keywords into it. `faker` is not a keyword it merges, so the first
- * declaration's `faker` survives and its value overrides every constraint
- * the later declarations add (an `enum`, a `maxLength`). When a later
- * declaration does add one, drop that first `faker` from the member's place
- * in this node's copy; the schema it came from, and any other use of it,
- * keep their own.
+ * keywords into it, and merges their own properties the same way, level by
+ * level. `faker` is not a keyword it merges, so the first declaration's
+ * `faker` survives and its value overrides every constraint the later
+ * declarations add (an `enum`, a `maxLength`). When a later declaration does
+ * add one and the enhancer wrote that `faker` (a name mapping or the lorem
+ * fallback), drop it from the member's place in this node's copy; the schema
+ * it came from, and any other use of it, keep their own. A `faker` the schema
+ * declares is kept: it always wins. `ancestors` holds the declarations
+ * already being merged, so a recursive schema stops.
  */
 function dropOverriddenFakers(
   group: MergeMember[],
-  replaced: JsfObjectSchema[],
+  state: MergeState,
+  ancestors: ReadonlySet<JsfObjectSchema> = new Set(),
 ): void {
   const names = new Set(
     group.flatMap((member) => Object.keys(propertiesOf(member.schema))),
   );
   for (const name of names) {
-    const [first, ...later] = group.filter((member) =>
+    const declaring = group.filter((member) =>
       Object.hasOwn(propertiesOf(member.schema), name),
     );
+    const [first, ...later] = declaring;
     if (!first || later.length === 0) continue;
     const declaration = propertiesOf(first.schema)[name];
-    if (!isJsfObject(declaration) || declaration.faker === undefined) continue;
-    const overridden = later.some((member) =>
-      addsConstraint(propertiesOf(member.schema)[name], declaration),
+    if (
+      isJsfObject(declaration) &&
+      state.inferredFakers.has(declaration) &&
+      later.some((member) =>
+        addsConstraint(propertiesOf(member.schema)[name], declaration),
+      )
+    ) {
+      const { faker: _dropped, ...rest } = declaration;
+      declarationMember(first, name, state)?.replace(rest);
+    }
+    const nested = declaring.flatMap(
+      (member) => declarationMember(member, name, state) ?? [],
     );
-    if (!overridden) continue;
-    const { faker: _dropped, ...rest } = declaration;
-    const properties = { ...propertiesOf(first.schema) };
-    Object.defineProperty(properties, name, {
-      value: rest,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-    const next = { ...first.schema, properties };
-    first.replace(next);
-    first.schema = next;
-    replaced.push(next);
+    if (
+      nested.length < 2 ||
+      nested.some((member) => ancestors.has(member.schema))
+    ) {
+      continue;
+    }
+    const path = new Set(ancestors);
+    for (const member of nested) path.add(member.schema);
+    dropOverriddenFakers(nested, state, path);
   }
 }
 
@@ -794,6 +862,9 @@ function normalizeSchemaNodeForJsf(
 
   const normalized: JsfObjectSchema = {};
   context.normalizedSchemas.set(schema, normalized);
+  if (Reflect.get(schema, INFERRED_FAKER_MARKER) === true) {
+    context.inferredFakers.add(normalized);
+  }
   for (const [key, value] of Object.entries(schema)) {
     if (JSF_SCHEMA_KEYWORDS.has(key)) {
       normalized[key] = value;

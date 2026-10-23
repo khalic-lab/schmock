@@ -119,7 +119,11 @@ describe("review R14: one keyword table for the three walkers", () => {
         expect(childOf(enhanced, keyword)).toEqual(
           keyword === "not"
             ? { type: "string" }
-            : { type: "string", faker: "lorem.word" },
+            : {
+                type: "string",
+                faker: "lorem.word",
+                schmockInferredFaker: true,
+              },
         );
       });
     },
@@ -634,7 +638,7 @@ describe("review R14: array-valued maps are walked by every walker", () => {
         schemaWith({ [keyword]: [{ type: "string" }] }),
       );
       expect(Reflect.get(enhanced, keyword)).toEqual({
-        0: { type: "string", faker: "lorem.word" },
+        0: { type: "string", faker: "lorem.word", schmockInferredFaker: true },
       });
     }
   });

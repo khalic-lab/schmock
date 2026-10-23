@@ -626,12 +626,83 @@ describe("a property declared by several merged schemas (faker-4)", () => {
     }
   });
 
+  it("keeps an explicit faker beside a merged constraint", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      required: ["name"],
+      allOf: [
+        {
+          properties: {
+            name: withKeys({ type: "string" }, { faker: "person.firstName" }),
+          },
+        },
+        { properties: { name: { maxLength: 50 } } },
+      ],
+    };
+    const names = await stringsAt(schema, "name");
+    names.forEach((name, index) => {
+      const faker = createFakerInstance(index + 1, DETERMINISTIC_REF_DATE);
+      expect(name).toBe(faker.person.firstName());
+    });
+  });
+
+  it("keeps an explicit faker beside a then that adds a constraint", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: {
+        code: withKeys({ type: "string" }, { faker: "string.alpha" }),
+      },
+      required: ["code"],
+      if: { required: ["code"] },
+      // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+      then: { properties: { code: { minLength: 1 } } },
+    };
+    for (const code of await stringsAt(schema, "code")) {
+      expect(code).toMatch(/^[A-Za-z]$/);
+    }
+  });
+
+  it("honours a maxLength a later allOf entry adds to a nested property", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      allOf: [
+        {
+          properties: {
+            user: {
+              type: "object",
+              properties: { email: { type: "string" } },
+              required: ["email"],
+            },
+          },
+          required: ["user"],
+        },
+        { properties: { user: { properties: { email: { maxLength: 12 } } } } },
+      ],
+    };
+    for (const value of await generateSeeds(schema)) {
+      const email = objectOf(objectOf(value).user).email;
+      if (typeof email !== "string") throw new Error("Expected a string");
+      expect(email.length).toBeLessThanOrEqual(12);
+    }
+  });
+
+  it("stops at a declaration that contains itself", () => {
+    const loop: JSONSchema7 = { type: "object", properties: {} };
+    Reflect.set(Object(loop.properties), "self", loop);
+    const normalized = normalizeSchemaForJsf({
+      allOf: [{ properties: { node: loop } }, { properties: { node: loop } }],
+    });
+    expect(normalized.allOf).toHaveLength(2);
+  });
+
   it("strips the faker only from the copy JSF merges first", () => {
     const base: JSONSchema7 = {
       type: "object",
       properties: { email: { type: "string" } },
     };
+    // As the enhancer writes a name mapping: marked as its own.
     Reflect.set(Object(base.properties).email, "faker", "internet.email");
+    Reflect.set(Object(base.properties).email, "schmockInferredFaker", true);
     const schema: JSONSchema7 = {
       allOf: [
         { $ref: "#/$defs/Base" },

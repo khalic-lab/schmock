@@ -1354,8 +1354,9 @@ fallback and no boolean weighting. A node without a `type` is not mapped when
 it bounds a length or a number, or carries an object or array keyword such as
 `properties` or `items`. When schemas that are generated together (`allOf`
 entries, an `if` with its `then`, a `oneOf`/`anyOf` branch with the base)
-declare the same property and a later declaration constrains it, the property
-is generated without a mapping or lorem fallback.
+declare the same property, at any depth, and a later declaration constrains
+it, the property is generated without a mapping or lorem fallback. An
+explicit `faker` is kept.
 
 #### Matching rules
 
