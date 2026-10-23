@@ -314,6 +314,24 @@ describe("schmock callable API", () => {
         expect((await mock.handle("GET", "/data")).status).toBeLessThan(500);
       },
     );
+
+    it("names the reason JSON.stringify gave for static data with a cycle", () => {
+      const cycle: Record<string, unknown> = { name: "loop" };
+      cycle.self = cycle;
+      const mock = schmock();
+      let thrown: unknown;
+      try {
+        mock("GET /loop", cycle as Schmock.StaticData);
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(RouteDefinitionError);
+      const message = thrown instanceof Error ? thrown.message : "";
+      expect(message).toContain("not JSON-serializable: ");
+      // V8 says "circular structure", JavaScriptCore "cyclic structures".
+      expect(message).toMatch(/circular|cyclic/i);
+    });
   });
 
   describe("plugin integration", () => {

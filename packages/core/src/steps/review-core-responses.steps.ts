@@ -523,6 +523,49 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     },
   );
 
+  Scenario(
+    "Static JSON data with a cycle names the cycle when the route is defined",
+    ({ Given, When, Then, And }) => {
+      Given("an empty mock", () => {
+        mock = schmock();
+      });
+
+      When(
+        'I define "GET /loop" with static data that refers to itself',
+        () => {
+          const loop: Record<string, unknown> = { name: "loop" };
+          loop.self = loop;
+          try {
+            currentMock()("GET /loop", loop);
+          } catch (error) {
+            thrown = error;
+          }
+        },
+      );
+
+      Then(
+        "the definition throws a RouteDefinitionError mentioning {string}",
+        (_, reason: string) => {
+          expect(thrown).toBeInstanceOf(RouteDefinitionError);
+          expect(thrown instanceof Error ? thrown.message : "").toContain(
+            reason,
+          );
+        },
+      );
+
+      And("the error message names the circular reference", () => {
+        // V8 says "circular structure", JavaScriptCore "cyclic structures".
+        expect(thrown instanceof Error ? thrown.message : "").toMatch(
+          /circular|cyclic/i,
+        );
+      });
+
+      And("the mock has no routes", () => {
+        expect(currentMock().getRoutes()).toEqual([]);
+      });
+    },
+  );
+
   // ── Hook types ─────────────────────────────────────────────────────────
 
   Scenario(

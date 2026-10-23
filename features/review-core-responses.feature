@@ -80,6 +80,13 @@ Feature: Core response and error-path review fixes
     Then the definition throws a RouteDefinitionError mentioning "unsupported object"
     And the mock has no routes
 
+  Scenario: Static JSON data with a cycle names the cycle when the route is defined
+    Given an empty mock
+    When I define "GET /loop" with static data that refers to itself
+    Then the definition throws a RouteDefinitionError mentioning "not JSON-serializable:"
+    And the error message names the circular reference
+    And the mock has no routes
+
   # ── Hook types ───────────────────────────────────────────────────────────
 
   Scenario: Observers and callback dispatchers whose value is discarded may be expression-bodied

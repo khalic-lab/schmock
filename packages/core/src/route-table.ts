@@ -1,7 +1,7 @@
 import { isBinaryBody } from "./binary.js";
 import { normalizePath } from "./constants.js";
 import type { DebugLogger } from "./debug-logger.js";
-import { errorMessage, RouteDefinitionError } from "./errors.js";
+import { errorMessage, RouteDefinitionError, SchmockError } from "./errors.js";
 import { parseRouteKey } from "./parser.js";
 import { stringifyJsonBody } from "./response-normalizer.js";
 import { getResponseParts } from "./response-parser.js";
@@ -61,8 +61,23 @@ function staticJsonProblem(data: Schmock.StaticData): string | undefined {
     stringifyJsonBody(body);
     return undefined;
   } catch (error) {
-    return errorMessage(error);
+    return serializationProblem(error);
   }
+}
+
+/**
+ * The serializer's message, followed by the reason `JSON.stringify` itself
+ * gave when it threw. That reason (a cycle, and where it closes) is kept only
+ * in the error's context, and at definition time it is the useful half.
+ */
+function serializationProblem(error: unknown): string {
+  const message = errorMessage(error);
+  const context = error instanceof SchmockError ? error.context : undefined;
+  const cause =
+    typeof context === "object" && context !== null
+      ? Reflect.get(context, "cause")
+      : undefined;
+  return typeof cause === "string" ? `${message}: ${cause}` : message;
 }
 
 /**
