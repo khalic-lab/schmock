@@ -14,6 +14,9 @@ import { startWatch } from "./watch.js";
 /** Default ceiling on how long a graceful close waits for in-flight requests. */
 export const SHUTDOWN_GRACE_MS = 5_000;
 
+/** The longest delay `setTimeout` honours (2^31 - 1 ms, about 24.8 days). */
+const MAX_TIMER_MS = 2_147_483_647;
+
 async function createCliMock(
   options: CliOptions,
 ): Promise<Schmock.CallableMockInstance> {
@@ -266,13 +269,28 @@ function assertServerOptions(options: CliOptions): void {
       { option: "seed", value: options.seed },
     );
   }
+  // The grace window goes straight to setTimeout, which fires after 1 ms for
+  // Infinity, NaN, a negative value or anything above MAX_TIMER_MS: passing
+  // Infinity to mean "no bound" destroyed every in-flight request at once.
+  const graceMs = options.shutdownGraceMs;
+  if (
+    graceMs !== undefined &&
+    !(Number.isInteger(graceMs) && graceMs >= 0 && graceMs <= MAX_TIMER_MS)
+  ) {
+    throw new SchmockError(
+      `Invalid shutdownGraceMs. It must be an integer number of milliseconds from 0 to ${MAX_TIMER_MS}.`,
+      "INVALID_CONFIG",
+      { option: "shutdownGraceMs", value: graceMs },
+    );
+  }
 }
 
 /**
  * Start a mock server for an OpenAPI spec, as the `schmock` command does.
  *
- * @throws SchmockError `INVALID_CONFIG` for a blank hostname or seed path, or
- *   an unusable admin token, before anything is bound
+ * @throws SchmockError `INVALID_CONFIG` for a blank hostname or seed path, a
+ *   `shutdownGraceMs` that is not an integer from 0 to 2147483647, or an
+ *   unusable admin token, before anything is bound
  */
 export async function createCliServer(options: CliOptions): Promise<CliServer> {
   assertServerOptions(options);

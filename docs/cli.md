@@ -465,6 +465,13 @@ reload still parsing, cannot keep the shutdown open past the bound. It is
 memoized, so calling it twice is safe and both calls resolve. Awaiting it
 before binding the same port again is what makes a port-reuse race impossible.
 
+`shutdownGraceMs` must be an integer from `0` to `2147483647` (about 24.8 days,
+the longest delay a timer can hold). Anything else, `Infinity` included, makes
+`createCliServer` throw `INVALID_CONFIG` with context
+`{ option: 'shutdownGraceMs', value }`. A timer fires after 1 ms for such a
+value, so passing `Infinity` to mean "no bound" used to destroy every in-flight
+request the moment `close()` was called.
+
 `watch: true` works here too, not just behind the `--watch` flag: the returned
 server owns the watcher and closes it with the socket. If the watcher cannot be
 started, `createCliServer` rejects instead of leaving a server bound that

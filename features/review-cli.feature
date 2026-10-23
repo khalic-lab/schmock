@@ -91,3 +91,7 @@ Feature: CLI review fixes
   Scenario: --refs-allow-http without --refs-external warns that it has no effect
     When the CLI is run on the petstore spec with the extra arguments "--refs-allow-http schemas.example.com"
     Then the startup output contains "WARNING: --refs-allow-http has no effect without --refs-external"
+
+  Scenario: An unbounded shutdown grace window is refused instead of cutting requests off at once
+    When a CLI server is created for the petstore spec with a shutdown grace of "Infinity" milliseconds
+    Then the server refuses to start with code "INVALID_CONFIG"

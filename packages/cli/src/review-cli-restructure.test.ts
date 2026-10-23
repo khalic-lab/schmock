@@ -690,6 +690,42 @@ describe("CLI errors carry SchmockError codes", () => {
     },
   );
 
+  // Review 2026-10-23, cli-7: setTimeout fires after 1 ms for each of these,
+  // so the "grace window" destroyed in-flight requests at once.
+  it.each([
+    [Number.POSITIVE_INFINITY],
+    [2 ** 31],
+    [3_000_000_000],
+    [-1],
+    [1.5],
+    [Number.NaN],
+  ])(
+    "createCliServer refuses shutdownGraceMs %d with INVALID_CONFIG",
+    async (shutdownGraceMs) => {
+      await expect(
+        createCliServer({ spec: PETSTORE_SPEC, port: 0, shutdownGraceMs }),
+      ).rejects.toMatchObject({
+        name: "SchmockError",
+        code: "INVALID_CONFIG",
+        message:
+          "Invalid shutdownGraceMs. It must be an integer number of milliseconds from 0 to 2147483647.",
+        context: { option: "shutdownGraceMs", value: shutdownGraceMs },
+      });
+    },
+  );
+
+  it.each([[0], [2_147_483_647]])(
+    "createCliServer accepts shutdownGraceMs %d",
+    async (shutdownGraceMs) => {
+      const server = await createCliServer({
+        spec: PETSTORE_SPEC,
+        port: 0,
+        shutdownGraceMs,
+      });
+      await server.close();
+    },
+  );
+
   it("createCliServer refuses the blank seed path before reading the spec", async () => {
     // A spec that does not exist would fail first if it were read first.
     await expect(

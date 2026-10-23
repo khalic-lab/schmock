@@ -697,4 +697,25 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       Then("the startup output contains {string}", thenOutputContains);
     },
   );
+
+  // cli-7: setTimeout fires after 1 ms for Infinity, so "no bound" destroyed
+  // every in-flight request the moment close() was called.
+  Scenario(
+    "An unbounded shutdown grace window is refused instead of cutting requests off at once",
+    ({ When, Then }) => {
+      When(
+        "a CLI server is created for the petstore spec with a shutdown grace of {string} milliseconds",
+        (_, graceMs: string) =>
+          attemptStart({
+            spec: PETSTORE_SPEC,
+            port: 0,
+            shutdownGraceMs: Number(graceMs),
+          }),
+      );
+      Then(
+        "the server refuses to start with code {string}",
+        thenRefusedWithCode,
+      );
+    },
+  );
 });
