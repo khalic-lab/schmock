@@ -2460,4 +2460,41 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       );
     },
   );
+
+  Scenario(
+    "A beacon from a relaying page goes to the network without visiting the page",
+    ({ Given, When, Then }) => {
+      Given(
+        'a page whose mock answers "GET /api/users" with users and whose relay has started',
+        () => givenRelayingPage(usersRoute),
+      );
+
+      When('the page sends a beacon to "/api/events"', async () => {
+        // sendBeacon never goes through window.fetch: a keepalive POST
+        // straight from the browser.
+        response = await withTimeout(
+          currentPage().networkFetch("/api/events", {
+            method: "POST",
+            body: "event",
+            keepalive: true,
+          }),
+          "beacon /api/events",
+        );
+      });
+
+      Then(
+        "the network received the beacon without the page seeing it",
+        async () => {
+          await expectNetworkBody(await receivedResponse());
+          expect(currentPage().browserLog.at(-1)).toEqual({
+            method: "POST",
+            url: "http://localhost/api/events",
+            servedBy: "network",
+          });
+          expect(currentPage().relayedFrames).toEqual([]);
+          expect(currentMock().callCount()).toBe(0);
+        },
+      );
+    },
+  );
 });

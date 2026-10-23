@@ -19,14 +19,17 @@ import type {
 
 /**
  * Whether a request may be relayed to its page: sub-resource fetches the page
- * itself made (fetch/XHR), never navigations, loads with a destination, or
- * cross-mode only-if-cached requests.
+ * itself made (fetch/XHR), never navigations, loads with a destination,
+ * cross-mode only-if-cached requests, or keepalive requests (sendBeacon, a
+ * keepalive fetch): those exist to outlive their page, and a page that is
+ * going away may never answer them.
  */
 export function isRelayCandidate(request: Request, clientId: string): boolean {
   return (
     clientId !== "" &&
     request.mode !== "navigate" &&
     request.destination === "" &&
+    !request.keepalive &&
     !(request.cache === "only-if-cached" && request.mode !== "same-origin")
   );
 }

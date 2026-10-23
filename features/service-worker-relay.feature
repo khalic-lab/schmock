@@ -404,3 +404,8 @@ Feature: Service worker relay
     And the page stops the relay
     And the new worker version finishes installing and takes control
     Then the page's XHR for "/api/users" reaches the network without the mock
+
+  Scenario: A beacon from a relaying page goes to the network without visiting the page
+    Given a page whose mock answers "GET /api/users" with users and whose relay has started
+    When the page sends a beacon to "/api/events"
+    Then the network received the beacon without the page seeing it

@@ -415,6 +415,8 @@ leave `provideSchmockInterceptor`.
 | Cross-origin request a lease answers (origin-form `baseUrl` for another origin) | readable | readable, custom headers such as `x-total-count` included (observed) |
 | Bodiless `POST` (`fetch` or XHR) | no body | no body (observed) |
 | Explicit empty request body | empty | empty |
+| `fetch` with `keepalive: true` | mocked | not relayed: reaches the network unmocked |
+| `navigator.sendBeacon()` | never seen | not relayed: reaches the network |
 | Before the relay is live | n/a | `fetch` answered in the page, XHR not mocked |
 | Performance entry vs Network row | no row | the entry is shorter by the worker round trip |
 
@@ -429,9 +431,16 @@ worker, so it is usually a few milliseconds shorter than the Network row.
   tab. Another page under the same worker that never started the relay is
   untouched (observed).
 - **Only requests with an empty destination:** `fetch()` and XHR, and also
-  `navigator.sendBeacon()` and `EventSource`. Navigations, scripts, styles,
-  images and fonts are never relayed, so a `passthrough: false` lease cannot
-  answer the app's own assets with 404s.
+  `EventSource`. Navigations, scripts, styles, images and fonts are never
+  relayed, so a `passthrough: false` lease cannot answer the app's own assets
+  with 404s.
+- **Not keepalive requests:** `navigator.sendBeacon()` and
+  `fetch(url, { keepalive: true })`. They exist to outlive their page, often
+  sent as it unloads, and a page that is going away may never answer the
+  worker, so the request would reach neither the mock nor the network. The
+  worker sends them to the network. While the relay is live, the page hands
+  every `fetch` to the worker, so a keepalive `fetch` that fetch mode would
+  mock reaches the network unmocked.
 - **Not `only-if-cached` requests** whose mode is not `same-origin`.
 
 The worker stores its list of pages in Cache Storage, in a cache named

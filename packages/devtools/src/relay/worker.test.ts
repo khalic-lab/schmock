@@ -124,7 +124,12 @@ function answerFrames(
 }
 
 function req(
-  props: { mode?: string; destination?: string; cache?: string } = {},
+  props: {
+    mode?: string;
+    destination?: string;
+    cache?: string;
+    keepalive?: boolean;
+  } = {},
 ) {
   const request = new Request("http://localhost/x");
   for (const [key, value] of Object.entries(props)) {
@@ -174,6 +179,21 @@ describe("isRelayCandidate", () => {
         "c1",
       ),
     ).toBe(true);
+  });
+
+  it("W1 rejects keepalive requests, which may outlive their page", () => {
+    expect(isRelayCandidate(req({ keepalive: true }), "c1")).toBe(false);
+    expect(
+      isRelayCandidate(
+        new Request("http://localhost/beacon", {
+          method: "POST",
+          body: "x",
+          keepalive: true,
+        }),
+        "c1",
+      ),
+    ).toBe(false);
+    expect(isRelayCandidate(req({ keepalive: false }), "c1")).toBe(true);
   });
 });
 
@@ -525,6 +545,33 @@ describe("fetch", () => {
       { timeout: 2000 },
     );
     port.close();
+  });
+
+  it("W21 leaves a relaying page's keepalive request to the network", async () => {
+    await relayWorker();
+    const page = h.openPage();
+    await page.respondToRelaysWith({ tab: "A" });
+
+    const response = await page.networkFetch("/api/beacon", {
+      method: "POST",
+      body: "event",
+      keepalive: true,
+    });
+
+    expect(await response.text()).toBe("real network");
+    expect(page.browserLog.at(-1)).toEqual({
+      method: "POST",
+      url: "http://localhost/api/beacon",
+      servedBy: "network",
+    });
+    expect(page.relayedFrames).toEqual([]);
+
+    // positive control: the same request without keepalive is relayed
+    const relayed = await page.networkFetch("/api/beacon", {
+      method: "POST",
+      body: "event",
+    });
+    expect(await relayed.json()).toEqual({ tab: "A" });
   });
 
   it("W14 falls back to scope.fetch for a client it cannot find, and keeps its id", async () => {
