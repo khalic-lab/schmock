@@ -4,10 +4,8 @@ import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { SchmockError, schmock } from "@schmock/core";
 import { expect, vi } from "vitest";
 import { devtoolsPlugin } from "../index.js";
-import {
-  createServiceWorkerRelay,
-  startServiceWorkerRelay,
-} from "../relay/page-relay.js";
+import { createServiceWorkerRelay } from "../relay/page-relay.js";
+import { startServiceWorkerRelay } from "../relay/start-relay.js";
 import type {
   ExtendableEventLike,
   ExtendableMessageEventLike,

@@ -68,7 +68,7 @@ function invalidRelayOption(
   return invalidOption("startServiceWorkerRelay", option, requirement, value);
 }
 
-function isNonEmptyString(value: unknown): value is string {
+export function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value !== "";
 }
 
@@ -226,6 +226,11 @@ function handleFrame(event: RelayMessageEvent): void {
 
 type Waited<T> = { done: true; value: T } | { done: false };
 
+/**
+ * The relay over an explicit environment: startServiceWorkerRelay's engine
+ * (start-relay.ts) and the seam tests drive. The package entry does not
+ * re-export this module.
+ */
 export function createServiceWorkerRelay(
   environment: RelayEnvironment,
   options?: ServiceWorkerRelayOptions,
@@ -629,61 +634,4 @@ export function createServiceWorkerRelay(
 
   start().catch((error) => registrationFailed(errorMessage(error)));
   return promise;
-}
-
-export function startServiceWorkerRelay(
-  options?: ServiceWorkerRelayOptions,
-): Promise<ServiceWorkerRelay> {
-  let serviceWorker: RelayContainer | undefined;
-  try {
-    serviceWorker = globalThis.navigator?.serviceWorker ?? undefined;
-  } catch {
-    // A sandboxed document without allow-same-origin throws a SecurityError.
-    serviceWorker = undefined;
-  }
-  const environment: RelayEnvironment = {
-    container: serviceWorker,
-    secureContext: globalThis.isSecureContext === true,
-    baseUrl: pageBaseUrl(),
-    pageUrl: documentCreationUrl(),
-    onPageHide(listener) {
-      if (typeof globalThis.addEventListener !== "function") return () => {};
-      const handler = (event: Event) =>
-        listener(Reflect.get(event, "persisted") === true);
-      globalThis.addEventListener("pagehide", handler);
-      return () => globalThis.removeEventListener("pagehide", handler);
-    },
-  };
-  return createServiceWorkerRelay(environment, options);
-}
-
-/**
- * The URL the document was created at, which is what a worker's scope must
- * cover: the navigation entry keeps it after history.pushState() moves
- * location.href.
- */
-function documentCreationUrl(): string | undefined {
-  try {
-    const [navigation] =
-      globalThis.performance?.getEntriesByType?.("navigation") ?? [];
-    if (navigation !== undefined && isNonEmptyString(navigation.name)) {
-      return navigation.name;
-    }
-  } catch {
-    // no navigation timing here
-  }
-  if (typeof location !== "undefined" && typeof location.href === "string") {
-    return location.href;
-  }
-  return undefined;
-}
-
-function pageBaseUrl(): string {
-  if (typeof document !== "undefined" && isNonEmptyString(document.baseURI)) {
-    return document.baseURI;
-  }
-  if (typeof location !== "undefined" && typeof location.href === "string") {
-    return location.href;
-  }
-  return "http://localhost/";
 }

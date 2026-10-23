@@ -8,10 +8,8 @@ import {
   type RelayHarness,
 } from "../test-support/relay-harness.js";
 import type { ServiceWorkerRelay } from "../types.js";
-import {
-  createServiceWorkerRelay,
-  startServiceWorkerRelay,
-} from "./page-relay.js";
+import { createServiceWorkerRelay } from "./page-relay.js";
+import { startServiceWorkerRelay } from "./start-relay.js";
 import type {
   ClientLike,
   ExtendableMessageEventLike,
@@ -1487,7 +1485,7 @@ describe("PR24 import has no side effects", () => {
     });
     vi.stubGlobal("addEventListener", addEventListener);
 
-    const mod = await import("./page-relay.js");
+    const mod = await import("./start-relay.js");
     await import("../index.js");
     expect(reads).toBe(0);
     expect(addEventListener).not.toHaveBeenCalled();
@@ -1502,7 +1500,7 @@ describe("PR24 import has no side effects", () => {
 describe("PR25 package root entry", () => {
   it("re-exports the same function, exposes only the two runtime names", async () => {
     const root = await import("../index.js");
-    const relayModule = await import("./page-relay.js");
+    const relayModule = await import("./start-relay.js");
     expect(root.startServiceWorkerRelay).toBe(
       relayModule.startServiceWorkerRelay,
     );

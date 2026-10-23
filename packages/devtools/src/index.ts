@@ -6,7 +6,7 @@ import { invalidOption } from "./invalid-option.js";
 import { measureExchange } from "./performance-reporter.js";
 import type { DevtoolsPluginOptions } from "./types.js";
 
-export { startServiceWorkerRelay } from "./relay/page-relay.js";
+export { startServiceWorkerRelay } from "./relay/start-relay.js";
 export type {
   DevtoolsPluginOptions,
   RelayFallbackReason,
