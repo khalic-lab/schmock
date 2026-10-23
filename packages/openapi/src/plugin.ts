@@ -33,6 +33,7 @@ import {
 import {
   CREATE_SUCCESS_STATUS_ORDER,
   findSuccessResponse,
+  isStatusInRange,
 } from "./response-status.js";
 import type { SeedConfig, SeedSource } from "./seed.js";
 import { assertValidSeedConfig, loadSeed } from "./seed.js";
@@ -476,12 +477,17 @@ function applySchemaOverrides(
     // 200 (an upsert contract declaring both answers a fresh create with 201),
     // everything else takes the lowest declared 2xx. Patching the first 2xx in
     // map order changed a create's 200 while it served the untouched 201.
+    // A `default` the route would fall back to is not a 2xx entry, and gets a
+    // synthetic 200 in front of it instead of being rewritten.
     const success = findSuccessResponse(
       parsedPath.responses,
       creates.has(parsedPath) ? CREATE_SUCCESS_STATUS_ORDER : undefined,
+    )?.[1];
+    const declaredAs2xx = [...parsedPath.responses].some(
+      ([code, entry]) => entry === success && isStatusInRange(code, 200, 300),
     );
-    if (success && success[1] !== parsedPath.responses.get("default")) {
-      replaceResponseSchema(success[1], schema);
+    if (success && declaredAs2xx) {
+      replaceResponseSchema(success, schema);
     } else {
       parsedPath.responses.set(200, { schema, description: "" });
     }
