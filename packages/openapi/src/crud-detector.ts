@@ -552,25 +552,15 @@ function buildOperationMeta(
     }
   }
 
-  // Capture error response schemas (4xx)
-  const errorSchemas = new Map<number, JSONSchema7>();
-  for (const [code, resp] of p.responses) {
-    if (typeof code === "number" && code >= 400 && code < 600 && resp.schema) {
-      errorSchemas.set(code, resp.schema);
-    }
-  }
-  // The 404 a CRUD handler answers on its own resolves the way response
-  // validation resolves it (exact, range, then `default`), so a spec that
-  // declares its errors only under `default` or `4XX` gets its own body back.
-  // A `default` entry that is the success contract is not an error schema.
-  if (!errorSchemas.has(MISSING_ITEM_STATUS)) {
-    const entry = findResponseEntry(p.responses, MISSING_ITEM_STATUS);
-    if (entry?.schema && entry !== successResponse?.[1]) {
-      errorSchemas.set(MISSING_ITEM_STATUS, entry.schema);
-    }
-  }
-  if (errorSchemas.size > 0) {
-    meta.errorSchemas = errorSchemas;
+  // The 404 for a missing item is the only error body a CRUD handler answers
+  // on its own, so it is the only error schema kept. It resolves the way
+  // response validation resolves it (exact, range, then `default`), so a spec
+  // that declares its errors only under `default` or `4XX` gets its own body
+  // back. A `default` entry that is the success contract is not an error
+  // schema.
+  const missing = findResponseEntry(p.responses, MISSING_ITEM_STATUS);
+  if (missing?.schema && missing !== successResponse?.[1]) {
+    meta.errorSchemas = new Map([[MISSING_ITEM_STATUS, missing.schema]]);
   }
 
   return meta;

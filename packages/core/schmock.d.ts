@@ -999,7 +999,10 @@ declare namespace Schmock {
     responseStatus?: number;
     /** Response headers from spec */
     responseHeaders?: Record<string, ResponseHeaderDef>;
-    /** Error response schemas keyed by status code */
+    /**
+     * Error response schemas keyed by status code. CRUD answers only the 404
+     * for a missing item itself, so that is the only status detected.
+     */
     errorSchemas?: Map<number, JSONSchema7>;
     /** Declared media types for the success response, in spec order. */
     responseContentTypes?: string[];

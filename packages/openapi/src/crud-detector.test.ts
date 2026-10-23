@@ -341,6 +341,24 @@ describe("CRUD error schemas", () => {
     expect(meta.errorSchemas?.get(404)).toBe(problem);
   });
 
+  it("keeps no exact error status other than the missing-item 404", () => {
+    expect([
+      ...(itemRead([
+        [200, pet],
+        [400, problem],
+        [404, other],
+        [409, problem],
+      ]).errorSchemas?.keys() ?? []),
+    ]).toEqual([404]);
+    expect(
+      itemRead([
+        [200, pet],
+        [400, problem],
+        [409, problem],
+      ]).errorSchemas,
+    ).toBeUndefined();
+  });
+
   it("prefers the exact status, then the range, then `default`", () => {
     expect(
       itemRead([
