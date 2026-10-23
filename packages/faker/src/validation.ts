@@ -58,10 +58,12 @@ interface Estimate {
   /** Estimated number of JSON nodes this sub-schema generates. */
   nodes: number;
   /**
-   * Characters this sub-schema is certain to generate: the `minLength` of
-   * every string it emits, multiplied through array counts. A floor, never an
-   * estimate of the typical size, so charging it cannot reject a schema whose
-   * output would fit.
+   * Characters this sub-schema is certain to generate: the certain length of
+   * every string it emits (`certainStringLength`), multiplied through array
+   * counts. A floor, never an estimate of the typical size, so charging it
+   * cannot reject a schema whose output would fit. The one exception is a
+   * pattern that a composition nested more than one level below it
+   * contradicts (`patternLengthFloor`), which can be over-charged.
    */
   chars: number;
 }
@@ -675,10 +677,7 @@ function estimateSchema(
   let height = 0;
   let nodes = 1;
   // Only a schema that can be nothing but a string is certain to emit one.
-  let chars =
-    schema.type === "string" && typeof schema.minLength === "number"
-      ? Math.max(0, schema.minLength)
-      : 0;
+  let chars = schema.type === "string" ? certainStringLength(schema) : 0;
   /** Keywords the rules below account for; the rest are charged in full. */
   const handled = new Set<string>([
     ...NON_VALUE_KEYWORDS,
@@ -838,6 +837,87 @@ function estimateDefinition(
   estimates: Map<JSONSchema7, Estimate>,
 ): Estimate {
   return isJSONSchema7(definition) ? (estimates.get(definition) ?? LEAF) : LEAF;
+}
+
+/**
+ * The fewest characters json-schema-faker emits for a string schema: the
+ * largest of its `minLength`, the shortest match of the `pattern` it generates
+ * from, and the length its faker method is told to produce.
+ */
+function certainStringLength(schema: FakerAwareSchema): number {
+  // A NaN `minLength` is no floor; left in, it would turn the whole
+  // estimate into NaN, which no limit comparison catches.
+  const minLength =
+    typeof schema.minLength === "number" && !Number.isNaN(schema.minLength)
+      ? Math.max(0, schema.minLength)
+      : 0;
+  return Math.max(
+    minLength,
+    patternLengthFloor(schema),
+    fakerLengthFloor(schema.faker),
+  );
+}
+
+/** Keywords json-schema-faker generates from in place of a `pattern`. */
+const PATTERN_OVERRIDES: readonly string[] = [
+  "faker",
+  "format",
+  "enum",
+  "const",
+  "default",
+];
+
+/**
+ * The subschemas json-schema-faker merges into a string schema before it
+ * generates: every `allOf` entry, the `anyOf` or `oneOf` entry it picks, and
+ * the `then` or `else` it applies (with the `if` beside a `then`).
+ */
+function mergedStringBranches(schema: JSONSchema7): JSONSchema7[] {
+  const branches: unknown[] = [];
+  for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
+    const entries = schema[keyword];
+    if (Array.isArray(entries)) branches.push(...entries);
+  }
+  if (schema.then !== undefined) branches.push(schema.if, schema.then);
+  branches.push(schema.else);
+  return branches.filter(isJSONSchema7);
+}
+
+/**
+ * The shortest string a `pattern` makes json-schema-faker generate. A
+ * `faker`, `format`, `enum`, `const` or `default` replaces the pattern, and a
+ * `maxLength` truncates its match. A merged branch can do either, so a branch
+ * carrying one of those keywords (or a pattern of its own) drops the floor,
+ * and the smallest `maxLength` among the schema and its branches caps it.
+ * Branches are read one level deep; a deeper composition that contradicts
+ * the pattern can still be charged more than it generates.
+ */
+function patternLengthFloor(schema: FakerAwareSchema): number {
+  if (
+    typeof schema.pattern !== "string" ||
+    compilePattern(schema.pattern) === undefined ||
+    PATTERN_OVERRIDES.some(
+      (keyword) => Reflect.get(schema, keyword) !== undefined,
+    )
+  ) {
+    return 0;
+  }
+  const branches = mergedStringBranches(schema);
+  if (
+    branches.some((branch) =>
+      ["pattern", ...PATTERN_OVERRIDES].some(
+        (keyword) => Reflect.get(branch, keyword) !== undefined,
+      ),
+    )
+  ) {
+    return 0;
+  }
+  const floor = cappedBy(
+    regexLengthBounds(schema.pattern).min,
+    mergedCaps(schema, ...branches).maxLength,
+  );
+  // json-schema-faker truncates to a NaN maxLength as to zero.
+  return Number.isNaN(floor) ? 0 : floor;
 }
 
 function analyzeGraphPaths(
@@ -1056,12 +1136,20 @@ interface AllocationRule {
   property?: "count" | "length";
   resource: "array_size" | "string_length";
   limit: number;
+  /**
+   * The argument is a length faker always produces, so its lower bound is
+   * certain output. Unset for counts of words, sentences or items, for a
+   * length that only selects dictionary words (`word.sample`), and for a
+   * count of entries that may be empty strings (`string.fromCharacters`).
+   */
+  exact?: true;
 }
 
 const STRING_LIMIT = {
   resource: "string_length",
   limit: MAX_STRING_LENGTH,
 } as const;
+const EXACT_LENGTH = { ...STRING_LIMIT, exact: true } as const;
 const ARRAY_LIMIT = {
   resource: "array_size",
   limit: MAX_ARRAY_SIZE,
@@ -1099,7 +1187,7 @@ const FAKER_ALLOCATION_POLICIES: Readonly<
       argumentIndex: 0,
       direct: true,
       property: "length",
-      ...STRING_LIMIT,
+      ...EXACT_LENGTH,
     },
   ],
   "string.alphanumeric": [
@@ -1107,7 +1195,7 @@ const FAKER_ALLOCATION_POLICIES: Readonly<
       argumentIndex: 0,
       direct: true,
       property: "length",
-      ...STRING_LIMIT,
+      ...EXACT_LENGTH,
     },
   ],
   "string.binary": [
@@ -1115,7 +1203,7 @@ const FAKER_ALLOCATION_POLICIES: Readonly<
       argumentIndex: 0,
       direct: false,
       property: "length",
-      ...STRING_LIMIT,
+      ...EXACT_LENGTH,
     },
   ],
   "string.octal": [
@@ -1123,7 +1211,7 @@ const FAKER_ALLOCATION_POLICIES: Readonly<
       argumentIndex: 0,
       direct: false,
       property: "length",
-      ...STRING_LIMIT,
+      ...EXACT_LENGTH,
     },
   ],
   "string.hexadecimal": [
@@ -1131,7 +1219,7 @@ const FAKER_ALLOCATION_POLICIES: Readonly<
       argumentIndex: 0,
       direct: false,
       property: "length",
-      ...STRING_LIMIT,
+      ...EXACT_LENGTH,
     },
   ],
   "string.numeric": [
@@ -1139,12 +1227,12 @@ const FAKER_ALLOCATION_POLICIES: Readonly<
       argumentIndex: 0,
       direct: true,
       property: "length",
-      ...STRING_LIMIT,
+      ...EXACT_LENGTH,
     },
   ],
-  "string.sample": [{ argumentIndex: 0, direct: true, ...STRING_LIMIT }],
-  "string.nanoid": [{ argumentIndex: 0, direct: true, ...STRING_LIMIT }],
-  "string.symbol": [{ argumentIndex: 0, direct: true, ...STRING_LIMIT }],
+  "string.sample": [{ argumentIndex: 0, direct: true, ...EXACT_LENGTH }],
+  "string.nanoid": [{ argumentIndex: 0, direct: true, ...EXACT_LENGTH }],
+  "string.symbol": [{ argumentIndex: 0, direct: true, ...EXACT_LENGTH }],
   "word.sample": [
     {
       argumentIndex: 0,
@@ -1182,7 +1270,7 @@ const FAKER_ALLOCATION_POLICIES: Readonly<
       argumentIndex: 0,
       direct: false,
       property: "length",
-      ...STRING_LIMIT,
+      ...EXACT_LENGTH,
     },
   ],
   "helpers.uniqueArray": [{ argumentIndex: 1, direct: true, ...ARRAY_LIMIT }],
@@ -1257,6 +1345,40 @@ function maximumCardinality(value: unknown): number {
     if (typeof bound === "number") maximum = Math.max(maximum, bound);
   }
   return maximum;
+}
+
+/** The lower end of a faker size argument: a number, or a `{ min, max }`. */
+function minimumCardinality(value: unknown): number {
+  const bound = isRecord(value) ? Reflect.get(value, "min") : value;
+  return typeof bound === "number" && Number.isFinite(bound)
+    ? Math.max(0, bound)
+    : 0;
+}
+
+/**
+ * The fewest characters a faker config is certain to produce: the lower
+ * bound of a length argument its method always reaches (an `exact` rule).
+ * An options object carries the length under the rule's property; only a
+ * method without one takes a `{ min, max }` range directly.
+ */
+function fakerLengthFloor(config: unknown): number {
+  if (!isRecord(config)) return 0;
+  let floor = 0;
+  for (const [method, args] of Object.entries(config)) {
+    if (!Array.isArray(args)) continue;
+    for (const rule of FAKER_ALLOCATION_POLICIES[method] ?? []) {
+      if (!rule.exact) continue;
+      const argument: unknown = args[rule.argumentIndex];
+      const length =
+        rule.property && isRecord(argument)
+          ? Reflect.get(argument, rule.property)
+          : rule.direct
+            ? argument
+            : undefined;
+      floor = Math.max(floor, minimumCardinality(length));
+    }
+  }
+  return floor;
 }
 
 /**

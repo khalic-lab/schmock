@@ -1505,7 +1505,16 @@ against `generated_nodes`.
 
 `generated_chars` counts every string and object key in one response. At
 creation it is checked against the least the schema can produce: each
-`minLength` multiplied by its array counts. Nested arrays are bounded by
+string's certain length multiplied by its array counts. A string's certain
+length is the largest of its `minLength`, the shortest match of its `pattern`,
+and the length argument of a faker method that always produces that many
+characters (`string.alpha`, `string.alphanumeric`, `string.numeric`,
+`string.binary`, `string.octal`, `string.hexadecimal`, `string.sample`,
+`string.nanoid`, `string.symbol`, `internet.password`). A `pattern` counts only
+up to the smallest `maxLength` on the schema or a branch json-schema-faker
+merges into it (`allOf`, `anyOf`, `oneOf`, `then`, `else`), and not at all when
+a `faker`, `format`, `enum`, `const` or `default` on the schema or such a
+branch supplies the value instead. Nested arrays are bounded by
 `generated_nodes`; there is no separate memory estimate.
 
 Faker arguments that set a size are held to the string limit:

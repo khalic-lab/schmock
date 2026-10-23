@@ -19,3 +19,20 @@ Feature: Faker creation-time checks
     Given an array schema of at most 5 integers whose contains allows 2 to 3 matches
     When I create a faker plugin for it
     Then the plugin generates an array of at most 5 items
+
+  # Review 2026-10-23 faker-12: a pattern or faker length floor is as certain as minLength
+  Scenario Outline: Strings whose certain lengths add up past the character budget are rejected at construction
+    Given an object holding 300 strings that each get 60000 characters from "<source>"
+    When I create a faker plugin for it
+    Then plugin creation fails with resource "generated_chars"
+
+    Examples:
+      | source       |
+      | minLength    |
+      | pattern      |
+      | string.alpha |
+
+  Scenario: A pattern that maxLength truncates is charged only up to maxLength
+    Given an object holding 300 strings whose pattern needs 60000 characters but whose maxLength is 10
+    When I create a faker plugin for it
+    Then plugin creation succeeds

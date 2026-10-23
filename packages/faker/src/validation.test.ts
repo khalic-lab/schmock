@@ -52,6 +52,17 @@ async function generateOnce(schema: JSONSchema7): Promise<unknown> {
   return (await plugin.process(context())).response;
 }
 
+/** An object whose `rows` property holds `count` copies of `item`. */
+function rowsOf(item: JSONSchema7, count: number): JSONSchema7 {
+  return {
+    type: "object",
+    properties: {
+      rows: { type: "array", minItems: count, maxItems: count, items: item },
+    },
+    required: ["rows"],
+  };
+}
+
 describe("validateSchema", () => {
   describe("contains draw counts", () => {
     it("rejects a maxContains above the array limit even when maxItems is small", () => {
@@ -239,5 +250,159 @@ describe("validateSchema", () => {
 
       expect(() => fakerPlugin({ schema })).not.toThrow();
     });
+  });
+
+  describe("certain string floors", () => {
+    it("charges a pattern's shortest match against the character budget", () => {
+      const schema = rowsOf({ type: "string", pattern: "^[a-z]{60000}$" }, 300);
+
+      expectResource(
+        captureFailure(() => fakerPlugin({ schema })),
+        {
+          resource: "generated_chars",
+          actual: 18_000_000,
+        },
+      );
+    });
+
+    it.each([
+      ["string.alpha", [{ length: 60_000 }]],
+      ["string.alphanumeric", [60_000]],
+      ["string.numeric", [{ length: { min: 60_000, max: 60_000 } }]],
+      ["string.hexadecimal", [{ length: 60_000 }]],
+      ["string.nanoid", [{ min: 60_000, max: 60_000 }]],
+      ["string.sample", [60_000]],
+      ["internet.password", [{ length: 60_000 }]],
+    ])(
+      "charges the %s length argument against the character budget",
+      (method, args) => {
+        const item = withKeywords(
+          { type: "string" },
+          {
+            faker: { [method]: args },
+          },
+        );
+        const schema = rowsOf(item, 300);
+
+        expectResource(
+          captureFailure(() => fakerPlugin({ schema })),
+          {
+            resource: "generated_chars",
+            actual: 18_000_000,
+          },
+        );
+      },
+    );
+
+    it("charges the larger of minLength and a pattern floor", () => {
+      const schema = rowsOf(
+        { type: "string", minLength: 10, pattern: "^[a-z]{60000}$" },
+        300,
+      );
+
+      expectResource(
+        captureFailure(() => fakerPlugin({ schema })),
+        {
+          resource: "generated_chars",
+          actual: 18_000_000,
+        },
+      );
+    });
+
+    it.each([
+      [
+        "a maxLength that truncates the pattern",
+        { type: "string", pattern: "^[a-z]{60000}$", maxLength: 10 },
+      ],
+      [
+        "a format that replaces the pattern",
+        { type: "string", pattern: "^[a-z]{60000}$", format: "uuid" },
+      ],
+      [
+        "an enum that replaces the pattern",
+        { type: "string", pattern: "^[a-z]{60000}$", enum: ["a"] },
+      ],
+      [
+        "a default that replaces the pattern",
+        { type: "string", pattern: "^[a-z]{60000}$", default: "a" },
+      ],
+      [
+        "a nullable pattern",
+        { type: ["string", "null"], pattern: "^[a-z]{60000}$" },
+      ],
+      [
+        "an allOf maxLength that truncates the pattern",
+        { type: "string", pattern: "^[a-z]{60000}$", allOf: [{ maxLength: 10 }] },
+      ],
+      [
+        "an anyOf enum that replaces the pattern",
+        { type: "string", pattern: "^[a-z]{60000}$", anyOf: [{ enum: ["x"] }] },
+      ],
+      [
+        "a then const that replaces the pattern",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          if: { minLength: 0 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { const: "x" },
+        },
+      ],
+      [
+        "a NaN maxLength",
+        { type: "string", pattern: "^[a-z]{60000}$", maxLength: Number.NaN },
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "does not charge a pattern floor under %s",
+      (_, item) => {
+        expect(() => fakerPlugin({ schema: rowsOf(item, 300) })).not.toThrow();
+      },
+    );
+
+    it("still charges a pattern beside an allOf that leaves it in place", () => {
+      const schema = rowsOf(
+        { type: "string", pattern: "^[a-z]{60000}$", allOf: [{ minLength: 1 }] },
+        300,
+      );
+
+      expectResource(
+        captureFailure(() => fakerPlugin({ schema })),
+        { resource: "generated_chars", actual: 18_000_000 },
+      );
+    });
+
+    it("does not let a NaN minLength hide a sibling over the character budget", () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: {
+          rows: rowsOf({ type: "string", minLength: 60_000 }, 300),
+          odd: { type: "string", minLength: Number.NaN },
+        },
+      };
+
+      expectResource(
+        captureFailure(() => fakerPlugin({ schema })),
+        { resource: "generated_chars", actual: 18_000_000 },
+      );
+    });
+
+    it.each([
+      ["word.sample", [{ length: 60_000 }]],
+      ["lorem.word", [{ length: 60_000 }]],
+      ["lorem.words", [30_000]],
+      ["string.fromCharacters", [["", "a"], 60_000]],
+    ])(
+      "does not charge %s, whose output length is not certain",
+      (method, args) => {
+        const item = withKeywords(
+          { type: "string" },
+          {
+            faker: { [method]: args },
+          },
+        );
+
+        expect(() => fakerPlugin({ schema: rowsOf(item, 300) })).not.toThrow();
+      },
+    );
   });
 });

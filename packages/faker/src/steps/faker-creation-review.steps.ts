@@ -31,6 +31,34 @@ function withKeywords(
   return schema;
 }
 
+/** An object whose `rows` property holds `count` copies of `item`. */
+function rowsOf(item: JSONSchema7, count: number): JSONSchema7 {
+  return {
+    type: "object",
+    properties: {
+      rows: { type: "array", minItems: count, maxItems: count, items: item },
+    },
+    required: ["rows"],
+  };
+}
+
+/** A string schema that `source` alone makes `length` characters long. */
+function stringOfLength(source: string, length: number): JSONSchema7 {
+  switch (source) {
+    case "minLength":
+      return { type: "string", minLength: length };
+    case "pattern":
+      return { type: "string", pattern: `^[a-z]{${length}}$` };
+    case "string.alpha":
+      return withKeywords(
+        { type: "string" },
+        { faker: { "string.alpha": [{ length }] } },
+      );
+    default:
+      throw new Error(`Unknown length source: ${source}`);
+  }
+}
+
 function expectResourceFailure(
   error: unknown,
   resource: string,
@@ -121,6 +149,45 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           expect(response.length).toBeLessThanOrEqual(maxItems);
         },
       );
+    },
+  );
+
+  ScenarioOutline(
+    "Strings whose certain lengths add up past the character budget are rejected at construction",
+    ({ Given, When, Then }, variables) => {
+      Given(
+        "an object holding {int} strings that each get {int} characters from {string}",
+        (_, count: number, length: number) => {
+          schema = rowsOf(stringOfLength(variables.source, length), count);
+        },
+      );
+      When("I create a faker plugin for it", createPlugin);
+      Then(
+        "plugin creation fails with resource {string}",
+        (_, resource: string) => {
+          expectResourceFailure(creationError, resource);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A pattern that maxLength truncates is charged only up to maxLength",
+    ({ Given, When, Then }) => {
+      Given(
+        "an object holding {int} strings whose pattern needs {int} characters but whose maxLength is {int}",
+        (_, count: number, length: number, maxLength: number) => {
+          schema = rowsOf(
+            { type: "string", pattern: `^[a-z]{${length}}$`, maxLength },
+            count,
+          );
+        },
+      );
+      When("I create a faker plugin for it", createPlugin);
+      Then("plugin creation succeeds", () => {
+        expect(creationError).toBeUndefined();
+        expect(plugin).toBeDefined();
+      });
     },
   );
 });
