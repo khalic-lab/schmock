@@ -872,6 +872,15 @@ await fetch('/orders', {
 // validated as { qty: 3, gift: true, metadata: { ref: 'A1' } }
 ```
 
+CRUD create, `PUT` and `PATCH` store a form body read the same way, through the
+request schema declared for its media type, whether `validateRequests` is on
+or off: `name=Tom&age=4` stores `age: 4` against an `integer` property, and a
+multipart create stores its text fields. File parts (a `Blob`/`File`, or a
+list of them under one name) are not stored, because a stored file would
+serialize as `{}` on every later read. The created body generates those
+properties from the response contract instead, like any field the request
+omits.
+
 ### Per-media-type request schemas and 415
 
 Each media type an operation declares keeps its own schema, and the request's

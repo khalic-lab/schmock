@@ -598,4 +598,204 @@ describe("CRUD review fixes", () => {
       ]);
     });
   });
+
+  describe("form bodies on CRUD create and update", () => {
+    const formPet = {
+      type: "object",
+      required: ["id", "name", "age"],
+      properties: {
+        id: { type: "integer" },
+        name: { type: "string" },
+        age: { type: "integer" },
+      },
+    };
+    const uploadPet = {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        age: { type: "integer" },
+        photo: { type: "string", format: "binary" },
+      },
+    };
+    const formSpec = spec({
+      "/pets": {
+        get: {
+          responses: {
+            "200": {
+              description: "list",
+              content: json({ type: "array", items: formPet }),
+            },
+          },
+        },
+        post: {
+          requestBody: {
+            content: {
+              "multipart/form-data": { schema: uploadPet },
+              "application/x-www-form-urlencoded": { schema: uploadPet },
+            },
+          },
+          responses: { "201": { description: "c", content: json(formPet) } },
+        },
+      },
+      "/pets/{petId}": {
+        get: {
+          responses: { "200": { description: "p", content: json(formPet) } },
+        },
+        put: {
+          requestBody: {
+            content: { "multipart/form-data": { schema: uploadPet } },
+          },
+          responses: { "200": { description: "p", content: json(formPet) } },
+        },
+        patch: {
+          requestBody: {
+            content: {
+              "application/x-www-form-urlencoded": { schema: uploadPet },
+            },
+          },
+          responses: { "200": { description: "p", content: json(formPet) } },
+        },
+      },
+    });
+
+    function multipart(fields: Record<string, string | Blob>): FormData {
+      const form = new FormData();
+      for (const [name, value] of Object.entries(fields)) {
+        form.append(name, value);
+      }
+      return form;
+    }
+
+    async function interceptedSend(
+      mock: Schmock.CallableMockInstance,
+      method: string,
+      path: string,
+      body: BodyInit,
+    ): Promise<{ status: number; body: unknown }> {
+      const handle = mock.intercept({ passthrough: false });
+      try {
+        const response = await fetch(`http://localhost${path}`, {
+          method,
+          body,
+        });
+        const text = await response.text();
+        return {
+          status: response.status,
+          body: text ? JSON.parse(text) : undefined,
+        };
+      } finally {
+        handle.restore();
+      }
+    }
+
+    for (const validateRequests of [false, true]) {
+      it(`stores the submitted multipart fields, typed, without the file (validateRequests: ${validateRequests})`, async () => {
+        const mock = await mockOf(formSpec, {
+          validateRequests,
+          validateResponses: true,
+        });
+
+        const created = await mock.handle("POST", "/pets", {
+          headers: { "content-type": "multipart/form-data; boundary=x" },
+          body: multipart({
+            name: "Rex",
+            age: "3",
+            photo: new Blob([new Uint8Array([1, 2, 3])]),
+          }),
+        });
+        expect(created.status).toBe(201);
+        expect(created.body).toEqual({ id: 1, name: "Rex", age: 3 });
+
+        const replaced = await mock.handle("PUT", "/pets/1", {
+          headers: { "content-type": "multipart/form-data; boundary=x" },
+          body: multipart({ name: "Renamed" }),
+        });
+        expect(replaced.status).toBe(200);
+        expect(replaced.body).toEqual({ id: 1, name: "Renamed", age: 3 });
+      });
+    }
+
+    it("stores urlencoded fields as their declared types through fetch", async () => {
+      const mock = await mockOf(formSpec, { validateResponses: true });
+
+      const created = await interceptedSend(
+        mock,
+        "POST",
+        "/pets",
+        new URLSearchParams({ name: "Tom", age: "4" }),
+      );
+      expect(created).toEqual({
+        status: 201,
+        body: { id: 1, name: "Tom", age: 4 },
+      });
+
+      const patched = await interceptedSend(
+        mock,
+        "PATCH",
+        "/pets/1",
+        new URLSearchParams({ age: "5" }),
+      );
+      expect(patched).toEqual({
+        status: 200,
+        body: { id: 1, name: "Tom", age: 5 },
+      });
+
+      const read = await mock.handle("GET", "/pets/1");
+      expect(read.body).toEqual({ id: 1, name: "Tom", age: 5 });
+    });
+
+    it("reads form fields by the request schema when validation is off", async () => {
+      // The response contract does not declare `age`, the request schema does:
+      // the field is coerced the way the request schema reads it.
+      const loose = {
+        type: "object",
+        properties: { id: { type: "integer" }, name: { type: "string" } },
+      };
+      const mock = await mockOf(
+        spec({
+          "/pets": {
+            get: {
+              responses: {
+                "200": {
+                  description: "list",
+                  content: json({ type: "array", items: loose }),
+                },
+              },
+            },
+            post: {
+              requestBody: {
+                content: {
+                  "application/x-www-form-urlencoded": { schema: uploadPet },
+                },
+              },
+              responses: { "201": { description: "c", content: json(loose) } },
+            },
+          },
+        }),
+      );
+      const created = await mock.handle("POST", "/pets", {
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: { name: "Tom", age: "4" },
+      });
+      expect(created.body).toEqual({ id: 1, name: "Tom", age: 4 });
+    });
+
+    it("stores multipart fields sent through fetch", async () => {
+      const mock = await mockOf(formSpec, { validateResponses: true });
+      const created = await interceptedSend(
+        mock,
+        "POST",
+        "/pets",
+        multipart({
+          name: "Rex",
+          age: "3",
+          photo: new Blob([new Uint8Array([1, 2, 3])]),
+        }),
+      );
+      expect(created).toEqual({
+        status: 201,
+        body: { id: 1, name: "Rex", age: 3 },
+      });
+    });
+  });
 });

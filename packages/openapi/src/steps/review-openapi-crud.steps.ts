@@ -246,6 +246,55 @@ const disputeSpec = spec({
   },
 });
 
+// ── Form bodies ─────────────────────────────────────────────────────────────
+
+const storedPet = {
+  type: "object",
+  required: ["id", "name", "age"],
+  properties: {
+    id: { type: "integer" },
+    name: { type: "string" },
+    age: { type: "integer" },
+  },
+};
+
+const multipartPetsSpec = spec({
+  "/pets": {
+    get: {
+      responses: {
+        "200": {
+          description: "list",
+          content: json({ type: "array", items: storedPet }),
+        },
+      },
+    },
+    post: {
+      requestBody: {
+        content: {
+          "multipart/form-data": {
+            schema: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                age: { type: "integer" },
+                photo: { type: "string", format: "binary" },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        "201": { description: "created", content: json(storedPet) },
+      },
+    },
+  },
+  "/pets/{petId}": {
+    get: {
+      responses: { "200": { description: "pet", content: json(storedPet) } },
+    },
+  },
+});
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -457,6 +506,55 @@ describeFeature(feature, ({ Scenario }) => {
           }
         },
       );
+    },
+  );
+
+  Scenario(
+    "A multipart create stores its text fields, typed, and not its file",
+    ({ Given, When, Then, And }) => {
+      let created: { status: number; body: unknown };
+
+      Given(
+        "a validating pets mock whose create accepts a multipart name, age and photo",
+        async () => {
+          await validatingMock(multipartPetsSpec);
+        },
+      );
+
+      When(
+        'I post a multipart pet named "Rex" aged "3" with a photo through the fetch interceptor',
+        async () => {
+          const form = new FormData();
+          form.append("name", "Rex");
+          form.append("age", "3");
+          form.append("photo", new Blob([new Uint8Array([1, 2, 3])]));
+          const handle = mock.intercept({ passthrough: false });
+          try {
+            const res = await fetch("http://localhost/pets", {
+              method: "POST",
+              body: form,
+            });
+            created = { status: res.status, body: await res.json() };
+          } finally {
+            handle.restore();
+          }
+        },
+      );
+
+      Then(
+        'the created pet is 201 with name "Rex" and age 3 and no photo',
+        () => {
+          expect(created).toEqual({
+            status: 201,
+            body: { id: 1, name: "Rex", age: 3 },
+          });
+        },
+      );
+
+      And("reading pet 1 answers the same pet", async () => {
+        const read = await mock.handle("GET", "/pets/1");
+        expect(read.body).toEqual({ id: 1, name: "Rex", age: 3 });
+      });
     },
   );
 });

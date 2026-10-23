@@ -1,5 +1,5 @@
 import type * as Schmock from "@schmock/core";
-import { isHttpMethod, SchmockError } from "@schmock/core";
+import { getHeader, isHttpMethod, SchmockError } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { version as packageVersion } from "../package.json";
 import { dispatchCallbacks, getRouteCallbacks } from "./callbacks.js";
@@ -17,6 +17,10 @@ import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
 import { convertPathTemplate, parseSpec } from "./parser.js";
 import { templateToRoutePath } from "./path-template.js";
 import {
+  NORMALIZED_BODY_STATE_KEY,
+  normalizeRequestBody,
+} from "./request-body.js";
+import {
   applyResponseContentType,
   createBodyValidatorContext,
   getResponseStatus,
@@ -29,7 +33,7 @@ import {
 import { isStatusInRange } from "./response-status.js";
 import type { SeedConfig, SeedSource } from "./seed.js";
 import { assertValidSeedConfig, loadSeed } from "./seed.js";
-import { normalizeMediaType } from "./utils.js";
+import { isRecord, normalizeMediaType } from "./utils.js";
 
 export type { SeedConfig, SeedSource };
 
@@ -195,6 +199,8 @@ export async function openapi(
           requestValidatorCtx,
         );
         if (validationResult) return rejectRequest(context, validationResult);
+      } else {
+        storeNormalizedBody(context);
       }
 
       return undefined;
@@ -300,6 +306,50 @@ function settlePendingMutations(
   for (const commit of pending) {
     if (typeof commit === "function") commit();
   }
+}
+
+/**
+ * Leave the request body, read the way the operation's request schema reads
+ * it, where the CRUD generators look for it (`readRequestBody`). Request
+ * validation does this itself; this is the same step when it is off, so a
+ * multipart or urlencoded create stores the submitted fields either way.
+ */
+function storeNormalizedBody(context: Schmock.PluginContext): void {
+  if (context.body === undefined) return;
+  const contentType = getHeader(context.headers, "content-type");
+  context.state.set(
+    NORMALIZED_BODY_STATE_KEY,
+    normalizeRequestBody(
+      context.body,
+      contentType,
+      requestSchemaFor(context.route, contentType),
+    ),
+  );
+}
+
+/**
+ * The request schema declared for the body's media type: an exact key, then
+ * its `type/*` range, then the any-type wildcard, as request validation
+ * selects it. Without a match (or a Content-Type) it is the JSON-ish default
+ * the parser resolved.
+ */
+function requestSchemaFor(
+  route: Schmock.RouteConfig,
+  contentType: string | undefined,
+): JSONSchema7 | undefined {
+  const requestBody = route["openapi:requestBody"];
+  const fallback = isRecord(requestBody) ? requestBody : undefined;
+  const content = route["openapi:requestContent"];
+  if (!contentType || !(content instanceof Map)) return fallback;
+  const mediaType = normalizeMediaType(contentType);
+  const range = `${mediaType.split("/", 1)[0]}/*`;
+  for (const key of [mediaType, range, "*/*"]) {
+    if (content.has(key)) {
+      const schema: unknown = content.get(key);
+      return isRecord(schema) ? schema : undefined;
+    }
+  }
+  return fallback;
 }
 
 function rejectRequest(

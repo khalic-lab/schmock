@@ -54,3 +54,11 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     Given a validating dispute mock with GET and POST on one path and a balance_transactions array
     When I create a dispute and then read it
     Then the dispute read is 200 with generated balance transactions, not the created dispute
+
+  # ── Form bodies on CRUD routes ─────────────────────────────────────────────
+
+  Scenario: A multipart create stores its text fields, typed, and not its file
+    Given a validating pets mock whose create accepts a multipart name, age and photo
+    When I post a multipart pet named "Rex" aged "3" with a photo through the fetch interceptor
+    Then the created pet is 201 with name "Rex" and age 3 and no photo
+    And reading pet 1 answers the same pet

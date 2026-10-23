@@ -11,6 +11,7 @@ import type { CrudResource, IdKind } from "./crud-detector.js";
 import { MAX_SEED_GENERATED_NODES } from "./limits.js";
 import { type AccessModes, collectAccessModes } from "./normalizer.js";
 import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
+import { isBinaryPayload, readRequestBody } from "./request-body.js";
 import { findRepresentativeResponse } from "./response-status.js";
 import { collectionStateKey, counterStateKey } from "./state-keys.js";
 import { hasType, isRecord, toJsonSchema } from "./utils.js";
@@ -1419,9 +1420,10 @@ export function createCreateGenerator(
     );
     const modes = accessModesFor(resource, effective);
 
-    if (isRecord(ctx.body)) {
+    const submitted = readRequestBody(ctx, effective);
+    if (isRecord(submitted)) {
       for (const [property, value] of acceptedFields(
-        ctx.body,
+        submitted,
         effective,
         modes,
         resource.idProperty,
@@ -1475,6 +1477,9 @@ export function createCreateGenerator(
  *
  * Fields are returned as entries, for the caller to define as own properties:
  * a JSON `__proto__` key assigned with `=` re-prototyped the stored row.
+ *
+ * A file part of a multipart body (one `Blob`/`File`, or a list of them) is
+ * never stored: it would serialize as `{}` on every later read.
  */
 function acceptedFields(
   body: Record<string, unknown>,
@@ -1490,10 +1495,19 @@ function acceptedFields(
   return Object.entries(body).filter(
     ([property, value]) =>
       value !== undefined &&
+      !isFilePart(value) &&
       property !== idProperty &&
       !modes.readOnly.has(property) &&
       !modes.writeOnly.has(property) &&
       (Object.hasOwn(declared, property) || noContract || open),
+  );
+}
+
+/** A file, or a list of files, sent as one form field. */
+function isFilePart(value: unknown): boolean {
+  return (
+    isBinaryPayload(value) ||
+    (Array.isArray(value) && value.length > 0 && value.every(isBinaryPayload))
   );
 }
 
@@ -1610,9 +1624,10 @@ export function createUpdateGenerator(
       ? resource.schema
       : (responseSchema ?? resource.schema);
     const modes = accessModesFor(resource, itemSchema);
-    const updates = isRecord(ctx.body)
+    const submitted = readRequestBody(ctx, itemSchema);
+    const updates = isRecord(submitted)
       ? Object.fromEntries(
-          acceptedFields(ctx.body, itemSchema, modes, resource.idProperty),
+          acceptedFields(submitted, itemSchema, modes, resource.idProperty),
         )
       : {};
     const merge = (row: unknown): Record<string, unknown> => {
