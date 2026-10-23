@@ -67,23 +67,22 @@ describe("Express consumes core's request admission", () => {
   });
 });
 
-describe("Express consumes core's InvalidHttpMethodError", () => {
-  it("renders a beforeRequest rewrite to an unsupported verb as INVALID_HTTP_METHOD", async () => {
+describe("Express treats a rewrite to an unsupported verb as a miss", () => {
+  it("passes it to the next middleware, as the fetch interceptor and Angular do", async () => {
     const mock = schmock();
     mock("GET /ok", "ok");
-
-    const response = await request(
-      appFor(mock, {
-        passErrorsToNext: false,
-        beforeRequest: () => ({ method: "PROPFIND" }),
-      }),
-    ).get("/ok");
-
-    expect(response.status).toBe(500);
-    expect(response.body).toEqual({
-      error: 'Invalid HTTP method: "PROPFIND"',
-      code: "INVALID_HTTP_METHOD",
+    const app = appFor(mock, {
+      passErrorsToNext: false,
+      beforeRequest: () => ({ method: "PROPFIND" }),
     });
+    app.use((_req, res) => {
+      res.status(418).json({ source: "next" });
+    });
+
+    const response = await request(app).get("/ok");
+
+    expect(response.status).toBe(418);
+    expect(response.body).toEqual({ source: "next" });
   });
 });
 

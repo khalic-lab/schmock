@@ -1202,6 +1202,77 @@ describe("toExpress", () => {
       expect(next).toHaveBeenCalled();
       expect(mock.handle).not.toHaveBeenCalled();
     });
+
+    it("calls next() when beforeRequest rewrites to an unsupported method", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      await toExpress(mock, { beforeRequest: () => ({ method: "PURGE" }) })(
+        createReq({ path: "/resource" }),
+        res,
+        next,
+      );
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(next).toHaveBeenCalledWith();
+      expect(mock.handle).not.toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it("treats a rewrite to an unsupported method as a miss, not an error, with passErrorsToNext off", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      await toExpress(mock, {
+        passErrorsToNext: false,
+        beforeRequest: () => ({ method: "purge" }),
+      })(createReq({ path: "/resource" }), res, next);
+
+      expect(next).toHaveBeenCalledWith();
+      expect(res.end).not.toHaveBeenCalled();
+    });
+
+    it("routes a lowercase rewrite to a supported method", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+
+      await toExpress(mock, { beforeRequest: () => ({ method: "post" }) })(
+        createReq({ path: "/resource" }),
+        createRes(),
+        vi.fn() as NextFunction,
+      );
+
+      expect(mock.handle).toHaveBeenCalledWith(
+        "POST",
+        "/resource",
+        expect.any(Object),
+      );
+    });
+
+    it("leaves a hook-owned response alone after a rewrite to an unsupported method", async () => {
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+      const res = createRes();
+      Object.defineProperty(res, "headersSent", { value: true });
+      const next = vi.fn() as NextFunction;
+
+      await toExpress(mock, { beforeRequest: () => ({ method: "PURGE" }) })(
+        createReq({ path: "/resource" }),
+        res,
+        next,
+      );
+
+      expect(next).not.toHaveBeenCalled();
+      expect(mock.handle).not.toHaveBeenCalled();
+    });
   });
 
   describe("custom transforms", () => {

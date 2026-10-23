@@ -676,6 +676,42 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   );
 
   Scenario(
+    "A beforeRequest rewrite to an unsupported method reaches the next middleware",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Express middleware whose beforeRequest rewrites the method to {string}",
+        (_, method: string) => {
+          const mock = schmock();
+          mock("GET /users", [{ id: 1, name: "John" }]);
+          mount(mock, { beforeRequest: () => ({ method }) });
+        },
+      );
+
+      When("a request is made to {string}", async (_, requestSpec: string) => {
+        await makeRequest(requestSpec);
+      });
+
+      Then(
+        "the Express fallback should return status {int}",
+        (_, status: number) => {
+          expect(currentResponse().status).toBe(status);
+          expect(parseJson(currentResponse().text)).toEqual({
+            source: "express-fallback",
+          });
+          expect(fallbackCalls).toBe(1);
+        },
+      );
+
+      And(
+        "the Express error middleware should not have handled the request",
+        () => {
+          expect(errorHandlerCalls).toBe(0);
+        },
+      );
+    },
+  );
+
+  Scenario(
     "A non-Error hook failure is answered as mock.handle() answers it",
     ({ Given, When, Then, And }) => {
       Given(

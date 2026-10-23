@@ -2,6 +2,7 @@ import type * as Schmock from "@schmock/core";
 import {
   buildFormattedErrorResponse,
   getResponseException,
+  isHttpMethod,
   isRouteNotFound,
   normalizeResponse,
   parseNodeQuery,
@@ -312,10 +313,20 @@ export function toExpress(
           abortController.signal,
         );
         if (intercepted) {
+          // A hook may produce a method no route can match; that is a miss,
+          // as in the fetch interceptor and the Angular adapter, unless the
+          // hook already owns the response.
+          const rewritten = (
+            intercepted.method || requestData.method
+          ).toUpperCase();
+          if (!isHttpMethod(rewritten)) {
+            if (res.headersSent || res.writableEnded) return;
+            return next();
+          }
           requestData = {
             ...requestData,
             ...intercepted,
-            method: toHttpMethod(intercepted.method || requestData.method),
+            method: rewritten,
           };
           responseMethod = requestData.method;
         }

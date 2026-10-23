@@ -58,7 +58,10 @@ toExpress(mock, {
 
 ### `beforeRequest`
 
-Modify request data before Schmock processes it. Return an object with any subset of `{ method, path, headers, body, query }`:
+Modify request data before Schmock processes it. Return an object with any subset of `{ method, path, headers, body, query }`.
+A rewrite to a method Schmock does not route (`PURGE`, `PROPFIND`) is a miss,
+like an incoming one: the request goes to `next()`, as the fetch interceptor
+and the Angular adapter pass it on.
 
 ```typescript
 toExpress(mock, {

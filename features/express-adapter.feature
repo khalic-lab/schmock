@@ -112,6 +112,12 @@ Feature: Express Adapter
     And the Express error middleware should observe "request hook exploded after write"
     And the Express error formatter should not have handled the error
 
+  Scenario: A beforeRequest rewrite to an unsupported method reaches the next middleware
+    Given I create an Express middleware whose beforeRequest rewrites the method to "PURGE"
+    When a request is made to "GET /users"
+    Then the Express fallback should return status 418
+    And the Express error middleware should not have handled the request
+
   Scenario: A non-Error hook failure is answered as mock.handle() answers it
     Given I create an Express middleware whose beforeRequest throws a plain object with passErrorsToNext disabled
     When a request is made to "GET /failure"
