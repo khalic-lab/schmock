@@ -85,3 +85,10 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     Given an upserts mock whose create declares 200 and 201, with a "POST /upserts" schemas override
     When I create an upsert
     Then the create response is 201 with the overridden body
+
+  # ── Callbacks ──────────────────────────────────────────────────────────────
+
+  Scenario: A callback value spliced into a fixed URL stays inside its path segment
+    Given an orders mock whose callback URL is "https://hooks.example.com/orders/{$request.body#/note}/paid"
+    When I post an order whose note is "a/../../admin?x=1#"
+    Then the callback is dispatched to a URL whose path starts with "/orders/" and ends with "/paid"

@@ -397,14 +397,66 @@ const upsertsSpec = spec({
   },
 });
 
+// ── Callbacks ───────────────────────────────────────────────────────────────
+
+/** A POST /orders operation with one callback at `urlExpression`. */
+function ordersSpec(urlExpression: string) {
+  return spec({
+    "/orders": {
+      post: {
+        requestBody: {
+          content: json({
+            type: "object",
+            properties: { note: { type: "string" } },
+          }),
+        },
+        responses: {
+          "201": {
+            description: "created",
+            content: json({
+              type: "object",
+              required: ["id"],
+              properties: { id: { type: "integer" } },
+            }),
+          },
+        },
+        callbacks: {
+          orderPaid: {
+            [urlExpression]: {
+              post: { responses: { "200": { description: "ok" } } },
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
   let responses: Schmock.Response[] = [];
 
+  let dispatched: Schmock.OpenApiCallbackRequest[] = [];
+
   async function validatingMock(document: Record<string, unknown>) {
     mock = schmock({ state: {} });
     mock.pipe(await openapi({ spec: document, validateResponses: true }));
+  }
+
+  async function callbackMock(urlExpression: string) {
+    dispatched = [];
+    mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: ordersSpec(urlExpression),
+        callbacks: {
+          dispatch: (request) => {
+            dispatched.push(request);
+          },
+        },
+      }),
+    );
   }
 
   Scenario(
@@ -786,6 +838,38 @@ describeFeature(feature, ({ Scenario }) => {
         expect(response.status).toBe(201);
         expect(response.body).toMatchObject({ id: 1, patched: true });
       });
+    },
+  );
+
+  Scenario(
+    "A callback value spliced into a fixed URL stays inside its path segment",
+    ({ Given, When, Then }) => {
+      Given(
+        'an orders mock whose callback URL is "https://hooks.example.com/orders/{$request.body#/note}/paid"',
+        async () => {
+          await callbackMock(
+            "https://hooks.example.com/orders/{$request.body#/note}/paid",
+          );
+        },
+      );
+
+      When('I post an order whose note is "a/../../admin?x=1#"', async () => {
+        response = await mock.handle("POST", "/orders", {
+          body: { note: "a/../../admin?x=1#" },
+        });
+      });
+
+      Then(
+        'the callback is dispatched to a URL whose path starts with "/orders/" and ends with "/paid"',
+        () => {
+          expect(dispatched).toHaveLength(1);
+          const url = new URL(dispatched[0].url);
+          expect(url.pathname.startsWith("/orders/")).toBe(true);
+          expect(url.pathname.endsWith("/paid")).toBe(true);
+          expect(url.search).toBe("");
+          expect(url.hash).toBe("");
+        },
+      );
     },
   );
 });

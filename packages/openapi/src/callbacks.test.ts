@@ -210,4 +210,58 @@ describe("dispatchCallbacks", () => {
       body,
     });
   });
+
+  describe("values spliced into a fixed URL", () => {
+    async function dispatchedUrl(
+      urlExpression: string,
+      body: Record<string, unknown>,
+      response: unknown = { id: 1 },
+    ): Promise<string> {
+      const urls: string[] = [];
+      await dispatchCallbacks(
+        [{ urlExpression, method: "POST" }],
+        (request) => {
+          urls.push(request.url);
+        },
+        makeContext({ body }),
+        response,
+      );
+      expect(urls).toHaveLength(1);
+      return urls[0];
+    }
+
+    it("keeps a client value inside the path segment the template fixes", async () => {
+      const url = await dispatchedUrl(
+        "https://hooks.example.com/orders/{$request.body#/note}/paid?source=mock",
+        { note: "a/../../../admin/purge?all=1#" },
+      );
+      const parsed = new URL(url);
+      expect(parsed.pathname).toBe(
+        `/orders/${encodeURIComponent("a/../../../admin/purge?all=1#")}/paid`,
+      );
+      expect(parsed.searchParams.get("source")).toBe("mock");
+      expect(parsed.hash).toBe("");
+    });
+
+    it("delivers query values with reserved characters intact", async () => {
+      const url = await dispatchedUrl(
+        "http://notificationServer.com?transactionId={$request.body#/id}&email={$request.body#/email}",
+        { id: "t 1", email: "a+b@x.com&admin=1" },
+      );
+      const params = [...new URL(url).searchParams];
+      expect(params).toEqual([
+        ["transactionId", "t 1"],
+        ["email", "a+b@x.com&admin=1"],
+      ]);
+    });
+
+    it("splices an expression that opens the template as the URL itself", async () => {
+      const url = await dispatchedUrl(
+        "{$request.body#/callbackUrl}/pets/{$response.body#/id}",
+        { callbackUrl: "https://hooks.example/v1?key=a" },
+        { id: "p/1" },
+      );
+      expect(url).toBe("https://hooks.example/v1?key=a/pets/p%2F1");
+    });
+  });
 });

@@ -1104,6 +1104,16 @@ callback is skipped rather than sent to a partial URL. The skip is logged with
 sent no `callbackUrl`. `$url`, `$method` and `$statusCode` are not implemented
 and resolve to an empty string.
 
+An expression that opens the URL template, such as
+`{$request.body#/callbackUrl}`, supplies the URL itself and is used as it is.
+Every value spliced after it is percent-encoded with `encodeURIComponent`,
+because it sits inside a URL the template fixes. A client's
+`a/../../admin?x=1#` therefore stays one path segment of
+`https://hooks.example.com/orders/{$request.body#/note}`, and the spec's own
+`?transactionId={$request.body#/id}&email={$request.body#/email}` delivers an
+email containing `+` or `&` intact. A template that needs to splice a path
+fragment with its slashes has to take it from the leading expression.
+
 `$response.body#/…` and the fallback payload below read the body the client
 actually receives. A `{ status, body, headers }` object is unwrapped only when
 `headers` is absent or a record of strings, the rule core applies. Otherwise

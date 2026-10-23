@@ -112,6 +112,12 @@ function urlSegment(value: unknown): string | undefined {
  * A request/response expression that yields no usable value makes the whole
  * URL unresolved, reported by the expression text: splicing `""` in its place
  * used to dispatch a partial URL such as `https://hooks.example/pets/`.
+ *
+ * An expression that opens the template supplies the URL itself
+ * (`{$request.body#/callbackUrl}`) and is spliced as it is. Every later one is
+ * a value inside a URL the template fixes, so it is percent-encoded: spliced
+ * raw, a client's `a/../../admin?x=1#` walked out of the template's path, and
+ * `&`, `+`, `#` or a space in an ordinary value broke the query.
  */
 function resolveCallbackUrl(
   expression: string,
@@ -119,14 +125,17 @@ function resolveCallbackUrl(
   response: unknown,
 ): ResolvedCallbackUrl {
   let unresolved: string | undefined;
-  const url = expression.replace(/\{\$([^}]+)\}/g, (_, expr: string) => {
-    const segment = resolveExpression(expr, context, response);
-    if (segment === undefined) {
-      unresolved ??= expr;
-      return "";
-    }
-    return segment;
-  });
+  const url = expression.replace(
+    /\{\$([^}]+)\}/g,
+    (_, expr: string, offset: number) => {
+      const segment = resolveExpression(expr, context, response);
+      if (segment === undefined) {
+        unresolved ??= expr;
+        return "";
+      }
+      return offset === 0 ? segment : encodeURIComponent(segment);
+    },
+  );
   return unresolved === undefined ? { url } : { unresolved };
 }
 
