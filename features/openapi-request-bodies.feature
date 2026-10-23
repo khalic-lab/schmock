@@ -44,3 +44,10 @@ Feature: OpenAPI request bodies as the transports deliver them
     Given a validating upload mock whose urlencoded body declares only a metadata object
     When I post the urlencoded form "metadata[order]=42" through the fetch interceptor
     Then the upload response status is 201
+
+  # ── Bodies core does not parse ───────────────────────────────────────────
+
+  Scenario: An XML body is not validated against its object schema
+    Given a validating upload mock whose XML body requires a name
+    When I post an XML pet named "Rex" through the fetch interceptor
+    Then the upload response status is 201

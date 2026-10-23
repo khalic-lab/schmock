@@ -42,6 +42,11 @@ export function isFormMediaType(mediaType: string): boolean {
   );
 }
 
+/** True for the media types core parses as JSON. */
+export function isJsonMediaType(mediaType: string): boolean {
+  return mediaType === "application/json" || mediaType.endsWith("+json");
+}
+
 /**
  * The request body in the shape `schema` describes.
  *
@@ -231,8 +236,20 @@ function branchesOf(schema: JSONSchema7 | undefined): JSONSchema7[] {
   return branches;
 }
 
-function admitsType(schema: JSONSchema7 | undefined, type: string): boolean {
+/** True when the schema or one of its branches declares `type`. */
+export function admitsType(
+  schema: JSONSchema7 | undefined,
+  type: string,
+): boolean {
   return branchesOf(schema).some((branch) => hasType(branch, type));
+}
+
+/**
+ * True when no branch of the schema declares a `type`, so a value of any type
+ * can satisfy it: `{ maxLength: 2 }` still checks a string.
+ */
+export function isUntyped(schema: JSONSchema7 | undefined): boolean {
+  return branchesOf(schema).every((branch) => branch.type === undefined);
 }
 
 function admitsObject(schema: JSONSchema7 | undefined): boolean {

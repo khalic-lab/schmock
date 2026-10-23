@@ -17,7 +17,11 @@ import type {
 } from "./parser.js";
 import { parsePreferHeader } from "./prefer.js";
 import {
+  admitsType,
   isBinaryPayload,
+  isFormMediaType,
+  isJsonMediaType,
+  isUntyped,
   NORMALIZED_BODY_STATE_KEY,
   normalizeRequestBody,
   toValidationInstance,
@@ -53,6 +57,15 @@ function getRouteRequestBody(
 ): JSONSchema7 | undefined {
   const value = route["openapi:requestBody"];
   return isRecord(value) ? value : undefined;
+}
+
+/**
+ * A body core handed over undecoded: a string for `text/*`, bytes for every
+ * other media type it does not parse as JSON or as a form.
+ */
+function isUndecodedBody(body: unknown, mediaType: string): boolean {
+  if (isJsonMediaType(mediaType) || isFormMediaType(mediaType)) return false;
+  return typeof body === "string" || isBinaryPayload(body);
 }
 
 // `hasType`, not `type === "string"`: the normalizer turns 3.0 `nullable: true`
@@ -381,6 +394,21 @@ export function validateRequestBody(
   if (
     isBinaryPayload(context.body) &&
     isBinaryStringSchema(requestBodySchema)
+  ) {
+    return undefined;
+  }
+
+  // XML, CSV and other media types core does not parse arrive as the text or
+  // bytes that were sent, which no object schema can describe: the media type
+  // was already checked above. Text is still checked against a schema that
+  // can take a string: one with a string branch, or one that declares no type.
+  if (
+    rawContentType &&
+    isUndecodedBody(context.body, normalizeMediaType(rawContentType)) &&
+    (typeof context.body !== "string" ||
+      !(
+        admitsType(requestBodySchema, "string") || isUntyped(requestBodySchema)
+      ))
   ) {
     return undefined;
   }

@@ -270,4 +270,38 @@ describeFeature(feature, ({ Scenario }) => {
       });
     },
   );
+
+  Scenario(
+    "An XML body is not validated against its object schema",
+    ({ Given, When, Then }) => {
+      Given(
+        "a validating upload mock whose XML body requires a name",
+        async () => {
+          await validatingMock({
+            "application/xml": {
+              schema: {
+                type: "object",
+                required: ["name"],
+                properties: { name: { type: "string" } },
+              },
+            },
+          });
+        },
+      );
+
+      When(
+        "I post an XML pet named {string} through the fetch interceptor",
+        async (_, name: string) => {
+          await interceptedPost({
+            body: `<pet><name>${name}</name></pet>`,
+            headers: { "content-type": "application/xml" },
+          });
+        },
+      );
+
+      Then("the upload response status is 201", () => {
+        expect(result.status).toBe(201);
+      });
+    },
+  );
 });

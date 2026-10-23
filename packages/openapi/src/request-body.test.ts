@@ -524,6 +524,96 @@ describe("request body validation", () => {
       }
     });
   });
+
+  describe("bodies core does not decode", () => {
+    const objectSchema = {
+      type: "object",
+      required: ["name"],
+      properties: { name: { type: "string" } },
+    };
+
+    it("does not validate XML text against its object schema", async () => {
+      const mock = await validatingMock({
+        "application/xml": { schema: objectSchema },
+      });
+
+      const result = await interceptedPost(mock, {
+        body: "<pet><name>Rex</name></pet>",
+        headers: { "content-type": "application/xml" },
+      });
+
+      expect(result.status).toBe(201);
+    });
+
+    it("does not validate CSV text against an object schema behind */*", async () => {
+      const mock = await validatingMock({
+        "*/*": { schema: { type: "object" } },
+      });
+
+      const result = await interceptedPost(mock, {
+        body: "a,b",
+        headers: { "content-type": "text/csv" },
+      });
+
+      expect(result.status).toBe(201);
+    });
+
+    it("still validates text against a string schema", async () => {
+      const mock = await validatingMock({
+        "text/plain": { schema: { type: "string", maxLength: 3 } },
+      });
+
+      const accepted = await interceptedPost(mock, {
+        body: "abc",
+        headers: { "content-type": "text/plain" },
+      });
+      const rejected = await interceptedPost(mock, {
+        body: "abcd",
+        headers: { "content-type": "text/plain" },
+      });
+
+      expect(accepted.status).toBe(201);
+      expect(rejected.status).toBe(400);
+    });
+
+    it.each([
+      ["no type", { maxLength: 2 }],
+      ["no type", { pattern: "^a+$" }],
+      ["no type", { enum: ["ok"] }],
+      [
+        "a string branch",
+        { anyOf: [{ type: "object" }, { type: "string", maxLength: 2 }] },
+      ],
+    ])("still validates text against a schema with %s", async (_, schema) => {
+      const mock = await validatingMock({ "text/plain": { schema } });
+      const text = { "content-type": "text/plain" };
+
+      const intercepted = await interceptedPost(mock, {
+        body: "abcdef",
+        headers: text,
+      });
+      const direct = await mock.handle("POST", "/uploads", {
+        body: "abcdef",
+        headers: text,
+      });
+
+      expect(intercepted.status).toBe(400);
+      expect(direct.status).toBe(400);
+    });
+
+    it("still validates a parsed object handed over for a non-JSON type", async () => {
+      const mock = await validatingMock({
+        "application/xml": { schema: objectSchema },
+      });
+
+      const response = await mock.handle("POST", "/uploads", {
+        body: { other: "value" },
+        headers: { "content-type": "application/xml" },
+      });
+
+      expect(response.status).toBe(400);
+    });
+  });
 });
 
 describe("normalizeRequestBody", () => {
