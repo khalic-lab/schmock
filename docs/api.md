@@ -1541,9 +1541,14 @@ included. The expanded `helpers.mustache` output and the explicit upper quantifi
 `helpers.fromRegExp` must fit in 65,536 characters, and a schema `pattern`
 whose shortest match is longer than that is rejected at creation.
 
-Limits inside `not`, `if` and unreferenced `$defs`/`definitions` do not reject a
-schema, because nothing is generated from them. `then`/`else` and definitions
-reached through `$ref` still count.
+Limits inside `not`, an `if` with no sibling `then`, and unreferenced
+`$defs`/`definitions` do not reject a schema, because nothing is generated from
+them. `then`/`else` and definitions reached through `$ref` still count. So does
+an `if` beside a `then`, which json-schema-faker merges into what it generates:
+its own size keywords are charged, each held to the smallest matching maximum
+(`maxItems`, `maxLength`, `maxProperties`) that the parent or the `then`
+declares. Its `contains` draws and every schema below it are charged as
+written.
 
 The limits are constants, not options. To generate less for one request,
 return a trimmed schema from the `@schmock/openapi` `onSchema` callback.
