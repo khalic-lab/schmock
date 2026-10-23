@@ -10,8 +10,12 @@ import {
   logResourceDetection,
   registerCrudRoutes,
   registerNonCrudRoutes,
+  selectRequestSchema,
 } from "./crud-registration.js";
-import { PENDING_MUTATIONS_KEY } from "./generators.js";
+import {
+  NORMALIZED_BODY_SOURCE_KEY,
+  PENDING_MUTATIONS_KEY,
+} from "./generators.js";
 import { createOwnerToken, isOwnedRoute } from "./owner.js";
 import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
 import { convertPathTemplate, parseSpec } from "./parser.js";
@@ -38,7 +42,7 @@ import {
 } from "./response-status.js";
 import type { SeedConfig, SeedSource } from "./seed.js";
 import { assertValidSeedConfig, loadSeed } from "./seed.js";
-import { isRecord, normalizeMediaType } from "./utils.js";
+import { normalizeMediaType } from "./utils.js";
 
 export type { SeedConfig, SeedSource };
 
@@ -204,6 +208,10 @@ export async function openapi(
         if (contentResult) return rejectRequest(context, contentResult);
       }
 
+      // The body the normalization below reads. A plugin piped later may still
+      // replace `context.body`; the CRUD generators then normalize the
+      // replacement instead of storing this one.
+      context.state.set(NORMALIZED_BODY_SOURCE_KEY, context.body);
       if (options.validateRequests) {
         const validationResult = validateRequestBody(
           context,
@@ -369,29 +377,16 @@ function storeNormalizedBody(context: Schmock.PluginContext): void {
   );
 }
 
-/**
- * The request schema declared for the body's media type: an exact key, then
- * its `type/*` range, then the any-type wildcard, as request validation
- * selects it. Without a match (or a Content-Type) it is the JSON-ish default
- * the parser resolved.
- */
+/** The request schema declared for the body's media type on `route`. */
 function requestSchemaFor(
   route: Schmock.RouteConfig,
   contentType: string | undefined,
 ): JSONSchema7 | undefined {
-  const requestBody = route["openapi:requestBody"];
-  const fallback = isRecord(requestBody) ? requestBody : undefined;
-  const content = route["openapi:requestContent"];
-  if (!contentType || !(content instanceof Map)) return fallback;
-  const mediaType = normalizeMediaType(contentType);
-  const range = `${mediaType.split("/", 1)[0]}/*`;
-  for (const key of [mediaType, range, "*/*"]) {
-    if (content.has(key)) {
-      const schema: unknown = content.get(key);
-      return isRecord(schema) ? schema : undefined;
-    }
-  }
-  return fallback;
+  return selectRequestSchema(
+    route["openapi:requestBody"],
+    route["openapi:requestContent"],
+    contentType,
+  );
 }
 
 function rejectRequest(

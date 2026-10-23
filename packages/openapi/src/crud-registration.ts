@@ -35,7 +35,7 @@ import {
   counterStateKey,
   seededStateKey,
 } from "./state-keys.js";
-import { hasType, isRecord } from "./utils.js";
+import { hasType, isRecord, normalizeMediaType } from "./utils.js";
 
 /**
  * Build the common `openapi:*` route metadata carried by every registered route.
@@ -60,6 +60,30 @@ function buildRouteConfig(
     "openapi:operationId": parsedPath.operationId,
     "openapi:tags": parsedPath.tags,
   };
+}
+
+/**
+ * The request schema an operation declares for a body of `contentType`: an
+ * exact key, then its `type/*` range, then the any-type wildcard, as request
+ * validation selects it. Without a match (or a Content-Type) it is the
+ * JSON-ish default the parser resolved.
+ */
+export function selectRequestSchema(
+  requestBody: unknown,
+  requestContent: unknown,
+  contentType: string | undefined,
+): JSONSchema7 | undefined {
+  const fallback = isRecord(requestBody) ? requestBody : undefined;
+  if (!contentType || !(requestContent instanceof Map)) return fallback;
+  const mediaType = normalizeMediaType(contentType);
+  const range = `${mediaType.split("/", 1)[0]}/*`;
+  for (const key of [mediaType, range, "*/*"]) {
+    if (requestContent.has(key)) {
+      const schema: unknown = requestContent.get(key);
+      return isRecord(schema) ? schema : undefined;
+    }
+  }
+  return fallback;
 }
 
 /**
@@ -94,9 +118,12 @@ export function registerCrudRoutes(
 
   for (const route of resource.routes) {
     const routeMeta = registrationMeta(route);
+    const { requestBody, requestContent } = route.parsed;
     const genHooks: CrudGenerationHooks = {
       method: route.method,
       path: route.parsed.path,
+      requestSchema: (contentType) =>
+        selectRequestSchema(requestBody, requestContent, contentType),
       ...hooks,
     };
     let gen = createCrudGenerator(route.op, resource, routeMeta, genHooks);

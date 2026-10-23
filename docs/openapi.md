@@ -888,11 +888,14 @@ await fetch('/orders', {
 CRUD create, `PUT` and `PATCH` store a form body read the same way, through the
 request schema declared for its media type, whether `validateRequests` is on
 or off: `name=Tom&age=4` stores `age: 4` against an `integer` property, and a
-multipart create stores its text fields. File parts (a `Blob`/`File`, or a
-list of them under one name) are not stored, because a stored file would
-serialize as `{}` on every later read. The created body generates those
-properties from the response contract instead, like any field the request
-omits.
+multipart create stores its text fields. When a plugin piped after
+`@schmock/openapi` replaces the body in its own `beforeRequest`, the
+replacement is what gets stored, read through the same request schema but not
+validated again: `validateRequests` checked the body as it was before the
+replacement. File parts (a `Blob`/`File`, or a list of them under one name) are
+not stored, because a stored file would serialize as `{}` on every later read.
+The created body generates those properties from the response contract
+instead, like any field the request omits.
 
 ### Per-media-type request schemas and 415
 

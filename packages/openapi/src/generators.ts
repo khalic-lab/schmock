@@ -1,5 +1,6 @@
 import type * as Schmock from "@schmock/core";
 import {
+  getHeader,
   ResourceLimitError,
   SchemaGenerationError,
   SchmockError,
@@ -31,7 +32,11 @@ import {
 } from "./list-envelope.js";
 import { type AccessModes, collectAccessModes } from "./normalizer.js";
 import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
-import { isBinaryPayload, readRequestBody } from "./request-body.js";
+import {
+  isBinaryPayload,
+  normalizeRequestBody,
+  readRequestBody,
+} from "./request-body.js";
 import { generateHeaderValues, type HeaderSeed } from "./response-headers.js";
 import { findRepresentativeResponse } from "./response-status.js";
 import { collectionStateKey, counterStateKey } from "./state-keys.js";
@@ -104,6 +109,13 @@ export interface CrudGenerationHooks extends GenerationHooks {
   method: string;
   /** Spec path this generator was registered on, e.g. "/pets/:petId". */
   path: string;
+  /**
+   * The request schema the operation declares for a body of `contentType`,
+   * selected the way request validation selects it. Create and update read a
+   * form body through it, and an update judges request fields by it when no
+   * item contract exists.
+   */
+  requestSchema?: (contentType: string | undefined) => JSONSchema7 | undefined;
 }
 
 /**
@@ -207,6 +219,39 @@ function accessModesFor(
 
 /** Key under which `RequestContext.pluginState` holds this request's staged mutations. */
 export const PENDING_MUTATIONS_KEY = "openapi:pendingMutations";
+
+/**
+ * Key under which the plugin records the request body its `beforeRequest`
+ * normalized, so a generator can tell whether that normalized value still
+ * describes the body it receives.
+ */
+export const NORMALIZED_BODY_SOURCE_KEY = "openapi:normalizedBodySource";
+
+/**
+ * The request body a create or update stores, read the way the operation's
+ * request schema reads it (`contract` stands in when it declares none).
+ *
+ * The plugin normalizes the body once, in its `beforeRequest`. A plugin piped
+ * after it can still replace `context.body` in its own `beforeRequest`, and
+ * the route receives that replacement: the stored normalization describes a
+ * body the route never saw, so the replacement is normalized here instead.
+ */
+function readSubmittedBody(
+  ctx: Schmock.RequestContext,
+  hooks: CrudGenerationHooks | undefined,
+  contract: JSONSchema7 | undefined,
+): unknown {
+  const contentType = getHeader(ctx.headers, "content-type");
+  const schema = hooks?.requestSchema?.(contentType) ?? contract;
+  const store = ctx.pluginState;
+  if (
+    store?.has(NORMALIZED_BODY_SOURCE_KEY) &&
+    store.get(NORMALIZED_BODY_SOURCE_KEY) !== ctx.body
+  ) {
+    return normalizeRequestBody(ctx.body, contentType, schema);
+  }
+  return readRequestBody(ctx, schema);
+}
 
 type PendingMutation = () => void;
 
@@ -670,7 +715,7 @@ export function createCreateGenerator(
     );
     const modes = accessModesFor(resource, effective);
 
-    const submitted = readRequestBody(ctx, effective);
+    const submitted = readSubmittedBody(ctx, hooks, effective);
     if (isRecord(submitted)) {
       for (const [property, value] of acceptedFields(
         submitted,
@@ -896,7 +941,7 @@ export function createUpdateGenerator(
       ? resource.schema
       : (responseSchema ?? resource.schema);
     const modes = accessModesFor(resource, itemSchema);
-    const submitted = readRequestBody(ctx, itemSchema);
+    const submitted = readSubmittedBody(ctx, hooks, itemSchema);
     const updates = isRecord(submitted)
       ? Object.fromEntries(
           acceptedFields(submitted, itemSchema, modes, resource.idProperty),

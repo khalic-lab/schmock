@@ -915,6 +915,40 @@ describe("CRUD review fixes", () => {
         body: { id: 1, name: "Rex", age: 3 },
       });
     });
+
+    for (const validateRequests of [false, true]) {
+      it(`stores the body a plugin piped later rewrote, read by the request schema (validateRequests: ${validateRequests})`, async () => {
+        const mock = await mockOf(formSpec, { validateRequests });
+        const rewrite: Schmock.Plugin = {
+          name: "rewrite-body",
+          beforeRequest(context) {
+            const replacement = context.method === "POST" ? "Renamed" : "Max";
+            return {
+              context: { ...context, body: { name: replacement, age: "7" } },
+            };
+          },
+          process(context, response) {
+            return { context, response };
+          },
+        };
+        mock.pipe(rewrite);
+        const form = { "content-type": "application/x-www-form-urlencoded" };
+
+        const created = await mock.handle("POST", "/pets", {
+          headers: form,
+          body: { name: "Tom", age: "4" },
+        });
+        expect(created.body).toEqual({ id: 1, name: "Renamed", age: 7 });
+
+        const patched = await mock.handle("PATCH", "/pets/1", {
+          headers: form,
+          body: { name: "Tom" },
+        });
+        expect(patched.body).toEqual({ id: 1, name: "Max", age: 7 });
+        const read = await mock.handle("GET", "/pets/1");
+        expect(read.body).toEqual({ id: 1, name: "Max", age: 7 });
+      });
+    }
   });
 });
 
