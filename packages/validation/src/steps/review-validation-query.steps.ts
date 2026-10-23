@@ -938,6 +938,43 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
     },
   );
 
+  ScenarioOutline(
+    "A multipart upload coerces its numeric field and accepts a binary file part",
+    ({ Given, When, Then }, variables) => {
+      Given(
+        "a route whose upload schema requires an integer age of at least 18 and a binary avatar",
+        () => {
+          mock = schmock();
+          mock("POST /uploads", () => [201, { ok: true }]).pipe(
+            validationPlugin({
+              request: {
+                body: {
+                  type: "object",
+                  properties: {
+                    age: { type: "integer", minimum: 18 },
+                    avatar: { type: "string", format: "binary" },
+                  },
+                  required: ["age", "avatar"],
+                },
+              },
+            }),
+          );
+        },
+      );
+
+      When("I upload a form with age <age> and an avatar file", async () => {
+        const body = new FormData();
+        body.append("age", variables.age);
+        body.append("avatar", new Blob(["png"]), "avatar.png");
+        response = await mock.handle("POST", "/uploads", { body });
+      });
+
+      Then("the upload response status should be <status>", () => {
+        expect(response.status).toBe(Number(variables.status));
+      });
+    },
+  );
+
   // ── Schema option errors (review 2026-10-23) ─────────────────────────────
 
   ScenarioOutline(

@@ -650,7 +650,7 @@ function escapePointerSegment(segment: string): string {
  * finite number in plain decimal notation to pass.
  */
 function numericCoercionErrors(
-  original: Record<string, string>,
+  original: Record<string, unknown>,
   coerced: Record<string, unknown>,
 ): CoercionError[] {
   const errors: CoercionError[] = [];
@@ -674,11 +674,11 @@ function numericCoercionErrors(
  * Core delivers a `multipart/*` body as `FormData`, which has no own
  * properties for Ajv to judge. Its fields are validated as a record instead:
  * each name maps to its value, a repeated name to an array of its values in
- * order, and a file part to its `File`. Any other body is validated as is.
+ * order, and a file part to its `File`. Any other body yields `undefined`.
  */
-function validatedBody(body: unknown): unknown {
+function formRecord(body: unknown): Record<string, unknown> | undefined {
   if (typeof FormData === "undefined" || !(body instanceof FormData)) {
-    return body;
+    return undefined;
   }
   const fields = new Map<string, FormDataEntryValue[]>();
   for (const [name, value] of body.entries()) {
@@ -697,6 +697,36 @@ function validatedBody(body: unknown): unknown {
       values.length === 1 ? values[0] : values,
     ]),
   );
+}
+
+/**
+ * A file part reaches the form record as a `File`, which OpenAPI's upload
+ * idiom `type: 'string', format: 'binary'` would reject as "must be string".
+ * The form validator's own copy of the schema drops that type and format, so
+ * a file or a text value satisfies the slot while its other rules still apply.
+ */
+function acceptFileParts(schema: JSONSchema7): JSONSchema7 {
+  const visited = new WeakSet<object>();
+  const pending: JSONSchema7[] = [schema];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    if (current.format === "binary") {
+      if (current.type === "string") {
+        delete current.type;
+        delete current.format;
+      } else if (
+        Array.isArray(current.type) &&
+        current.type.includes("string")
+      ) {
+        if (!current.type.includes("object")) current.type.push("object");
+        delete current.format;
+      }
+    }
+    pending.push(...childSchemas(current));
+  }
+  return schema;
 }
 
 function cloneSchema(
@@ -798,6 +828,31 @@ export function validationPlugin(
       coerceTypes: false,
     });
   }
+  // A multipart body validates through its own copy of request.body: form
+  // fields arrive as strings, so it coerces scalar types like the query and
+  // header slots, and a file part satisfies `format: 'binary'`. It replaces
+  // the strict body inventory and compiles on the first multipart request.
+  let formBodyValidator: ValidateFunction | undefined;
+  function formBodyValidate(): ValidateFunction | undefined {
+    if (!requestBodyInventory) return undefined;
+    if (!formBodyValidator) {
+      const formSchema = cloneSchema(options.request?.body, "request.body");
+      if (!formSchema) return undefined;
+      const formInventory = inventorySchema(
+        acceptFileParts(formSchema),
+        resolver,
+      );
+      formBodyValidator = compileSchema({
+        target: formInventory,
+        inventories: inventories.map((inventory) =>
+          inventory === requestBodyInventory ? formInventory : inventory,
+        ),
+        coerceTypes: true,
+      });
+    }
+    return formBodyValidator;
+  }
+
   const headerSpellings = requestHeadersInventory
     ? headerNameSpellings({
         root: requestHeadersInventory.schema,
@@ -852,7 +907,24 @@ export function validationPlugin(
       // Optional bodies are skipped when absent, but every supplied body is
       // validated before route code can observe or mutate state from it.
       if (validators.requestBody && context.body !== undefined) {
-        if (!validators.requestBody(validatedBody(context.body))) {
+        const form = formRecord(context.body);
+        const validateForm = form ? formBodyValidate() : undefined;
+        if (form && validateForm) {
+          // Ajv coerces in place, and the record is already a copy, so the
+          // route still receives the original FormData and its strings.
+          const coercedForm = { ...form };
+          const errors = validateForm(coercedForm)
+            ? numericCoercionErrors(form, coercedForm)
+            : validateForm.errors;
+          if (errors && errors.length > 0) {
+            return rejectRequest(
+              context,
+              "Request validation failed",
+              "REQUEST_VALIDATION_ERROR",
+              errors,
+            );
+          }
+        } else if (!validators.requestBody(context.body)) {
           return rejectRequest(
             context,
             "Request validation failed",

@@ -1601,9 +1601,12 @@ absent body must be rejected; supplied bodies are always validated.
 A `multipart/*` body arrives as `FormData`, so `request.body` validates a
 record of its fields instead: each name maps to its value, a name sent more
 than once maps to an array of its values in order, and a file part maps to its
-`File`. Field values are strings and bodies keep strict typing, so describe a
-numeric field as `type: 'string'` with a `pattern`, and a file field as
-`type: 'object'` or `{}`. The route still receives the original `FormData`.
+`File`. Form fields always arrive as strings, so this record coerces scalar
+types under the same rules as query and header values, described next:
+`age=42` satisfies `type: 'integer'`. A file part satisfies OpenAPI's upload
+idiom `type: 'string', format: 'binary'`, alone or as `items` of an array, as
+well as `type: 'object'` and `{}`. The coercion happens on a copy, so the
+route still receives the original `FormData`.
 
 Query and header values always arrive as strings, so their schemas coerce
 scalar types: `'2'` satisfies `type: 'integer'`, `'25'` satisfies
@@ -1615,8 +1618,8 @@ an optional leading `-`, digits, an optional fraction, such as `-3`, `2.5` or
 rejected with the slot's validation error, so numeric range keywords such as
 `minimum`/`maximum` hold for every accepted query and header value.
 Coercion happens on a copy: the route and later plugins still receive the
-original strings in `context.query`. Request and response bodies keep strict
-typing, so `'3'` does not satisfy `type: 'integer'` in `request.body`.
+original strings in `context.query`. Other request bodies and response bodies
+keep strict typing, so in a JSON body `'3'` does not satisfy `type: 'integer'`.
 
 `multipleOf` tolerates floating-point error in every slot: a value passes when
 `value / multipleOf` is within `1e-9` of an integer. That accepts exact

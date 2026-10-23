@@ -700,6 +700,91 @@ describe("validationPlugin multipart bodies", () => {
     });
   });
 
+  it("coerces a numeric form field like a query value", async () => {
+    const schema = {
+      type: "object" as const,
+      properties: { age: { type: "integer" as const, minimum: 18 } },
+      required: ["age"],
+    };
+    const body = form([["age", "42"]]);
+    const accepted = await validateForm(schema, body);
+    const tooYoung = await validateForm(schema, form([["age", "7"]]));
+    const notPlain = await validateForm(schema, form([["age", "0x2a"]]));
+
+    expect(accepted.response).toBeUndefined();
+    expect(accepted.context.body).toBe(body);
+    expect(body.get("age")).toBe("42");
+    expect(tooYoung.response).toMatchObject({
+      status: 400,
+      body: { details: [{ instancePath: "/age", keyword: "minimum" }] },
+    });
+    expect(notPlain.response).toMatchObject({
+      status: 400,
+      body: { details: [{ instancePath: "/age", keyword: "type" }] },
+    });
+  });
+
+  it("keeps JSON bodies strictly typed", async () => {
+    const result = await validateForm(
+      { type: "object", properties: { age: { type: "integer" } } },
+      // A plain object body is not a form, so "42" stays a string.
+      { age: "42" } as unknown as FormData,
+    );
+    expect(result.response).toMatchObject({
+      status: 400,
+      body: { details: [{ instancePath: "/age", keyword: "type" }] },
+    });
+  });
+
+  it("lets a file part satisfy OpenAPI's binary string idiom", async () => {
+    const binary = { type: "string" as const, format: "binary" };
+    const single = await validateForm(
+      {
+        type: "object",
+        properties: { file: binary },
+        required: ["file"],
+      },
+      form([["file", new Blob(["png"])]]),
+    );
+    const several = await validateForm(
+      {
+        type: "object",
+        properties: { files: { type: "array", items: binary, minItems: 2 } },
+      },
+      form([
+        ["files", new Blob(["a"])],
+        ["files", new Blob(["b"])],
+      ]),
+    );
+    const viaRef = await validateForm(
+      {
+        type: "object",
+        definitions: { upload: binary },
+        properties: { file: { $ref: "#/definitions/upload" } },
+      },
+      form([["file", new Blob(["png"])]]),
+    );
+
+    expect(single.response).toBeUndefined();
+    expect(several.response).toBeUndefined();
+    expect(viaRef.response).toBeUndefined();
+  });
+
+  it("still requires a binary file part to be present", async () => {
+    const result = await validateForm(
+      {
+        type: "object",
+        properties: { file: { type: "string", format: "binary" } },
+        required: ["file"],
+      },
+      form([["name", "Ada"]]),
+    );
+    expect(result.response).toMatchObject({
+      status: 400,
+      body: { details: [{ keyword: "required" }] },
+    });
+  });
+
   it("validates a file part as its File object", async () => {
     const body = form([["avatar", new Blob(["png"])]]);
     const asObject = await validateForm(

@@ -186,6 +186,17 @@ Feature: Validation plugin review fixes
       | name=Ada&role=guest | enum     |
       | role=admin          | required |
 
+  Scenario Outline: A multipart upload coerces its numeric field and accepts a binary file part
+    Given a route whose upload schema requires an integer age of at least 18 and a binary avatar
+    When I upload a form with age <age> and an avatar file
+    Then the upload response status should be <status>
+
+    Examples:
+      | age | status |
+      | 42  | 201    |
+      | 7   | 400    |
+      | x   | 400    |
+
   # ── Schema option errors (review 2026-10-23) ─────────────────────────────
 
   Scenario Outline: A schema option that is not a JSON Schema object fails during plugin creation
