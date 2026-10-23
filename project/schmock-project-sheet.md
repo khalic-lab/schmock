@@ -124,7 +124,7 @@ Implemented OpenAPI/Swagger auto-mock generation:
 - Response generators from OpenAPI schema definitions
 - Seed data support for realistic mock responses
 - Example response extraction from spec `examples`
-- One-liner: `schmock.pipe(openapi({ spec: './swagger.json', seedData }))`
+- One-liner: `mock.pipe(await openapi({ spec: './swagger.json', seed }))`
 - Stress tested with Petstore, Train Travel, Scalar Galaxy, and Stripe (5.8MB, 415 endpoints)
 
 #### 3.2 Standalone Server & CLI
@@ -132,9 +132,11 @@ Implemented OpenAPI/Swagger auto-mock generation:
 - `@schmock/cli` for starting a mock server from the command line
 - Seed file support for realistic initial data
 
-### Production Hardening — Phases 1 and 2 Complete Locally
+### Production Hardening — Phases 1 to 5 Complete
 
-The post-v2.3.0 worktree has completed and locally verified:
+All five remediation phases of the post-v2.3.0 audit
+([`CODEBASE-ANALYSIS.md`](../CODEBASE-ANALYSIS.md)) were implemented on
+2026-08-09 and 2026-08-10 and first shipped in v2.4.0. Phases 1 and 2 delivered:
 
 - Deterministic clean and repeated package builds with stale-artifact removal
 - Standalone public declarations for all package entries, including a packed TypeScript 5.6 Core consumer
@@ -148,11 +150,19 @@ The post-v2.3.0 worktree has completed and locally verified:
 - One final response contract across Core, Fetch, Node HTTP, Express, Angular, and CLI
 - Structured 400/413 Node ingress handling with exact 10 MiB limits
 
-Final local evidence is 1,928 unit, 1,307 BDD, 137 integration, and 14 E2E
+Their local evidence was 1,928 unit, 1,307 BDD, 137 integration, and 14 E2E
 tests, plus lint, build, TypeScript 5.6, reproducibility, packed-consumer,
-`publint`, and `attw` gates. Fresh remote CI is still pending. Audit findings
-M10 onward remain open in whole or in part; see
-[`CODEBASE-ANALYSIS.md`](../CODEBASE-ANALYSIS.md) for the next phases.
+`publint`, and `attw` gates.
+
+Phases 3 to 5 made OpenAPI CRUD operations transactional and owned (M10-M19),
+repaired the adapter and CLI boundaries (M24-M29), and closed the data-plugin
+majors (M20-M23), every remaining minor finding, the documentation-drift rows
+and the packaging items. The whole-monorepo review in
+[`REVIEW-2026-09-25.md`](../REVIEW-2026-09-25.md) followed in v2.5.0, and
+DevTools reporting in v2.6.0.
+
+As of 2026-10-23 GitHub reports no runs of the CI workflows, so the local
+release gate (`bun run publish`) is what enforces the full check set.
 
 ### Product Phase 4 — Future
 - **Network error simulation**: Timeouts, connection refused (beyond HTTP error codes)
@@ -203,6 +213,6 @@ M10 onward remain open in whole or in part; see
 
 ---
 
-**Status**: Active development; release-artifact and core lifecycle/transport hardening complete locally, fresh remote CI pending
+**Status**: Active development; production hardening (Phases 1-5) released in v2.4.0, the 2026-09-25 review in v2.5.0 and DevTools reporting in v2.6.0; remote CI has not run yet
 **License**: MIT
 **Maintained by**: Khalic Lab
