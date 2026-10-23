@@ -299,6 +299,18 @@ of crashing the process.
 Each request goes through [`serveNodeRequest()`](#servenoderequest), the same
 bridge the CLI uses, so both answer client errors alike.
 
+`listen()` needs Node.js or Bun. A bundler that applies the `browser` export
+condition (Vite, webpack, esbuild and Angular with a browser platform,
+`bun build --target browser`) resolves `@schmock/core` to a browser build that
+has no HTTP server, so it bundles neither `node:http` nor the Node polyfills
+some bundlers would inline for it. That build exports the same names, and its
+mocks behave the same in every other way, but `listen()` returns a promise that
+rejects with `SERVER_UNAVAILABLE` and `close()` does nothing. In a browser, use
+[`.intercept()`](#interceptoptions) instead. Node.js and Bun never apply the
+`browser` condition, so servers and tests there get the full build. A test
+environment that applies it as well gets the browser build too: Jest's `jsdom`
+environment does by default, through its `customExportConditions` option.
+
 #### `.intercept(options?)`
 
 Patch `globalThis.fetch` and route matching requests through the mock:

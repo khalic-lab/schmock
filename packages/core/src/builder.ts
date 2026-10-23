@@ -26,7 +26,6 @@ import {
   type ExchangeObserver,
   NORMALIZED_ADMISSION_KEY,
 } from "./interceptor.js";
-import { NodeServerController } from "./node-server.js";
 import {
   assertValidPlugin,
   hasAfterResponseHook,
@@ -54,6 +53,11 @@ import {
 } from "./route-matcher.js";
 import type { RouteTableSnapshot } from "./route-table.js";
 import { copyRouteConfig, copyStaticData, RouteTable } from "./route-table.js";
+import type {
+  ServerController,
+  ServerControllerFactory,
+} from "./server-controller.js";
+import { noServer } from "./server-controller.js";
 
 type InternalGlobalConfig = Omit<Schmock.GlobalConfig, "state"> & {
   state: Record<string, unknown>;
@@ -167,7 +171,7 @@ export class CallableMockInstance {
   private plugins: Schmock.Plugin[] = [];
   private logger: DebugLogger;
   private readonly requestHistory: RequestHistory;
-  private readonly nodeServer: NodeServerController;
+  private readonly server: ServerController;
   private callableRef: Schmock.CallableMockInstance | undefined;
   private interceptHandles = new Set<Schmock.InterceptHandle>();
   private readonly generations = new RequestGenerations((plugins) =>
@@ -178,7 +182,16 @@ export class CallableMockInstance {
   private readonly events: MockEvents;
   private namespaceCache: CanonicalNamespace | undefined;
 
-  constructor(globalConfig: Schmock.GlobalConfig = {}) {
+  /**
+   * @param createServer The server `listen()` starts, chosen by the package
+   *   entry: the Node server, or {@link noServer} in the browser build. The
+   *   builder never imports the Node server, so a browser bundle never
+   *   reaches `node:http`.
+   */
+  constructor(
+    globalConfig: Schmock.GlobalConfig = {},
+    createServer: ServerControllerFactory = noServer,
+  ) {
     // First: an invalid maxHistorySize throws before anything else is built.
     this.requestHistory = new RequestHistory(globalConfig.maxHistorySize);
     this.globalConfig = {
@@ -187,7 +200,7 @@ export class CallableMockInstance {
     };
     this.logger = new DebugLogger(globalConfig.debug || false);
     this.events = new MockEvents(this.logger);
-    this.nodeServer = new NodeServerController({
+    this.server = createServer({
       admitRequest: () => this.createRequestAdmission(),
       logger: this.logger,
     });
@@ -405,11 +418,11 @@ export class CallableMockInstance {
   // ===== Standalone Server =====
 
   listen(port = 0, hostname = "127.0.0.1"): Promise<Schmock.ServerInfo> {
-    return this.nodeServer.listen(port, hostname);
+    return this.server.listen(port, hostname);
   }
 
   close(): void {
-    this.nodeServer.close();
+    this.server.close();
   }
 
   // ===== Fetch Interceptor =====

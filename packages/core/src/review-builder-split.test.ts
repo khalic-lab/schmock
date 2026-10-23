@@ -51,22 +51,29 @@ function relativeImports(src: string): string[] {
   );
 }
 
+/** Every module `entry` loads, each checked for static `node:` imports. */
+function moduleGraph(entry: string): Set<string> {
+  const visited = new Set<string>();
+  const pending = [entry];
+  while (pending.length > 0) {
+    const specifier = pending.pop();
+    if (specifier === undefined || visited.has(specifier)) continue;
+    visited.add(specifier);
+    const src = readFileSync(resolve(distRoot, specifier), "utf8");
+    expect(staticNodeImports(src), specifier).toEqual([]);
+    pending.push(...relativeImports(src));
+  }
+  return visited;
+}
+
 describe.skipIf(!existsSync(distRoot))(
-  "dist shape of every module builder.js loads (#395)",
+  "dist shape of every module the entries load (#395)",
   () => {
-    it("statically imports node:* nowhere in builder.js's module graph", () => {
-      const visited = new Set<string>();
-      const pending = ["./builder.js"];
-      while (pending.length > 0) {
-        const specifier = pending.pop();
-        if (specifier === undefined || visited.has(specifier)) continue;
-        visited.add(specifier);
-        const src = readFileSync(resolve(distRoot, specifier), "utf8");
-        expect(staticNodeImports(src), specifier).toEqual([]);
-        pending.push(...relativeImports(src));
-      }
+    it("statically imports node:* nowhere in index.js's module graph", () => {
+      const visited = moduleGraph("./index.js");
 
       for (const module of [
+        "./builder.js",
         "./node-server.js",
         "./history.js",
         "./route-table.js",
@@ -80,9 +87,21 @@ describe.skipIf(!existsSync(distRoot))(
       }
     });
 
-    it("keeps node:http a dynamic import inside node-server.js", () => {
+    it("never reaches node-server.js from the browser entry (#114)", () => {
+      const visited = moduleGraph("./index.browser.js");
+
+      expect(visited).toContain("./builder.js");
+      expect(visited).toContain("./interceptor.js");
+      expect(visited).not.toContain("./node-server.js");
+    });
+
+    it("keeps node:http a literal dynamic import with its own rejection handler", () => {
+      // esbuild (and so Angular's application builder) leaves a dynamic
+      // import unresolved only when the import() expression handles its own
+      // failure, which is what keeps a bundler that ignores the `browser`
+      // condition building (#25).
       const src = readFileSync(resolve(distRoot, "node-server.js"), "utf8");
-      expect(src).toMatch(/import\(\s*["']node:http["']\s*\)/);
+      expect(src).toMatch(/import\(\s*["']node:http["']\s*\)\s*\.catch\(/);
     });
   },
 );

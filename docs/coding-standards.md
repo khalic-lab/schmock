@@ -363,7 +363,14 @@ One concern per file. In `packages/core/src`:
 - `builder.ts` — route registration, plugin piping and request handling
   (resolve, generate, pipeline, finalize)
 - `history.ts` — request history and the spy API
-- `node-server.ts` — the `listen()`/`close()` server lifecycle
+- `index.ts` / `index.browser.ts` — the Node and browser entries: each defines
+  `schmock()` with its own server and re-exports `public-api.ts`, the rest of
+  the public surface, so the two builds cannot drift apart
+- `callable-mock.ts` — the callable mock both entries' `schmock()` returns
+- `server-controller.ts` — the server interface `listen()`/`close()` drive,
+  and the browser build's `noServer`
+- `node-server.ts` — the `listen()`/`close()` server lifecycle on Node, which
+  only the Node entry imports
 - `route-table.ts` — the copy-on-write route table and per-request route copies
 - `plugin-hooks.ts` — plugin validation and install/uninstall hooks
 - `generations.ts` — request generations and deferred uninstall

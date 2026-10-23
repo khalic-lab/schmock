@@ -1,7 +1,8 @@
 import { request as nodeRequest } from "node:http";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
-import { schmock, toRouteKey } from "../index";
+import { schmock, toHttpMethod, toRouteKey } from "../index";
+import { schmock as schmockForBrowser } from "../index.browser";
 
 const feature = await loadFeature("../../features/standalone-server.feature");
 
@@ -501,6 +502,46 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         async (_, property: string) => {
           expect(await httpResponse.json()).toMatchObject({ [property]: true });
           expect(jsonRouteExecutions).toBe(1);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "The browser build cannot listen but still answers requests",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a mock with a GET /hello route from the browser build",
+        () => {
+          mock = schmockForBrowser();
+          mock("GET /hello", { message: "hello" });
+        },
+      );
+
+      When("I try to start the server on a random port", () => {
+        pendingStart = mock.listen(0);
+        void pendingStart.catch(() => undefined);
+      });
+
+      Then(
+        "the start should reject with code {string}",
+        async (_, expectedCode: string) => {
+          await expect(pendingStart).rejects.toMatchObject({
+            code: expectedCode,
+          });
+        },
+      );
+
+      And("closing the server should do nothing", () => {
+        expect(() => mock.close()).not.toThrow();
+      });
+
+      And(
+        "handling {string} should still answer {int}",
+        async (_, request: string, status: number) => {
+          const [method, path] = request.split(" ");
+          const response = await mock.handle(toHttpMethod(method), path);
+          expect(response.status).toBe(status);
         },
       );
     },

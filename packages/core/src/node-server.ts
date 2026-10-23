@@ -5,6 +5,11 @@ import {
   DEFAULT_MAX_BODY_SIZE,
   serveAdmittedNodeRequest,
 } from "./http-helpers.js";
+import type {
+  ServerController,
+  ServerControllerFactory,
+  ServerControllerOptions,
+} from "./server-controller.js";
 
 interface PendingServerStart {
   readonly token: symbol;
@@ -16,17 +21,6 @@ interface PendingServerStart {
   settled: boolean;
 }
 
-interface NodeServerControllerOptions {
-  /**
-   * Admit one request against the mock. Called on arrival, before the request
-   * is parsed, and released once it is answered. Its `handle` must be a
-   * `schmock()` admission's own: what it returns is written as normalized,
-   * with no second validating pass (see `serveAdmittedNodeRequest`).
-   */
-  readonly admitRequest: () => Schmock.RequestAdmission;
-  readonly logger: DebugLogger;
-}
-
 /**
  * The standalone HTTP server behind `mock.listen()` / `mock.close()`.
  *
@@ -35,17 +29,23 @@ interface NodeServerControllerOptions {
  * waits for every earlier server to finish closing (the close barrier) so a
  * restart on the same port never races the old socket.
  *
- * `node:http` is imported lazily, on the first `listen()`, so a browser bundle
- * that never listens never pulls it in (issue #395).
+ * The `handle` of each admission `admitRequest` gives must be a `schmock()`
+ * admission's own: what it returns is written as normalized, with no second
+ * validating pass (see `serveAdmittedNodeRequest`).
+ *
+ * Only the Node entry (`index.ts`) reaches this module; the browser entry
+ * gives its mocks `noServer` instead. `node:http` is still imported lazily, on
+ * the first `listen()`, so a bundler that ignores the `browser` condition and
+ * never listens does not need it either (issue #395).
  */
-export class NodeServerController {
+export class NodeServerController implements ServerController {
   #server: Server | undefined;
   #pendingStart: PendingServerStart | undefined;
   #closeBarrier: Promise<void> | undefined;
   readonly #admitRequest: () => Schmock.RequestAdmission;
   readonly #logger: DebugLogger;
 
-  constructor(options: NodeServerControllerOptions) {
+  constructor(options: ServerControllerOptions) {
     this.#admitRequest = options.admitRequest;
     this.#logger = options.logger;
   }
@@ -220,3 +220,7 @@ export class NodeServerController {
     });
   }
 }
+
+/** The server a mock built by the Node entry listens with. */
+export const createNodeServer: ServerControllerFactory = (options) =>
+  new NodeServerController(options);

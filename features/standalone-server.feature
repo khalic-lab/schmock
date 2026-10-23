@@ -96,3 +96,13 @@ Feature: Standalone Server
     When I start the server on a random port
     And I send valid JSON with mixed-case media type to "/json"
     Then the echoed JSON property "valid" should be true
+
+  # Design Decision (#114): a bundler that applies the `browser` export
+  # condition gets a build of @schmock/core without the HTTP server, so no
+  # Node polyfills are bundled. listen() keeps its promise shape and rejects.
+  Scenario: The browser build cannot listen but still answers requests
+    Given I create a mock with a GET /hello route from the browser build
+    When I try to start the server on a random port
+    Then the start should reject with code "SERVER_UNAVAILABLE"
+    And closing the server should do nothing
+    And handling "GET /hello" should still answer 200
