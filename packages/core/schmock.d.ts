@@ -1111,7 +1111,7 @@ declare namespace Schmock {
     ) =>
       | AdapterRequestOverride
       | void
-      | Promise<AdapterRequestOverride | undefined>;
+      | Promise<AdapterRequestOverride | undefined | void>;
     /**
      * `transformResponse` under the fetch interceptor's name; it may be async,
      * and returning nothing keeps the response. When both are set,
@@ -1120,7 +1120,7 @@ declare namespace Schmock {
     beforeResponse?: (
       response: Response,
       request: unknown,
-    ) => Response | void | Promise<Response | undefined>;
+    ) => Response | void | Promise<Response | undefined | void>;
   }
 
   // ===== OpenAPI Plugin Options =====

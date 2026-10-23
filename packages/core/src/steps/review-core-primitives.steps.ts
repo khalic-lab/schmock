@@ -90,6 +90,18 @@ const deprecatedAngularOptions: AngularAdapterOptions = {
   beforeResponse: async (response) => response,
 };
 
+// It also accepts an async hook declared to return void, as @schmock/angular
+// does: a named hook that only observes the request is no compile error.
+async function observeRequest(_request: unknown): Promise<void> {}
+async function observeResponse(
+  _response: Schmock.Response,
+  _request: unknown,
+): Promise<void> {}
+const deprecatedAngularVoidHooks: AngularAdapterOptions = {
+  beforeRequest: observeRequest,
+  beforeResponse: observeResponse,
+};
+
 // The deprecated core copy of the Express options accepts a hook declared to
 // return void, as @schmock/express does: a named hook that only writes its
 // own response is no compile error, sync or async.
@@ -559,6 +571,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         () => {
           expect(valueReturningPlugins).toHaveLength(3);
           expect(deprecatedAngularOptions.beforeRequest?.({})).toBeUndefined();
+          expect(deprecatedAngularVoidHooks.beforeRequest).toBe(observeRequest);
           expect(
             deprecatedExpressOptions.beforeRequest?.({}, {}),
           ).toBeUndefined();
