@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type * as Schmock from "@schmock/core";
 import { schmock } from "@schmock/core";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -35,13 +36,17 @@ async function mockFor(
 }
 
 /** Compile with the exact AJV the request pipeline uses (request-pipeline.ts). */
-function acceptsNull(schema: JSONSchema7): boolean {
+function accepts(schema: JSONSchema7, value: unknown): boolean {
   const ajv = new Ajv2020({
     allErrors: true,
     strictSchema: false,
     strictTypes: false,
   });
-  return ajv.compile(schema)(null);
+  return ajv.compile(schema)(value);
+}
+
+function acceptsNull(schema: JSONSchema7): boolean {
+  return accepts(schema, null);
 }
 
 describe("normalizeSchema", () => {
@@ -294,13 +299,362 @@ describe("normalizeSchema", () => {
       expect(props.plainCat.properties?.petType).toEqual({ type: "string" });
     });
 
-    it("still truncates a true self-cycle to {} without overflowing", () => {
+    it("ends a self-cycle by leaving out the optional property that closes it", () => {
       const a: Record<string, unknown> = { type: "object", properties: {} };
       (a.properties as Record<string, unknown>).self = a;
+      (a.properties as Record<string, unknown>).parent = { allOf: [a] };
 
       const result = normalizeSchema(a, "response");
-      const props = result.properties as Record<string, unknown>;
-      expect(props.self).toEqual({});
+      expect(result.properties).toEqual({});
+    });
+  });
+
+  describe("recursive schemas", () => {
+    /** Accepts anything, as an unconstrained schema does, but is not empty. */
+    function expectOpenCut(schema: unknown): void {
+      expect(schema).toBeTypeOf("object");
+      expect(Object.keys(schema as object).length).toBeGreaterThan(0);
+      const cut = schema as JSONSchema7;
+      for (const value of [null, 1, "x", { deep: [1] }, [{ id: 1 }]]) {
+        expect(accepts(cut, value)).toBe(true);
+      }
+    }
+
+    function treeNode(): Record<string, unknown> {
+      const node: Record<string, unknown> = {
+        type: "object",
+        required: ["id"],
+        properties: { id: { type: "integer" } },
+      };
+      (node.properties as Record<string, unknown>).children = {
+        type: "array",
+        items: node,
+      };
+      return node;
+    }
+
+    it("defaults a recursive array to empty and keeps its items open", () => {
+      const result = normalizeSchema(treeNode(), "response");
+      const children = (result.properties as Record<string, JSONSchema7>)
+        .children;
+
+      expect(children.type).toBe("array");
+      expect(children.default).toEqual([]);
+      expectOpenCut(children.items);
+      expect(
+        accepts(result, {
+          id: 1,
+          children: [{ id: 2, children: [{ id: 3 }] }],
+        }),
+      ).toBe(true);
+    });
+
+    it("leaves a minItems recursive array without an empty default", () => {
+      const node = treeNode();
+      const props = node.properties as Record<string, Record<string, unknown>>;
+      props.children.minItems = 1;
+
+      const result = normalizeSchema(node, "response");
+      const children = (result.properties as Record<string, JSONSchema7>)
+        .children;
+      expect(children).not.toHaveProperty("default");
+      expectOpenCut(children.items);
+    });
+
+    it("cuts a required recursive property to an open schema", () => {
+      const person: Record<string, unknown> = {
+        type: "object",
+        required: ["name", "manager"],
+        properties: { name: { type: "string" } },
+      };
+      (person.properties as Record<string, unknown>).manager = person;
+
+      const result = normalizeSchema(person, "request");
+      expectOpenCut((result.properties as Record<string, unknown>).manager);
+    });
+
+    it("keeps an optional recursive property when the object is closed", () => {
+      const person: Record<string, unknown> = {
+        type: "object",
+        additionalProperties: false,
+        properties: { name: { type: "string" } },
+      };
+      (person.properties as Record<string, unknown>).manager = person;
+
+      const result = normalizeSchema(person, "response");
+      expectOpenCut((result.properties as Record<string, unknown>).manager);
+      expect(accepts(result, { name: "a", manager: { name: "b" } })).toBe(true);
+    });
+
+    /**
+     * The OAS 3.1 way to close a composition: `unevaluatedProperties: false`
+     * on the composer, every name declared by an open `allOf` branch.
+     */
+    function closedComposition(): {
+      node: Record<string, unknown>;
+      branch: Record<string, unknown>;
+    } {
+      const branch: Record<string, unknown> = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
+      const node = { unevaluatedProperties: false, allOf: [branch] };
+      (branch.properties as Record<string, unknown>).next = node;
+      return { node, branch };
+    }
+
+    it("declares an optional recursive property a closed composer evaluates", () => {
+      const { node } = closedComposition();
+
+      for (const direction of ["request", "response"] as const) {
+        const result = normalizeSchema(node, direction);
+        const [branch] = result.allOf as JSONSchema7[];
+        expectOpenCut((branch.properties as Record<string, unknown>).next);
+        expect(
+          accepts(result, { name: "a", next: { name: "b", next: {} } }),
+        ).toBe(true);
+        expect(accepts(result, { name: "a", bogus: 1 })).toBe(false);
+      }
+    });
+
+    it("keeps a composer whose branch closes the cycle open to nested data", () => {
+      // Entered at the branch, the cycle closes on the composer's own allOf.
+      const { branch } = closedComposition();
+
+      const result = normalizeSchema(branch, "request");
+      const deep = { name: "a", next: { name: "b", next: { name: "c" } } };
+      expect(accepts(result, deep)).toBe(true);
+      expect(
+        (result.properties as Record<string, JSONSchema7>).next.default,
+      ).toBeNull();
+    });
+
+    it.each(["anyOf", "oneOf"])(
+      "keeps a closed %s composer open to nested data through its branch",
+      (keyword) => {
+        const branch: Record<string, unknown> = {
+          type: "object",
+          properties: { name: { type: "string" } },
+        };
+        const other = {
+          type: "object",
+          required: ["other"],
+          properties: { other: { type: "integer" } },
+        };
+        const node = {
+          unevaluatedProperties: false,
+          [keyword]: [branch, other],
+        };
+        (branch.properties as Record<string, unknown>).next = node;
+
+        const result = normalizeSchema(branch, "request");
+        expect(accepts(result, { name: "a", next: { name: "b" } })).toBe(true);
+        expect(accepts(normalizeSchema(node, "request"), { bogus: 1 })).toBe(
+          false,
+        );
+      },
+    );
+
+    it("lets a nullable composition idiom end in null", () => {
+      const category: Record<string, unknown> = {
+        type: "object",
+        required: ["id", "parent"],
+        properties: { id: { type: "integer" } },
+      };
+      (category.properties as Record<string, unknown>).parent = {
+        allOf: [category],
+        nullable: true,
+      };
+
+      const result = normalizeSchema(category, "response");
+      const parent = (result.properties as Record<string, JSONSchema7>).parent;
+      // json-schema-faker merges `allOf` without `default`, so the branch
+      // that closed the cycle is gone and the wrapper itself ends in null.
+      expect(parent).not.toHaveProperty("allOf");
+      expect(parent.default).toBeNull();
+      expectOpenCut(parent);
+    });
+  });
+
+  describe("recursive schemas through the plugin", () => {
+    const recursiveSchemas = {
+      TreeNode: {
+        type: "object",
+        required: ["id"],
+        properties: {
+          id: { type: "integer" },
+          children: {
+            type: "array",
+            items: { $ref: "#/components/schemas/TreeNode" },
+          },
+        },
+      },
+      Person: {
+        type: "object",
+        required: ["name"],
+        properties: {
+          name: { type: "string" },
+          manager: { $ref: "#/components/schemas/Person" },
+        },
+      },
+      Category: {
+        type: "object",
+        required: ["id", "parent"],
+        properties: {
+          id: { type: "integer" },
+          parent: {
+            allOf: [{ $ref: "#/components/schemas/Category" }],
+            nullable: true,
+          },
+        },
+      },
+      Comment: {
+        type: "object",
+        required: ["text"],
+        properties: {
+          text: { type: "string" },
+          replies: {
+            type: "array",
+            items: { $ref: "#/components/schemas/Comment" },
+          },
+        },
+      },
+    };
+    const get = (schema: object) => ({
+      get: {
+        responses: { "200": { description: "ok", content: json(schema) } },
+      },
+    });
+
+    it("generates every self-referential shape instead of answering 500", async () => {
+      const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+      const mock = await mockFor(
+        specWith(
+          {
+            "/tree": get(ref("TreeNode")),
+            "/person": get(ref("Person")),
+            "/category": get(ref("Category")),
+            "/comments": get({ type: "array", items: ref("Comment") }),
+          },
+          recursiveSchemas,
+        ),
+        { validateResponses: true, fakerSeed: 11 },
+      );
+
+      const tree = await mock.handle("GET", "/tree");
+      expect(tree.status).toBe(200);
+      expect(tree.body).toMatchObject({ children: [] });
+
+      const person = await mock.handle("GET", "/person");
+      expect(person.status).toBe(200);
+      expect(person.body).not.toHaveProperty("manager");
+
+      const category = await mock.handle("GET", "/category");
+      expect(category.status).toBe(200);
+      expect(category.body).toMatchObject({ parent: null });
+
+      const comments = await mock.handle("GET", "/comments");
+      expect(comments.status).toBe(200);
+      for (const comment of comments.body as Array<Record<string, unknown>>) {
+        expect(comment.replies).toEqual([]);
+      }
+    });
+
+    it("still validates a deep request tree against the recursive schema", async () => {
+      const mock = await mockFor(
+        specWith(
+          {
+            "/tree": {
+              post: {
+                requestBody: {
+                  required: true,
+                  content: json({ $ref: "#/components/schemas/TreeNode" }),
+                },
+                responses: { "201": { description: "ok" } },
+              },
+            },
+          },
+          recursiveSchemas,
+        ),
+        { validateRequests: true },
+      );
+
+      const deep = {
+        id: 1,
+        children: [{ id: 2, children: [{ id: 3, children: [{ id: 4 }] }] }],
+      };
+      expect((await mock.handle("POST", "/tree", { body: deep })).status).toBe(
+        201,
+      );
+      const invalid = { id: "one", children: [] };
+      expect(
+        (await mock.handle("POST", "/tree", { body: invalid })).status,
+      ).toBe(400);
+    });
+
+    it("accepts a nested request under a 3.1 composer closed by unevaluatedProperties", async () => {
+      const mock = await mockFor(
+        specWith(
+          {
+            "/nodes": {
+              post: {
+                requestBody: {
+                  required: true,
+                  content: json({ $ref: "#/components/schemas/Node" }),
+                },
+                responses: { "204": { description: "ok" } },
+              },
+            },
+          },
+          {
+            Node: {
+              unevaluatedProperties: false,
+              allOf: [
+                {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    next: { $ref: "#/components/schemas/Node" },
+                  },
+                },
+              ],
+            },
+          },
+          "3.1.0",
+        ),
+        { validateRequests: true },
+      );
+
+      const nested = { name: "a", next: { name: "b", next: { name: "c" } } };
+      expect(
+        (await mock.handle("POST", "/nodes", { body: nested })).status,
+      ).toBe(204);
+      const bogus = { name: "a", bogus: 1 };
+      expect(
+        (await mock.handle("POST", "/nodes", { body: bogus })).status,
+      ).toBe(400);
+    });
+
+    it("seeds and generates the Scalar Galaxy planets despite their recursion", async () => {
+      const mock = schmock({ state: {} });
+      mock.pipe(
+        await openapi({
+          spec: resolve(__dirname, "__fixtures__/scalar-galaxy.yaml"),
+          seed: { planets: { count: 2 } },
+          fakerSeed: 5,
+        }),
+      );
+
+      const list = await mock.handle("GET", "/planets");
+      expect(list.status).toBe(200);
+      const data = (list.body as { data: Array<Record<string, unknown>> }).data;
+      expect(data).toHaveLength(2);
+
+      const dynamic = await mock.handle("GET", `/planets/${data[0].id}`, {
+        headers: { prefer: "dynamic=true" },
+      });
+      expect(dynamic.status).toBe(200);
+      expect(dynamic.body).toHaveProperty("name");
     });
   });
 

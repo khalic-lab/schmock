@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
 import { expect } from "vitest";
@@ -6,6 +7,7 @@ import { openapi } from "../plugin";
 const feature = await loadFeature(
   "../../features/openapi-schema-model.feature",
 );
+const fixturesDir = resolve(import.meta.dirname, "../__fixtures__");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -255,6 +257,84 @@ describeFeature(feature, ({ Scenario }) => {
 
       And('the profile has no "password" key', () => {
         expect(response.body).not.toHaveProperty("password");
+      });
+    },
+  );
+
+  Scenario(
+    "A self-referential schema generates instead of failing",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a response-validating mock whose tree node lists children of its own type and has an optional parent",
+        async () => {
+          const node = { $ref: "#/components/schemas/TreeNode" };
+          await build({
+            spec: specWith(
+              {
+                "/tree": {
+                  get: {
+                    responses: {
+                      "200": { description: "OK", content: json(node) },
+                    },
+                  },
+                },
+              },
+              {
+                TreeNode: {
+                  type: "object",
+                  required: ["id", "children"],
+                  properties: {
+                    id: { type: "integer" },
+                    parent: node,
+                    children: { type: "array", items: node },
+                  },
+                },
+              },
+            ),
+            validateResponses: true,
+          });
+        },
+      );
+
+      When("I read the tree", async () => {
+        response = await mock.handle("GET", "/tree");
+      });
+
+      Then("the tree response has status 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And('the tree has no "parent" key and an empty "children" list', () => {
+        expect(response.body).not.toHaveProperty("parent");
+        expect(response.body).toHaveProperty("children", []);
+      });
+    },
+  );
+
+  Scenario(
+    "The Scalar Galaxy planets seed from a count despite their recursion",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "the Scalar Galaxy spec seeded with 2 generated planets",
+        async () => {
+          await build({
+            spec: resolve(fixturesDir, "scalar-galaxy.yaml"),
+            seed: { planets: { count: 2 } },
+          });
+        },
+      );
+
+      When("I list the planets", async () => {
+        response = await mock.handle("GET", "/planets");
+      });
+
+      Then("the planets response has status 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And("the planet list holds 2 planets", () => {
+        const body = isRecord(response.body) ? response.body : {};
+        expect(body.data).toHaveLength(2);
       });
     },
   );

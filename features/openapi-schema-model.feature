@@ -34,3 +34,23 @@ Feature: OpenAPI schema model fixes
     When I read the profile
     Then the profile response has status 200
     And the profile has no "password" key
+
+  # ── Recursive schemas ─────────────────────────────────────────────────────
+
+  # Design Decision: a cycle ends where a generated instance can stop
+  # - An optional property that closes the cycle is left out
+  # - An array of the enclosing schema defaults to empty
+  # - Anywhere else the cut is an open schema that generates null
+  # - Validation stays as permissive as the old empty-schema cut
+
+  Scenario: A self-referential schema generates instead of failing
+    Given a response-validating mock whose tree node lists children of its own type and has an optional parent
+    When I read the tree
+    Then the tree response has status 200
+    And the tree has no "parent" key and an empty "children" list
+
+  Scenario: The Scalar Galaxy planets seed from a count despite their recursion
+    Given the Scalar Galaxy spec seeded with 2 generated planets
+    When I list the planets
+    Then the planets response has status 200
+    And the planet list holds 2 planets

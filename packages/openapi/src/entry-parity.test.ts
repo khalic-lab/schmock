@@ -208,12 +208,12 @@ describe("Node and browser entries agree", () => {
     }
   });
 
-  it("reject a self-referencing schema the same way", async () => {
+  it("generate from a self-referencing schema the same way", async () => {
     const [node, browser] = await Promise.all(
       ENTRIES.map(([, file]) => responseFrom(file, CYCLIC_SPEC, "/nodes")),
     );
 
-    expect(node.status).toBe(500);
+    expect(node.status).toBe(200);
     expect(browser).toEqual(node);
   });
 });

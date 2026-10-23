@@ -109,17 +109,67 @@ function isPrimitive(value: unknown): boolean {
  * - example -> default (if default not set), on scalar nodes only
  * - exclusiveMinimum/exclusiveMaximum boolean -> number format
  * - x-* extensions -> stripped
+ * - a cycle -> ended where generation can stop: an optional property closing
+ *   it is left out of an open object, an array of the enclosing schema
+ *   defaults to `[]`, and any other back-reference becomes an open schema that
+ *   generates `null`
+ *
+ * The input is never modified, and neither is any node shared inside it.
  */
 export function normalizeSchema(
   schema: Record<string, unknown>,
   direction: "request" | "response",
 ): JSONSchema7 {
-  return normalizeNode(
-    structuredClone(schema),
+  const input = structuredClone(schema);
+  return normalizeNode(input, {
     direction,
-    new Set<object>(),
-    new Map<object, JSONSchema7>(),
-  );
+    stack: new Set<object>(),
+    memo: new Map<object, JSONSchema7>(),
+    canLeaveOutBackReferences: !closesEvaluation(input),
+  });
+}
+
+/** One {@link normalizeSchema} call's traversal state. */
+interface NormalizePass {
+  readonly direction: "request" | "response";
+  /** Input nodes still being normalized, the ancestors of the current one. */
+  readonly stack: Set<object>;
+  /** Every input node normalized so far, by identity. */
+  readonly memo: Map<object, JSONSchema7>;
+  /**
+   * May an optional property closing a cycle be left out of an open object?
+   * Decided once for the whole schema, never per position: a normalized node
+   * is memoized and reused wherever its input occurs again.
+   */
+  readonly canLeaveOutBackReferences: boolean;
+}
+
+/**
+ * Does anything in `schema` set `unevaluatedProperties` to something other
+ * than `true`?
+ *
+ * That keyword reaches through `allOf`, `anyOf`, `oneOf`, `$ref` and the
+ * conditionals: a 3.1 composition closed with `unevaluatedProperties: false`
+ * accepts only the names its branches declare. A property one branch left out
+ * of `properties` becomes a name nothing declares, and the composer rejects it,
+ * however open the branch itself looks. Which composer a memoized branch ends
+ * up under is not known while it is normalized, so the answer covers the whole
+ * schema.
+ */
+function closesEvaluation(schema: unknown, seen = new Set<object>()): boolean {
+  if (typeof schema !== "object" || schema === null || seen.has(schema)) {
+    return false;
+  }
+  seen.add(schema);
+  if (
+    !Array.isArray(schema) &&
+    "unevaluatedProperties" in schema &&
+    schema.unevaluatedProperties !== true &&
+    schema.unevaluatedProperties !== undefined
+  ) {
+    return true;
+  }
+  return Object.values(schema).some((value) => closesEvaluation(value, seen));
 }
 
 /**
@@ -160,6 +210,67 @@ function applyNullability(
 
   node.schmockNullable = true;
   return node;
+}
+
+/**
+ * What a reference back into a schema still being normalized becomes.
+ *
+ * The cut has two readers. AJV validates requests, stored rows and generated
+ * bodies against it, so it must accept whatever nesting real data carries, as
+ * an unconstrained schema does. @schmock/faker generates from it and rejects
+ * an empty schema, so `{}` failed every request. `default` is an annotation to
+ * AJV, and json-schema-faker returns it verbatim, so generation ends in `null`.
+ *
+ * Where the schema uses `unevaluatedProperties`, the cut also evaluates every
+ * name. As a property or an item that changes nothing; as an `anyOf` or
+ * `oneOf` branch it stands in for the names the branch would have declared,
+ * which the closed composer above it still expects to see evaluated.
+ *
+ * Optional properties and arrays end the recursion before it gets here; see
+ * {@link reachesBackReference}.
+ */
+function recursionCut(pass: NormalizePass): JSONSchema7 {
+  return pass.canLeaveOutBackReferences
+    ? { default: null }
+    : toJsonSchema({ default: null, unevaluatedProperties: true });
+}
+
+/**
+ * Does `schema` lead straight back into a schema still being normalized,
+ * itself or through the `allOf` wrapper a 3.0 `$ref` with siblings is written
+ * as? A property or an array item like that is where a generated instance can
+ * end the recursion within the contract: the optional property is left out
+ * and the array is empty.
+ */
+function reachesBackReference(
+  schema: Record<string, unknown>,
+  stack: ReadonlySet<object>,
+  seen: Set<object> = new Set(),
+): boolean {
+  if (stack.has(schema)) return true;
+  if (seen.has(schema)) return false;
+  seen.add(schema);
+  return (
+    Array.isArray(schema.allOf) &&
+    schema.allOf.some(
+      (branch: unknown) =>
+        isRecord(branch) && reachesBackReference(branch, stack, seen),
+    )
+  );
+}
+
+/**
+ * Can a property be left out of `properties` without this object rejecting it?
+ * Only when nothing else here constrains the undeclared key. An enclosing
+ * `unevaluatedProperties` is {@link closesEvaluation}'s to rule out.
+ */
+function acceptsUndeclaredProperties(node: Record<string, unknown>): boolean {
+  const open = (value: unknown) => value === undefined || value === true;
+  return (
+    open(node.additionalProperties) &&
+    open(node.unevaluatedProperties) &&
+    node.patternProperties === undefined
+  );
 }
 
 /**
@@ -245,10 +356,9 @@ function withoutRequired(
 
 function normalizeNode(
   input: Record<string, unknown>,
-  direction: "request" | "response",
-  stack: Set<object>,
-  memo: Map<object, JSONSchema7>,
+  pass: NormalizePass,
 ): JSONSchema7 {
+  const { direction, stack, memo } = pass;
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return toJsonSchema({});
   }
@@ -262,7 +372,7 @@ function normalizeNode(
 
   // Circular reference detection — break true cycles (node is on the stack)
   if (stack.has(input)) {
-    return toJsonSchema({});
+    return recursionCut(pass);
   }
   stack.add(input);
 
@@ -301,7 +411,7 @@ function normalizeNode(
       node.oneOf = branches.map((branch: unknown, index) =>
         isRecord(branch)
           ? pinDiscriminator(
-              normalizeNode(branch, direction, stack, memo),
+              normalizeNode(branch, pass),
               propName,
               resolved?.[index],
             )
@@ -319,6 +429,8 @@ function normalizeNode(
       : [];
     const props: Record<string, unknown> = {};
     const stripped: string[] = [];
+    const canLeaveOut =
+      pass.canLeaveOutBackReferences && acceptsUndeclaredProperties(node);
 
     for (const [propName, propSchema] of Object.entries(node.properties)) {
       if (!isRecord(propSchema)) {
@@ -340,7 +452,17 @@ function normalizeNode(
         continue;
       }
 
-      props[propName] = normalizeNode(propSchema, direction, stack, memo);
+      // An optional property that closes a cycle is where generation stops.
+      // Undeclared, it still validates as anything, just as the cut would.
+      if (
+        canLeaveOut &&
+        !declaredRequired.includes(propName) &&
+        reachesBackReference(propSchema, stack)
+      ) {
+        continue;
+      }
+
+      props[propName] = normalizeNode(propSchema, pass);
     }
     node.properties = props;
 
@@ -387,34 +509,58 @@ function normalizeNode(
   if (node.items) {
     if (Array.isArray(node.items)) {
       node.items = node.items.map((item: unknown) =>
-        isRecord(item) ? normalizeNode(item, direction, stack, memo) : item,
+        isRecord(item) ? normalizeNode(item, pass) : item,
       );
     } else if (isRecord(node.items)) {
-      node.items = normalizeNode(node.items, direction, stack, memo);
+      const closesCycle = reachesBackReference(node.items, stack);
+      node.items = normalizeNode(node.items, pass);
+      // An array of the enclosing schema ends the recursion empty, unless it
+      // must hold items; those generate from the cut instead.
+      const minItems = typeof node.minItems === "number" ? node.minItems : 0;
+      if (closesCycle && minItems === 0 && !("default" in node)) {
+        node.default = [];
+      }
     }
   }
 
   // Recurse into additionalProperties
   if (isRecord(node.additionalProperties)) {
-    node.additionalProperties = normalizeNode(
-      node.additionalProperties,
-      direction,
-      stack,
-      memo,
-    );
+    node.additionalProperties = normalizeNode(node.additionalProperties, pass);
   }
 
   // Recurse into composition keywords (discriminated branches are done)
   for (const keyword of ["allOf", "anyOf", "oneOf"]) {
     if (keyword === discriminated) continue;
-    const keywordValue = node[keyword];
-    if (Array.isArray(keywordValue)) {
-      node[keyword] = keywordValue.map((branch: unknown) =>
-        isRecord(branch)
-          ? normalizeNode(branch, direction, stack, memo)
-          : branch,
+    const declared = node[keyword];
+    if (!Array.isArray(declared)) continue;
+    let branches: unknown[] = declared;
+    if (keyword === "allOf") {
+      // An `allOf` branch closing a cycle (`allOf: [$ref Self]` beside
+      // `nullable` or a description) would be cut to a schema that constrains
+      // nothing, and json-schema-faker merges `allOf` without its `default`.
+      // Drop it, and let this node end the recursion in `null` instead.
+      const kept = branches.filter(
+        (branch: unknown) => !(isRecord(branch) && stack.has(branch)),
       );
+      if (kept.length < branches.length) {
+        if (!("default" in node)) node.default = null;
+        // The dropped branch declared names that an `unevaluatedProperties`
+        // here or on an enclosing composer still expects to see evaluated.
+        // Evaluating every name here keeps the cut open to real data, and
+        // unlike an added branch it leaves the `null` default generating.
+        if (!pass.canLeaveOutBackReferences) {
+          node.unevaluatedProperties = true;
+        }
+        if (kept.length === 0) {
+          delete node.allOf;
+          continue;
+        }
+        branches = kept;
+      }
     }
+    node[keyword] = branches.map((branch: unknown) =>
+      isRecord(branch) ? normalizeNode(branch, pass) : branch,
+    );
   }
 
   // A stripped name stays required wherever another allOf branch, or this
@@ -432,14 +578,14 @@ function normalizeNode(
 
   // Recurse into not
   if (isRecord(node.not)) {
-    node.not = normalizeNode(node.not, direction, stack, memo);
+    node.not = normalizeNode(node.not, pass);
   }
 
   // Recurse into conditional
   for (const keyword of ["if", "then", "else"]) {
     const keywordValue = node[keyword];
     if (isRecord(keywordValue)) {
-      node[keyword] = normalizeNode(keywordValue, direction, stack, memo);
+      node[keyword] = normalizeNode(keywordValue, pass);
     }
   }
 
@@ -447,9 +593,7 @@ function normalizeNode(
   if (isRecord(node.patternProperties)) {
     const pp: Record<string, unknown> = {};
     for (const [pattern, schema] of Object.entries(node.patternProperties)) {
-      pp[pattern] = isRecord(schema)
-        ? normalizeNode(schema, direction, stack, memo)
-        : schema;
+      pp[pattern] = isRecord(schema) ? normalizeNode(schema, pass) : schema;
     }
     node.patternProperties = pp;
   }
