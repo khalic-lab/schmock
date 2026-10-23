@@ -61,7 +61,10 @@ export const JSF_MAX_DEPTH = MAX_NESTING_DEPTH + 5;
  * `MAX_GENERATED_NODES` bounds the RESULT. json-schema-faker runs with
  * `alwaysFakeOptionals`, so every optional property is materialized and the
  * size of a response is the product of array sizes and object widths down each
- * branch — width, not merely the number of schema nodes.
+ * branch — width, not merely the number of schema nodes. It also charges every
+ * `contains` match json-schema-faker draws: it generates them all before it
+ * trims the array to `maxItems`, so the work is done even for the ones it then
+ * discards.
  *
  * Both are plain constants rather than plugin options, mirroring
  * `packages/openapi/src/limits.ts`: a mock has no legitimate reason to emit a
@@ -89,8 +92,11 @@ export const MAX_STRING_LENGTH = 65_536;
  * every one of them and still add up to 655M characters. 256 maximal strings
  * (16M code units, about 32 MB in memory) is far past any realistic mock body
  * and far short of what exhausts a process. Validation charges each string's
- * `minLength` against it, so a schema that can only overshoot is refused when
- * the plugin is created; the generated value is checked against it too.
+ * certain length against it: the largest of its `minLength`, the shortest
+ * match of its `pattern`, the exact length a faker method is told to produce,
+ * and the placeholder floors of a `helpers.fake` template. A schema that can
+ * only overshoot is therefore refused when the plugin is created; the
+ * generated value is checked against it too.
  */
 export const MAX_GENERATED_CHARS = MAX_STRING_LENGTH * 256;
 
