@@ -256,4 +256,29 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       });
     },
   );
+
+  Scenario(
+    "A protocol-relative $ref is refused by the reference policy",
+    ({ Given, When, Then }) => {
+      Given(
+        "a spec whose response schema is a reference to {string}",
+        (_, ref: string) => {
+          spec = specWithResponseSchema({ $ref: ref });
+        },
+      );
+
+      When(
+        "I create an openapi plugin with external references enabled expecting a failure",
+        async () => {
+          // ref-parser reads `//host/x` as `https://host/x`; the policy has
+          // to rule on that, not on a file path spelled with two slashes.
+          failure = await failureOf(
+            openapi({ spec, refs: { external: true } }),
+          );
+        },
+      );
+
+      Then("creating the plugin fails with code {string}", expectFailureCode);
+    },
+  );
 });

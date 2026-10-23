@@ -281,6 +281,48 @@ describe("loadDocument", () => {
     });
   });
 
+  describe("http refs not spelled http(s)://", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    for (const ref of [
+      "//169.254.169.254/latest/meta-data",
+      "\\\\169.254.169.254\\latest\\meta-data",
+      "http:/169.254.169.254/latest/meta-data",
+      "http:169.254.169.254/latest/meta-data",
+      "HTTP:169.254.169.254/latest/meta-data",
+    ]) {
+      for (const [refs, reason] of [
+        [{ external: true }, "http(s) reference resolution is disabled"],
+        [
+          { external: true, allowHttp: true },
+          "loopback, link-local or private",
+        ],
+      ] as const) {
+        it(`refuses ${ref} with the policy's code${refs.allowHttp ? " under allowHttp" : ""}`, async () => {
+          // ref-parser reads every one of these as http(s)://169.254.169.254;
+          // the pre-scan used to wave them through as file paths.
+          const fetchRef = vi.fn<RefFetch>();
+          vi.spyOn(globalThis, "fetch").mockRejectedValue(
+            new Error("global fetch must not be reached"),
+          );
+
+          const error = await failureOf(
+            loadDocument(specWithResponseSchema({ $ref: ref }), {
+              refs,
+              fetchRef,
+            }),
+          );
+
+          expect(codeOf(error)).toBe("OPENAPI_EXTERNAL_REF_BLOCKED");
+          expect((error as Error).message).toContain(reason);
+          expect(fetchRef).not.toHaveBeenCalled();
+        });
+      }
+    }
+  });
+
   describe("$refs to nothing", () => {
     let dir: string;
 

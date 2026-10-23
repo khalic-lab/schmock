@@ -6,6 +6,7 @@ import {
   isHttpUrl,
   type RefFetch,
   type RefParserOptions,
+  resolveReference,
 } from "./ref-policy.js";
 import { createGuardedFetch } from "./ref-transport.js";
 import { isRecord } from "./utils.js";
@@ -173,23 +174,6 @@ async function rootLocation(source: string): Promise<string> {
 function isLocalLocation(url: string): boolean {
   const protocol = /^(\w{2,}):\/\//i.exec(url)?.[1]?.toLowerCase();
   return protocol === undefined || protocol === "file";
-}
-
-/**
- * ref-parser's `url.resolve`, which decides the URL a nested `$ref` is read
- * from. Mirrored exactly — including resolving a relative base against a
- * throwaway host — so the provenance check below compares like with like.
- */
-function resolveReference(from: string, to: string): string {
-  const toPosix = (path: string): string =>
-    path.startsWith("\\\\?\\") ? path : path.split("\\").join("/");
-  const fromUrl = new URL(toPosix(from), "https://aaa.nonexistanturl.com");
-  const resolved = new URL(toPosix(to), fromUrl);
-  const endSpaces = /(\s*)$/.exec(to)?.[1] ?? "";
-  if (resolved.hostname === "aaa.nonexistanturl.com") {
-    return resolved.pathname + resolved.search + resolved.hash + endSpaces;
-  }
-  return resolved.toString() + endSpaces;
 }
 
 function stripHash(url: string): string {

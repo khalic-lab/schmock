@@ -4,6 +4,7 @@ import {
   buildRefParserOptions,
   checkRef,
   collectUnresolvedRefs,
+  httpReadLocation,
   isUnsafeHost,
   resolveRefPolicy,
 } from "./ref-policy";
@@ -256,6 +257,43 @@ describe("collectUnresolvedRefs", () => {
     node.children = [node, { nested: node }];
 
     expect(collectUnresolvedRefs(node)).toEqual(["./models.json#/Thing"]);
+  });
+});
+
+describe("httpReadLocation", () => {
+  const METADATA = "169.254.169.254/latest/meta-data";
+
+  it("finds the http URL behind every spelling WHATWG resolution turns into one", () => {
+    for (const [ref, expected] of [
+      [`//${METADATA}`, `https://${METADATA}`],
+      ["\\\\169.254.169.254\\latest\\meta-data", `https://${METADATA}`],
+      [`/\\${METADATA}`, `https://${METADATA}`],
+      [`http:/${METADATA}`, `http://${METADATA}`],
+      [`http:${METADATA}`, `http://${METADATA}`],
+      [`HTTP:${METADATA}`, `http://${METADATA}`],
+    ]) {
+      expect(httpReadLocation(ref, "/specs/api.yaml"), ref).toBe(expected);
+      expect(httpReadLocation(ref, undefined), ref).toBe(expected);
+    }
+  });
+
+  it("leaves file refs and internal pointers as spelled", () => {
+    for (const ref of [
+      "./pet.json#/Pet",
+      "../shared/pet.yaml",
+      "pet.json",
+      // Same scheme as ref-parser's stand-in base: a relative path, as there.
+      `https:${METADATA}`,
+      "#/components/schemas/Pet",
+    ]) {
+      expect(httpReadLocation(ref, "/specs/api.yaml"), ref).toBe(ref);
+    }
+  });
+
+  it("resolves a relative ref in a remote document to the URL it is read from", () => {
+    expect(
+      httpReadLocation("./pet.json", "https://schemas.example.com/v1/api.json"),
+    ).toBe("https://schemas.example.com/v1/pet.json");
   });
 });
 

@@ -5,6 +5,7 @@ import {
   buildRefParserOptions,
   checkRef,
   collectUnresolvedRefs,
+  httpReadLocation,
   isHttpUrl,
   type RefFetch,
   type RefParserOptions,
@@ -163,8 +164,15 @@ export async function loadDocument(
 
   const blocked: string[] = [];
   for (const ref of collectUnresolvedRefs(raw)) {
-    const verdict = checkRef(ref, policy);
-    if (!verdict.allowed) blocked.push(`${ref} (${verdict.reason})`);
+    // Ruled on as ref-parser will read it, which is not always as spelled.
+    const location = httpReadLocation(ref, baseUrl);
+    const verdict = checkRef(location, policy);
+    if (verdict.allowed) continue;
+    blocked.push(
+      location === ref
+        ? `${ref} (${verdict.reason})`
+        : `${ref} (read as ${location}: ${verdict.reason})`,
+    );
   }
   if (blocked.length > 0) throw externalRefBlocked(blocked, source);
 

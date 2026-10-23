@@ -184,6 +184,50 @@ export function isHttpUrl(ref: string): boolean {
 }
 
 /**
+ * ref-parser's `url.resolve`, which decides the URL a `$ref` is read from.
+ * Mirrored exactly — including resolving a relative base against a throwaway
+ * host — so what is checked here is what ref-parser reads.
+ */
+export function resolveReference(from: string, to: string): string {
+  const toPosix = (path: string): string =>
+    path.startsWith("\\\\?\\") ? path : path.split("\\").join("/");
+  const fromUrl = new URL(toPosix(from), "https://aaa.nonexistanturl.com");
+  const resolved = new URL(toPosix(to), fromUrl);
+  const endSpaces = /(\s*)$/.exec(to)?.[1] ?? "";
+  if (resolved.hostname === "aaa.nonexistanturl.com") {
+    return resolved.pathname + resolved.search + resolved.hash + endSpaces;
+  }
+  return resolved.toString() + endSpaces;
+}
+
+/**
+ * Where ref-parser will read `ref` from, when that is over http(s), read from
+ * a document at `base` (`undefined` for an inline spec); otherwise `ref`
+ * itself.
+ *
+ * The policy pre-scan sees a `$ref` as spelled, and {@link checkRef} waves
+ * anything not spelled `http(s)://` through as a file once `external` is on.
+ * WHATWG URL resolution turns `//host/x`, `\\host\x`, `http:/host/x` and
+ * `http:host/x` into `http(s)://host/x` all the same. The http resolver's
+ * `canRead` still refused them, so nothing was sent, but the refusal reached
+ * the caller as ref-parser's uncoded `Unable to resolve $ref pointer`.
+ */
+export function httpReadLocation(
+  ref: string,
+  base: string | undefined,
+): string {
+  if (ref.startsWith("#")) return ref;
+  try {
+    // An inline spec is read from the working directory, which resolves
+    // every spelling the way any other filesystem path does.
+    const resolved = resolveReference(base ?? "/", ref);
+    return isHttpUrl(resolved) ? resolved : ref;
+  } catch {
+    return ref;
+  }
+}
+
+/**
  * Decide whether a single `$ref` may be resolved under `policy`.
  *
  * Used twice on purpose: once as a pre-scan over the root document (so a

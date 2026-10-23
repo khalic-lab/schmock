@@ -31,3 +31,8 @@ Feature: OpenAPI spec loading
     When I create an openapi plugin from the spec URL "https://specs.example.test/openapi.json" expecting a failure
     Then creating the plugin fails with code "OPENAPI_EXTERNAL_REF_BLOCKED"
     And nothing was fetched
+
+  Scenario: A protocol-relative $ref is refused by the reference policy
+    Given a spec whose response schema is a reference to "//169.254.169.254/latest/meta-data"
+    When I create an openapi plugin with external references enabled expecting a failure
+    Then creating the plugin fails with code "OPENAPI_EXTERNAL_REF_BLOCKED"
