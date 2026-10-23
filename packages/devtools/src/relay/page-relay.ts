@@ -3,6 +3,7 @@ import {
   acquireFetchRelay,
   type FetchRelay,
   routeRelayedRequest,
+  toError,
 } from "@schmock/core/adapter";
 import { invalidOption } from "../invalid-option.js";
 import type {
@@ -138,10 +139,6 @@ function resolveOptions(
   };
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function sameHttpOrigin(pageUrl: string, scope: string): boolean {
   try {
     const page = new URL(pageUrl);
@@ -207,12 +204,10 @@ function handleFrame(event: RelayMessageEvent): void {
           frame.request.url,
           error,
         );
+        const failure = toError(error);
         reply = {
           type: "schmock:error",
-          error: {
-            name: error instanceof Error ? error.name : "Error",
-            message: errorMessage(error),
-          },
+          error: { name: failure.name, message: failure.message },
         };
       }
     }
@@ -479,7 +474,7 @@ export function createServiceWorkerRelay(
         return;
       }
     } catch (error) {
-      registrationFailed(errorMessage(error));
+      registrationFailed(toError(error).message);
     }
   };
 
@@ -538,7 +533,7 @@ export function createServiceWorkerRelay(
       if (!looked.done) return onDeadline();
       found = looked.value;
     } catch (error) {
-      return registrationFailed(errorMessage(error));
+      return registrationFailed(toError(error).message);
     }
     if (found !== undefined && found.scope === intendedScope) {
       const worker = found.active ?? found.waiting ?? found.installing;
@@ -580,7 +575,7 @@ export function createServiceWorkerRelay(
       if (!registered.done) return onDeadline();
       registration = registered.value;
     } catch (error) {
-      return registrationFailed(errorMessage(error));
+      return registrationFailed(toError(error).message);
     }
 
     // Activation.
@@ -636,6 +631,6 @@ export function createServiceWorkerRelay(
     }
   };
 
-  start().catch((error) => registrationFailed(errorMessage(error)));
+  start().catch((error) => registrationFailed(toError(error).message));
   return promise;
 }

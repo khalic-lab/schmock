@@ -114,9 +114,34 @@ describe("summarizeExchange outcome", () => {
     expect(summarizeExchange(failed(42)).outcome).toBe("failed: 42");
   });
 
-  it("falls back for an unprintable failure", () => {
+  it("describes a plain-object failure as its JSON, as core does", () => {
+    expect(summarizeExchange(failed({ code: "E_HOOK" })).outcome).toBe(
+      'failed: {"code":"E_HOOK"}',
+    );
     expect(summarizeExchange(failed(Object.create(null))).outcome).toBe(
-      "failed: <unprintable>",
+      "failed: {}",
+    );
+  });
+
+  it("falls back to Unknown error for a failure that carries or prints nothing", () => {
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+    for (const error of [null, undefined, circular]) {
+      expect(summarizeExchange(failed(error)).outcome).toBe(
+        "failed: Unknown error",
+      );
+    }
+  });
+
+  it("never throws for an Error whose message cannot be read", () => {
+    const error = new Error("hidden");
+    Object.defineProperty(error, "message", {
+      get() {
+        throw new Error("no message for you");
+      },
+    });
+    expect(summarizeExchange(failed(error)).outcome).toBe(
+      "failed: Unknown error",
     );
   });
 

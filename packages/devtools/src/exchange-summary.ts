@@ -1,14 +1,6 @@
 import type * as Schmock from "@schmock/core";
+import { toError } from "@schmock/core/adapter";
 import type { ExchangeSummary, ExchangeTone } from "./types.js";
-
-function describeError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  try {
-    return String(error);
-  } catch {
-    return "<unprintable>";
-  }
-}
 
 function displayUrlOf(url: string, pageOrigin: string | undefined): string {
   if (pageOrigin === undefined) return url;
@@ -27,7 +19,7 @@ function outcomeOf(exchange: Schmock.Exchange): string {
     case "answered":
       return String(exchange.response.status);
     case "failed":
-      return `failed: ${describeError(exchange.error)}`;
+      return `failed: ${toError(exchange.error).message}`;
     default:
       return "aborted";
   }

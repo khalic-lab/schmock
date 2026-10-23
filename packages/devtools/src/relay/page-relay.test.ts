@@ -631,6 +631,21 @@ describe("PR6 registration failures", () => {
     );
   });
 
+  it("describes a rejection that is not an Error as core does", async () => {
+    const relay = await createServiceWorkerRelay(
+      envOf(
+        neverContainer({
+          getRegistration: () => Promise.reject({ code: 404 }),
+        }),
+      ),
+    );
+    expectFallback(
+      relay,
+      "registration-failed",
+      `Schmock relay: could not register ${SCRIPT} ({"code":404}). Run "npx @schmock/devtools init <publicDir>" and serve the file at ${SCRIPT}.`,
+    );
+  });
+
   it("reports a script that is not served", async () => {
     const harnessed = harness();
     harnessed.serveScript(false);
@@ -955,6 +970,26 @@ describe("PR15 aborted and error replies", () => {
     probe.port.postMessage({ type: "schmock:abort" });
     expect(await replyOf(probe)).toEqual({ type: "schmock:aborted" });
     await vi.waitFor(() => expect(statuses).toEqual([499]), { timeout: 2000 });
+  });
+
+  it("replies error with core's description of a thrown value that is not an Error", async () => {
+    const harnessed = harness();
+    harnessed.installWorker(stubWorker());
+    const page = harnessed.openPage();
+    const thrown = { reason: "quota" };
+    lease(page, {
+      beforeResponse: () => {
+        throw thrown;
+      },
+    });
+    const relay = await start(page);
+    expect(relay.active).toBe(true);
+    const reply = await replyOf(await sendFrame(page));
+    expect(reply).toEqual({
+      type: "schmock:error",
+      error: { name: "Error", message: '{"reason":"quota"}' },
+    });
+    expect(error.mock.calls[0]?.[3]).toBe(thrown);
   });
 
   it("replies error and logs the original error", async () => {
