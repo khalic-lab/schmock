@@ -10,7 +10,7 @@ import {
 } from "@angular/common/http";
 import type * as Schmock from "@schmock/core";
 import { SchmockError, schmock } from "@schmock/core";
-import { firstValueFrom, of } from "rxjs";
+import { lastValueFrom, of } from "rxjs";
 import { describe, expect, it, vi } from "vitest";
 import { type AngularAdapterOptions, createSchmockInterceptor } from "./index";
 
@@ -38,7 +38,7 @@ function run(
   next: HttpHandler = passthroughHandler(),
 ): Promise<HttpEvent<unknown>> {
   const Interceptor = createSchmockInterceptor(mock, options);
-  return firstValueFrom(new Interceptor().intercept(req, next));
+  return lastValueFrom(new Interceptor().intercept(req, next));
 }
 
 async function runError(

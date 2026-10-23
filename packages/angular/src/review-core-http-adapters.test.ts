@@ -14,7 +14,7 @@ import {
 } from "@angular/common/http";
 import type * as Schmock from "@schmock/core";
 import { schmock } from "@schmock/core";
-import { firstValueFrom, of } from "rxjs";
+import { lastValueFrom, of } from "rxjs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AngularAdapterOptions, createSchmockInterceptor } from "./index";
 
@@ -28,7 +28,7 @@ function intercept(
   options: AngularAdapterOptions = {},
 ) {
   const Interceptor = createSchmockInterceptor(mock, options);
-  return firstValueFrom(new Interceptor().intercept(req, passthrough));
+  return lastValueFrom(new Interceptor().intercept(req, passthrough));
 }
 
 async function interceptError(

@@ -346,6 +346,15 @@ describe('UserService', () => {
 
 ## Response Behavior
 
+- A request the mock answers first emits `{ type: HttpEventType.Sent }`, as
+  every Angular backend does, so `observe: 'events'` sees `Sent` before the
+  response or error. It arrives once the route's `delay` has run, not when
+  the request is handed to the mock. A request handed to the mock that fails
+  there (a rejected `handle()`) also emits `Sent` before its error, but a
+  request hook that throws fails the request before dispatch, so that error
+  comes without `Sent`. A passthrough request gets its events from the real
+  backend instead. No progress events are emitted, even with
+  `reportProgress`: a mocked body never crosses the wire
 - Final 2xx status → Emitted as an Angular `HttpResponse`
 - 3xx through 5xx status → Emitted through `error` as an `HttpErrorResponse`
 - HEAD, 204, 205, and 304 → Body removed before Angular conversion. 204 emits

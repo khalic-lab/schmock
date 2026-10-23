@@ -36,6 +36,14 @@ Feature: Angular Adapter
     Then the response should be an HttpResponse
     And the status should be 201
 
+  Scenario: The interceptor emits Sent before the response, as Angular's backends do
+    Given I create an Angular mock with:
+      """
+      mock('POST /api/users', [201, { id: 1, name: 'John' }])
+      """
+    When I collect every Angular event for "POST /api/users"
+    Then the Angular events should be Sent then Response
+
   Scenario: 304 Not Modified returns an empty HttpErrorResponse
     Given I create an Angular mock returning 304 with a body
     When I make an Angular request to "GET /api/cached"

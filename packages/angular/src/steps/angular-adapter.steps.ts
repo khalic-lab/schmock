@@ -5,6 +5,7 @@ import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import {
   HttpErrorResponse,
   type HttpEvent,
+  HttpEventType,
   type HttpHandler,
   HttpHeaders,
   type HttpInterceptor,
@@ -77,10 +78,11 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
     return new Promise<void>((resolve) => {
       interceptor.intercept(request, mockNext).subscribe({
         next: (event: HttpEvent<unknown>) => {
+          // The Sent event comes first; settle on the response.
           if (event instanceof HttpResponse) {
             response = event;
+            resolve();
           }
-          resolve();
         },
         error: (error: unknown) => {
           errorResponse =
@@ -178,6 +180,46 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       expect(response?.status).toBe(status);
     });
   });
+
+  Scenario(
+    "The interceptor emits Sent before the response, as Angular's backends do",
+    ({ Given, When, Then }) => {
+      let events: HttpEvent<unknown>[] = [];
+
+      Given("I create an Angular mock with:", () => {
+        resetState();
+        mock("POST /api/users", [201, { id: 1, name: "John" }]);
+      });
+
+      When(
+        "I collect every Angular event for {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          const Interceptor = createSchmockInterceptor(mock);
+          events = [];
+          await new Promise<void>((resolve, reject) => {
+            new Interceptor()
+              .intercept(
+                new HttpRequest<unknown>(method, path, { name: "John" }),
+                mockNext,
+              )
+              .subscribe({
+                next: (event) => events.push(event),
+                complete: resolve,
+                error: reject,
+              });
+          });
+        },
+      );
+
+      Then("the Angular events should be Sent then Response", () => {
+        expect(events.map((event) => event.type)).toEqual([
+          HttpEventType.Sent,
+          HttpEventType.Response,
+        ]);
+      });
+    },
+  );
 
   Scenario(
     "304 Not Modified returns an empty HttpErrorResponse",
@@ -615,10 +657,11 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           await new Promise<void>((resolve) => {
             interceptor.intercept(request, mockNext).subscribe({
               next: (event: HttpEvent<unknown>) => {
+                // The Sent event comes first; settle on the response.
                 if (event instanceof HttpResponse) {
                   response = event;
+                  resolve();
                 }
-                resolve();
               },
               error: (error: unknown) => {
                 errorResponse =
@@ -875,10 +918,11 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           await new Promise<void>((resolve) => {
             interceptor.intercept(req, mockNext).subscribe({
               next: (event: HttpEvent<unknown>) => {
+                // The Sent event comes first; settle on the response.
                 if (event instanceof HttpResponse) {
                   response = event;
+                  resolve();
                 }
-                resolve();
               },
               error: (error: unknown) => {
                 errorResponse =

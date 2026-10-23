@@ -5,6 +5,7 @@ import {
   HTTP_INTERCEPTORS,
   HttpErrorResponse,
   type HttpEvent,
+  HttpEventType,
   type HttpHandler,
   HttpHeaders,
   HttpParams,
@@ -83,9 +84,10 @@ describe("Angular Adapter", () => {
         }),
       );
 
-      // Verify response
-      expect(emittedValues).toHaveLength(1);
-      const response = emittedValues[0] as HttpResponse<any>;
+      // Verify response: Sent first, as every Angular backend emits it
+      expect(emittedValues).toHaveLength(2);
+      expect(emittedValues[0]).toEqual({ type: HttpEventType.Sent });
+      const response = emittedValues[1] as HttpResponse<any>;
       expect(response.body).toEqual({ data: "mocked" });
       expect(response.status).toBe(200);
     });
@@ -630,7 +632,7 @@ describe("Angular Adapter", () => {
         });
       });
 
-      const response = emittedValues[0] as HttpResponse<any>;
+      const response = emittedValues[1] as HttpResponse<any>;
       expect(response.status).toBe(201);
       expect(response.body).toBe("transformed");
     });

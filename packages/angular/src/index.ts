@@ -7,6 +7,7 @@ import type {
 import {
   HTTP_INTERCEPTORS,
   HttpErrorResponse,
+  HttpEventType,
   HttpHeaders,
   HttpResponse,
 } from "@angular/common/http";
@@ -770,11 +771,18 @@ function transformAndEmit(
   if (interception.aborted) return undefined;
   const { req, next, observer, config } = interception;
 
-  if (isRouteNotFound(schmockResponse)) {
-    if (config.passthrough) {
-      interception.innerSub = next.handle(req).subscribe(observer);
-      return undefined;
-    }
+  const answered = !isRouteNotFound(schmockResponse);
+  if (!answered && config.passthrough) {
+    // The real backend emits its own Sent event.
+    interception.innerSub = next.handle(req).subscribe(observer);
+    return undefined;
+  }
+
+  // The mock owns the response from here. Every Angular backend emits Sent
+  // before anything else, which `observe: 'events'` callers see.
+  observer.next({ type: HttpEventType.Sent });
+
+  if (!answered) {
     const response = normalizeResponse(
       {
         status: 404,
@@ -855,7 +863,17 @@ function dispatchRequest(
       query: routed.query,
       signal: abortController.signal,
     })
-    .then((response) => transformAndEmit(interception, response))
+    .then(
+      (response) => transformAndEmit(interception, response),
+      (error: unknown) => {
+        // The mock took the request and failed it. A backend emits Sent at
+        // dispatch, before the error, so the stream has the same shape.
+        if (!interception.aborted) {
+          interception.observer.next({ type: HttpEventType.Sent });
+        }
+        emitFailure(interception, error);
+      },
+    )
     .catch((error: unknown) => emitFailure(interception, error));
 }
 
