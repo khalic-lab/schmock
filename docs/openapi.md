@@ -152,9 +152,14 @@ The other limits on http refs:
   `external $ref <url> timed out after 5000ms`, or
   `external $ref <url> could not be fetched: <reason>`, where the reason is the
   network error, such as `getaddrinfo ENOTFOUND schemas.example.com`.
-- **Proxies are not used.** http refs connect directly and ignore
+- **Proxies are not used under Node.** http refs connect directly and ignore
   `HTTP_PROXY`/`HTTPS_PROXY`: a proxy resolves the name itself, which would
-  defeat the address check.
+  defeat the address check. **Under Bun they are**: Bun's `node:http` sends the
+  request through `HTTP_PROXY`/`HTTPS_PROXY` when one is set. The address check
+  still runs first, on every address the name resolves to, and refuses before
+  anything is sent, but where the proxy then connects is up to the proxy.
+  Unset the proxy variables when resolving http refs under Bun to keep the
+  connection pinned to the checked address.
 - Requests are sent with `accept-encoding: gzip, deflate, br` and
   `user-agent: @schmock/openapi`.
 

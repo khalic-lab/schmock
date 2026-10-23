@@ -16,7 +16,8 @@ import { isUnsafeHost, type RefFetch } from "./ref-policy.js";
  * exactly what was checked. That also closes DNS rebinding: there is no second
  * resolution between the check and the connect for an attacker to answer
  * differently. Redirect hops come back through `readHttpRef`, which calls this
- * again, so every hop is vetted the same way.
+ * again, so every hop is vetted the same way. A proxy set in the environment
+ * under Bun is the exception; see {@link createGuardedFetch}.
  *
  * Only `resolver.ts` imports this module, so the browser build — which swaps in
  * `resolver.browser.ts` and refuses external refs outright — never contains
@@ -200,6 +201,11 @@ async function toResponse(incoming: IncomingMessage): Promise<Response> {
  * unsafe-address block. One request per call, no redirects followed, no
  * pooled sockets: `agent: false` guarantees the socket is the one opened with
  * the guarded `lookup`, never one some other code left in the global pool.
+ *
+ * That holds under Node. Bun's `node:http` routes even an `agent: false`
+ * request through `HTTP_PROXY`/`HTTPS_PROXY` when one is set: the guarded
+ * `lookup` still runs and refuses first, but the socket then goes to the
+ * proxy, which resolves the name on its own. docs/openapi.md says so.
  */
 export function createGuardedFetch(
   options: GuardedFetchOptions = {},
