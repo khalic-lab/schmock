@@ -748,4 +748,157 @@ describe("validateSchema", () => {
       ).not.toThrow();
     });
   });
+
+  describe("not bodies generation must honour", () => {
+    const status: JSONSchema7 = { enum: ["open", "closed"] };
+
+    it.each([
+      ["a not.pattern", { type: "string", not: { pattern: "^test" } }],
+      [
+        "a not beside allOf",
+        { allOf: [{ type: "string" }], not: { const: "a" } },
+      ],
+      [
+        "a not beside oneOf",
+        { oneOf: [{ const: "a" }, { const: "b" }], not: { const: "a" } },
+      ],
+      [
+        "a not beside if",
+        // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+        { type: "string", if: { minLength: 1 }, then: {}, not: { const: "" } },
+      ],
+      [
+        "a not.required whose every property is required",
+        {
+          type: "object",
+          properties: { a: { type: "string" } },
+          required: ["a"],
+          not: { required: ["a"] },
+        },
+      ],
+      [
+        "a not.type that rejects the node's only type",
+        { type: "string", not: { type: "string" } },
+      ],
+      ["a not.type number on an untyped node", { not: { type: "number" } }],
+      [
+        "a not beside an explicit faker",
+        withKeywords(
+          { type: "string", not: { const: "Bob" } },
+          { faker: "person.firstName" },
+        ),
+      ],
+      [
+        "a not.type beside an enum",
+        { enum: ["a", 1], not: { type: "string" } },
+      ],
+      ["a not of the empty schema outside a property", { not: {} }],
+      [
+        "a not beside a $ref to a target with oneOf",
+        {
+          $ref: "#/$defs/S",
+          not: { const: "a" },
+          $defs: { S: { oneOf: [{ const: "a" }, { const: "b" }] } },
+        },
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "rejects %s at creation",
+      (_, schema) => {
+        expectSchemaError(
+          captureFailure(() => fakerPlugin({ schema })),
+          "$.not",
+        );
+      },
+    );
+
+    it("rejects a not beside a reference generation inlines", () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: { n: { $ref: "#sid", not: { const: "x" } } },
+        $defs: { S: withKeywords({ type: "string" }, { $anchor: "sid" }) },
+      };
+
+      expectSchemaError(
+        captureFailure(() => fakerPlugin({ schema })),
+        "$.properties.n.not",
+      );
+    });
+
+    it.each([
+      ["a not.const", { type: "boolean", not: { const: true } }],
+      ["a not.enum", { type: "integer", not: { enum: [1, 2] } }],
+      [
+        "a not.type that narrows a type union",
+        { type: ["string", "integer"], not: { type: "string" } },
+      ],
+      [
+        "a not.type the node's type already avoids",
+        { type: "string", not: { type: "null" } },
+      ],
+      ["a not.type on an untyped node", { not: { type: "string" } }],
+      [
+        "a not.required with an optional property",
+        {
+          type: "object",
+          properties: { a: { type: "string" }, b: { type: "string" } },
+          not: { required: ["a", "b"] },
+        },
+      ],
+      [
+        "a not whose length bound the node's own bound rules out",
+        { type: "string", maxLength: 20, not: { minLength: 70_000 } },
+      ],
+      [
+        "a not whose numeric bound the node's own bound rules out",
+        { type: "integer", minimum: 0, maximum: 10, not: { minimum: 20 } },
+      ],
+      [
+        "a not of the empty schema on a property",
+        { type: "object", properties: { gone: { not: {} } } },
+      ],
+      [
+        "a not.const beside a $ref json-schema-faker merges it into",
+        {
+          type: "object",
+          properties: { s: { $ref: "#/$defs/S", not: { const: "open" } } },
+          $defs: { S: status },
+        },
+      ],
+      [
+        "a not inside a definition nothing references",
+        {
+          type: "string",
+          maxLength: 5,
+          $defs: { Unused: { type: "string", not: { pattern: "x" } } },
+        },
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)("accepts %s", (_, schema) => {
+      expect(() => fakerPlugin({ schema })).not.toThrow();
+    });
+
+    it("generates around a not.const beside a $ref", async () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: { s: { $ref: "#/$defs/S", not: { const: "open" } } },
+        required: ["s"],
+        $defs: { S: status },
+      };
+
+      for (let seed = 1; seed <= 20; seed += 1) {
+        const plugin = fakerPlugin({ schema, seed });
+        const { response } = await plugin.process(context());
+        expect(response).toEqual({ s: "closed" });
+      }
+    });
+
+    it("leaves a property whose schema is not of the empty schema out", async () => {
+      const generated = await generateOnce({
+        type: "object",
+        properties: { kept: { type: "integer" }, gone: { not: {} } },
+        required: ["kept"],
+      });
+
+      expect(generated).not.toHaveProperty("gone");
+    });
+  });
 });

@@ -112,9 +112,9 @@ describe("Advanced Schema Features", () => {
       });
     });
 
-    it("accepts a not schema and still generates the declared type", async () => {
-      // Generation does not enforce `not`: a lorem word such as "testimonium"
-      // can still match `not.pattern`, so only the accepted shape is asserted.
+    it("rejects a not.pattern that generation cannot honour", async () => {
+      // json-schema-faker never checks a value against not.pattern, so a
+      // lorem word such as "testimonium" would match it.
       const schema: JSONSchema7 = {
         type: "object",
         properties: {
@@ -127,10 +127,26 @@ describe("Advanced Schema Features", () => {
         },
       };
 
-      const results = await generate.samples<any>(schema, 10);
+      await expect(generateFromSchema({ schema })).rejects.toMatchObject({
+        code: "SCHEMA_VALIDATION_ERROR",
+        context: { schemaPath: "$.properties.value.not" },
+      });
+    });
+
+    it("accepts a not that the schema's own bounds already satisfy", async () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: {
+          value: { type: "string", maxLength: 3, not: { minLength: 10 } },
+        },
+        required: ["value"],
+      };
+
+      const results = await generate.samples<{ value: unknown }>(schema, 10);
 
       results.forEach((result) => {
         expect(typeof result.value).toBe("string");
+        expect(String(result.value).length).toBeLessThanOrEqual(3);
       });
     });
 

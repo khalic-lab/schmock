@@ -115,6 +115,60 @@ function referenceSchema(property: string, kind: string): JSONSchema7 {
   }
 }
 
+/** A schema whose `not` is of the kind `name` describes. */
+function notSchema(name: string): JSONSchema7 {
+  switch (name) {
+    case "not-pattern":
+      return { type: "string", not: { pattern: "^test" } };
+    case "not-beside-all-of":
+      return { allOf: [{ type: "string" }], not: { const: "a" } };
+    case "not-required-all-required":
+      return {
+        type: "object",
+        properties: { a: { type: "string" } },
+        required: ["a"],
+        not: { required: ["a"] },
+      };
+    case "not-type-own-type":
+      return { type: "string", not: { type: "string" } };
+    case "not-beside-faker":
+      return {
+        type: "object",
+        properties: {
+          name: withKeywords(
+            { type: "string", not: { const: "Bob" } },
+            { faker: "person.firstName" },
+          ),
+        },
+      };
+    case "not-const":
+      return { type: "boolean", not: { const: true } };
+    case "not-type-in-union":
+      return { type: ["string", "integer"], not: { type: "string" } };
+    case "not-required-optional":
+      return {
+        type: "object",
+        properties: { a: { type: "string" }, b: { type: "string" } },
+        not: { required: ["a", "b"] },
+      };
+    case "not-ruled-out-by-bounds":
+      return { type: "integer", minimum: 0, maximum: 10, not: { minimum: 20 } };
+    case "not-forbidden-property":
+      return {
+        type: "object",
+        properties: { kept: { type: "integer" }, gone: { not: {} } },
+      };
+    case "not-beside-pointer-ref":
+      return {
+        type: "object",
+        properties: { s: { $ref: "#/$defs/S", not: { const: "open" } } },
+        $defs: { S: { enum: ["open", "closed"] } },
+      };
+    default:
+      throw new Error(`Unknown not schema: ${name}`);
+  }
+}
+
 /** A root that reaches an integer array through `wrapper`. */
 function wrappedArraySchema(wrapper: string): JSONSchema7 {
   const list: JSONSchema7 = { type: "array", items: { type: "integer" } };
@@ -413,6 +467,39 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           expectResourceFailure(creationError, resource);
         },
       );
+    },
+  );
+
+  ScenarioOutline(
+    "A not that generation cannot honour is rejected at construction",
+    ({ Given, When, Then }, variables) => {
+      Given("the not schema {string}", () => {
+        schema = notSchema(variables.case);
+      });
+      When("I create a faker plugin for it", createPlugin);
+      Then(
+        "plugin creation fails with a schema validation error at {string}",
+        () => {
+          expect(creationError).toBeInstanceOf(SchemaValidationError);
+          expect(creationError).toMatchObject({
+            context: { schemaPath: variables.path },
+          });
+        },
+      );
+    },
+  );
+
+  ScenarioOutline(
+    "A not that generation honours is accepted at construction",
+    ({ Given, When, Then }, variables) => {
+      Given("the not schema {string}", () => {
+        schema = notSchema(variables.case);
+      });
+      When("I create a faker plugin for it", createPlugin);
+      Then("plugin creation succeeds", () => {
+        expect(creationError).toBeUndefined();
+        expect(plugin).toBeDefined();
+      });
     },
   );
 });

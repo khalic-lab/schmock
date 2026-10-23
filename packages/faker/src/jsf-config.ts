@@ -8,6 +8,7 @@ import {
   type Random,
 } from "json-schema-faker-private";
 import { DETERMINISTIC_REF_DATE, JSF_MAX_DEPTH } from "./constants.js";
+import { narrowTypeUnion, omittableNotRequired } from "./not-support.js";
 import { assertOutputWithinLimits } from "./output-limits.js";
 import { resolveLocalRef } from "./post-process.js";
 import { mapSchemaChildren, type SchemaChildSlot } from "./schema-children.js";
@@ -977,32 +978,21 @@ function encodeNot(schema: JSONSchema7, normalized: JsfObjectSchema): void {
   if (keys.length !== 1) return;
   const encoded =
     keys[0] === "type"
-      ? narrowTypeUnion(normalized, not.type)
+      ? narrowCopyTypes(normalized, not.type)
       : keys[0] === "required" && omitOneNotRequired(schema, normalized, not);
   if (encoded) delete normalized.not;
 }
 
-/** Remove the types `excluded` rejects from a type union; false if none. */
-function narrowTypeUnion(
+/** Remove the types `excluded` rejects from the copy's type union; false if none. */
+function narrowCopyTypes(
   normalized: JsfObjectSchema,
   excluded: JSONSchema7["type"],
 ): boolean {
-  const { type } = normalized;
-  if (!Array.isArray(type)) return false;
-  const rejected: unknown[] = Array.isArray(excluded) ? excluded : [excluded];
-  // Every integer is also a number, so `not: {type: "number"}` rejects both.
-  const allowed = type.filter(
-    (member) =>
-      !rejected.includes(member) &&
-      !(member === "integer" && rejected.includes("number")),
-  );
-  if (allowed.length === 0 || allowed.length === type.length) return false;
+  const allowed = narrowTypeUnion(normalized.type, excluded);
+  if (allowed === undefined) return false;
   normalized.type = allowed.length === 1 ? allowed[0] : allowed;
   return true;
 }
-
-/** Keywords json-schema-faker merges a node's own properties with. */
-const MERGING_KEYWORDS = ["allOf", "anyOf", "oneOf", "if"] as const;
 
 /**
  * Leave the first optional property `not.required` lists out of the copy. A
@@ -1017,13 +1007,8 @@ function omitOneNotRequired(
   not: JSONSchema7,
 ): boolean {
   const { properties } = normalized;
-  const merges = MERGING_KEYWORDS.some((key) => schema[key] !== undefined);
-  if (merges || !isJSONSchema7(properties)) return false;
-  const required = new Set(schema.required ?? []);
-  const omitted = (not.required ?? []).find(
-    (name) => !required.has(name) && Object.hasOwn(properties, name),
-  );
-  if (omitted === undefined) return false;
+  const omitted = omittableNotRequired(schema, properties, not);
+  if (omitted === undefined || !isJSONSchema7(properties)) return false;
   const kept: Record<string, JsonSchema> = { ...properties };
   Object.defineProperty(kept, omitted, {
     value: false,

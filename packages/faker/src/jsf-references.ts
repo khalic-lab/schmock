@@ -47,7 +47,8 @@ export function inlineUnfollowedReferences(root: JSONSchema7): JSONSchema7 {
   return copyWithInlined(root, inlined, new Map());
 }
 
-function isRootPointer(reference: string): boolean {
+/** A `$ref` json-schema-faker resolves itself: `#` or a `#/...` pointer. */
+export function isRootPointer(reference: string): boolean {
   return reference === "#" || reference.startsWith("#/");
 }
 

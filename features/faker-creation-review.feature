@@ -90,3 +90,31 @@ Feature: Faker creation-time checks
       | ref        |
       | allof      |
       | anyof-null |
+
+  # Review 2026-10-23 faker-2: json-schema-faker honours only some not bodies
+  Scenario Outline: A not that generation cannot honour is rejected at construction
+    Given the not schema "<case>"
+    When I create a faker plugin for it
+    Then plugin creation fails with a schema validation error at "<path>"
+
+    Examples:
+      | case                      | path                  |
+      | not-pattern               | $.not                 |
+      | not-beside-all-of         | $.not                 |
+      | not-required-all-required | $.not                 |
+      | not-type-own-type         | $.not                 |
+      | not-beside-faker          | $.properties.name.not |
+
+  Scenario Outline: A not that generation honours is accepted at construction
+    Given the not schema "<case>"
+    When I create a faker plugin for it
+    Then plugin creation succeeds
+
+    Examples:
+      | case                    |
+      | not-const               |
+      | not-type-in-union       |
+      | not-required-optional   |
+      | not-ruled-out-by-bounds |
+      | not-forbidden-property  |
+      | not-beside-pointer-ref  |

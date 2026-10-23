@@ -375,7 +375,7 @@ describe("applyNullableRolls — a not that rejects null (faker-2)", () => {
     ],
     [
       "a not whose body ignores null",
-      { type: ["integer", "null"], not: { minLength: 1 } },
+      { type: ["integer", "null"], maximum: 5, not: { minimum: 10 } },
     ],
   ] satisfies [string, JSONSchema7][])(
     "never rolls null beside %s",

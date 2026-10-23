@@ -11,6 +11,8 @@ import {
   MAX_STRING_LENGTH,
 } from "./constants.js";
 import { fakerLengthFloor, validateFakerConfig } from "./faker-allocation.js";
+import { isRootPointer } from "./jsf-references.js";
+import { type NotSite, unhonouredNot } from "./not-support.js";
 import { createLocalRefResolver, type LocalRefResolver } from "./ref-index.js";
 import { regexLengthBounds } from "./regex-bounds.js";
 import { findRootArray } from "./root-array.js";
@@ -76,8 +78,8 @@ const LEAF: Estimate = { height: 0, nodes: 1, chars: 0 };
 
 type SchemaEdge = SchemaChild;
 
-/** A `$dynamicRef` that resolves to nothing, found on a generating path. */
-interface UnresolvedReference {
+/** A structural problem found on a generating path, thrown once it finishes. */
+interface GeneratingIssue {
   path: string;
   issue: string;
 }
@@ -89,7 +91,10 @@ interface WalkState {
   edges: Map<JSONSchema7, SchemaEdge[]>;
   postOrder: JSONSchema7[];
   refs: LocalRefResolver;
-  unresolvedReference?: UnresolvedReference;
+  /** A generating `$dynamicRef` that resolves to nothing. */
+  unresolvedReference?: GeneratingIssue;
+  /** A generating `not` json-schema-faker would not honour. */
+  unhonouredNot?: GeneratingIssue;
   arraySize?: Violation;
   objectSize?: Violation;
   stringLength?: Violation;
@@ -155,6 +160,14 @@ export function validateSchema(
       state.unresolvedReference.path,
       state.unresolvedReference.issue,
       'Give the target schema a matching "$dynamicAnchor", or reference it with a JSON Pointer such as "#/$defs/Name"',
+    );
+  }
+
+  if (state.unhonouredNot) {
+    throw new SchemaValidationError(
+      state.unhonouredNot.path,
+      state.unhonouredNot.issue,
+      "Write the exclusion as not.type, not.const, not.enum or not.required, or bound the schema itself so it cannot produce what not rejects",
     );
   }
 
@@ -347,6 +360,8 @@ function chargeGeneratingSchemas(
     schema: JSONSchema7;
     path: string;
     caps: MergedCaps;
+    /** The keyword the schema was reached through, if any. */
+    keyword?: string;
   }> = [{ schema: root, path: rootPath, caps: NO_CAPS }];
   while (pending.length > 0) {
     const frame = pending.pop();
@@ -356,6 +371,10 @@ function chargeGeneratingSchemas(
     if (frame.caps === NO_CAPS) charged.add(frame.schema);
 
     recordUnresolvedDynamicReference(frame.schema, frame.path, state);
+    recordUnhonouredNot(frame.schema, frame.path, state, {
+      propertyValue: frame.keyword === "properties",
+      inlinedReference: inlinesReference(frame.schema, state.refs),
+    });
     recordDeclaredArrayLimit(frame.schema, frame.path, state, frame.caps);
     recordObjectLimit(frame.schema, frame.path, state, frame.caps);
     recordStringLimit(frame.schema, frame.path, state, frame.caps);
@@ -371,6 +390,7 @@ function chargeGeneratingSchemas(
             edge.keyword === "if"
               ? mergedCaps(frame.schema, frame.schema.then)
               : NO_CAPS,
+          keyword: edge.keyword,
         });
       }
     }
@@ -402,6 +422,65 @@ function recordUnresolvedDynamicReference(
     path: `${path}.$dynamicRef`,
     issue: `$dynamicRef ${JSON.stringify(reference)} resolves to no schema in this document`,
   };
+}
+
+/**
+ * Whether generation inlines a reference on `schema` as an `allOf` entry
+ * (jsf-references.ts): a `$dynamicRef`, or a `$ref` other than a root JSON
+ * Pointer, that the index resolves to a schema.
+ */
+function inlinesReference(
+  schema: JSONSchema7,
+  refs: LocalRefResolver,
+): boolean {
+  return (["$ref", "$dynamicRef"] as const).some((keyword) => {
+    const reference: unknown = Reflect.get(schema, keyword);
+    if (typeof reference !== "string") return false;
+    if (keyword === "$ref" && isRootPointer(reference)) return false;
+    return isJSONSchema7(refs.resolve(schema, reference));
+  });
+}
+
+/**
+ * Record the first generating `not` json-schema-faker would not honour
+ * (not-support.ts), so it fails at creation instead of generating values the
+ * schema rejects. A `not` beside a `$ref` json-schema-faker follows itself is
+ * read as JSF reads it: merged into the target, whose own keywords join the
+ * node's. A `not` inside another `not`, an `if` with no `then` or an
+ * unreferenced definition generates nothing and is not checked.
+ */
+function recordUnhonouredNot(
+  schema: JSONSchema7,
+  path: string,
+  state: WalkState,
+  site: NotSite,
+): void {
+  if (state.unhonouredNot || schema.not === undefined) return;
+  const issue = unhonouredNot(mergedWithTarget(schema, state.refs), site);
+  if (issue !== undefined) state.unhonouredNot = { path: `${path}.not`, issue };
+}
+
+/**
+ * `schema` as json-schema-faker generates it when it holds a `$ref` JSF
+ * follows itself: the target with the node's other keywords merged over it,
+ * through a chain of such references.
+ */
+function mergedWithTarget(
+  schema: JSONSchema7,
+  refs: LocalRefResolver,
+): JSONSchema7 {
+  const seen = new Set<JSONSchema7>();
+  let merged = schema;
+  let holder = schema;
+  while (typeof holder.$ref === "string" && isRootPointer(holder.$ref)) {
+    const target = refs.resolve(holder, holder.$ref);
+    if (!isJSONSchema7(target) || seen.has(target)) break;
+    seen.add(target);
+    const { $ref: _followed, ...siblings } = merged;
+    merged = { ...target, ...siblings };
+    holder = target;
+  }
+  return merged;
 }
 
 function collectSchemaEdges(
