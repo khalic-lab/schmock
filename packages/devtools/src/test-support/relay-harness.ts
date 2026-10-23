@@ -152,9 +152,10 @@ export interface FakePage {
   /** schmock:request frames this page's container received. */
   readonly relayedFrames: readonly unknown[];
   /**
-   * Fire pagehide listeners; persisted true puts the page in the bfcache (matchAll omits it, claim skips it) until show().
+   * Fire pagehide listeners; persisted true puts the page in the bfcache (matchAll omits it; claim takes it, as the spec's does) until show().
    * While in the bfcache, its events (statechange, controllerchange, container messages) wait until show().
-   * Chrome's eviction of bfcached pages is not modelled. hide(false) does not close the page: call close() for that.
+   * Chrome evicts a bfcached page instead when a worker messages, claims or hands it over; that eviction is not modelled.
+   * hide(false) does not close the page: call close() for that.
    */
   hide(persisted: boolean): void;
   /** Restore from the bfcache, then deliver the events it held. */
@@ -728,10 +729,11 @@ export function createRelayHarness(settings?: {
         "Failed to execute 'claim' on 'Clients': Only the active worker can claim clients.",
       );
     }
+    // The spec's claim() has no bfcache exception: a frozen page is claimed,
+    // and its controllerchange waits for show() (dispatchOrDefer).
     const claimed = pages.filter(
       (page) =>
         page.open &&
-        !page.frozen &&
         page.claimable &&
         page.secure &&
         page.serviceWorkers &&

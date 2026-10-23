@@ -411,7 +411,7 @@ describe("registration lifecycle", () => {
 });
 
 describe("claim", () => {
-  it("takes only open, claimable pages outside the bfcache whose longest-prefix registration is the claimer's", async () => {
+  it("takes only open, claimable pages whose longest-prefix registration is the claimer's, bfcached ones included", async () => {
     const h = setUp();
     h.seedForeignRegistration("/app/app-sw.js", "/app/");
     h.installWorker(claimingWorker());
@@ -434,8 +434,15 @@ describe("claim", () => {
       "http://localhost/app/app-sw.js",
     );
     expect(containerOf(unclaimable).controller).toBeNull();
-    expect(containerOf(hidden).controller).toBeNull();
+    // The spec's claim() has no bfcache exception; the event waits for show().
+    expect(containerOf(hidden).controller?.scriptURL).toBe(
+      "http://localhost/schmock-sw.js",
+    );
     expect(changes.map((counter) => counter.count)).toEqual([1, 0, 0, 0]);
+
+    hidden.show();
+    await h.flush();
+    expect(changes.map((counter) => counter.count)).toEqual([1, 0, 0, 1]);
   });
 
   it("claims a page that registered while it was uncontrolled (a hard reload)", async () => {
