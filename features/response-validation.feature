@@ -94,3 +94,9 @@ Feature: OpenAPI Response Validation
     When I create a product priced 19.99
     Then the response status is 201
     And the created product is priced 19.99
+
+  Scenario: A pattern only the legacy regex grammar accepts still validates
+    Given a mock validating responses for a phone pattern with an escaped hyphen
+    When I request the generated phone
+    Then the response status is 200
+    And the generated phone matches the pattern

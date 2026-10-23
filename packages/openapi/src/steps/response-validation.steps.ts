@@ -554,6 +554,34 @@ const centPricedProductsSpec = {
   },
 };
 
+// `\-` is an identity escape: legal in a plain regex, a syntax error under `u`.
+const escapedPatternSpec = {
+  openapi: "3.0.3",
+  info: { title: "Escaped pattern", version: "1.0.0" },
+  paths: {
+    "/phone": {
+      get: {
+        responses: {
+          "200": {
+            description: "Phone",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["phone"],
+                  properties: {
+                    phone: { type: "string", pattern: "^\\d{3}\\-\\d{4}$" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -1108,6 +1136,37 @@ describeFeature(feature, ({ Scenario }) => {
 
       And("the created product is priced 19.99", () => {
         expect(response.body).toMatchObject({ price: 19.99 });
+      });
+    },
+  );
+  Scenario(
+    "A pattern only the legacy regex grammar accepts still validates",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a mock validating responses for a phone pattern with an escaped hyphen",
+        async () => {
+          mock = schmock();
+          mock.pipe(
+            await openapi({
+              spec: escapedPatternSpec,
+              validateResponses: true,
+            }),
+          );
+        },
+      );
+
+      When("I request the generated phone", async () => {
+        response = await mock.handle("GET", "/phone");
+      });
+
+      Then("the response status is 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And("the generated phone matches the pattern", () => {
+        expect(response.body).toEqual({
+          phone: expect.stringMatching(/^\d{3}-\d{4}$/),
+        });
       });
     },
   );

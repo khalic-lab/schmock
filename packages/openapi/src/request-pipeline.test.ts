@@ -822,3 +822,98 @@ describe("multipleOf with a fractional divisor", () => {
     }
   });
 });
+
+/** A phone resource whose pattern escapes `-`, which only legacy regexes allow. */
+const escapedPatternSpec = {
+  openapi: "3.0.3",
+  info: { title: "Phones", version: "1.0.0" },
+  paths: {
+    "/phone": {
+      get: {
+        responses: {
+          "200": {
+            description: "Phone",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/Phone" },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Phone" },
+            },
+          },
+        },
+        responses: { "204": { description: "Stored" } },
+      },
+    },
+  },
+  components: {
+    schemas: {
+      Phone: {
+        type: "object",
+        required: ["phone"],
+        properties: {
+          phone: { type: "string", pattern: "^\\d{3}\\-\\d{4}$" },
+        },
+      },
+    },
+  },
+};
+
+describe("pattern dialect", () => {
+  it("compiles a pattern only the legacy grammar accepts, as faker does", () => {
+    const { ajv } = createBodyValidatorContext();
+    const phone = ajv.compile({ type: "string", pattern: "^\\d{3}\\-\\d{4}$" });
+
+    expect(phone("555-1234")).toBe(true);
+    expect(phone("5551234")).toBe(false);
+  });
+
+  it("keeps unicode mode for patterns that compile in it", () => {
+    const { ajv } = createBodyValidatorContext();
+    const letters = ajv.compile({ type: "string", pattern: "^\\p{L}+$" });
+
+    expect(letters("élan")).toBe(true);
+    expect(letters("p{L}")).toBe(false);
+  });
+
+  it("validates generated responses and valid requests against such a pattern", async () => {
+    const mock = schmock();
+    mock.pipe(
+      await openapi({
+        spec: escapedPatternSpec,
+        validateRequests: true,
+        validateResponses: true,
+      }),
+    );
+
+    const read = await mock.handle("GET", "/phone");
+    expect(read.status).toBe(200);
+    expect(read.body).toEqual({
+      phone: expect.stringMatching(/^\d{3}-\d{4}$/),
+    });
+
+    const stored = await mock.handle("POST", "/phone", {
+      body: { phone: "555-1234" },
+      headers: { "content-type": "application/json" },
+    });
+    expect(stored.status).toBe(204);
+
+    const rejected = await mock.handle("POST", "/phone", {
+      body: { phone: "5551234" },
+      headers: { "content-type": "application/json" },
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body).toMatchObject({
+      code: "VALIDATION_ERROR",
+      details: [{ path: "/phone", keyword: "pattern" }],
+    });
+  });
+});

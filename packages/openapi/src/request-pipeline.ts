@@ -1,7 +1,7 @@
 import type * as Schmock from "@schmock/core";
 import { getHeader, getResponseParts } from "@schmock/core";
 import { generateFromSchema } from "@schmock/faker";
-import type { ValidateFunction } from "ajv";
+import type { CodeOptions, ValidateFunction } from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import type { JSONSchema7 } from "json-schema";
@@ -314,6 +314,27 @@ export function processContentNegotiation(
 const MULTIPLE_OF_PRECISION = 6;
 
 /**
+ * Compiles a spec `pattern` the way faker's `compilePattern` does: with the
+ * `u` flag first, then without it for patterns only the legacy grammar
+ * accepts. AJV's default engine is `u`-only, so a pattern such as
+ * `^\d{3}\-\d{4}$` (an identity escape `u` forbids) failed to compile while
+ * faker generated values from it. A pattern neither grammar accepts still
+ * throws.
+ */
+const specPatternEngine: NonNullable<CodeOptions["regExp"]> = Object.assign(
+  (pattern: string, flags: string): RegExp => {
+    try {
+      return new RegExp(pattern, flags);
+    } catch (error) {
+      if (!flags.includes("u")) throw error;
+      return new RegExp(pattern, flags.replace("u", ""));
+    }
+  },
+  // Read only when AJV emits standalone source, which this package never does.
+  { code: "specPatternEngine" },
+);
+
+/**
  * Per-plugin validator context. Each openapi() call creates its own
  * AJV instance and schema cache so that loading multiple specs in the
  * same process can't collide on duplicate \$id values.
@@ -329,6 +350,7 @@ export function createBodyValidatorContext(): BodyValidatorContext {
     strictSchema: false,
     strictTypes: false,
     multipleOfPrecision: MULTIPLE_OF_PRECISION,
+    code: { regExp: specPatternEngine },
   });
   addFormats(ajv);
 
