@@ -191,7 +191,13 @@ interface ServiceWorkerRelayOptions {
 
 `url` and `scope` resolve against the page's base URL (`document.baseURI`, or
 `location.href` without a document). The worker is registered with
-`updateViaCache: 'none'`, so a script copied again installs on the next load.
+`updateViaCache: 'none'`, so a script copied again installs on the next normal
+load: the browser checks the script for new bytes on each navigation,
+bypassing the HTTP cache. Registering again with the same options does not
+check it, and a Shift+Reload skips the navigation check, so after a hard reload
+the old worker serves the page until the next normal reload. After an upgrade
+the relay then warns that the versions differ, or falls back with
+`"protocol-mismatch"`.
 
 `timeout` is one deadline for the whole start: the lookup of an existing
 registration, the registration, activation, taking control of the page and
@@ -483,7 +489,9 @@ list in memory.
   the relay asks the active worker to claim the page. After a hard reload the
   relay re-claimed the page and came back active, with no warning (observed).
   If a claim does not take, the relay falls back with `"not-controlled"` and
-  the "reload normally" warning.
+  the "reload normally" warning. A script copied again by `init` does not
+  install on a hard reload: the old worker relays until the next normal
+  reload.
 - **Synchronous XHR.** `xhr.open(method, url, false)` deadlocks: the main
   thread blocks while the worker waits for the page to answer. It is not
   supported under the relay.

@@ -238,11 +238,16 @@ describe("lifecycle", () => {
     const page = h.openPage();
     const container = page.environment.container;
     if (!container) throw new Error("no container");
+    const v1 = container.controller;
     h.installWorker(installRelayWorker);
-    await container.register("/schmock-sw.js");
+    // A navigation soft-updates the registration: the new bytes install
+    // while v1 still controls the page.
+    h.openPage();
     await h.flush();
     const registration = await container.getRegistration();
+    expect(v1?.state).toBe("redundant");
     expect(registration?.waiting).toBeNull();
+    expect(registration?.active).not.toBe(v1);
     expect(registration?.active?.state).toBe("activated");
   });
 });

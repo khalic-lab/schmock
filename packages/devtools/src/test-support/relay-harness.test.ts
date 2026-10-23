@@ -271,7 +271,26 @@ describe("registration lifecycle", () => {
     expect(h.registerCalls).toHaveLength(2);
   });
 
-  it("installs a new version when other bytes are served at the same URL", async () => {
+  it("re-registering the same script URL and updateViaCache updates nothing, even when other bytes are served", async () => {
+    const h = setUp();
+    h.installWorker(answeringWorker("v1"));
+    const page = h.openPage();
+    const container = containerOf(page);
+    const first = await container.register("/schmock-sw.js");
+    await h.flush();
+    const v1 = container.controller;
+
+    h.installWorker(answeringWorker("v2"));
+    const second = await container.register("/schmock-sw.js");
+    await h.flush();
+
+    expect(second).toBe(first);
+    expect(second.installing).toBeNull();
+    expect(v1?.state).toBe("activated");
+    expect(await (await page.xhr("/api")).text()).toBe("v1");
+  });
+
+  it("re-registering with another updateViaCache installs other bytes served at the same URL", async () => {
     const h = setUp();
     h.installWorker(answeringWorker("v1"));
     const page = h.openPage();
@@ -281,11 +300,49 @@ describe("registration lifecycle", () => {
     const v1 = container.controller;
 
     h.installWorker(answeringWorker("v2"));
-    await container.register("/schmock-sw.js");
+    await container.register("/schmock-sw.js", { updateViaCache: "none" });
     await h.flush();
 
     expect(v1?.state).toBe("redundant");
     expect(await (await page.xhr("/api")).text()).toBe("v2");
+  });
+
+  it("a navigation the registration controls installs other bytes served at the same URL", async () => {
+    const h = setUp();
+    h.installWorker(answeringWorker("v1"));
+    await h.activateWorker();
+    const page = h.openPage();
+    const v1 = containerOf(page).controller;
+
+    h.installWorker(answeringWorker("v2"));
+    h.openPage();
+    await h.flush();
+
+    expect(v1?.state).toBe("redundant");
+    expect(await (await page.xhr("/api")).text()).toBe("v2");
+  });
+
+  it("a hard reload does not soft-update, nor does a page outside every registration", async () => {
+    const h = setUp();
+    let installs = 0;
+    const counting = (body: string) => (scope: FakeWorkerScope) => {
+      answeringWorker(body)(scope);
+      scope.addEventListener("install", () => {
+        installs += 1;
+      });
+    };
+    h.installWorker(counting("v1"), "/app/schmock-sw.js");
+    await h.activateWorker();
+    const page = h.openPage({ path: "/app/index.html" });
+
+    h.installWorker(counting("v2"), "/app/schmock-sw.js");
+    h.openPage({ path: "/app/index.html", controlled: false });
+    h.openPage({ path: "/other.html" });
+    await h.flush();
+
+    expect(installs).toBe(1);
+    expect(containerOf(page).controller?.state).toBe("activated");
+    expect(await (await page.xhr("/app/api")).text()).toBe("v1");
   });
 
   it("finds the registration whose scope is the longest prefix of the URL", async () => {

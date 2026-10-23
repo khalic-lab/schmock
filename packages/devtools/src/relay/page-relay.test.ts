@@ -1514,3 +1514,31 @@ describe("PR25 package root entry", () => {
     expect(relay.fallbackReason).toBe("unsupported");
   });
 });
+
+describe("PR27 a script copied again", () => {
+  it("keeps the old worker through a hard reload and installs the new one on a normal load", async () => {
+    const harnessed = harness();
+    const before: Seen[] = [];
+    const after: Seen[] = [];
+    harnessed.installWorker(stubWorker({ seen: before }));
+    await harnessed.activateWorker();
+    // init copied new bytes; the page then comes back with Shift+Reload.
+    harnessed.installWorker(stubWorker({ seen: after }));
+    const page = harnessed.openPage({ controlled: false });
+
+    const relay = await start(page);
+    await harnessed.flush();
+
+    expect(relay.active).toBe(true);
+    expect(ofType(before, "schmock:hello")).toHaveLength(1);
+    expect(after).toEqual([]);
+
+    harnessed.openPage();
+    await harnessed.flush();
+    await vi.waitFor(
+      () => expect(ofType(after, "schmock:hello")).toHaveLength(1),
+      { timeout: 2000 },
+    );
+    expect(relay.active).toBe(true);
+  });
+});

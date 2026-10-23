@@ -70,14 +70,16 @@ export interface RelayHarness {
   }[];
   /**
    * Serve a worker script at scriptURL (default origin + "/schmock-sw.js"); register() of that URL runs setup against a fresh scope. Registers nothing by itself.
-   * Serving again at the same URL serves new bytes: the next register() installs a new version; re-registering unchanged bytes reinstalls nothing.
+   * Serving again at the same URL serves new bytes. As in the spec, they install on the next soft update: openPage() of a page the
+   * registration controls, or a register() whose updateViaCache differs from the registration's. A register() with the same script
+   * URL and updateViaCache (default "imports") resolves with the registration as it is; unchanged bytes never reinstall.
    * A setup that throws makes register() reject with a TypeError ("ServiceWorker script evaluation failed", the error as its cause).
    */
   installWorker(
     setup: (scope: FakeWorkerScope) => void,
     scriptURL?: string,
   ): void;
-  /** As if an earlier visit registered the most recently served script: create its registration (scope default: the script's directory), run setup, install and activate. Not recorded in registerCalls. Rejects with what setup throws. */
+  /** As if an earlier visit registered the most recently served script as the relay does (updateViaCache "none"): create its registration (scope default: the script's directory), run setup, install and activate. Not recorded in registerCalls. Rejects with what setup throws. */
   activateWorker(scope?: string): Promise<void>;
   /** The browser stopped and restarted the worker: fresh scope memory, same registration and caches, setup re-run, NO install/activate events. Rethrows what setup throws. */
   restartWorker(): void;
@@ -98,6 +100,8 @@ export interface RelayHarness {
    * path default "/index.html"; secure and serviceWorkers default true; claimable default true.
    * A page starts controlled by the active worker of its longest-prefix registration when one exists,
    * unless controlled is false (a hard reload). claimable false makes every claim skip it.
+   * Opening a controlled page is a navigation: it soft-updates that registration, so new bytes served
+   * at its script URL install (flush() waits for it). A hard reload does not.
    */
   openPage(options?: {
     path?: string;
@@ -230,11 +234,15 @@ interface WorkerVersion extends VersionCore {
   scope: ScopeRecord;
 }
 
+type UpdateViaCache = "imports" | "all" | "none";
+
 interface RegistrationRecord {
   readonly scope: string;
   installing: WorkerVersion | null;
   waiting: WorkerVersion | null;
   active: WorkerVersion | null;
+  /** The mode the last register() asked for; the spec's default is "imports". */
+  updateViaCache: UpdateViaCache;
   /** The registration's job queue: updates run one after another. */
   jobs: Promise<void>;
 }
@@ -574,12 +582,16 @@ export function createRelayHarness(settings?: {
     return best;
   }
 
-  function createRegistration(scope: string): RegistrationRecord {
+  function createRegistration(
+    scope: string,
+    updateViaCache: UpdateViaCache = "imports",
+  ): RegistrationRecord {
     const registration: RegistrationRecord = {
       scope,
       installing: null,
       waiting: null,
       active: null,
+      updateViaCache,
       jobs: Promise.resolve(),
     };
     registrations.set(scope, registration);
@@ -864,6 +876,19 @@ export function createRelayHarness(settings?: {
     return script;
   }
 
+  /**
+   * Spec "Soft Update": fetch the newest worker's script again and install
+   * it when its bytes changed. Nothing happens when it is not served.
+   */
+  function softUpdate(registration: RegistrationRecord): void {
+    const newest =
+      registration.installing ?? registration.waiting ?? registration.active;
+    if (newest === null || !scriptsAvailable) return;
+    const script = served.get(newest.scriptURL);
+    if (script === undefined) return;
+    track(update(registration, script, false).then(({ done }) => done));
+  }
+
   // ── pages ──
 
   function dispatchOrDefer(page: PageRecord, run: () => void): void {
@@ -946,9 +971,7 @@ export function createRelayHarness(settings?: {
   async function register(
     page: PageRecord,
     scriptUrl: string,
-    options:
-      | { scope?: string; updateViaCache?: "imports" | "all" | "none" }
-      | undefined,
+    options: { scope?: string; updateViaCache?: UpdateViaCache } | undefined,
   ): Promise<RelayRegistration> {
     registerCalls.push({ url: scriptUrl, options });
     await tick();
@@ -973,6 +996,22 @@ export function createRelayHarness(settings?: {
         "SecurityError",
       );
     }
+    const updateViaCache = options?.updateViaCache ?? "imports";
+    const existing = registrations.get(scope);
+    const newest =
+      existing === undefined
+        ? null
+        : (existing.installing ?? existing.waiting ?? existing.active);
+    // Spec "Register" step 5: the same script URL and updateViaCache resolve
+    // with the registration as it is, with no fetch and no update, whatever
+    // bytes are served now. New bytes install on a navigation's soft update.
+    if (
+      existing !== undefined &&
+      newest?.scriptURL === scriptURL &&
+      existing.updateViaCache === updateViaCache
+    ) {
+      return registrationHandle(page, existing);
+    }
     const script = served.get(scriptURL);
     if (!scriptsAvailable || script === undefined) {
       throw new TypeError(SCRIPT_NOT_FOUND);
@@ -984,7 +1023,8 @@ export function createRelayHarness(settings?: {
         "SecurityError",
       );
     }
-    const registration = registrations.get(scope) ?? createRegistration(scope);
+    const registration = existing ?? createRegistration(scope);
+    registration.updateViaCache = updateViaCache;
     try {
       await update(registration, script, false);
     } catch (error) {
@@ -1319,7 +1359,13 @@ export function createRelayHarness(settings?: {
     pages.push(record);
 
     if (serviceWorkers && secure && options.controlled !== false) {
-      record.controller = matchRegistration(url)?.active ?? null;
+      const registration = matchRegistration(url);
+      record.controller = registration?.active ?? null;
+      // Spec "Handle Fetch": the navigation that loaded the page soft-updates
+      // the registration that handled it. A hard reload never reaches it.
+      if (registration !== undefined && record.controller !== null) {
+        softUpdate(registration);
+      }
     }
 
     const environment: RelayEnvironment = {
@@ -1428,8 +1474,9 @@ export function createRelayHarness(settings?: {
         scope !== undefined
           ? new URL(scope, origin).href
           : directoryOf(script.url);
+      // The earlier visit was the relay's, which registers with "none".
       const registration =
-        registrations.get(scopeURL) ?? createRegistration(scopeURL);
+        registrations.get(scopeURL) ?? createRegistration(scopeURL, "none");
       const { done } = await update(registration, script, true);
       if (!(await done)) {
         throw new Error(`The worker at ${script.url} failed to install`);
