@@ -69,8 +69,10 @@ something else:
 - `--seed` and `--spec` must be non-empty paths. `--seed=` (for example an
   unset shell variable) is rejected with `Invalid --seed. The path must be
   non-empty.` where it used to start a server with empty collections and no
-  warning; `--spec=` is rejected the same way. `createCliServer({ seed: '' })`
-  throws `Invalid seed. The seed manifest path must be non-empty.`
+  warning; `--spec=` is rejected the same way, and so is a blank positional
+  spec (`schmock ""`, `schmock "  "`), which used to print the usage or a file
+  error. `createCliServer({ seed: '' })` throws `Invalid seed. The seed
+  manifest path must be non-empty.`
 
 Each of these is a `SchmockError` with code `INVALID_CONFIG`; the messages are
 the ones quoted above. From `parseCliArgs`, the error's `context` is

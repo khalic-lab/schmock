@@ -656,6 +656,16 @@ describe("CLI errors carry SchmockError codes", () => {
       message: "Invalid --spec. The path must be non-empty.",
       context: { flag: "--spec", value: "" },
     },
+    {
+      args: [""],
+      message: "Invalid --spec. The path must be non-empty.",
+      context: { flag: "--spec", value: "" },
+    },
+    {
+      args: ["  ", "--port", "3000"],
+      message: "Invalid --spec. The path must be non-empty.",
+      context: { flag: "--spec", value: "  " },
+    },
   ])(
     "parseCliArgs($args) throws INVALID_CONFIG",
     ({ args, message, context }) => {

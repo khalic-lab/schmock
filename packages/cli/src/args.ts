@@ -190,7 +190,12 @@ export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
     );
   }
 
-  const spec = validatePath("--spec", values.spec) ?? positionals[0] ?? "";
+  // The positional is `--spec` passed by position, so a blank one is the same
+  // typo: `schmock ""` used to print the usage, `schmock " "` a file error.
+  const spec =
+    validatePath("--spec", values.spec) ??
+    validatePath("--spec", positionals[0]) ??
+    "";
 
   // A token alone used to be dropped silently: the admin paths fell through to
   // the mock and every authenticated call 404'd with no hint why. Implying
