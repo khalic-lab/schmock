@@ -311,9 +311,12 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
           "browser-dist/meta.json",
           "browser-openapi-dist/meta.json",
         ]);
+        // Core's browser condition keeps node:http out of both bundles, so
+        // neither stage admits any Node built-in.
         for (const line of gateCalls) {
-          expect(line).toContain("BROWSER_NODE_IMPORT_ALLOWLIST");
+          expect(line).not.toContain("--allow");
         }
+        expect(script).not.toContain("BROWSER_NODE_IMPORT_ALLOWLIST");
         // The old text scan comment claimed survivors were reported "above".
         expect(script).not.toContain("reported by the scan above");
       });
