@@ -674,4 +674,36 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       );
     },
   );
+
+  Scenario(
+    "A non-Error hook failure is answered as mock.handle() answers it",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Express middleware whose beforeRequest throws a plain object with passErrorsToNext disabled",
+        () => {
+          mount(schmock(), {
+            passErrorsToNext: false,
+            beforeRequest: () => {
+              throw { reason: "x" };
+            },
+          });
+        },
+      );
+
+      When("a request is made to {string}", async (_, requestSpec: string) => {
+        await makeRequest(requestSpec);
+      });
+
+      Then(
+        "the Express response should have status {int}",
+        (_, status: number) => {
+          expect(currentResponse().status).toBe(status);
+        },
+      );
+
+      And("the Express response body should be:", (_, docString: string) => {
+        expect(parseJson(currentResponse().text)).toEqual(parseJson(docString));
+      });
+    },
+  );
 });

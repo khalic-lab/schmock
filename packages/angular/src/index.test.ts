@@ -692,7 +692,7 @@ describe("Angular Adapter", () => {
       });
     });
 
-    it("returns generic error body for non-Error throws", async () => {
+    it("describes a non-Error throw as core's handle() does", async () => {
       mockInstance.handle = vi.fn().mockRejectedValue("string error");
 
       const InterceptorClass = createSchmockInterceptor(mockInstance);
@@ -712,7 +712,7 @@ describe("Angular Adapter", () => {
       });
 
       expect(errorResponse.error).toEqual({
-        error: "Internal Server Error",
+        error: "string error",
         code: "INTERNAL_ERROR",
       });
     });

@@ -111,3 +111,12 @@ Feature: Express Adapter
     Then the committed Express response should complete with status 207 and body "partial"
     And the Express error middleware should observe "request hook exploded after write"
     And the Express error formatter should not have handled the error
+
+  Scenario: A non-Error hook failure is answered as mock.handle() answers it
+    Given I create an Express middleware whose beforeRequest throws a plain object with passErrorsToNext disabled
+    When a request is made to "GET /failure"
+    Then the Express response should have status 500
+    And the Express response body should be:
+      """
+      { "error": "{\"reason\":\"x\"}", "code": "INTERNAL_ERROR" }
+      """

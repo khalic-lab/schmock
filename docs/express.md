@@ -129,7 +129,12 @@ the whole body falls back to `{ error: 'Internal Server Error', code:
 
 The formatter receives core-marked internal exceptions and errors thrown by
 adapter hooks or request handling before the Express response is committed. It
-does not reinterpret an ordinary user-defined 500 route response.
+does not reinterpret an ordinary user-defined 500 route response. A thrown
+value that is not an `Error` arrives wrapped in one, with the value as its
+`cause`. Without a formatter, and with `passErrorsToNext: false`, the 500 body
+is the one `mock.handle()` answers: the failure's message (a thrown string as
+is, a plain object as its JSON text) and its code when it is a `SchmockError`,
+otherwise `INTERNAL_ERROR`.
 
 Exception provenance is captured before `beforeResponse` runs, so a hook that
 clones the response with `{ ...response }` does not suppress the formatter.

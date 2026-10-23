@@ -9,7 +9,7 @@ import {
   HttpResponse,
 } from "@angular/common/http";
 import type * as Schmock from "@schmock/core";
-import { schmock } from "@schmock/core";
+import { SchmockError, schmock } from "@schmock/core";
 import { firstValueFrom, of } from "rxjs";
 import { describe, expect, it, vi } from "vitest";
 import { type AngularAdapterOptions, createSchmockInterceptor } from "./index";
@@ -243,7 +243,7 @@ describe("Angular beforeRequest / beforeResponse aliases (types-108)", () => {
 describe("Angular out-of-band errors keep their fallback body", () => {
   it("falls back to the failure's message and code when the formatter throws", async () => {
     const handle = vi.fn(async () => {
-      throw Object.assign(new Error("handler failed"), { code: "E_HANDLER" });
+      throw new SchmockError("handler failed", "E_HANDLER");
     });
     const mock = { handle } as unknown as Schmock.CallableMockInstance;
     const error = await runError(mock, new HttpRequest("GET", "/x"), {
@@ -254,6 +254,59 @@ describe("Angular out-of-band errors keep their fallback body", () => {
     expect(error.status).toBe(500);
     expect(error.statusText).toBe("Internal Server Error");
     expect(error.error).toEqual({ error: "handler failed", code: "E_HANDLER" });
+  });
+
+  it("reads the code of a SchmockError only, as core and Express do", async () => {
+    // An Error from a Node API carries a string `code` too (ECONNRESET);
+    // core's handle() and Express answer it as INTERNAL_ERROR.
+    const handle = vi.fn(async () => {
+      throw Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+    });
+    const mock = { handle } as unknown as Schmock.CallableMockInstance;
+    const error = await runError(mock, new HttpRequest("GET", "/x"));
+    expect(error.error).toEqual({
+      error: "socket hang up",
+      code: "INTERNAL_ERROR",
+    });
+  });
+
+  it("answers a thrown plain object with its JSON text, like core's handle()", async () => {
+    const thrown = { reason: "x" };
+    const failing = schmock();
+    const error = await runError(failing, new HttpRequest("GET", "/x"), {
+      beforeRequest: () => {
+        throw thrown;
+      },
+    });
+
+    const core = schmock();
+    core("GET /x", () => {
+      throw thrown;
+    });
+    const handled = await core.handle("GET", "/x");
+
+    expect(error.error).toEqual(handled.body);
+    expect(error.error).toEqual({
+      error: '{"reason":"x"}',
+      code: "INTERNAL_ERROR",
+    });
+  });
+
+  it("hands errorFormatter a non-Error throw wrapped, with the value as its cause", async () => {
+    const thrown = { reason: "x" };
+    const error = await runError(schmock(), new HttpRequest("GET", "/x"), {
+      beforeRequest: () => {
+        throw thrown;
+      },
+      errorFormatter: (failure) => ({
+        message: failure.message,
+        cause: failure.cause,
+      }),
+    });
+    expect(error.error).toEqual({
+      message: '{"reason":"x"}',
+      cause: { reason: "x" },
+    });
   });
 
   it("answers the minimal body when the formatted body cannot be serialized", async () => {

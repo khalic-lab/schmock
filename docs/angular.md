@@ -380,7 +380,11 @@ route's other headers. Output that cannot be serialized, such as an embedded
 `{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }`; `undefined` is
 rejected, not dropped, so write `code: error.code ?? null` or spread the
 property conditionally. The out-of-band path, a throwing hook, is formatted the
-same way.
+same way. There a thrown value that is not an `Error` reaches the formatter
+wrapped in one, with the value as its `cause`. Without a formatter, or when it
+throws, the body is the one `mock.handle()` answers a failure with: the
+failure's message and its code when it is a `SchmockError`, otherwise
+`INTERNAL_ERROR`.
 
 Unsubscribing aborts pending Schmock work and unsubscribes any unmatched
 passthrough request. No response is emitted after teardown.

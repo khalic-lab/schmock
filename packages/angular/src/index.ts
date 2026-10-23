@@ -25,6 +25,7 @@ import {
   schmock,
   serializeResponseBody,
 } from "@schmock/core";
+import { buildJsonErrorResponse, toError } from "@schmock/core/adapter";
 import { Observable, type Subscriber } from "rxjs";
 
 type AngularResponseType = HttpRequest<unknown>["responseType"];
@@ -556,43 +557,40 @@ function emitHttpError(
   );
 }
 
-/** The unformatted body of an adapter failure: its message and code. */
-function defaultErrorBody(error: unknown): { error: string; code: string } {
-  return {
-    error: error instanceof Error ? error.message : "Internal Server Error",
-    code:
-      error !== null &&
-      typeof error === "object" &&
-      "code" in error &&
-      typeof error.code === "string"
-        ? error.code
-        : "INTERNAL_ERROR",
-  };
-}
-
 /**
  * Shape an out-of-band failure (a throwing hook, a rejected handler) into an
  * HttpErrorResponse, so the Observable always settles. Without an
- * errorFormatter, or when it throws, the body is the failure's own message and
- * code; a formatted body the normalizer rejects falls back to the minimal one.
+ * errorFormatter, or when it throws, the response is the 500 core's
+ * `handle()` answers a failure with: the failure's own message, and its code
+ * when it is a SchmockError. A formatted body the normalizer rejects falls
+ * back to the minimal one.
  */
 function emitFailure(interception: Interception, error: unknown): void {
   if (interception.aborted) return;
   const { req, config } = interception;
   const { errorFormatter } = config;
+  const method = interception.responseMethod;
+  const cause = toError(error);
 
-  const response = buildFormattedErrorResponse({
-    formatter: (cause) => {
-      if (!errorFormatter) return defaultErrorBody(error);
-      try {
-        return errorFormatter(cause, req);
-      } catch {
-        return defaultErrorBody(error);
-      }
-    },
-    error: error instanceof Error ? error : new Error(String(error)),
-    method: interception.responseMethod,
+  const unformatted = buildJsonErrorResponse({
+    status: 500,
+    error: cause.message,
+    code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
+    method,
   });
+  const response = errorFormatter
+    ? buildFormattedErrorResponse({
+        formatter: (formatted) => {
+          try {
+            return errorFormatter(formatted, req);
+          } catch {
+            return unformatted.body;
+          }
+        },
+        error: cause,
+        method,
+      })
+    : unformatted;
   emitHttpError(interception.observer, req, response, response.body);
 }
 

@@ -471,6 +471,47 @@ describe("toExpress", () => {
       expect(next).not.toHaveBeenCalled();
     });
 
+    it("writes core's 500 envelope when the formatted response cannot be written", async () => {
+      const mock = createMock(() => Promise.resolve(markedException()));
+      const res = createRes();
+      vi.mocked(res.setHeader).mockImplementationOnce(() => {
+        throw new TypeError("Invalid header value");
+      });
+
+      await toExpress(mock, { errorFormatter: () => ({ formatted: true }) })(
+        createReq(),
+        res,
+        vi.fn(),
+      );
+
+      expect(res.status).toHaveBeenLastCalledWith(500);
+      expect(res.setHeader).toHaveBeenLastCalledWith(
+        "content-type",
+        "application/json",
+      );
+      expect(endedJson(res)).toEqual({
+        error: "Internal Server Error",
+        code: "INTERNAL_ERROR",
+      });
+    });
+
+    it("ends a HEAD request's write-failure fallback without a body", async () => {
+      const mock = createMock(() => Promise.resolve(markedException()));
+      const res = createRes();
+      vi.mocked(res.setHeader).mockImplementationOnce(() => {
+        throw new TypeError("Invalid header value");
+      });
+
+      await toExpress(mock, { errorFormatter: () => ({ formatted: true }) })(
+        createReq({ method: "HEAD" }),
+        res,
+        vi.fn(),
+      );
+
+      expect(res.status).toHaveBeenLastCalledWith(500);
+      expect(vi.mocked(res.end).mock.calls.at(-1)?.[0]).toBeUndefined();
+    });
+
     it("formats a core exception response once even when the formatter throws", async () => {
       // A resolved 500 marked as a core exception reaches the formatter on
       // the success path; a throw there must not re-invoke the formatter
@@ -547,7 +588,7 @@ describe("toExpress", () => {
       });
     });
 
-    it("handles non-Error throws when passErrorsToNext is false", async () => {
+    it("describes a non-Error throw as core's handle() does when passErrorsToNext is false", async () => {
       const mock = createMock(() => Promise.reject("string error"));
       const res = createRes();
       const next = vi.fn() as NextFunction;
@@ -559,8 +600,53 @@ describe("toExpress", () => {
       );
 
       expect(endedJson(res)).toEqual({
-        error: "Internal Server Error",
+        error: "string error",
         code: "INTERNAL_ERROR",
+      });
+    });
+
+    it("answers a thrown plain object with its JSON text, like core's handle()", async () => {
+      const thrown = { reason: "x" };
+      const res = createRes();
+
+      await toExpress(schmock(), {
+        passErrorsToNext: false,
+        beforeRequest: () => {
+          throw thrown;
+        },
+      })(createReq(), res, vi.fn() as NextFunction);
+
+      const core = schmock();
+      core("GET /", () => {
+        throw thrown;
+      });
+      const handled = await core.handle("GET", "/");
+
+      expect(endedJson(res)).toEqual(handled.body);
+      expect(endedJson(res)).toEqual({
+        error: '{"reason":"x"}',
+        code: "INTERNAL_ERROR",
+      });
+    });
+
+    it("hands errorFormatter a non-Error throw wrapped, with the value as its cause", async () => {
+      const thrown = { reason: "x" };
+      const res = createRes();
+      const errorFormatter = vi.fn((error: Error) => ({
+        message: error.message,
+        cause: error.cause,
+      }));
+
+      await toExpress(schmock(), {
+        errorFormatter,
+        beforeRequest: () => {
+          throw thrown;
+        },
+      })(createReq(), res, vi.fn() as NextFunction);
+
+      expect(endedJson(res)).toEqual({
+        message: '{"reason":"x"}',
+        cause: { reason: "x" },
       });
     });
   });

@@ -13,8 +13,10 @@ import {
 import {
   acquireRequestAdmission,
   awaitWithAbort,
+  buildJsonErrorResponse,
   type MockRequestHandler,
   type RequestAdmission,
+  toError,
 } from "@schmock/core/adapter";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
@@ -146,23 +148,26 @@ function sendFormattedError(send: FormattedErrorSend): void {
   try {
     schmockToExpressResponse(response, method, res);
   } catch {
-    if (!res.headersSent) {
-      res.status(500);
-      res.setHeader("content-type", "application/json");
+    const fallback = buildJsonErrorResponse({
+      status: 500,
+      error: "Internal Server Error",
+      code: "INTERNAL_ERROR",
+      method,
+    });
+    const headersWereSent = res.headersSent;
+    if (!headersWereSent) {
+      res.status(fallback.status);
+      for (const [name, value] of Object.entries(fallback.headers)) {
+        res.setHeader(name, value);
+      }
     }
     if (!res.writableEnded) {
       // Once headers are on the wire, appending the fallback JSON would
       // concatenate it onto whatever bytes were already written.
-      res.end(
-        res.headersSent
-          ? undefined
-          : Buffer.from(
-              JSON.stringify({
-                error: "Internal Server Error",
-                code: "INTERNAL_ERROR",
-              }),
-            ),
-      );
+      const body = headersWereSent
+        ? undefined
+        : serializeResponseBody(fallback);
+      res.end(body === undefined ? undefined : Buffer.from(body));
     }
   }
 }
@@ -401,11 +406,11 @@ export function toExpress(
       // Handle errors based on configuration
       if (errorFormatter) {
         // Fires for any Error from the handler/pipeline, not just
-        // SchmockError — matches the Angular adapter's behavior.
-        const err = error instanceof Error ? error : new Error(String(error));
+        // SchmockError — matches the Angular adapter's behavior. A non-Error
+        // throw arrives wrapped, with the thrown value as its `cause`.
         sendFormattedError({
           errorFormatter,
-          error: err,
+          error: toError(error),
           req,
           res,
           method: responseMethod,
@@ -413,19 +418,14 @@ export function toExpress(
       } else if (passErrorsToNext) {
         next(error);
       } else {
+        // The 500 core's handle() answers a failure with.
         schmockToExpressResponse(
-          {
+          buildJsonErrorResponse({
             status: 500,
-            body: {
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Internal Server Error",
-              code:
-                error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
-            },
-            headers: { "content-type": "application/json" },
-          },
+            error: toError(error).message,
+            code: error instanceof SchmockError ? error.code : "INTERNAL_ERROR",
+            method: responseMethod,
+          }),
           responseMethod,
           res,
         );
