@@ -23,7 +23,7 @@ import {
 } from "./jsf-config.js";
 import { assertOutputWithinLimits } from "./output-limits.js";
 import { applyOverrides, determineArrayCount } from "./overrides.js";
-import { applyNullableRolls } from "./post-process.js";
+import { applyNullableRolls, resolveLocalRef } from "./post-process.js";
 import { enhanceSchemaWithSmartMapping } from "./schema-enhancement.js";
 import { isJSONSchema7, isRecord } from "./utils.js";
 import { hasType, validateSchema } from "./validation.js";
@@ -153,12 +153,86 @@ export async function generateFromSchema(
   );
 }
 
+/** Keys that leave a single-entry `allOf` root standing for its entry alone. */
+const ALLOF_WRAPPER_KEYS = new Set([
+  "allOf",
+  "$schema",
+  "$id",
+  "$comment",
+  "$defs",
+  "definitions",
+  "title",
+  "description",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+  "examples",
+]);
+
+/** An array json-schema-faker generates with items it can size. */
+function isSizableArray(schema: JSONSchema7): boolean {
+  if (schema.items === undefined) return false;
+  return hasType(schema, "array") || schema.type === undefined;
+}
+
+/**
+ * The array node a root value is generated from: the root itself, or what a
+ * root `$ref` (whose siblings JSF ignores) or a single-entry `allOf` with
+ * nothing else to merge stands for. A null union is already unwrapped by the
+ * enhancer. Undefined when the root is not such an array.
+ */
+function findRootArray(root: JSONSchema7): JSONSchema7 | undefined {
+  const visited = new Set<JSONSchema7>();
+  let node: JSONSchema7 | undefined = root;
+  while (node && !visited.has(node)) {
+    visited.add(node);
+    if (isSizableArray(node)) return node;
+    if (typeof node.$ref === "string") {
+      node = resolveLocalRef(node, root);
+    } else if (
+      node.allOf?.length === 1 &&
+      Object.keys(node).every((key) => ALLOF_WRAPPER_KEYS.has(key)) &&
+      isJSONSchema7(node.allOf[0])
+    ) {
+      const [entry] = node.allOf;
+      node =
+        typeof entry.$ref === "string" ? resolveLocalRef(entry, root) : entry;
+    } else {
+      node = undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * `root` with `array` fixed at `itemCount` items. A root reached through a
+ * `$ref` or `allOf` is replaced by that array, keeping the root's
+ * definitions so every reference inside still resolves (the array's own
+ * `$defs` shadow the root's, as they do while JSF walks it).
+ */
+function sizeRootArray(
+  root: JSONSchema7,
+  array: JSONSchema7,
+  itemCount: number,
+): JSONSchema7 {
+  const sized: JSONSchema7 = {
+    ...array,
+    minItems: itemCount,
+    maxItems: itemCount,
+  };
+  if (array === root) return sized;
+  if (root.$defs !== undefined || array.$defs !== undefined) {
+    sized.$defs = { ...root.$defs, ...array.$defs };
+  }
+  if (root.definitions !== undefined) sized.definitions = root.definitions;
+  return sized;
+}
+
 async function generateFromPrepared(
   prepared: PreparedSchema,
   options: SchemaGenerationContext,
 ): Promise<unknown> {
   const { count, overrides, params, state, query, seed } = options;
-  const { schema } = prepared;
 
   const generationSeed = resolveGenerationSeed(seed);
   const random = createSeededRandom(generationSeed);
@@ -167,18 +241,15 @@ async function generateFromPrepared(
 
   // Resolve the top-level array size once, then let JSF generate the complete
   // array so tuple positions, uniqueness, and a seeded sequence are preserved.
-  if (hasType(schema, "array") && schema.items) {
-    const itemCount = determineArrayCount(schema, count, random);
+  const rootArray = findRootArray(enhancedSchema);
+  if (rootArray) {
+    const itemCount = determineArrayCount(rootArray, count, random);
 
     if (itemCount > MAX_ARRAY_SIZE) {
       throw new ResourceLimitError("array_size", MAX_ARRAY_SIZE, itemCount);
     }
 
-    enhancedSchema = {
-      ...enhancedSchema,
-      minItems: itemCount,
-      maxItems: itemCount,
-    };
+    enhancedSchema = sizeRootArray(enhancedSchema, rootArray, itemCount);
   }
 
   // A caller-supplied seed promises reproducible output, so date fields are

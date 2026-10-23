@@ -35,6 +35,8 @@ function numeric(value: unknown): number {
 /** A schema, and what every value generated from it must satisfy. */
 interface FidelityCase {
   schema: JSONSchema7;
+  /** The `count` option to generate with, if any. */
+  count?: number;
   /** Checks one value; `seed` is the seed it was generated with. */
   fits: (value: unknown, seed: number) => void;
 }
@@ -72,6 +74,11 @@ function expectBase64Within(value: unknown, min: number, max: number): void {
   expect(encoded.length).toBeGreaterThanOrEqual(min);
   expect(encoded.length).toBeLessThanOrEqual(max);
 }
+
+const INTEGER_LIST: JSONSchema7 = {
+  type: "array",
+  items: { type: "integer" },
+};
 
 function expectPet(value: unknown): void {
   const pet = record(value);
@@ -458,6 +465,24 @@ const CASES: Record<string, FidelityCase> = {
     },
     fits: (value) => expect(record(record(value).foo)).toBeDefined(),
   },
+  "count-through-ref-root": {
+    schema: { $ref: "#/$defs/List", $defs: { List: INTEGER_LIST } },
+    count: 10,
+    fits: (value) => expect(list(value)).toHaveLength(10),
+  },
+  "count-through-all-of-root": {
+    schema: { allOf: [INTEGER_LIST] },
+    count: 10,
+    fits: (value) => expect(list(value)).toHaveLength(10),
+  },
+  "count-through-null-union-root": {
+    schema: { anyOf: [INTEGER_LIST, { type: "null" }] },
+    count: 10,
+    // The union may roll the root itself to null.
+    fits: (value) => {
+      if (value !== null) expect(list(value)).toHaveLength(10);
+    },
+  },
   "inclusive-maximum-tighter-than-exclusive": {
     schema: { type: "number", minimum: 0, maximum: 5, exclusiveMaximum: 100 },
     fits: (value) => {
@@ -488,6 +513,7 @@ const OUTLINES = [
   "A decimal multipleOf yields exact multiples without float noise",
   "A uniqueItems array never receives two rolled nulls",
   "A nullable type union rolls no null its own composition rejects",
+  "count sizes a root array reached through $ref, allOf or a null union",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {
@@ -497,8 +523,9 @@ describeFeature(feature, ({ ScenarioOutline }) => {
   async function generateWithSeeds(seeds: number): Promise<void> {
     if (!current) throw new Error("no fidelity schema was chosen");
     results = [];
+    const { schema, count } = current;
     for (let seed = 1; seed <= seeds; seed += 1) {
-      results.push(await generateFromSchema({ schema: current.schema, seed }));
+      results.push(await generateFromSchema({ schema, count, seed }));
     }
   }
 

@@ -1268,3 +1268,76 @@ describe("Additional Coverage Tests", () => {
     });
   });
 });
+
+describe("count reaches a root array behind $ref, allOf or a null union (faker-17)", () => {
+  const LIST: JSONSchema7 = {
+    type: "array",
+    items: { type: "integer" },
+  };
+
+  const roots: [string, JSONSchema7][] = [
+    ["a $defs $ref", { $ref: "#/$defs/List", $defs: { List: LIST } }],
+    [
+      "a definitions $ref",
+      { $ref: "#/definitions/List", definitions: { List: LIST } },
+    ],
+    ["a single-entry allOf", { allOf: [LIST] }],
+    [
+      "a single-entry allOf over a $ref",
+      { allOf: [{ $ref: "#/$defs/List" }], $defs: { List: LIST } },
+    ],
+    ["an anyOf null union", { anyOf: [LIST, { type: "null" }] }],
+    ["a oneOf null union", { oneOf: [{ type: "null" }, LIST] }],
+    ["an untyped items root", { items: { type: "integer" } }],
+  ];
+
+  it.each(roots)("generates count items through %s", async (_, schema) => {
+    let arrays = 0;
+    for (let seed = 1; seed <= 10; seed += 1) {
+      const value = await generateFromSchema({ schema, count: 10, seed });
+      // A null union may roll the root itself to null.
+      if (value === null) continue;
+      arrays += 1;
+      expect(Array.isArray(value)).toBe(true);
+      expect(value).toHaveLength(10);
+    }
+    expect(arrays).toBeGreaterThan(5);
+  });
+
+  it("keeps nested references resolving after the root is resized", async () => {
+    const schema: JSONSchema7 = {
+      $ref: "#/$defs/List",
+      $defs: {
+        List: { type: "array", items: { $ref: "#/$defs/Item" } },
+        Item: {
+          type: "object",
+          properties: { id: { type: "integer" } },
+          required: ["id"],
+        },
+      },
+    };
+    const value = await generateFromSchema({ schema, count: 4, seed: 1 });
+    expect(value).toHaveLength(4);
+    for (const item of value as unknown[]) {
+      expect(Number.isInteger(Reflect.get(Object(item), "id"))).toBe(true);
+    }
+  });
+
+  it("rejects a count past the array limit through a $ref", async () => {
+    await expect(
+      generateFromSchema({
+        schema: { $ref: "#/$defs/List", $defs: { List: LIST } },
+        count: 50_000,
+      }),
+    ).rejects.toMatchObject({ context: { resource: "array_size" } });
+  });
+
+  it("leaves an allOf whose root adds its own keywords to json-schema-faker", async () => {
+    const value = await generateFromSchema({
+      schema: { allOf: [LIST], maxItems: 2 },
+      seed: 1,
+    });
+    expect(Array.isArray(value)).toBe(true);
+    expect((value as unknown[]).length).toBeLessThanOrEqual(2);
+  });
+});

@@ -159,3 +159,15 @@ Feature: Faker output honours every keyword of its schema
     Examples:
       | case                       |
       | type-union-with-all-of-ref |
+
+  # Review 2026-10-23 faker-17: count only sized a root that literally declared type array
+  Scenario Outline: count sizes a root array reached through $ref, allOf or a null union
+    Given the fidelity schema "<case>"
+    When I generate it with 10 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                          |
+      | count-through-ref-root        |
+      | count-through-all-of-root     |
+      | count-through-null-union-root |

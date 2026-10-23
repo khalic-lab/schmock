@@ -1247,6 +1247,9 @@ interface FakerPluginOptions {
 }
 ```
 
+`count` sizes the root array, including one the root reaches through a `$ref`,
+a single-entry `allOf` or an `anyOf`/`oneOf` union with `{ type: 'null' }`.
+
 ### `generateFromSchema(options)`
 
 Direct schema-to-data generation (used internally and available for standalone
