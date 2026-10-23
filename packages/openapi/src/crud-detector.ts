@@ -1,6 +1,6 @@
 import type * as Schmock from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
-import { collectSchemaProperties, findArrayProperty } from "./generators.js";
+import { collectSchemaProperties, findArrayProperty } from "./list-envelope.js";
 import { type AccessModes, collectAccessModes } from "./normalizer.js";
 import type { ParsedPath } from "./parser.js";
 import { segmentParamName } from "./path-template.js";

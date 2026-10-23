@@ -42,9 +42,6 @@ import { findRepresentativeResponse } from "./response-status.js";
 import { collectionStateKey, counterStateKey } from "./state-keys.js";
 import { isRecord, toJsonSchema } from "./utils.js";
 
-// CRUD detection reads these through this module.
-export { collectSchemaProperties, findArrayProperty } from "./list-envelope.js";
-
 /**
  * Wrap a generation failure in a structured, coded error.
  *
