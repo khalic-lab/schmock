@@ -106,6 +106,21 @@ function isValidParamLocation(
   return validLocations.includes(location);
 }
 
+/**
+ * Swagger 2.0 declares a file download as a response schema of `type: file`.
+ * JSON Schema has no `file` type, so faker and Ajv both rejected it; read it
+ * as the binary string OpenAPI 3 writes for the same payload. Only a root is
+ * rewritten: a response schema's root is the one place Swagger 2.0 allows
+ * `file`, and a non-strict spec's body parameter saying it means an upload.
+ */
+function fileTypeAsBinary(
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  return schema.type === "file"
+    ? { ...schema, type: "string", format: "binary" }
+    : schema;
+}
+
 export function isNotBodyParam(
   param: InternalParameter,
 ): param is ParsedParameter {
@@ -140,7 +155,7 @@ export function extractParameters(
         // Swagger 2.0: schema is inline on the parameter (type, format, etc.)
         if (location === "body") {
           schema = isRecord(p.schema)
-            ? ctx.normalize(p.schema, "request")
+            ? ctx.normalize(fileTypeAsBinary(p.schema), "request")
             : undefined;
         } else {
           schema = p.type
@@ -353,7 +368,7 @@ export function extractResponses(
 
     if (ctx.dialect === "swagger2") {
       if (isRecord(response.schema)) {
-        schema = ctx.normalize(response.schema, "response");
+        schema = ctx.normalize(fileTypeAsBinary(response.schema), "response");
       }
       // Swagger 2.0 single example
       if (response.examples !== undefined && isRecord(response.examples)) {
