@@ -351,6 +351,12 @@ export function createBodyValidatorContext(): BodyValidatorContext {
     strictTypes: false,
     multipleOfPrecision: MULTIPLE_OF_PRECISION,
     code: { regExp: specPatternEngine },
+    // With strictSchema off AJV ignores an unknown format such as Stripe's
+    // `unix-time`, but logs two console lines per occurrence on every compile:
+    // tens of thousands for one large response schema, with no option to
+    // silence them. Its other warnings are strict-mode remarks on the spec's
+    // own schemas, which the mock's user cannot act on either.
+    logger: false,
   });
   addFormats(ajv);
 

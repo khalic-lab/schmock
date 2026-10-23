@@ -1,5 +1,5 @@
 import { SchemaGenerationError, schmock } from "@schmock/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { openapi } from "./plugin";
 import {
   applyResponseContentType,
@@ -915,5 +915,29 @@ describe("pattern dialect", () => {
       code: "VALIDATION_ERROR",
       details: [{ path: "/phone", keyword: "pattern" }],
     });
+  });
+});
+
+describe("vendor formats", () => {
+  it("ignores an unknown format without writing to the console", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { ajv } = createBodyValidatorContext();
+      const timestamp = ajv.compile({
+        type: "object",
+        properties: {
+          created: { type: "integer", format: "unix-time" },
+          currency: { type: "string", format: "currency" },
+        },
+      });
+
+      expect(timestamp({ created: 1700000000, currency: "eur" })).toBe(true);
+      expect(warn).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
   });
 });
