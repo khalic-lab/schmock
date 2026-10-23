@@ -38,9 +38,10 @@ interface WalkContext {
 /**
  * A schema that applies to the value being walked. `vetoes` is false for
  * schemas reached through the `$ref`/composition of a node whose null came
- * from an unwrapped `anyOf`/`oneOf` union: those describe the non-null
- * alternative, so they cannot rule null out. Beside a `type: [T, "null"]`
- * they are conjuncts, and a null they reject is not rolled.
+ * from an unwrapped `anyOf`/`oneOf` union or from the marker alone: those
+ * describe the non-null alternative, so they cannot rule null out. Beside a
+ * `type: [T, "null"]` they are conjuncts, and a null they reject is not
+ * rolled.
  */
 interface Applicable {
   schema: JSONSchema7;
@@ -106,7 +107,11 @@ function isNullableMarked(schema: JSONSchema7): boolean {
   return Reflect.get(schema, "schmockNullable") === true;
 }
 
-/** Null is the other branch of a union the enhancer unwrapped into `schema`. */
+/**
+ * Null is an alternative to what `schema`'s own `$ref` and composition
+ * describe, rather than a member of its type union (see the enhancer's
+ * `schmockNullAlternative`).
+ */
 function isNullAlternative(schema: JSONSchema7): boolean {
   return (
     isNullableMarked(schema) &&

@@ -15,9 +15,11 @@ interface FakerSchema extends JSONSchema7 {
   schmockNullable?: boolean;
   schmockTrueProbability?: number;
   /**
-   * Set on the enhanced copy only, by `unwrapNullUnion`: null came from an
-   * `anyOf`/`oneOf` branch, so the node's own `$ref` and composition describe
-   * the non-null alternative and cannot rule null out (see post-process.ts).
+   * Set on the enhanced copy only, by `stripNullableForGeneration`, unless
+   * null comes from a `type: [T, "null"]`: from an unwrapped `anyOf`/`oneOf`
+   * branch, or from the marker alone. The node's own `$ref` and composition
+   * then describe the non-null alternative and cannot rule null out (see
+   * post-process.ts); beside a type union they are conjuncts that can.
    */
   schmockNullAlternative?: boolean;
 }
@@ -118,6 +120,9 @@ function stripNullableForGeneration(schema: FakerSchema): FakerSchema {
 
   if (!marked && !isNativeNullableType(schema)) return schema;
   schema.schmockNullable = true;
+  if (!Array.isArray(schema.type) || !schema.type.includes("null")) {
+    schema.schmockNullAlternative = true;
+  }
 
   // `type: [T, "null"]` encoding
   if (Array.isArray(schema.type)) {

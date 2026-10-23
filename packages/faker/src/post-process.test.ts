@@ -285,6 +285,13 @@ describe("applyNullableRolls — a type union's own composition (faker-10)", () 
     );
     expect(values).toContain(null);
   });
+
+  it("still rolls null for the marker alone beside a $ref or allOf", async () => {
+    expect(await fooValues(marked({ $ref: "#/$defs/Foo" }))).toContain(null);
+    expect(
+      await fooValues(marked({ allOf: [{ $ref: "#/$defs/Foo" }] })),
+    ).toContain(null);
+  });
 });
 
 describe("applyNullableRolls — uniqueItems (faker-9)", () => {
