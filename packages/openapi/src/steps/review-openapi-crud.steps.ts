@@ -295,6 +295,48 @@ const multipartPetsSpec = spec({
   },
 });
 
+// ── onSchema on an enveloped create ─────────────────────────────────────────
+
+const metaEnvelopeSpec = spec({
+  "/pets": {
+    get: {
+      responses: {
+        "200": {
+          description: "list",
+          content: json({
+            type: "object",
+            properties: { data: { type: "array", items: pet } },
+          }),
+        },
+      },
+    },
+    post: {
+      responses: {
+        "201": {
+          description: "created",
+          content: json({
+            type: "object",
+            required: ["data", "meta"],
+            properties: {
+              data: pet,
+              meta: {
+                type: "object",
+                required: ["v"],
+                properties: { v: { type: "integer" } },
+              },
+            },
+          }),
+        },
+      },
+    },
+  },
+  "/pets/{petId}": {
+    get: {
+      responses: { "200": { description: "pet", content: json(pet) } },
+    },
+  },
+});
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -555,6 +597,64 @@ describeFeature(feature, ({ Scenario }) => {
         const read = await mock.handle("GET", "/pets/1");
         expect(read.body).toEqual({ id: 1, name: "Rex", age: 3 });
       });
+    },
+  );
+
+  Scenario(
+    "onSchema receives an enveloped create's whole response contract",
+    ({ Given, When, Then, And }) => {
+      const seen: string[] = [];
+
+      Given(
+        "a pets mock whose create answers a data and meta envelope, with an onSchema hook that rewrites meta",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: metaEnvelopeSpec,
+              onSchema: (schema, context) => {
+                if (context.method !== "POST") return undefined;
+                seen.push(Object.keys(schema.properties ?? {}).join(","));
+                return {
+                  ...schema,
+                  properties: {
+                    ...schema.properties,
+                    meta: {
+                      type: "object",
+                      required: ["traceId"],
+                      properties: { traceId: { type: "string", const: "T-1" } },
+                    },
+                  },
+                };
+              },
+            }),
+          );
+        },
+      );
+
+      When('I create a pet named "rex"', async () => {
+        response = await mock.handle("POST", "/pets", {
+          body: { name: "rex" },
+        });
+      });
+
+      Then(
+        'the hook saw the create contract with properties "data,meta"',
+        () => {
+          expect(seen).toEqual(["data,meta"]);
+        },
+      );
+
+      And(
+        'the created body carries the rewritten meta and the pet under "data"',
+        () => {
+          expect(response.status).toBe(201);
+          expect(response.body).toEqual({
+            data: { id: 1, name: "rex" },
+            meta: { traceId: "T-1" },
+          });
+        },
+      );
     },
   );
 });

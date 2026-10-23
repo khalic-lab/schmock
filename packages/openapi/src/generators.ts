@@ -1410,10 +1410,16 @@ export function createCreateGenerator(
     const key = collectionStateKey(resource.basePath, ctx.params);
     const counterKey = counterStateKey(resource.basePath, ctx.params);
 
-    const responseSchema = metaSchema(meta, ctx.headers, headers);
+    // `onSchema` sees the whole response contract, envelope included, and the
+    // stored item and the envelope shell are both derived from what it returns,
+    // as the list generator re-derives its wrapper.
+    const declared = metaSchema(meta, ctx.headers, headers);
+    const responseSchema = applyOnSchema(declared, hooks, ctx);
     const wrapperProperty = resourceWrapperProperty(resource, responseSchema);
-    const itemSchema = wrapperProperty ? resource.schema : responseSchema;
-    const effective = applyOnSchema(itemSchema, hooks, ctx);
+    const effective =
+      wrapperProperty && responseSchema
+        ? wrappedItemSchema(resource, responseSchema, wrapperProperty, declared)
+        : responseSchema;
     const item: Record<string, unknown> = await generateContractBase(
       effective,
       hooks?.fakerSeed,
@@ -1464,6 +1470,28 @@ export function createCreateGenerator(
       headers,
     });
   };
+}
+
+/**
+ * The contract a created item is generated from when the create response
+ * wraps it in an envelope.
+ *
+ * The resource schema, as stored rows are, while the envelope is the one the
+ * spec declares. When `onSchema` rewrote the envelope, the wrapper property's
+ * schema in the rewritten one instead: a field the hook adds to the item lands
+ * in the created row (and so in later reads), not only in the response.
+ */
+function wrappedItemSchema(
+  resource: CrudResource,
+  envelope: JSONSchema7,
+  property: string,
+  declared: JSONSchema7 | undefined,
+): JSONSchema7 | undefined {
+  if (envelope === declared) return resource.schema;
+  const slot = propertyDeclarations(unwrapNullable(envelope)).find(
+    ([key]) => key === property,
+  )?.[1];
+  return slot ?? resource.schema;
 }
 
 /**

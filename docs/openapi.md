@@ -1256,6 +1256,14 @@ On CRUD routes the callback fires exactly where a body is generated:
 | Delete confirmation object (see [Created bodies](#created-bodies-satisfy-the-declared-contract)) | yes |
 | Read / update / delete success bodies that are the row itself | **no** |
 
+When a create response wraps the resource in an envelope
+(`{ data: <Resource>, meta: {…} }`), the callback receives that whole envelope,
+as it does for a list. The envelope's other properties are generated from what
+it returns. When it changes the envelope, the created item is generated from
+the wrapper property of the returned schema, so a field the callback adds there
+is stored and read back later. When it returns nothing, the item comes from
+the resource schema.
+
 Read, update and delete replay items from stored state instead of generating
 them, so a success body that is the row itself is never passed to the callback.
 The callback sees their envelope contract when they declare one, a delete's

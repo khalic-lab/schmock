@@ -130,6 +130,117 @@ describe("CRUD review fixes", () => {
       expect(seen).toEqual(["GET data"]);
     });
 
+    describe("onSchema on an enveloped create", () => {
+      const metaEnvelopeSpec = spec({
+        "/pets": {
+          get: {
+            responses: {
+              "200": {
+                description: "list",
+                content: json({
+                  type: "object",
+                  properties: { data: { type: "array", items: pet } },
+                }),
+              },
+            },
+          },
+          post: {
+            responses: {
+              "201": {
+                description: "created",
+                content: json({
+                  type: "object",
+                  required: ["data", "meta"],
+                  properties: {
+                    data: pet,
+                    meta: {
+                      type: "object",
+                      required: ["v"],
+                      properties: { v: { type: "integer" } },
+                    },
+                  },
+                }),
+              },
+            },
+          },
+        },
+        "/pets/{petId}": {
+          get: {
+            responses: { "200": { description: "pet", content: json(pet) } },
+          },
+        },
+      });
+
+      it("hands the hook the response contract and generates the envelope from its result", async () => {
+        const seen: string[] = [];
+        const mock = await mockOf(metaEnvelopeSpec, {
+          onSchema: (schema, context) => {
+            seen.push(
+              `${context.method} ${Object.keys(schema.properties ?? {}).join(",")}`,
+            );
+            if (context.method !== "POST" || !schema.properties?.meta) {
+              return undefined;
+            }
+            return {
+              ...schema,
+              properties: {
+                ...schema.properties,
+                meta: {
+                  type: "object",
+                  required: ["traceId"],
+                  properties: { traceId: { type: "string", const: "T-1" } },
+                },
+              },
+            };
+          },
+        });
+
+        const created = await mock.handle("POST", "/pets", {
+          body: { name: "rex" },
+        });
+        expect(seen).toEqual(["POST data,meta"]);
+        expect(created.status).toBe(201);
+        expect(created.body).toEqual({
+          data: { id: 1, name: "rex" },
+          meta: { traceId: "T-1" },
+        });
+      });
+
+      it("stores a field the hook adds to the wrapped item", async () => {
+        const mock = await mockOf(metaEnvelopeSpec, {
+          onSchema: (schema, context) => {
+            const data = schema.properties?.data;
+            if (context.method !== "POST" || typeof data !== "object") {
+              return undefined;
+            }
+            return {
+              ...schema,
+              properties: {
+                ...schema.properties,
+                data: {
+                  ...data,
+                  required: ["id", "name", "nickname"],
+                  properties: {
+                    ...data.properties,
+                    nickname: { type: "string", const: "N" },
+                  },
+                },
+              },
+            };
+          },
+        });
+
+        const created = await mock.handle("POST", "/pets", {
+          body: { name: "rex" },
+        });
+        expect(created.body).toMatchObject({
+          data: { id: 1, name: "rex", nickname: "N" },
+        });
+        const read = await mock.handle("GET", "/pets/1");
+        expect(read.body).toEqual({ id: 1, name: "rex", nickname: "N" });
+      });
+    });
+
     it("still replays the bare row when the item contract is not an envelope", async () => {
       const mock = await mockOf(
         spec({

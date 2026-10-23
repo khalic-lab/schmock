@@ -62,3 +62,11 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     When I post a multipart pet named "Rex" aged "3" with a photo through the fetch interceptor
     Then the created pet is 201 with name "Rex" and age 3 and no photo
     And reading pet 1 answers the same pet
+
+  # ── onSchema on an enveloped create ────────────────────────────────────────
+
+  Scenario: onSchema receives an enveloped create's whole response contract
+    Given a pets mock whose create answers a data and meta envelope, with an onSchema hook that rewrites meta
+    When I create a pet named "rex"
+    Then the hook saw the create contract with properties "data,meta"
+    And the created body carries the rewritten meta and the pet under "data"
