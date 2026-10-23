@@ -1512,8 +1512,11 @@ register them the same way:
   `type: ['array', 'null']` needs `items` like `type: 'array'`.
 - The json-schema-faker `chance` keyword is not supported. It is rejected with
   `SCHEMA_VALIDATION_ERROR` at `<path>.chance`; use `faker` instead.
-- A faker method string that resolves to an `Object.prototype` member
-  (`person.toString`) or to a `_`-prefixed member is rejected.
+- A faker method must be exactly `module.method`, in a `faker` keyword and in
+  each `helpers.fake` placeholder alike. A longer path such as
+  `person.faker.string.alpha`, or a method that resolves to an
+  `Object.prototype` member (`person.toString`) or to a `_`-prefixed member,
+  is rejected with `SCHEMA_VALIDATION_ERROR` when the plugin is created.
 - A map keyword (`properties`, `patternProperties`, `definitions`, `$defs`,
   `dependencies`, `dependentSchemas`) given as an array is walked by index, so
   a bad child there is rejected at its index path, such as
