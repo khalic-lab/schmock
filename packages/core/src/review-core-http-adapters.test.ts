@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
@@ -126,9 +126,12 @@ describe("writeSchmockResponse framing", () => {
 
 describe("workspace packaging", () => {
   const packagesDir = resolve(import.meta.dirname, "..", "..");
+  // Tools leave directories under packages/ (an editor's .claude/, say); only
+  // a directory with a package.json is a workspace package.
   const packageDirs = readdirSync(packagesDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name);
+    .map((entry) => entry.name)
+    .filter((name) => existsSync(join(packagesDir, name, "package.json")));
 
   function readJson(path: string): unknown {
     return JSON.parse(readFileSync(path, "utf8"));
