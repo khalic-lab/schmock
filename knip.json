@@ -5,7 +5,7 @@
     ".agents/**",
     "examples/**"
   ],
-  "ignoreBinaries": ["openssl"],
+  "ignoreBinaries": ["mkfifo", "openssl"],
   "workspaces": {
     ".": {
       "entry": [

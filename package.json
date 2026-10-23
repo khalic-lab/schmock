@@ -45,7 +45,7 @@
     "test:registry-scripts": "node --test scripts/check-manifests.test.mjs scripts/smoke-tests/registry-verification.test.mjs",
     "publish": "bash scripts/publish.sh",
     "check:publish": "bun run check:manifests && bun run test:registry-scripts && bun run test:release-scripts && bun run check:build-reproducibility && bun run test:pack",
-    "test:release-scripts": "node --test scripts/publish.test.mjs"
+    "test:release-scripts": "node --test scripts/publish.test.mjs scripts/repo-tooling.test.mjs"
   },
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^7.0.0",
