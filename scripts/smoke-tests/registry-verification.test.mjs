@@ -54,7 +54,7 @@ function makeFakeBun(workdir) {
   const executable = join(binDir, "bun");
   writeFileSync(
     executable,
-    '#!/usr/bin/env bash\nprintf "called\\n" >> "$BUN_MARKER"\nexit 97\n',
+    '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$BUN_MARKER"\nexit 97\n',
   );
   chmodSync(executable, 0o755);
   return {
@@ -284,6 +284,28 @@ test("smoke dry-run uses exact copied dependencies and never invokes bun", () =>
     assert.match(output(result), /@schmock\/faker: 9\.8\.7/);
     assert.equal(existsSync(fakeBun.marker), false, output(result));
     assert.equal(readFileSync(FAKER_FIXTURE, "utf8"), sourceBefore);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("fixture installs name the public registry instead of the machine default", () => {
+  const workdir = mkdtempSync(join(tmpdir(), "schmock-registry-install-"));
+  const fakeBun = makeFakeBun(workdir);
+
+  try {
+    // The fake bun fails the install, so nothing reaches the network; what
+    // matters is the registry the runner asked for.
+    const result = run("bash", [SMOKE_RUNNER, "--", "faker"], {
+      ...fakeBun.env,
+      SCHMOCK_VERSION: "9.8.7",
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(output(result), /FAIL: bun install failed/);
+    assert.equal(
+      readFileSync(fakeBun.marker, "utf8"),
+      "install --registry https://registry.npmjs.org/\n",
+    );
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }

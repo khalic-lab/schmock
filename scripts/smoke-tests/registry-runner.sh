@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCRIPTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REGISTRY_HELPER="$SCRIPT_DIR/registry-fixture.mjs"
+# The fixtures are copied out of the repository, so its .npmrc does not apply
+# and a machine-level ~/.npmrc (a private mirror, say) would choose the
+# registry. These suites check what the public registry serves, so name it.
+NPM_REGISTRY="https://registry.npmjs.org/"
 
 if [[ $# -lt 1 ]]; then
   printf 'Usage: %s <smoke|consumer> [--dry-run] [--] [fixture ...]\n' "$0" >&2
@@ -176,7 +180,7 @@ run_test() {
   fi
 
   if [[ $DRY_RUN -eq 1 ]]; then
-    printf '  DRY RUN: bun install\n'
+    printf '  DRY RUN: bun install --registry %s\n' "$NPM_REGISTRY"
     if [[ "$SUITE" == "smoke" ]]; then
       printf '  DRY RUN: bun %s\n' "$test_file"
     else
@@ -187,7 +191,7 @@ run_test() {
     return
   fi
 
-  if ! (cd "$directory" && bun install); then
+  if ! (cd "$directory" && bun install --registry "$NPM_REGISTRY"); then
     red "  FAIL: bun install failed"
     FAILED=$((FAILED + 1))
     FAILURES+=("$name (install)")
