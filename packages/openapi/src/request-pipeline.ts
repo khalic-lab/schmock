@@ -304,6 +304,16 @@ export function processContentNegotiation(
 }
 
 /**
+ * Decimal places of tolerance AJV allows when it divides a value by
+ * `multipleOf`. Without one, 19.99 / 0.01 comes out as 1998.9999999999998 and
+ * an exact amount of cents fails `multipleOf: 0.01`. The quotient's rounding
+ * error grows with the value, so a tighter tolerance rejects large amounts
+ * again: 1e-9 already refuses 1234567.89, while 1e-6 holds for cent values
+ * past a hundred million.
+ */
+const MULTIPLE_OF_PRECISION = 6;
+
+/**
  * Per-plugin validator context. Each openapi() call creates its own
  * AJV instance and schema cache so that loading multiple specs in the
  * same process can't collide on duplicate \$id values.
@@ -318,6 +328,7 @@ export function createBodyValidatorContext(): BodyValidatorContext {
     allErrors: true,
     strictSchema: false,
     strictTypes: false,
+    multipleOfPrecision: MULTIPLE_OF_PRECISION,
   });
   addFormats(ajv);
 

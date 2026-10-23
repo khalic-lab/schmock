@@ -88,3 +88,9 @@ Feature: OpenAPI Response Validation
     Then the response status is 500
     And the response validation error code is "RESPONSE_VALIDATION_ERROR"
     And the response validation error reports the missing property "name"
+
+  Scenario: An exact decimal amount satisfies a fractional multipleOf
+    Given a mock validating requests and responses for products priced in whole cents
+    When I create a product priced 19.99
+    Then the response status is 201
+    And the created product is priced 19.99

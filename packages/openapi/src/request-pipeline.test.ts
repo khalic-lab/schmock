@@ -682,3 +682,143 @@ describe("response validation errors", () => {
     ]);
   });
 });
+
+/** A products resource whose price is constrained to whole cents. */
+const centPricedProductsSpec = {
+  openapi: "3.0.3",
+  info: { title: "Products", version: "1.0.0" },
+  paths: {
+    "/products": {
+      get: {
+        responses: {
+          "200": {
+            description: "List",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array",
+                  items: { $ref: "#/components/schemas/Product" },
+                },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Product" },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/Product" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/products/{productId}": {
+      get: {
+        parameters: [
+          {
+            name: "productId",
+            in: "path",
+            required: true,
+            schema: { type: "integer" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Product",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/Product" },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  components: {
+    schemas: {
+      Product: {
+        type: "object",
+        required: ["price"],
+        properties: {
+          productId: { type: "integer" },
+          price: { type: "number", multipleOf: 0.01 },
+        },
+      },
+    },
+  },
+};
+
+describe("multipleOf with a fractional divisor", () => {
+  // Every one of these is an exact number of cents that floating-point
+  // division turns into a non-integer quotient (19.99 / 0.01 is
+  // 1998.9999999999998).
+  const exactCents = [19.99, 0.29, 73.43, 4.35, 0.07, 156.29, 98765.43];
+
+  it("accepts exact decimals and still rejects values between multiples", () => {
+    const { ajv } = createBodyValidatorContext();
+    const cents = ajv.compile({ type: "number", multipleOf: 0.01 });
+
+    for (const price of exactCents) expect(cents(price)).toBe(true);
+    // Large amounts carry more rounding error in the quotient; a tolerance of
+    // 1e-9 would already reject this one.
+    expect(cents(1234567.89)).toBe(true);
+    expect(cents(19.995)).toBe(false);
+    expect(cents(0.015)).toBe(false);
+  });
+
+  it("accepts an exact-cent request body under validateRequests", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({ spec: centPricedProductsSpec, validateRequests: true }),
+    );
+
+    for (const price of exactCents) {
+      const created = await mock.handle("POST", "/products", {
+        body: { price },
+        headers: { "content-type": "application/json" },
+      });
+      expect(created.status).toBe(201);
+    }
+    const rejected = await mock.handle("POST", "/products", {
+      body: { price: 19.995 },
+      headers: { "content-type": "application/json" },
+    });
+    expect(rejected.status).toBe(400);
+  });
+
+  it("accepts exact-cent stored rows under validateResponses", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: centPricedProductsSpec,
+        validateResponses: true,
+        seed: {
+          products: exactCents.map((price, index) => ({
+            productId: index + 1,
+            price,
+          })),
+        },
+      }),
+    );
+
+    for (const [index, price] of exactCents.entries()) {
+      const read = await mock.handle("GET", `/products/${index + 1}`);
+      expect(read.status).toBe(200);
+      expect(read.body).toEqual({ productId: index + 1, price });
+    }
+  });
+});

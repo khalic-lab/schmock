@@ -498,6 +498,62 @@ const petsWithoutProducesSpec = {
   },
 };
 
+const centPricedProductsSpec = {
+  openapi: "3.0.3",
+  info: { title: "Cent-priced products", version: "1.0.0" },
+  paths: {
+    "/products": {
+      get: {
+        responses: {
+          "200": {
+            description: "List",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array",
+                  items: { $ref: "#/components/schemas/Product" },
+                },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Product" },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/Product" },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  components: {
+    schemas: {
+      Product: {
+        type: "object",
+        required: ["price"],
+        properties: {
+          productId: { type: "integer" },
+          price: { type: "number", multipleOf: 0.01 },
+        },
+      },
+    },
+  },
+};
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -1019,6 +1075,40 @@ describeFeature(feature, ({ Scenario }) => {
           });
         },
       );
+    },
+  );
+  Scenario(
+    "An exact decimal amount satisfies a fractional multipleOf",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a mock validating requests and responses for products priced in whole cents",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: centPricedProductsSpec,
+              validateRequests: true,
+              validateResponses: true,
+            }),
+          );
+        },
+      );
+
+      // 19.99 / 0.01 is 1998.9999999999998 in floating point.
+      When("I create a product priced 19.99", async () => {
+        response = await mock.handle("POST", "/products", {
+          headers: { "content-type": "application/json" },
+          body: { price: 19.99 },
+        });
+      });
+
+      Then("the response status is 201", () => {
+        expect(response.status).toBe(201);
+      });
+
+      And("the created product is priced 19.99", () => {
+        expect(response.body).toMatchObject({ price: 19.99 });
+      });
     },
   );
 });
