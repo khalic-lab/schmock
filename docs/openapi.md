@@ -683,6 +683,8 @@ case-sensitive. `dynamic` may be written bare or as `dynamic=true` (any case).
 
 Precedence is `code`, then `example`, then `dynamic`. An unknown status or
 example name falls through to the next directive, or to the normal response.
+A `code` outside 200–599 (`code=0`, `code=101`, `code=999`) is ignored the same
+way, even on an operation that declares a `default` response.
 
 ## Security Validation
 
