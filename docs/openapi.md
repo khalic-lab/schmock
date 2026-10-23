@@ -419,10 +419,21 @@ When the create operation declares a response schema, the created body is
 The **resource** that is returned is the resource that is stored, so read, list
 and update stay consistent with create. When the create response wraps the
 resource in an envelope (for example `{ data: <Resource> }`), the bare resource
-is what gets stored — so `GET /widgets/{id}` replays a resource — and only the
-returned body is wrapped in the declared envelope. When the operation declares no
-response schema (or a non-object one), create falls back to echoing the request
-body and stamping the id.
+is what gets stored, and only the returned body is wrapped in the declared
+envelope. Read, update and delete follow their own response contracts the same
+way: when `GET`, `PUT`, `PATCH` or `DELETE /widgets/{id}` declares
+`{ data: <Resource> }`, the stored row is answered inside that envelope, and
+when it declares the resource itself, the row is answered bare. The envelope's
+other properties are generated. When the operation declares no response schema
+(or a non-object one), create falls back to echoing the request body and
+stamping the id.
+
+A `DELETE` usually answers with the deleted row. When its response declares a
+confirmation object that the row does not satisfy, such as Stripe's
+`{ id, object, deleted: true }` with `deleted` required, the body is generated
+from that contract and every property it shares with the row (`id`, `object`)
+takes the row's value. A contract the row already satisfies, the resource schema
+included, still replays the row.
 
 When the create response declares several media types, the contract is chosen by
 negotiating the request's `Accept` header against them, falling back to the first
@@ -1218,11 +1229,14 @@ On CRUD routes the callback fires exactly where a body is generated:
 | Create response contract | yes |
 | List wrapper skeleton | yes |
 | CRUD error bodies (404/400/409) | yes |
-| Read / update / delete success bodies | **no** |
+| Read / update / delete envelope around the stored row | yes |
+| Delete confirmation object (see [Created bodies](#created-bodies-satisfy-the-declared-contract)) | yes |
+| Read / update / delete success bodies that are the row itself | **no** |
 
 Read, update and delete replay items from stored state instead of generating
-them, so nothing is passed to the callback on their success path — they only
-reach it when they answer 404.
+them, so a success body that is the row itself is never passed to the callback.
+The callback sees their envelope contract when they declare one, a delete's
+confirmation contract when it is generated, and their 404 error contract.
 
 **Use cases:**
 - Fill gaps in incomplete specs

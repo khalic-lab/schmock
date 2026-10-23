@@ -815,8 +815,9 @@ export interface CrudGenerationHooks extends GenerationHooks {
  * Fires only where a body is actually generated: the create response contract,
  * the list wrapper skeleton (or a list's declared object body when it carries
  * no array), and CRUD error bodies. Read/update/delete replay stored state, so
- * they only reach it on their 404 path — or, for a lookup-only read with no
- * stored scope, through the static generator it falls back to.
+ * they only reach it for an envelope around the row, a delete confirmation
+ * object, and their 404 path — or, for a lookup-only read with no stored
+ * scope, through the static generator it falls back to.
  */
 function applyOnSchema(
   schema: JSONSchema7 | undefined,
@@ -1142,6 +1143,136 @@ function findResourceWrapper(
 }
 
 /**
+ * The envelope property an operation's response wraps the resource in, if any.
+ *
+ * Only trusted when a resolved item schema exists to store; without one
+ * (incomplete specs) the response schema is treated as the item, so nothing
+ * that worked before is re-shaped.
+ */
+function resourceWrapperProperty(
+  resource: CrudResource,
+  responseSchema: JSONSchema7 | undefined,
+): string | undefined {
+  if (!resource.schema) return undefined;
+  return findResourceWrapper(responseSchema, resource.idProperty).property;
+}
+
+/**
+ * Put a resource into the wrapper slot of an envelope generated from the rest
+ * of the contract. The envelope keeps its declared key order, as a list
+ * envelope does.
+ */
+async function wrapInEnvelope(
+  item: unknown,
+  envelope: JSONSchema7,
+  property: string,
+  seed?: number,
+): Promise<Record<string, unknown>> {
+  const shell = await generateContractBase(
+    withoutPath(envelope, [property]),
+    seed,
+  );
+  return injectAtPath(shell, envelope, [property], item);
+}
+
+/**
+ * The body a read, update or delete answers with for a stored row.
+ *
+ * The row is replayed as stored. When the operation's own response contract
+ * wraps the resource in an envelope (`{ data: <Resource> }`), the row goes into
+ * the wrapper slot, the way create wraps a new row: the stored row stays bare
+ * and only the response carries the envelope. `onSchema` sees that envelope
+ * contract, since its shell is generated.
+ */
+async function replayRow(
+  row: unknown,
+  declared: JSONSchema7 | undefined,
+  resource: CrudResource,
+  hooks: CrudGenerationHooks | undefined,
+  ctx: Schmock.RequestContext,
+): Promise<unknown> {
+  if (!declared || !resourceWrapperProperty(resource, declared)) return row;
+  const contract = applyOnSchema(declared, hooks, ctx) ?? declared;
+  const property = resourceWrapperProperty(resource, contract);
+  if (!property) return row;
+  return wrapInEnvelope(row, contract, property, hooks?.fakerSeed);
+}
+
+/**
+ * Every name a schema lists in `required`, following `allOf` branches the way
+ * {@link collectSchemaProperties} follows their properties.
+ */
+function requiredProperties(schema: JSONSchema7): Set<string> {
+  const out = new Set<string>();
+  const visit = (node: JSONSchema7): void => {
+    if (Array.isArray(node.required)) {
+      for (const name of node.required) out.add(name);
+    }
+    if (Array.isArray(node.allOf)) {
+      for (const branch of node.allOf) {
+        if (isRecord(branch)) visit(toJsonSchema(branch));
+      }
+    }
+  };
+  visit(schema);
+  return out;
+}
+
+/**
+ * Whether a stored row already has the top-level shape an object contract
+ * declares: every required property, and no undeclared one when the contract
+ * is closed. A contract that is not object-shaped generates nothing, so it is
+ * treated as describing the row.
+ */
+function describesRow(
+  contract: JSONSchema7,
+  row: Record<string, unknown>,
+): boolean {
+  if (!isObjectShaped(contract)) return true;
+  for (const name of requiredProperties(contract)) {
+    if (!Object.hasOwn(row, name)) return false;
+  }
+  if (contract.additionalProperties === false) {
+    const declared = collectSchemaProperties(contract);
+    for (const key of Object.keys(row)) {
+      if (!Object.hasOwn(declared, key)) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * The body a delete answers with.
+ *
+ * Usually the deleted row, replayed (or wrapped, see {@link replayRow}). A
+ * DELETE can instead declare a confirmation object such as Stripe's
+ * `{ id, object, deleted: true }`, which the row does not satisfy. That body
+ * is generated from the contract, with every property it shares with the row
+ * taken from the row, as create overlays the request onto a generated base.
+ * When nothing can be generated, the row is replayed as before.
+ */
+async function deleteBody(
+  row: unknown,
+  declared: JSONSchema7 | undefined,
+  resource: CrudResource,
+  hooks: CrudGenerationHooks | undefined,
+  ctx: Schmock.RequestContext,
+): Promise<unknown> {
+  if (!declared || resourceWrapperProperty(resource, declared)) {
+    return replayRow(row, declared, resource, hooks, ctx);
+  }
+  if (!isRecord(row) || describesRow(declared, row)) return row;
+
+  const contract = applyOnSchema(declared, hooks, ctx) ?? declared;
+  const body = await generateContractBase(contract, hooks?.fakerSeed);
+  if (Object.keys(body).length === 0) return row;
+  for (const property of Object.keys(collectSchemaProperties(contract))) {
+    if (Object.hasOwn(row, property)) defineOwn(body, property, row[property]);
+  }
+  return body;
+}
+
+/**
  * Copy of `schema` with the property at `path` removed from `properties` and
  * `required` — through `allOf`/`anyOf`/`oneOf` branches and into a nested
  * envelope level. Used to generate an envelope's outer shell without
@@ -1211,13 +1342,8 @@ export function createCreateGenerator(
     const counterKey = counterStateKey(resource.basePath, ctx.params);
 
     const responseSchema = metaSchema(meta, ctx.headers, headers);
-    // Only trust an envelope when a resolved item schema exists to store;
-    // without one (incomplete specs) keep treating the response schema as the
-    // item so nothing regresses.
-    const wrapper = resource.schema
-      ? findResourceWrapper(responseSchema, resource.idProperty)
-      : {};
-    const itemSchema = wrapper.property ? resource.schema : responseSchema;
+    const wrapperProperty = resourceWrapperProperty(resource, responseSchema);
+    const itemSchema = wrapperProperty ? resource.schema : responseSchema;
     const effective = applyOnSchema(itemSchema, hooks, ctx);
     const item: Record<string, unknown> = await generateContractBase(
       effective,
@@ -1256,15 +1382,15 @@ export function createCreateGenerator(
     // The stored object is always the bare resource. Wrap it for the response
     // only when the contract declares an envelope, injecting the real item into
     // the wrapper slot the way the list generator injects the collection.
-    let body: unknown = item;
-    if (wrapper.property && responseSchema) {
-      const shell = await generateContractBase(
-        withoutPath(responseSchema, [wrapper.property]),
-        hooks?.fakerSeed,
-      );
-      defineOwn(shell, wrapper.property, item);
-      body = shell;
-    }
+    const body =
+      wrapperProperty && responseSchema
+        ? await wrapInEnvelope(
+            item,
+            responseSchema,
+            wrapperProperty,
+            hooks?.fakerSeed,
+          )
+        : item;
     return buildResponse({
       status: responseStatus,
       body,
@@ -1329,7 +1455,13 @@ export function createReadGenerator(
 
     return buildResponse({
       status: responseStatus,
-      body: item,
+      body: await replayRow(
+        item,
+        metaSchema(meta, ctx.headers, headers),
+        resource,
+        hooks,
+        ctx,
+      ),
       headers,
     });
   };
@@ -1375,10 +1507,8 @@ export function createUpdateGenerator(
       return await generateErrorResponse(404, meta, hooks, ctx);
     }
 
-    const modes = accessModesFor(
-      resource,
-      metaSchema(meta, ctx.headers, headers),
-    );
+    const responseSchema = metaSchema(meta, ctx.headers, headers);
+    const modes = accessModesFor(resource, responseSchema);
     const updates = isRecord(ctx.body)
       ? Object.fromEntries(
           Object.entries(ctx.body).filter(
@@ -1417,7 +1547,7 @@ export function createUpdateGenerator(
     });
     return buildResponse({
       status: responseStatus,
-      body: updated,
+      body: await replayRow(updated, responseSchema, resource, hooks, ctx),
       headers,
     });
   };
@@ -1452,7 +1582,13 @@ export function createDeleteGenerator(
     });
     return buildResponse({
       status: responseStatus,
-      body: deleted,
+      body: await deleteBody(
+        deleted,
+        metaSchema(meta, ctx.headers, headers),
+        resource,
+        hooks,
+        ctx,
+      ),
       headers,
     });
   };
@@ -1604,8 +1740,9 @@ function countNodes(value: unknown, budget: number): number {
  * Generate an error response using the spec's error schema if available,
  * or fall back to the default { error, code } format.
  *
- * This is the one place read/update/delete reach `onSchema`: their success
- * bodies are replayed from state rather than generated.
+ * Read/update/delete also reach `onSchema` here: their success bodies are
+ * replayed from state, and only an envelope or a delete confirmation around
+ * the row is generated.
  */
 async function generateErrorResponse(
   status: number,
