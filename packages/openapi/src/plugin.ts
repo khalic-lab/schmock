@@ -265,7 +265,13 @@ export async function openapi(
       // committed state.
       settlePendingMutations(context, response);
 
-      if (options.callbacks) {
+      // A callback reports something that happened. A 404 or 409 did not
+      // happen, so it fires none, while a Prefer-simulated status is the
+      // simulation the client asked for and fires with the simulated body.
+      if (
+        options.callbacks &&
+        (result.applied || getResponseStatus(response) < 400)
+      ) {
         const callbacks = getRouteCallbacks(context.route);
         if (callbacks && callbacks.length > 0) {
           await dispatchCallbacks(

@@ -1091,6 +1091,12 @@ The dispatcher runs only after request and response validation succeed. The
 application therefore controls whether delivery uses an in-memory queue, a
 test spy, or an explicitly secured network client.
 
+Callbacks report something that happened, so a response with a status of 400 or
+above dispatches none: a CRUD `PATCH` or `DELETE` of a missing item (404) fires
+nothing. The exception is a status a `Prefer` directive simulated, such as
+`Prefer: code=404`: the client asked for that simulation, so its callbacks
+fire with the simulated body.
+
 Callback runtime expressions support RFC 6901 JSON Pointers, including array
 indices and escaped `~0`/`~1` tokens, for request and response bodies.
 

@@ -98,3 +98,9 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     When I create a pet named "rex"
     Then the dispatcher received the pet named "rex"
     And the pets list holds the pet named "rex" unedited
+
+  Scenario: A PATCH of a missing item dispatches no callback
+    Given a pets mock whose PATCH has a callback, with a recording dispatcher
+    When I patch pet 9, which does not exist
+    Then the patch response status is 404
+    And no callback was dispatched

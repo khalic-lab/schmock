@@ -213,6 +213,106 @@ describe("dispatchCallbacks", () => {
     });
   });
 
+  describe("error responses", () => {
+    const pet = {
+      type: "object",
+      properties: { id: { type: "integer" }, name: { type: "string" } },
+    };
+    const json = (schema: Record<string, unknown>) => ({
+      "application/json": { schema },
+    });
+    const hook = {
+      updated: {
+        "https://hooks.example/updated": {
+          post: { responses: { "200": { description: "ok" } } },
+        },
+      },
+    };
+    const itemSpec = {
+      openapi: "3.0.3",
+      info: { title: "callbacks", version: "1.0.0" },
+      paths: {
+        "/pets": {
+          get: {
+            responses: {
+              "200": {
+                description: "list",
+                content: json({ type: "array", items: pet }),
+              },
+            },
+          },
+          post: {
+            responses: { "201": { description: "c", content: json(pet) } },
+          },
+        },
+        "/pets/{petId}": {
+          patch: {
+            responses: {
+              "200": { description: "p", content: json(pet) },
+              "404": {
+                description: "missing",
+                content: json({
+                  type: "object",
+                  properties: { message: { type: "string" } },
+                }),
+              },
+            },
+            callbacks: hook,
+          },
+          delete: {
+            responses: { "204": { description: "gone" } },
+            callbacks: hook,
+          },
+        },
+      },
+    };
+
+    async function mockWithDispatcher() {
+      const urls: string[] = [];
+      const mock = schmock({ state: {} });
+      mock.pipe(
+        await openapi({
+          spec: itemSpec,
+          callbacks: {
+            dispatch: (request) => {
+              urls.push(request.url);
+            },
+          },
+        }),
+      );
+      return { mock, urls };
+    }
+
+    it("dispatches nothing for a CRUD 404", async () => {
+      const { mock, urls } = await mockWithDispatcher();
+
+      const patched = await mock.handle("PATCH", "/pets/9", {
+        body: { name: "x" },
+      });
+      const deleted = await mock.handle("DELETE", "/pets/9");
+      expect([patched.status, deleted.status]).toEqual([404, 404]);
+      expect(urls).toEqual([]);
+    });
+
+    it("still dispatches for a success and for a Prefer-simulated error", async () => {
+      const { mock, urls } = await mockWithDispatcher();
+      await mock.handle("POST", "/pets", { body: { name: "rex" } });
+
+      const patched = await mock.handle("PATCH", "/pets/1", {
+        body: { name: "max" },
+      });
+      expect(patched.status).toBe(200);
+      expect(urls).toEqual(["https://hooks.example/updated"]);
+
+      const simulated = await mock.handle("PATCH", "/pets/1", {
+        body: { name: "max" },
+        headers: { prefer: "code=404" },
+      });
+      expect(simulated.status).toBe(404);
+      expect(urls).toHaveLength(2);
+    });
+  });
+
   describe("fallback payload ownership", () => {
     const pet = {
       type: "object",

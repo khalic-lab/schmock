@@ -455,6 +455,34 @@ const petCallbackSpec = spec({
   },
 });
 
+const patchCallbackSpec = spec({
+  "/pets": {
+    get: {
+      responses: {
+        "200": {
+          description: "list",
+          content: json({ type: "array", items: pet }),
+        },
+      },
+    },
+    post: {
+      responses: { "201": { description: "created", content: json(pet) } },
+    },
+  },
+  "/pets/{petId}": {
+    patch: {
+      responses: { "200": { description: "patched", content: json(pet) } },
+      callbacks: {
+        petUpdated: {
+          "https://hooks.example/updated": {
+            post: { responses: { "200": { description: "ok" } } },
+          },
+        },
+      },
+    },
+  },
+});
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -935,6 +963,43 @@ describeFeature(feature, ({ Scenario }) => {
         expect(response.body).toEqual({ id: 1, name: "rex" });
         const list = await mock.handle("GET", "/pets");
         expect(list.body).toEqual([{ id: 1, name: "rex" }]);
+      });
+    },
+  );
+
+  Scenario(
+    "A PATCH of a missing item dispatches no callback",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a pets mock whose PATCH has a callback, with a recording dispatcher",
+        async () => {
+          dispatched = [];
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: patchCallbackSpec,
+              callbacks: {
+                dispatch: (request) => {
+                  dispatched.push(request);
+                },
+              },
+            }),
+          );
+        },
+      );
+
+      When("I patch pet 9, which does not exist", async () => {
+        response = await mock.handle("PATCH", "/pets/9", {
+          body: { name: "max" },
+        });
+      });
+
+      Then("the patch response status is 404", () => {
+        expect(response.status).toBe(404);
+      });
+
+      And("no callback was dispatched", () => {
+        expect(dispatched).toEqual([]);
       });
     },
   );
