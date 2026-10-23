@@ -1459,7 +1459,8 @@ register them the same way:
   is narrowed), a `not.const` or `not.enum`, or a `not.required` (one optional
   listed property is left out).
 - A `oneOf`, `anyOf` or `if`/`then`/`else` beside `allOf` on the same node is
-  generated together with the `allOf`.
+  generated together with the `allOf`. With a `oneOf`, only required
+  properties are generated, as for any `oneOf`.
 - Union `type` arrays are checked member by member, and
   `type: ['array', 'null']` needs `items` like `type: 'array'`.
 - The json-schema-faker `chance` keyword is not supported. It is rejected with
