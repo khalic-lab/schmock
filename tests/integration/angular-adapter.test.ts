@@ -22,7 +22,7 @@ const { createSchmockInterceptor } = await import(
   "../../packages/angular/src/index"
 );
 const { HttpHeaders, HttpRequest, HttpResponse } = angularHttp;
-const { firstValueFrom, of } = rxjs;
+const { lastValueFrom, of } = rxjs;
 
 const BACKEND_BODY = { source: "real-backend" };
 
@@ -51,7 +51,8 @@ async function intercept(
     handle: () => of(new HttpResponse({ body: BACKEND_BODY, status: 200 })),
   };
 
-  return firstValueFrom(interceptor.intercept(request, next));
+  // A mocked request emits Sent before its response; settle on the response.
+  return lastValueFrom(interceptor.intercept(request, next));
 }
 
 describe("Angular Adapter Integration", () => {
