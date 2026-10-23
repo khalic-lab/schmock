@@ -58,6 +58,35 @@ function oas3WithResponseHeaders(
 }
 
 describe("operation extraction", () => {
+  describe("security schemes the mock cannot simulate", () => {
+    it.each([
+      ["mutualTLS", { type: "mutualTLS" }],
+      ["an unknown type", { type: "magicLink" }],
+      ["no type", { description: "untyped" }],
+    ])("reports a %s scheme it skips", async (_, scheme) => {
+      const spec = await parseSpec({
+        openapi: "3.1.0",
+        info: { title: "secured", version: "1.0.0" },
+        components: {
+          securitySchemes: {
+            clientCert: scheme,
+            bearer: { type: "http", scheme: "bearer" },
+          },
+        },
+        security: [{ clientCert: [] }],
+        paths: {
+          "/ping": { get: { responses: { "200": { description: "OK" } } } },
+        },
+      });
+
+      expect(spec.securitySchemes?.has("clientCert")).toBe(false);
+      expect(spec.securitySchemes?.has("bearer")).toBe(true);
+      expect(spec.warnings).toEqual([
+        `security scheme "clientCert": unsupported type "${"type" in scheme ? scheme.type : "(none)"}", skipped; a requirement naming it is never satisfied`,
+      ]);
+    });
+  });
+
   describe("a declared Content-Type response header", () => {
     it.each([
       ["Content-Type", { type: "string" }],

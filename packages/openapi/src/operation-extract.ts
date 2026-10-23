@@ -618,15 +618,20 @@ export function extractSecuritySchemes(
   if (!rawSchemes) return schemes.size > 0 ? schemes : undefined;
 
   for (const [name, schemeDef] of Object.entries(rawSchemes)) {
-    if (!isRecord(schemeDef)) continue;
-
-    const type = getString(schemeDef.type);
-    if (!type) continue;
-
-    const scheme = toSecurityScheme(type, schemeDef, ctx.dialect);
-    if (scheme) {
-      schemes.set(name, scheme);
+    const type = isRecord(schemeDef) ? getString(schemeDef.type) : undefined;
+    const scheme =
+      type && isRecord(schemeDef)
+        ? toSecurityScheme(type, schemeDef, ctx.dialect)
+        : undefined;
+    if (!scheme) {
+      // A requirement naming a skipped scheme can never be met, so with
+      // `security: true` it answers 401 to every request: say why.
+      ctx.warnings.push(
+        `security scheme "${name}": unsupported type "${type ?? "(none)"}", skipped; a requirement naming it is never satisfied`,
+      );
+      continue;
     }
+    schemes.set(name, scheme);
   }
 
   return schemes.size > 0 ? schemes : undefined;

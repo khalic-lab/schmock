@@ -26,3 +26,8 @@ Feature: Reading an operation's contract out of a spec
     When I fetch the report
     Then the report response status is 200
     And the report response content type is the negotiated "application/json"
+
+  Scenario: A security scheme the mock cannot simulate is reported, not dropped silently
+    Given an OpenAPI 3.1 spec whose operations require a mutualTLS scheme
+    When I parse the secured spec
+    Then the parse warnings say the "clientCert" scheme of type "mutualTLS" is skipped

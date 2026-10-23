@@ -1,6 +1,8 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
 import { expect } from "vitest";
+import type { ParsedSpec } from "../parser";
+import { parseSpec } from "../parser";
 import { openapi } from "../plugin";
 
 const feature = await loadFeature(
@@ -68,9 +70,20 @@ const freeContentTypeHeaderSpec = {
   },
 };
 
+const mutualTlsSpec = {
+  openapi: "3.1.0",
+  info: { title: "secured", version: "1.0.0" },
+  components: { securitySchemes: { clientCert: { type: "mutualTLS" } } },
+  security: [{ clientCert: [] }],
+  paths: {
+    "/ping": { get: { responses: { "200": { description: "OK" } } } },
+  },
+};
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
+  let parsed: ParsedSpec;
 
   Scenario(
     "A Swagger 2.0 file download answers with a binary body",
@@ -149,6 +162,29 @@ describeFeature(feature, ({ Scenario }) => {
         "the report response content type is the negotiated {string}",
         (_, type) => {
           expect(response.headers["content-type"]).toBe(type);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A security scheme the mock cannot simulate is reported, not dropped silently",
+    ({ Given, When, Then }) => {
+      Given(
+        "an OpenAPI 3.1 spec whose operations require a mutualTLS scheme",
+        () => {},
+      );
+
+      When("I parse the secured spec", async () => {
+        parsed = await parseSpec(mutualTlsSpec);
+      });
+
+      Then(
+        "the parse warnings say the {string} scheme of type {string} is skipped",
+        (_, name, type) => {
+          expect(parsed.warnings).toContain(
+            `security scheme "${name}": unsupported type "${type}", skipped; a requirement naming it is never satisfied`,
+          );
         },
       );
     },
