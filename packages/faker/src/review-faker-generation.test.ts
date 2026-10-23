@@ -287,12 +287,22 @@ describe("review: lone numeric bounds (finding 19)", () => {
   it("leaves bounds json-schema-faker already handles alone", () => {
     for (const schema of [
       { type: "integer", minimum: 5_000, maximum: 6_000 },
-      { type: "integer", minimum: 5_000, multipleOf: 10 },
       { type: "integer", minimum: 500 },
       { type: "integer", maximum: -500 },
     ] satisfies JSONSchema7[]) {
       expect(normalizeSchemaForJsf(schema)).toEqual(schema);
     }
+  });
+
+  // faker-8: json-schema-faker's multipleOf path also starts from
+  // [-1000, 1000], so it needs the partner bound as much as any other.
+  it("closes a lone bound beside multipleOf too", () => {
+    const schema: JSONSchema7 = {
+      type: "integer",
+      minimum: 5_000,
+      multipleOf: 10,
+    };
+    expect(normalizeSchemaForJsf(schema).maximum).toBeGreaterThan(5_000);
   });
 
   it("ignores OpenAPI 3.0 boolean exclusive bounds", () => {
@@ -320,6 +330,126 @@ describe("review: lone numeric bounds (finding 19)", () => {
       expect(Reflect.get(Object(value), "createdAt")).toBeGreaterThanOrEqual(
         1_600_000_000,
       );
+    }
+  });
+});
+
+describe("numeric bounds with multipleOf or both exclusivities (faker-8)", () => {
+  async function numbersFrom(schema: JSONSchema7): Promise<number[]> {
+    const values: number[] = [];
+    for (let seed = 1; seed <= 40; seed += 1) {
+      const value = await generateFromSchema({ schema, seed });
+      expect(typeof value).toBe("number");
+      values.push(Number(value));
+    }
+    return values;
+  }
+
+  /** `value % step` is -0 for a negative multiple, so compare by absolute. */
+  function isMultiple(value: number, step: number): boolean {
+    return Math.abs(value % step) === 0;
+  }
+
+  it("honours a lone bound past the default range beside multipleOf", async () => {
+    for (const value of await numbersFrom({
+      type: "integer",
+      multipleOf: 5,
+      maximum: -5_000,
+    })) {
+      expect(value).toBeLessThanOrEqual(-5_000);
+      expect(isMultiple(value, 5)).toBe(true);
+    }
+    for (const value of await numbersFrom({
+      type: "number",
+      multipleOf: 0.5,
+      exclusiveMaximum: -2_000,
+    })) {
+      expect(value).toBeLessThan(-2_000);
+    }
+    for (const value of await numbersFrom({
+      type: "integer",
+      multipleOf: 3,
+      maximum: -1_000,
+    })) {
+      expect(value).toBeLessThanOrEqual(-1_000);
+    }
+  });
+
+  it("draws a lone minimum beside multipleOf from a range, not one constant", async () => {
+    const values = await numbersFrom({
+      type: "integer",
+      multipleOf: 7,
+      minimum: 5_000,
+    });
+    for (const value of values) {
+      expect(value).toBeGreaterThanOrEqual(5_000);
+      expect(isMultiple(value, 7)).toBe(true);
+    }
+    expect(new Set(values).size).toBeGreaterThan(1);
+  });
+
+  it("keeps a multiple inside the range when the step is wider than the default span", async () => {
+    for (const value of await numbersFrom({
+      type: "integer",
+      multipleOf: 4_000,
+      maximum: -5_000,
+    })) {
+      expect(value).toBeLessThanOrEqual(-5_000);
+      expect(isMultiple(value, 4_000)).toBe(true);
+    }
+  });
+
+  it("keeps only the tighter of an inclusive and an exclusive bound", () => {
+    expect(
+      normalizeSchemaForJsf({
+        type: "integer",
+        minimum: 10,
+        exclusiveMinimum: 0,
+        maximum: 20,
+      }),
+    ).toEqual({ type: "integer", minimum: 10, maximum: 20 });
+    expect(
+      normalizeSchemaForJsf({
+        type: "number",
+        minimum: 0,
+        maximum: 5,
+        exclusiveMaximum: 100,
+      }),
+    ).toEqual({ type: "number", minimum: 0, maximum: 5 });
+    expect(
+      normalizeSchemaForJsf({
+        type: "number",
+        minimum: 10,
+        exclusiveMinimum: 10,
+        maximum: 20,
+      }),
+    ).toEqual({ type: "number", exclusiveMinimum: 10, maximum: 20 });
+  });
+
+  it("generates inside the tighter bound", async () => {
+    for (const value of await numbersFrom({
+      type: "integer",
+      minimum: 10,
+      exclusiveMinimum: 0,
+      maximum: 20,
+    })) {
+      expect(value).toBeGreaterThanOrEqual(10);
+      expect(value).toBeLessThanOrEqual(20);
+    }
+    for (const value of await numbersFrom({
+      type: "number",
+      minimum: 0,
+      maximum: 5,
+      exclusiveMaximum: 100,
+    })) {
+      expect(value).toBeLessThanOrEqual(5);
+    }
+    for (const value of await numbersFrom({
+      type: "integer",
+      minimum: 5_000,
+      exclusiveMinimum: 0,
+    })) {
+      expect(value).toBeGreaterThanOrEqual(5_000);
     }
   });
 });

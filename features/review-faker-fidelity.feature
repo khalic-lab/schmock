@@ -43,3 +43,16 @@ Feature: Faker output honours every keyword of its schema
       | map-with-definitions       |
       | closed-object-with-example |
       | map-with-dependencies      |
+
+  # Review 2026-10-23 faker-8: one finite bound per side reaches json-schema-faker
+  Scenario Outline: Numeric bounds hold beside multipleOf and a second bound on the same side
+    Given the fidelity schema "<case>"
+    When I generate it with 40 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                                     |
+      | multiple-of-lone-maximum                 |
+      | multiple-of-wide-step-lone-maximum       |
+      | inclusive-minimum-tighter-than-exclusive |
+      | inclusive-maximum-tighter-than-exclusive |

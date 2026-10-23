@@ -1435,7 +1435,9 @@ register them the same way:
 - `patternProperties` generate at least one key matching a pattern, and enough
   keys to reach `minProperties` without passing `maxProperties`.
 - A lone `minimum`/`exclusiveMinimum` of 1000 or more, or a lone
-  `maximum`/`exclusiveMaximum` of -1000 or less, generates in range.
+  `maximum`/`exclusiveMaximum` of -1000 or less, generates in range, with or
+  without `multipleOf`. When one side has both an inclusive and an exclusive
+  bound, the tighter one applies.
 - Union `type` arrays are checked member by member, and
   `type: ['array', 'null']` needs `items` like `type: 'array'`.
 - The json-schema-faker `chance` keyword is not supported. It is rejected with

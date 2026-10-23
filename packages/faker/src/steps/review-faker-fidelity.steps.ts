@@ -26,6 +26,11 @@ function text(value: unknown): string {
   return value;
 }
 
+function numeric(value: unknown): number {
+  if (typeof value !== "number") throw new Error(`expected a number: ${value}`);
+  return value;
+}
+
 /** A schema, and what every value generated from it must satisfy. */
 interface FidelityCase {
   schema: JSONSchema7;
@@ -200,6 +205,34 @@ const CASES: Record<string, FidelityCase> = {
     },
     fits: expectNoSchemaKeys,
   },
+  "multiple-of-lone-maximum": {
+    schema: { type: "integer", multipleOf: 5, maximum: -5000 },
+    fits: (value) => {
+      expect(numeric(value)).toBeLessThanOrEqual(-5000);
+      expect(Math.abs(numeric(value) % 5)).toBe(0);
+    },
+  },
+  "multiple-of-wide-step-lone-maximum": {
+    schema: { type: "integer", multipleOf: 4000, maximum: -5000 },
+    fits: (value) => {
+      expect(numeric(value)).toBeLessThanOrEqual(-5000);
+      expect(Math.abs(numeric(value) % 4000)).toBe(0);
+    },
+  },
+  "inclusive-minimum-tighter-than-exclusive": {
+    schema: { type: "integer", minimum: 10, exclusiveMinimum: 0, maximum: 20 },
+    fits: (value) => {
+      expect(numeric(value)).toBeGreaterThanOrEqual(10);
+      expect(numeric(value)).toBeLessThanOrEqual(20);
+    },
+  },
+  "inclusive-maximum-tighter-than-exclusive": {
+    schema: { type: "number", minimum: 0, maximum: 5, exclusiveMaximum: 100 },
+    fits: (value) => {
+      expect(numeric(value)).toBeGreaterThanOrEqual(0);
+      expect(numeric(value)).toBeLessThanOrEqual(5);
+    },
+  },
 };
 
 function fidelityCase(name: string): FidelityCase {
@@ -213,6 +246,7 @@ const OUTLINES = [
   "A composed node is generated from its composition",
   "An untyped node keeps the shape and bounds its keywords declare",
   "An object without properties never echoes schema keywords into the body",
+  "Numeric bounds hold beside multipleOf and a second bound on the same side",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {

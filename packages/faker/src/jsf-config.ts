@@ -427,7 +427,7 @@ function normalizeSchemaNodeForJsf(
       normalized[key] = value;
     }
   }
-  closeLoneNumericBound(schema, normalized);
+  normalizeNumericBounds(normalized);
 
   // Bespoke pre-step: a Draft-7 tuple's list becomes `prefixItems`, and its
   // `additionalItems` becomes `items` (`true` when absent or malformed).
@@ -510,29 +510,63 @@ function numericBound(
 }
 
 /**
- * Give a lone bound past json-schema-faker's default range a finite partner, so
- * the range it draws from is not inverted. Only the JSF copy changes; schemas
- * with `multipleOf` take a separate JSF path that already honours the bound.
+ * json-schema-faker lets an exclusive bound replace the inclusive one on the
+ * same side even when it is looser (`minimum: 10, exclusiveMinimum: 0` draws
+ * from above 0). Keep only the tighter of a numeric pair in the JSF copy; an
+ * exclusive bound wins a tie.
  */
-function closeLoneNumericBound(
-  schema: JSONSchema7,
+function keepTighterBound(
   normalized: JsfObjectSchema,
+  inclusiveKey: "minimum" | "maximum",
+  exclusiveKey: "exclusiveMinimum" | "exclusiveMaximum",
 ): void {
-  if (schema.multipleOf !== undefined) return;
-  const lower = numericBound(schema.minimum, schema.exclusiveMinimum, Math.max);
-  const upper = numericBound(schema.maximum, schema.exclusiveMaximum, Math.min);
+  const inclusive = normalized[inclusiveKey];
+  const exclusive = normalized[exclusiveKey];
+  if (typeof inclusive !== "number" || typeof exclusive !== "number") return;
+  const exclusiveIsTighter =
+    inclusiveKey === "minimum"
+      ? exclusive >= inclusive
+      : exclusive <= inclusive;
+  delete normalized[exclusiveIsTighter ? inclusiveKey : exclusiveKey];
+}
+
+/**
+ * Hand json-schema-faker one bound per side, and a finite partner for a lone
+ * bound past its default range so the range it draws from is not inverted.
+ * The `multipleOf` path starts from the same default range, so it needs the
+ * partner too; there the partner sits at least two steps away, so a multiple
+ * always lies between the bounds. Only the JSF copy changes.
+ */
+function normalizeNumericBounds(normalized: JsfObjectSchema): void {
+  keepTighterBound(normalized, "minimum", "exclusiveMinimum");
+  keepTighterBound(normalized, "maximum", "exclusiveMaximum");
+  const lower = numericBound(
+    normalized.minimum,
+    normalized.exclusiveMinimum,
+    Math.max,
+  );
+  const upper = numericBound(
+    normalized.maximum,
+    normalized.exclusiveMaximum,
+    Math.min,
+  );
+  const step = normalized.multipleOf;
+  const span =
+    typeof step === "number" && step > 0
+      ? Math.max(JSF_DEFAULT_NUMBER_BOUND, 2 * step)
+      : JSF_DEFAULT_NUMBER_BOUND;
   if (
     lower !== undefined &&
     upper === undefined &&
     lower >= JSF_DEFAULT_NUMBER_BOUND
   ) {
-    normalized.maximum = lower + JSF_DEFAULT_NUMBER_BOUND;
+    normalized.maximum = lower + span;
   } else if (
     upper !== undefined &&
     lower === undefined &&
     upper <= -JSF_DEFAULT_NUMBER_BOUND
   ) {
-    normalized.minimum = upper - JSF_DEFAULT_NUMBER_BOUND;
+    normalized.minimum = upper - span;
   }
 }
 
