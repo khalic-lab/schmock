@@ -1,0 +1,6 @@
+{
+  "name": "@schmock/core-adapter-compat",
+  "private": true,
+  "main": "../dist/adapter.js",
+  "types": "../dist/adapter.d.ts"
+}

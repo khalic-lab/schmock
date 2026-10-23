@@ -7,7 +7,10 @@
  * in `packages/<name>/src` reads `package.json`. This script pins the
  * invariants that only show up in a published tarball:
  *
- *   - every package ships `files: ["dist"]` (no `src`, no tests, no fixtures)
+ *   - every package ships `files: ["dist"]` (no `src`, no tests, no fixtures),
+ *     plus the stub directory of each subpath export
+ *   - every subpath export has that stub, so it resolves under TypeScript's
+ *     legacy `moduleResolution: "node"`
  *   - every package pins `publishConfig` at the public registry, so a machine
  *     whose `~/.npmrc` names a private one cannot redirect a release
  *   - every package carries a LICENSE copy identical to the root one, so the
@@ -31,15 +34,21 @@ const EXPECTED_FILES = ["dist"];
 const PUBLIC_REGISTRY = "https://registry.npmjs.org/";
 
 /**
- * Packages allowed to ship something besides `dist`, and what.
+ * Packages allowed to ship something besides `dist`, and what: the stub
+ * directory of each subpath export.
  *
- * `@schmock/openapi/browser` is an explicit way to reach the browser build for
- * a bundler that ignores export conditions. TypeScript's legacy
- * `moduleResolution: "node"` predates `exports` and resolves a subpath by
- * looking for a directory, so the subpath needs a real `browser/` directory to
- * point at or `attw` reports it unresolvable. Nothing imports it at runtime.
+ * TypeScript's legacy `moduleResolution: "node"` predates `exports` and
+ * resolves a subpath such as `@schmock/core/adapter` by looking for a
+ * directory, so every subpath needs a real directory with a `package.json` to
+ * point at or `attw` reports it unresolvable (see `checkSubpathStubs`). Nothing
+ * imports them at runtime. `@schmock/openapi/browser` is also an explicit way
+ * to reach the browser build for a bundler that ignores export conditions.
  */
-const EXTRA_FILES = new Map([["@schmock/openapi", ["browser"]]]);
+const EXTRA_FILES = new Map([
+  ["@schmock/core", ["adapter"]],
+  ["@schmock/openapi", ["browser"]],
+  ["@schmock/react", ["testing"]],
+]);
 
 /** Node-only packages and their effective transitive runtime floors. */
 const NODE_ENGINES = new Map([
@@ -67,6 +76,60 @@ function checkRootLicense() {
 function readRootLicense() {
   const path = join(ROOT_DIR, "LICENSE");
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+}
+
+/**
+ * Every subpath export resolves under `moduleResolution: "node"` (node10).
+ *
+ * node10 ignores `exports` and reads `<package>/<subpath>/package.json`
+ * instead, so each subpath ships that stub: private, listed in `files`, with a
+ * `types` and a `main` naming the files the subpath's `types` and `import`
+ * conditions name. `@schmock/react/testing` and `@schmock/core/adapter` once
+ * shipped without one, and the release gate's attw run reported nothing
+ * because its profile skipped node10.
+ */
+function checkSubpathStubs(directory, scope, manifest) {
+  const packageDir = join(ROOT_DIR, "packages", directory);
+  for (const [subpath, target] of Object.entries(manifest.exports ?? {})) {
+    if (subpath === "." || subpath === "./package.json") continue;
+    const stubName = subpath.replace(/^\.\//, "");
+    const conditions = typeof target === "string" ? { import: target } : target;
+    if (typeof conditions !== "object" || conditions === null) continue;
+
+    if (!Array.isArray(manifest.files) || !manifest.files.includes(stubName)) {
+      fail(scope, `exports["${subpath}"] needs "${stubName}" in files`);
+    }
+    const stubPath = join(packageDir, stubName, "package.json");
+    if (!existsSync(stubPath)) {
+      fail(
+        scope,
+        `exports["${subpath}"] has no ${stubName}/package.json, so it does not resolve under moduleResolution "node"`,
+      );
+      continue;
+    }
+
+    const stub = readJson(stubPath);
+    if (stub.private !== true) {
+      fail(scope, `${stubName}/package.json must be private`);
+    }
+    for (const [field, condition] of [
+      ["types", "types"],
+      ["main", "import"],
+    ]) {
+      const expected = conditions[condition];
+      if (typeof expected !== "string") continue;
+      const actual = stub[field];
+      if (
+        typeof actual !== "string" ||
+        resolve(packageDir, stubName, actual) !== resolve(packageDir, expected)
+      ) {
+        fail(
+          scope,
+          `${stubName}/package.json "${field}" must point at ${expected}, as exports["${subpath}"].${condition} does`,
+        );
+      }
+    }
+  }
 }
 
 function checkPackage(directory) {
@@ -130,6 +193,8 @@ function checkPackage(directory) {
       );
     }
   }
+
+  checkSubpathStubs(directory, scope, manifest);
 
   // A machine-level `~/.npmrc` can set `registry=` to a corporate mirror, and
   // npm honours it for `publish` and for the `npm view` call the release script

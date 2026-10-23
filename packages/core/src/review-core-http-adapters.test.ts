@@ -154,6 +154,34 @@ describe("workspace packaging", () => {
     },
   );
 
+  it.each(packageDirs)(
+    "@schmock/%s resolves every subpath export under moduleResolution node",
+    (dir) => {
+      const packageDir = join(packagesDir, dir);
+      const manifest = readJson(join(packageDir, "package.json"));
+      if (!isRecord(manifest) || !isRecord(manifest.exports)) return;
+      for (const [subpath, target] of Object.entries(manifest.exports)) {
+        if (subpath === "." || subpath === "./package.json") continue;
+        if (!isRecord(target)) continue;
+        // node10 ignores `exports` and reads <package>/<subpath>/package.json.
+        const stubName = subpath.replace(/^\.\//, "");
+        const stubPath = join(packageDir, stubName, "package.json");
+        expect(existsSync(stubPath), `${subpath} has no stub`).toBe(true);
+        const stub = readJson(stubPath);
+        if (!isRecord(stub)) throw new Error(`${stubPath} is not an object`);
+
+        expect(manifest.files, subpath).toContain(stubName);
+        expect(stub.private, subpath).toBe(true);
+        expect(resolve(packageDir, stubName, String(stub.types))).toBe(
+          resolve(packageDir, String(target.types)),
+        );
+        expect(resolve(packageDir, stubName, String(stub.main))).toBe(
+          resolve(packageDir, String(target.import)),
+        );
+      }
+    },
+  );
+
   it.each(packageDirs)("@schmock/%s ships no declaration maps", (dir) => {
     const tsconfig = readJson(join(packagesDir, dir, "tsconfig.json"));
     if (!isRecord(tsconfig) || !isRecord(tsconfig.compilerOptions)) return;

@@ -1,0 +1,6 @@
+{
+  "name": "@schmock/react-testing-compat",
+  "private": true,
+  "main": "../dist/testing.js",
+  "types": "../dist/testing.d.ts"
+}

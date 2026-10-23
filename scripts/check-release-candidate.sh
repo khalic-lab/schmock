@@ -182,17 +182,19 @@ for ((index = 0; index < TOTAL; index += 1)); do
   # spec fixtures and test-only helpers must stay out whatever they are named,
   # so a newly emitted or renamed test artefact cannot slip past.
   #
-  # `browser/` is named file by file for the same reason. It holds no code —
-  # only a stub manifest pointing back into `dist/`, so that
-  # `@schmock/openapi/browser` resolves under TypeScript's pre-`exports`
-  # `moduleResolution: "node"` — and listing the directory alone would let
-  # anything else inside it travel too.
+  # The subpath stub directories (`adapter/` in core, `browser/` in openapi,
+  # `testing/` in react) are named file by file for the same reason. They
+  # hold no code — only a stub manifest pointing back into `dist/`, so that
+  # the subpath resolves under TypeScript's pre-`exports`
+  # `moduleResolution: "node"` — and listing a directory alone would let
+  # anything else inside it travel too. scripts/check-manifests.mjs pins
+  # which package ships which.
   declare -a FORBIDDEN_ENTRIES=()
   while IFS= read -r entry; do
     [[ -n "$entry" ]] && FORBIDDEN_ENTRIES+=("$entry")
   done < <(
     tar -tf "$tarball" \
-      | grep -vE '^package/(package\.json|README\.md|LICENSE|dist/|browser/(package\.json|README\.md)$)' \
+      | grep -vE '^package/(package\.json|README\.md|LICENSE|dist/|(adapter|browser|testing)/(package\.json|README\.md)$)' \
       || true
   )
 
@@ -221,10 +223,15 @@ for ((index = 0; index < TOTAL; index += 1)); do
   echo "[publint $step/$TOTAL] ${PACKAGE_NAMES[$index]}"
   "$PUBLINT_BIN" "${TARBALLS[$index]}"
 
+  # The default profile, which includes node10 (`moduleResolution: "node"`),
+  # with the rule every package's own check:publish script ignores: the
+  # packages are ESM-only, so a CommonJS `require` resolving to ESM is
+  # expected. `--profile esm-only` skipped node10 and so hid two subpath
+  # exports that did not resolve there.
   echo "[attw $step/$TOTAL] ${PACKAGE_NAMES[$index]}"
   "$ATTW_BIN" \
     "${TARBALLS[$index]}" \
-    --profile esm-only
+    --ignore-rules cjs-resolves-to-esm
 done
 
 echo "[ranges 1/1] Validating internal dependency ranges"

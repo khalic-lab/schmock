@@ -670,6 +670,13 @@ and with TypeScript 5.6 for Core, verifies React cross-entry context identity,
 and runs browser, CLI, `publint`, and `attw` checks. This is a release gate, not
 a substitute for the ordinary test and lint suite.
 
+A subpath export (`@schmock/core/adapter`, `@schmock/react/testing`) also ships
+a stub directory of the same name holding a private `package.json` whose
+`main` and `types` point into `dist`, listed in `files`. TypeScript's legacy
+`moduleResolution: "node"` ignores `exports` and resolves the subpath through
+that directory. `check:manifests` rejects a subpath without one, and `attw`
+checks node10 resolution on every packed tarball.
+
 ## Git
 
 - **Branch flow**: `feature/*` -> `develop` -> `main`
