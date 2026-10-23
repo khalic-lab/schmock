@@ -71,6 +71,35 @@ function generateBase64(random: Random): string {
   return encoded;
 }
 
+/** Padded base64 comes in blocks of four characters. */
+const BASE64_BLOCK = 4;
+
+/** Blocks `generateBase64` emits at most: 48 bytes. */
+const BASE64_MAX_BLOCKS = 16;
+
+/**
+ * A format generator never sees length bounds: json-schema-faker slices or
+ * pads its output afterwards, which breaks padded base64. For a `byte` node
+ * with bounds, generate whole blocks from a pattern instead, as many as the
+ * bounds allow (at least one, unless only an empty string fits). An
+ * unsatisfiable range (`minLength: 5, maxLength: 7`) or a declared `pattern`
+ * is left as it is. Only the JSF copy changes.
+ */
+function boundByteLength(normalized: JsfObjectSchema): void {
+  const { format, minLength, maxLength } = normalized;
+  if (format !== "byte" || normalized.pattern !== undefined) return;
+  if (minLength === undefined && maxLength === undefined) return;
+  const fewest = Math.ceil((minLength ?? 0) / BASE64_BLOCK);
+  const most =
+    maxLength === undefined
+      ? fewest + BASE64_MAX_BLOCKS
+      : Math.floor(maxLength / BASE64_BLOCK);
+  const least = most > 0 ? Math.max(1, fewest) : fewest;
+  if (least > most) return;
+  normalized.pattern = `^(?:[A-Za-z0-9+/]{${BASE64_BLOCK}}){${least},${most}}$`;
+  delete normalized.format;
+}
+
 /**
  * Formats Schmock generates itself, passed per call so json-schema-faker's
  * module-global registry is never touched.
@@ -658,6 +687,7 @@ function normalizeSchemaNodeForJsf(
     }
   }
   normalizeNumericBounds(normalized);
+  boundByteLength(normalized);
 
   // Bespoke pre-step: a Draft-7 tuple's list becomes `prefixItems`, and its
   // `additionalItems` becomes `items` (`true` when absent or malformed).

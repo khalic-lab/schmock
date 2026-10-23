@@ -94,3 +94,15 @@ Feature: Faker output honours every keyword of its schema
       | all-of-with-sibling-any-of         |
       | defs-base-with-sibling-one-of-refs |
       | all-of-with-sibling-if-then        |
+
+  # Review 2026-10-23 faker-14: a bounded byte string is generated in whole blocks
+  Scenario Outline: A byte string with length bounds is valid padded base64 within them
+    Given the fidelity schema "<case>"
+    When I generate it with 40 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                |
+      | byte-max-length-10  |
+      | byte-min-length-80  |
+      | byte-length-5-to-30 |

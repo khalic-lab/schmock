@@ -742,3 +742,57 @@ describe("composition beside allOf (faker-3)", () => {
     }
   });
 });
+
+/** ajv-formats' `byte` format: padded base64. */
+const BASE64 =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+describe("byte strings with length bounds (faker-14)", () => {
+  async function bytesFrom(bounds: JSONSchema7): Promise<string[]> {
+    const schema: JSONSchema7 = { type: "string", format: "byte", ...bounds };
+    return (await generateSeeds(schema)).map((value) => {
+      if (typeof value !== "string") throw new Error("Expected a string");
+      return value;
+    });
+  }
+
+  it.each([
+    { maxLength: 10 },
+    { minLength: 80 },
+    { minLength: 5, maxLength: 30 },
+    { minLength: 8, maxLength: 8 },
+    { maxLength: 3 },
+  ] satisfies JSONSchema7[])("is valid base64 within %o", async (bounds) => {
+    for (const value of await bytesFrom(bounds)) {
+      expect(value).toMatch(BASE64);
+      expect(value.length).toBeGreaterThanOrEqual(bounds.minLength ?? 0);
+      expect(value.length).toBeLessThanOrEqual(bounds.maxLength ?? 1e9);
+    }
+  });
+
+  it("generates whole base64 blocks through a pattern in the JSF copy", () => {
+    expect(
+      normalizeSchemaForJsf({
+        type: "string",
+        format: "byte",
+        minLength: 5,
+        maxLength: 30,
+      }),
+    ).toEqual({
+      type: "string",
+      minLength: 5,
+      maxLength: 30,
+      pattern: "^(?:[A-Za-z0-9+/]{4}){2,7}$",
+    });
+  });
+
+  it("leaves an unbounded, unsatisfiable or patterned byte node alone", () => {
+    for (const schema of [
+      { type: "string", format: "byte" },
+      { type: "string", format: "byte", minLength: 5, maxLength: 7 },
+      { type: "string", format: "byte", maxLength: 8, pattern: "^QQ==$" },
+    ] satisfies JSONSchema7[]) {
+      expect(normalizeSchemaForJsf(schema)).toEqual(schema);
+    }
+  });
+});

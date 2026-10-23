@@ -56,6 +56,17 @@ function petKind(kind: string): JSONSchema7 {
   return { properties: { kind: { const: kind } }, required: ["kind"] };
 }
 
+/** ajv-formats' `byte` format: padded base64. */
+const BASE64 =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+function expectBase64Within(value: unknown, min: number, max: number): void {
+  const encoded = text(value);
+  expect(encoded).toMatch(BASE64);
+  expect(encoded.length).toBeGreaterThanOrEqual(min);
+  expect(encoded.length).toBeLessThanOrEqual(max);
+}
+
 function expectPet(value: unknown): void {
   const pet = record(value);
   expect(Number.isInteger(pet.id)).toBe(true);
@@ -348,6 +359,18 @@ const CASES: Record<string, FidelityCase> = {
       expect(record(value).tag).toBe("tagged");
     },
   },
+  "byte-max-length-10": {
+    schema: { type: "string", format: "byte", maxLength: 10 },
+    fits: (value) => expectBase64Within(value, 0, 10),
+  },
+  "byte-min-length-80": {
+    schema: { type: "string", format: "byte", minLength: 80 },
+    fits: (value) => expectBase64Within(value, 80, Number.POSITIVE_INFINITY),
+  },
+  "byte-length-5-to-30": {
+    schema: { type: "string", format: "byte", minLength: 5, maxLength: 30 },
+    fits: (value) => expectBase64Within(value, 5, 30),
+  },
   "inclusive-maximum-tighter-than-exclusive": {
     schema: { type: "number", minimum: 0, maximum: 5, exclusiveMaximum: 100 },
     fits: (value) => {
@@ -372,6 +395,7 @@ const OUTLINES = [
   "A not keyword rejects the values it names",
   "A property declared by several merged schemas honours every declaration",
   "Composition beside allOf is generated with it",
+  "A byte string with length bounds is valid padded base64 within them",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {
