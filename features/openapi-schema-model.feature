@@ -68,3 +68,11 @@ Feature: OpenAPI schema model fixes
     Given a 3.1 mock whose status string declares the examples "active" and "idle"
     When I read the status
     Then the status is "active"
+
+  # ── CRUD detection ────────────────────────────────────────────────────────
+
+  Scenario: A resource whose paths end in a slash stores what it creates
+    Given a pets mock whose collection and item paths end in a slash
+    When I create a pet named "Rex" at "/api/pets/"
+    Then reading "/api/pets/1/" returns the pet named "Rex"
+    And listing "/api/pets/" returns only the pet named "Rex"

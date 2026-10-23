@@ -148,6 +148,15 @@ interface BuildResourceResult {
 }
 
 /**
+ * Drop a single trailing slash, the rule core's `normalizePath` matches routes
+ * by. Django REST Framework declares `/api/pets/`, which groups under
+ * `/api/pets`, so comparing the raw path left list and create out.
+ */
+function withoutTrailingSlash(path: string): string {
+  return path.endsWith("/") && path !== "/" ? path.slice(0, -1) : path;
+}
+
+/**
  * Split a path in a group into its trailing `:param` segment, if it has exactly
  * one and the path really sits under `basePath`.
  */
@@ -168,7 +177,7 @@ function buildResource(
   let itemPath = "";
   let idParam = "";
   for (const p of paths) {
-    if (p.path === basePath) continue;
+    if (withoutTrailingSlash(p.path) === basePath) continue;
     const param = itemIdParam(basePath, p.path);
     if (param) {
       idParam = param;
@@ -198,7 +207,8 @@ function buildResource(
   };
 
   for (const p of paths) {
-    if (p.path === basePath) {
+    const path = withoutTrailingSlash(p.path);
+    if (path === basePath) {
       if (p.method === "GET") {
         listSchema = getSuccessResponseSchema(p);
         listFirst = !routes.some((r) => r.op === "read");
@@ -214,7 +224,7 @@ function buildResource(
     // Item paths must use the id param the resource settled on: a CRUD
     // generator only ever reads ctx.params[resource.idParam], so an aliased
     // param (PUT /pets/:id next to GET /pets/:petId) would 404 forever.
-    if (p.path !== itemPath) {
+    if (path !== withoutTrailingSlash(itemPath)) {
       leftovers.push(p);
       continue;
     }

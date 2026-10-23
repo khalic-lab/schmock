@@ -431,4 +431,72 @@ describeFeature(feature, ({ Scenario }) => {
       });
     },
   );
+
+  Scenario(
+    "A resource whose paths end in a slash stores what it creates",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a pets mock whose collection and item paths end in a slash",
+        async () => {
+          const pet = {
+            type: "object",
+            properties: { id: { type: "integer" }, name: { type: "string" } },
+          };
+          await build({
+            spec: specWith({
+              "/api/pets/": {
+                get: {
+                  responses: {
+                    "200": {
+                      description: "OK",
+                      content: json({ type: "array", items: pet }),
+                    },
+                  },
+                },
+                post: {
+                  requestBody: { content: json(pet) },
+                  responses: {
+                    "201": { description: "Created", content: json(pet) },
+                  },
+                },
+              },
+              "/api/pets/{id}/": {
+                parameters: [
+                  {
+                    name: "id",
+                    in: "path",
+                    required: true,
+                    schema: { type: "integer" },
+                  },
+                ],
+                get: {
+                  responses: {
+                    "200": { description: "OK", content: json(pet) },
+                  },
+                },
+              },
+            }),
+          });
+        },
+      );
+
+      When('I create a pet named "Rex" at "/api/pets/"', async () => {
+        response = await mock.handle("POST", "/api/pets/", {
+          body: { name: "Rex" },
+        });
+        expect(response.status).toBe(201);
+      });
+
+      Then('reading "/api/pets/1/" returns the pet named "Rex"', async () => {
+        const read = await mock.handle("GET", "/api/pets/1/");
+        expect(read.status).toBe(200);
+        expect(read.body).toEqual({ id: 1, name: "Rex" });
+      });
+
+      And('listing "/api/pets/" returns only the pet named "Rex"', async () => {
+        const list = await mock.handle("GET", "/api/pets/");
+        expect(list.body).toEqual([{ id: 1, name: "Rex" }]);
+      });
+    },
+  );
 });

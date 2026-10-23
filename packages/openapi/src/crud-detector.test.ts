@@ -1,6 +1,8 @@
+import { schmock } from "@schmock/core";
 import { describe, expect, it } from "vitest";
 import { detectCrudResources } from "./crud-detector";
 import type { ParsedPath } from "./parser";
+import { openapi } from "./plugin";
 
 function makePath(
   method: Schmock.HttpMethod,
@@ -211,6 +213,39 @@ describe("detectCrudResources", () => {
     expect(leftovers).toContain("OPTIONS /pets");
   });
 
+  it("keeps list and create in the resource when paths end in a slash", () => {
+    const paths: ParsedPath[] = [
+      makePath("GET", "/api/pets/"),
+      makePath("POST", "/api/pets/"),
+      makePath("GET", "/api/pets/:id/"),
+      makePath("PUT", "/api/pets/:id/"),
+      makePath("DELETE", "/api/pets/:id"),
+    ];
+
+    const result = detectCrudResources(paths);
+
+    expect(result.nonCrudPaths).toEqual([]);
+    expect(result.resources).toHaveLength(1);
+    const resource = result.resources[0];
+    expect(resource.basePath).toBe("/api/pets");
+    expect(resource.idParam).toBe("id");
+    expect(resource.operations).toEqual([
+      "list",
+      "create",
+      "read",
+      "update",
+      "delete",
+    ]);
+    // Routes still register at the paths the spec declared.
+    expect(resource.routes.map((r) => `${r.method} ${r.path}`)).toEqual([
+      "GET /api/pets/",
+      "POST /api/pets/",
+      "GET /api/pets/:id/",
+      "PUT /api/pets/:id/",
+      "DELETE /api/pets/:id",
+    ]);
+  });
+
   it("an item path with a mismatched id param is returned as non-CRUD", () => {
     const paths: ParsedPath[] = [
       makePath("GET", "/pets"),
@@ -227,6 +262,69 @@ describe("detectCrudResources", () => {
 
     const leftovers = result.nonCrudPaths.map((p) => `${p.method} ${p.path}`);
     expect(leftovers).toContain("PUT /pets/:id");
+  });
+});
+
+describe("trailing-slash specs through the plugin", () => {
+  it("stores, lists and reads rows of a Django REST Framework style resource", async () => {
+    const pet = {
+      type: "object",
+      properties: { id: { type: "integer" }, name: { type: "string" } },
+    };
+    const json = (schema: object) => ({ "application/json": { schema } });
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: {
+          openapi: "3.0.3",
+          info: { title: "DRF", version: "1.0.0" },
+          paths: {
+            "/api/pets/": {
+              get: {
+                responses: {
+                  "200": {
+                    description: "ok",
+                    content: json({ type: "array", items: pet }),
+                  },
+                },
+              },
+              post: {
+                requestBody: { content: json(pet) },
+                responses: { "201": { description: "ok", content: json(pet) } },
+              },
+            },
+            "/api/pets/{id}/": {
+              parameters: [
+                {
+                  name: "id",
+                  in: "path",
+                  required: true,
+                  schema: { type: "integer" },
+                },
+              ],
+              get: {
+                responses: { "200": { description: "ok", content: json(pet) } },
+              },
+            },
+          },
+        },
+        seed: { pets: [{ id: 1, name: "Seeded" }] },
+      }),
+    );
+
+    const created = await mock.handle("POST", "/api/pets/", {
+      body: { name: "Rex" },
+    });
+    expect(created.status).toBe(201);
+    expect(created.body).toEqual({ id: 2, name: "Rex" });
+
+    const list = await mock.handle("GET", "/api/pets/");
+    expect(list.body).toEqual([
+      { id: 1, name: "Seeded" },
+      { id: 2, name: "Rex" },
+    ]);
+    const read = await mock.handle("GET", "/api/pets/2/");
+    expect(read.body).toEqual({ id: 2, name: "Rex" });
   });
 });
 
