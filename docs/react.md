@@ -244,12 +244,12 @@ createRoot(document.getElementById('root')!).render(
 )
 ```
 
-The relay routes every lease of the page's current interception, the
-provider's included, so the provider needs no new prop (a lease taken before
-another library wrapped `fetch` is not routed; see
-[Hazards](./devtools.md#hazards), "A lease behind another `fetch` wrapper"). Mocked requests then show as Network rows with
-Size `(ServiceWorker)`. A relay that cannot start warns once, and the provider
-keeps answering `fetch` in the page. See
+The relay routes every lease of the page's current interception, the provider's
+included, so the provider needs no new prop (a lease taken before another
+library wrapped `fetch` is not routed; see [Hazards](./devtools.md#hazards), "A
+lease behind another `fetch` wrapper"). Mocked requests then show as Network
+rows with Size `(ServiceWorker)`. A relay that cannot start warns once, and the
+provider keeps answering `fetch` in the page. See
 [Network panel relay](./devtools.md#network-panel-relay).
 
 ## Testing

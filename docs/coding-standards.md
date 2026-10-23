@@ -391,11 +391,12 @@ dereferences a spec, `operation-extract.ts` reads one operation's contract out
 of it, and `parser.ts` walks the paths. `list-envelope.ts` reads what an object
 contract declares and which array a list envelope carries,
 `response-headers.ts` generates declared response header values, and
-`crud-ids.ts` finds a CRUD resource's stored rows by id and mints new ids. In `packages/faker/src`,
-`validation.ts` holds the schema walk, the generation limits and the size
-estimate, `ref-index.ts` the local `$ref` index, `faker-allocation.ts` the
-rules for the `faker` keyword, `regex-bounds.ts` the length bounds of a
-`pattern`, and `saturating.ts` `capped`, which keeps estimates finite.
+`crud-ids.ts` finds a CRUD resource's stored rows by id and mints new ids. In
+`packages/faker/src`, `validation.ts` holds the schema walk, the generation
+limits and the size estimate, `ref-index.ts` the local `$ref` index,
+`faker-allocation.ts` the rules for the `faker` keyword, `regex-bounds.ts` the
+length bounds of a `pattern`, and `saturating.ts` `capped`, which keeps
+estimates finite.
 
 ## Patterns
 

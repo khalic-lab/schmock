@@ -1075,12 +1075,12 @@ getHeader(headers: Readonly<Record<string, string>> | undefined, name: string): 
 
 `SENSITIVE_HEADER_NAMES` holds the seven credential headers, in lowercase:
 `authorization`, `proxy-authorization`, `cookie`, `set-cookie`, `x-api-key`,
-`x-auth-token` and `x-schmock-admin-token`. Debug logs, the CLI's admin
-history and `devtoolsPlugin`'s console groups mask this set. `redactHeaders()` replaces their values with
-`"[redacted]"`, matching names case-insensitively. It is copy-on-write: the
-input is never mutated, and when nothing is sensitive the same object comes
-back. `getHeader()` looks a header up case-insensitively and returns the first
-match, or `undefined`.
+`x-auth-token` and `x-schmock-admin-token`. Debug logs, the CLI's admin history
+and `devtoolsPlugin`'s console groups mask this set. `redactHeaders()` replaces
+their values with `"[redacted]"`, matching names case-insensitively. It is
+copy-on-write: the input is never mutated, and when nothing is sensitive the
+same object comes back. `getHeader()` looks a header up case-insensitively and
+returns the first match, or `undefined`.
 
 ```typescript
 import { getHeader, redactHeaders } from '@schmock/core'
@@ -2466,12 +2466,12 @@ Parse CLI arguments.
 function parseCliArgs(args: string[]): CliOptions & { help: boolean }
 ```
 
-A flag value the CLI refuses (a blank spec path included, whether passed
-as `--spec` or by position, which reports `flag: '--spec'`), a second
-positional argument, and `--admin-token` without `--admin` throw
-`SchmockError` with code `INVALID_CONFIG` and context `{ flag, value }`. `--admin-token` errors carry
-`{ flag }` only, and the extra-positional error carries `{ flag: '<spec>' }`.
-An unknown flag throws Node's own `parseArgs` error.
+A flag value the CLI refuses (a blank spec path included, whether passed as
+`--spec` or by position, which reports `flag: '--spec'`), a second positional
+argument, and `--admin-token` without `--admin` throw `SchmockError` with code
+`INVALID_CONFIG` and context `{ flag, value }`. `--admin-token` errors carry
+`{ flag }` only, and the extra-positional error carries `{ flag: '<spec>' }`. An
+unknown flag throws Node's own `parseArgs` error.
 
 ### `run(args)`
 
