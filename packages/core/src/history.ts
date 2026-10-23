@@ -1,5 +1,6 @@
 import { canonicalizePath, normalizePath } from "./constants.js";
 import { SchmockError } from "./errors.js";
+import { normalizedBodyText } from "./response-normalizer.js";
 import { snapshotNormalizedBody, snapshotValue } from "./snapshot.js";
 
 /**
@@ -21,7 +22,42 @@ function assertValidHistoryLimit(limit: number | undefined): void {
   }
 }
 
-function cloneRecord(r: Schmock.RequestRecord): Schmock.RequestRecord {
+/**
+ * A response body as history keeps it: the validated JSON text a normalized
+ * object or array body was parsed from, or a copy of any other body.
+ */
+type StoredResponseBody =
+  | { readonly kind: "json"; readonly text: string }
+  | { readonly kind: "value"; readonly value: unknown };
+
+/** A record as history keeps it; reads turn it into a `RequestRecord`. */
+interface StoredRecord extends Omit<Schmock.RequestRecord, "response"> {
+  readonly response: {
+    readonly status: number;
+    readonly body: StoredResponseBody;
+  };
+}
+
+/**
+ * Keep a normalized response body. A JSON tree is kept as the text the
+ * normalizer parsed it from, which costs nothing here: the tree is recorded
+ * before `handle()` returns it, so nothing can have edited it yet, and parsing
+ * the text on read gives the same tree a clone would.
+ */
+function storeResponseBody(body: unknown): StoredResponseBody {
+  const text = normalizedBodyText(body);
+  return text === undefined
+    ? { kind: "value", value: snapshotNormalizedBody(body) }
+    : { kind: "json", text };
+}
+
+function readResponseBody(body: StoredResponseBody): unknown {
+  return body.kind === "json"
+    ? JSON.parse(body.text)
+    : snapshotNormalizedBody(body.value);
+}
+
+function cloneRecord(r: StoredRecord): Schmock.RequestRecord {
   return {
     method: r.method,
     path: r.path,
@@ -34,7 +70,7 @@ function cloneRecord(r: Schmock.RequestRecord): Schmock.RequestRecord {
     timestamp: r.timestamp,
     response: {
       status: r.response.status,
-      body: snapshotNormalizedBody(r.response.body),
+      body: readResponseBody(r.response.body),
     },
   };
 }
@@ -50,7 +86,7 @@ function cloneRecord(r: Schmock.RequestRecord): Schmock.RequestRecord {
 function historyMatcher(
   method?: Schmock.HttpMethod,
   path?: string,
-): (r: Schmock.RequestRecord) => boolean {
+): (r: StoredRecord) => boolean {
   const wanted =
     path === undefined ? undefined : normalizePath(canonicalizePath(path));
   return (r) =>
@@ -85,7 +121,7 @@ interface RequestHistoryEntry {
  * flight when history is reset cannot write into the new log.
  */
 export class RequestHistory {
-  #records: Schmock.RequestRecord[] = [];
+  #records: StoredRecord[] = [];
   #generation = Symbol("schmock.history.generation");
   readonly #limit: number | undefined;
 
@@ -135,7 +171,7 @@ export class RequestHistory {
       timestamp: Date.now(),
       response: {
         status: entry.response.status,
-        body: snapshotNormalizedBody(entry.response.body),
+        body: storeResponseBody(entry.response.body),
       },
     });
     // The constructor already rejected a limit that is not a non-negative

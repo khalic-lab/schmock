@@ -301,6 +301,14 @@ export function stringifyJsonBody(body: unknown): string {
   }
 }
 
+/**
+ * The JSON text each normalized object or array body was parsed from, keyed
+ * by the parsed tree. It describes the tree as `normalizeResponse` returned
+ * it, so it may stand in for serializing the tree again only where nothing
+ * can have edited the tree since (see {@link normalizedBodyText}).
+ */
+const normalizedJsonText = new WeakMap<object, string>();
+
 function normalizeBody(body: unknown): unknown {
   if (body === undefined || typeof body === "string") return body;
   if (isBinaryBody(body)) return copyBinaryBody(body);
@@ -309,7 +317,27 @@ function normalizeBody(body: unknown): unknown {
   // A value whose toJSON yields a string (a Date, a money or ID class) must
   // stay JSON text: every string body is sent verbatim as pre-serialized
   // bytes, so the bare string would go out unquoted under a JSON type.
-  return typeof parsed === "string" ? json : parsed;
+  if (typeof parsed === "string") return json;
+  if (typeof parsed === "object" && parsed !== null) {
+    normalizedJsonText.set(parsed, json);
+  }
+  return parsed;
+}
+
+/**
+ * The validated JSON text a body `normalizeResponse` produced was parsed
+ * from, or `undefined` for any other body (a string, bytes, a primitive, a
+ * tree it did not build).
+ *
+ * @internal Not exported from the package. The text is the body only while
+ * nothing has edited the tree since it was normalized, which only core's own
+ * consumers of a response straight out of `handle()` can know: `listen()`,
+ * `intercept()` without a `beforeResponse` hook, and history.
+ */
+export function normalizedBodyText(body: unknown): string | undefined {
+  return typeof body === "object" && body !== null
+    ? normalizedJsonText.get(body)
+    : undefined;
 }
 
 function removeFramingHeaders(
@@ -395,6 +423,26 @@ export function serializeResponseBody(
   // routes that return JSON.stringify(...) themselves.
   const serialized = typeof body === "string" ? body : stringifyJsonBody(body);
   return new TextEncoder().encode(serialized);
+}
+
+/**
+ * `serializeResponseBody` for a response straight out of `normalizeResponse`
+ * that nothing has edited since: a JSON body is encoded from the text the
+ * normalizer already validated instead of being validated and serialized a
+ * second time. Any other body is serialized as usual.
+ *
+ * @internal Not exported from the package. The public `serializeResponseBody`
+ * keeps validating, since its caller may have edited a normalized tree in
+ * place (an adapter hook adding an `undefined` field must still be refused).
+ */
+export function serializeNormalizedResponseBody(
+  response: Schmock.Response,
+): OwnedBytes | undefined {
+  const text = normalizedBodyText(response.body);
+  if (text === undefined) return serializeResponseBody(response);
+  validateStatus(response.status);
+  if (BODY_FORBIDDEN_STATUSES.has(response.status)) return undefined;
+  return new TextEncoder().encode(text);
 }
 
 /**

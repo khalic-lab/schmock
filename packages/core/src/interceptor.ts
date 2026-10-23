@@ -20,7 +20,7 @@ import {
   buildFormattedErrorResponse,
   buildJsonErrorResponse,
   normalizeResponse,
-  serializeResponseBody,
+  serializeNormalizedResponseBody,
   withDefaultContentType,
 } from "./response-normalizer.js";
 import { snapshotRequestBody } from "./snapshot.js";
@@ -602,16 +602,20 @@ function routeProbeOf(
 }
 
 /**
- * Build the fetch Response from an already-normalized Schmock response.
+ * Build the fetch Response from an already-normalized Schmock response that
+ * nothing has edited since `normalizeResponse` built it: every caller passes
+ * one it normalized just before, or a `schmock()` admission's response when no
+ * `beforeResponse` hook ran. Its JSON body is therefore encoded from the text
+ * the normalizer validated rather than serialized a second time.
  */
 function createFetchResponse(
   normalized: Schmock.Response,
   context: FetchResponseContext,
 ): Response {
-  const response = new Response(serializeResponseBody(normalized) ?? null, {
-    status: normalized.status,
-    headers: normalized.headers,
-  });
+  const response = new Response(
+    serializeNormalizedResponseBody(normalized) ?? null,
+    { status: normalized.status, headers: normalized.headers },
+  );
   // A constructed Response has an empty url. Real fetch reports the request
   // URL, and code resolving links with `new URL(next, res.url)` needs it.
   Object.defineProperty(response, "url", { value: context.url });

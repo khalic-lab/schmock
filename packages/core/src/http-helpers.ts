@@ -9,6 +9,7 @@ import {
 } from "./request-body.js";
 import {
   buildJsonErrorResponse,
+  serializeNormalizedResponseBody,
   serializeResponseBody,
   withDefaultContentType,
 } from "./response-normalizer.js";
@@ -256,9 +257,13 @@ function mergeExtraHeaders(
   return merged;
 }
 
+/** How a response body becomes bytes on the wire. */
+type BodyEncoder = (response: Schmock.Response) => Uint8Array | undefined;
+
 function prepareWriteableResponse(
   response: Schmock.Response,
   extraHeaders?: Record<string, string>,
+  encodeBody: BodyEncoder = serializeResponseBody,
 ): { headers: Record<string, string>; body: Uint8Array | undefined } {
   // Extra headers first, so an extra content type counts before a default one
   // is inferred; the length is declared last, from the serialized bytes.
@@ -267,7 +272,7 @@ function prepareWriteableResponse(
     headers: mergeExtraHeaders(response.headers, extraHeaders),
   });
   const responseHeaders = typed.headers;
-  const body = serializeResponseBody(typed);
+  const body = encodeBody(typed);
 
   // Declare the length up front: writeHead() commits the header block before
   // end() sees the body, so without it Node frames every response as chunked,
@@ -288,7 +293,20 @@ export function writeSchmockResponse(
   response: Schmock.Response,
   extraHeaders?: Record<string, string>,
 ): void {
-  const { headers, body } = prepareWriteableResponse(response, extraHeaders);
+  writeResponse(res, response, extraHeaders, serializeResponseBody);
+}
+
+function writeResponse(
+  res: ResponseWritable,
+  response: Schmock.Response,
+  extraHeaders: Record<string, string> | undefined,
+  encodeBody: BodyEncoder,
+): void {
+  const { headers, body } = prepareWriteableResponse(
+    response,
+    extraHeaders,
+    encodeBody,
+  );
   res.writeHead(response.status, headers);
   res.end(body);
 }
@@ -631,10 +649,37 @@ async function handleWithBody(
  * handed to Node, which is when per-request resources (a request admission)
  * can be released.
  */
-export async function serveNodeRequest(
+export function serveNodeRequest(
   req: NodeRequest,
   res: NodeResponse,
   options: ServeNodeRequestOptions,
+): Promise<void> {
+  return serveNode(req, res, options, serializeResponseBody);
+}
+
+/**
+ * `serveNodeRequest` for `mock.listen()`, whose `handle` is a `schmock()`
+ * admission's own and whose options carry no `answerBeforeBody`: every
+ * response it writes comes straight out of `normalizeResponse` with nothing
+ * in between that could edit it, so a JSON body is encoded from the text the
+ * normalizer validated instead of being serialized a second time.
+ *
+ * @internal Not exported from the package. A `handle` someone else wrote may
+ * edit a normalized tree in place, so `serveNodeRequest` keeps validating.
+ */
+export function serveAdmittedNodeRequest(
+  req: NodeRequest,
+  res: NodeResponse,
+  options: Pick<ServeNodeRequestOptions, "handle" | "maxBodySize">,
+): Promise<void> {
+  return serveNode(req, res, options, serializeNormalizedResponseBody);
+}
+
+async function serveNode(
+  req: NodeRequest,
+  res: NodeResponse,
+  options: ServeNodeRequestOptions,
+  encodeBody: BodyEncoder,
 ): Promise<void> {
   const abortController = new AbortController();
   const abortRequest = () => abortController.abort();
@@ -657,10 +702,11 @@ export async function serveNodeRequest(
         maxBodySize: options.maxBodySize ?? DEFAULT_MAX_BODY_SIZE,
         signal: abortController.signal,
       }));
-    writeSchmockResponse(
+    writeResponse(
       res,
       response,
       options.extraHeaders?.({ isError: false, path }),
+      encodeBody,
     );
   } catch (error) {
     answerFailedRequest({ req, res, error, method, path, options });

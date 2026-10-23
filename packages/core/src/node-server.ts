@@ -1,7 +1,10 @@
 import type { Server } from "node:http";
 import type { DebugLogger } from "./debug-logger.js";
 import { errorMessage, SchmockError } from "./errors.js";
-import { DEFAULT_MAX_BODY_SIZE, serveNodeRequest } from "./http-helpers.js";
+import {
+  DEFAULT_MAX_BODY_SIZE,
+  serveAdmittedNodeRequest,
+} from "./http-helpers.js";
 
 interface PendingServerStart {
   readonly token: symbol;
@@ -16,7 +19,9 @@ interface PendingServerStart {
 interface NodeServerControllerOptions {
   /**
    * Admit one request against the mock. Called on arrival, before the request
-   * is parsed, and released once it is answered.
+   * is parsed, and released once it is answered. Its `handle` must be a
+   * `schmock()` admission's own: what it returns is written as normalized,
+   * with no second validating pass (see `serveAdmittedNodeRequest`).
    */
   readonly admitRequest: () => Schmock.RequestAdmission;
   readonly logger: DebugLogger;
@@ -115,7 +120,7 @@ export class NodeServerController {
       // Admitted on arrival, before the request is parsed, so a reset() while
       // its body uploads neither changes its routes nor uninstalls its plugins.
       const admittedRequest = this.#admitRequest();
-      void serveNodeRequest(req, res, {
+      void serveAdmittedNodeRequest(req, res, {
         handle: admittedRequest.handle,
         maxBodySize: DEFAULT_MAX_BODY_SIZE,
       }).finally(() => admittedRequest.release());
