@@ -486,6 +486,12 @@ A list operation whose success schema is an object with no array (for example
 `GET /settings` next to `POST /settings`) answers with a body generated from
 that schema instead of a bare array. When that object cannot be generated, the
 route serves the bare collection and logs a warning instead of answering 500.
+The same applies to a singleton (a `GET` and a `POST` on one path, with no item
+path) whose schema declares the resource's id property at its top level, even
+when it holds an array of objects. Stripe's
+`GET /v1/charges/{charge}/dispute` is one: its `balance_transactions` array is
+a field of the dispute, so it is generated rather than filled with created
+disputes.
 
 ### Collection scoping
 

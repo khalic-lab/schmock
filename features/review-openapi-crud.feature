@@ -47,3 +47,10 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     Given a validating sources mock whose create response is a oneOf of bank account and card
     When I create a source with no body
     Then the create response is 201 with id 1 and a bank account or card object
+
+  # ── Singletons served through the list generator ───────────────────────────
+
+  Scenario: A singleton whose item holds an array answers the declared item
+    Given a validating dispute mock with GET and POST on one path and a balance_transactions array
+    When I create a dispute and then read it
+    Then the dispute read is 200 with generated balance transactions, not the created dispute

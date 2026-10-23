@@ -1010,6 +1010,15 @@ export function createListGenerator(
   // cannot invalidate an entry.
   const wrapperMemo = new WeakMap<object, ArrayPropertyInfo>();
   const hints = listArrayHints(resource);
+  // GET and POST on one path with no item route: a singleton read through the
+  // list generator. Only there is a top-level id read as "this is the item",
+  // so a real collection's envelope that also carries an `id` (a request id)
+  // keeps serving its rows.
+  const singleton = !resource.operations.some(
+    (op) => op === "read" || op === "update" || op === "delete",
+  );
+  const declaresId = (schema: JSONSchema7): boolean =>
+    Object.hasOwn(collectSchemaProperties(schema), resource.idProperty);
 
   return async (ctx: Schmock.RequestContext) => {
     const headers = generateHeaderValues(headerDefs, headerSeed);
@@ -1040,7 +1049,7 @@ export function createListGenerator(
     const wrapperPath = arrayPropertyPath(
       resolveWrapperInfo(effective, wrapperMemo, hints),
     );
-    if (!wrapperPath) {
+    if (!wrapperPath || (singleton && declaresId(effective))) {
       if (!isObjectShaped(effective)) return flat;
       // An object contract with no array-like property at all (a singleton
       // such as `/settings` grouped as a list): a bare array is a shape the
@@ -1048,6 +1057,11 @@ export function createListGenerator(
       // would. When that body cannot be generated, the live items still beat
       // a 500 on every request — the degradation `generateWrapperSkeleton`
       // makes for an envelope's decoration.
+      //
+      // A singleton whose contract declares the resource's own id at its top
+      // level is the item itself even when it holds an array of objects
+      // (Stripe's Dispute and its `balance_transactions`): that array is a
+      // field of the item, not a slot for the collection.
       const declared = await generateDeclaredBody(effective, hooks?.fakerSeed);
       return declared === undefined
         ? flat

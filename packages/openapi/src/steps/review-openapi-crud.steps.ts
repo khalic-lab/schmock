@@ -214,6 +214,38 @@ const sourcesSpec = spec({
   },
 });
 
+// ── Singletons ──────────────────────────────────────────────────────────────
+
+const dispute = {
+  type: "object",
+  required: ["id", "object", "amount", "balance_transactions"],
+  properties: {
+    id: { type: "string" },
+    object: { type: "string", enum: ["dispute"] },
+    amount: { type: "integer" },
+    balance_transactions: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        required: ["id", "amount"],
+        properties: { id: { type: "string" }, amount: { type: "integer" } },
+      },
+    },
+  },
+};
+
+const disputeSpec = spec({
+  "/charges/{charge}/dispute": {
+    get: {
+      responses: { "200": { description: "dispute", content: json(dispute) } },
+    },
+    post: {
+      responses: { "200": { description: "dispute", content: json(dispute) } },
+    },
+  },
+});
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -389,6 +421,40 @@ describeFeature(feature, ({ Scenario }) => {
           expect(response.body).toMatchObject({ id: 1 });
           const object = (response.body as Record<string, unknown>).object;
           expect(["bank_account", "card"]).toContain(object);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A singleton whose item holds an array answers the declared item",
+    ({ Given, When, Then }) => {
+      Given(
+        "a validating dispute mock with GET and POST on one path and a balance_transactions array",
+        async () => {
+          await validatingMock(disputeSpec);
+        },
+      );
+
+      When("I create a dispute and then read it", async () => {
+        const created = await mock.handle("POST", "/charges/ch_1/dispute", {
+          body: { amount: 5 },
+        });
+        expect(created.status).toBe(200);
+        response = await mock.handle("GET", "/charges/ch_1/dispute");
+      });
+
+      Then(
+        "the dispute read is 200 with generated balance transactions, not the created dispute",
+        () => {
+          expect(response.status).toBe(200);
+          const body = response.body as Record<string, unknown>;
+          expect(body.object).toBe("dispute");
+          const transactions = body.balance_transactions;
+          expect(Array.isArray(transactions)).toBe(true);
+          for (const row of transactions as unknown[]) {
+            expect(row).not.toMatchObject({ object: "dispute" });
+          }
         },
       );
     },

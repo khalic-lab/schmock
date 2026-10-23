@@ -492,4 +492,110 @@ describe("CRUD review fixes", () => {
       ]);
     });
   });
+
+  describe("singleton resources whose item holds an array", () => {
+    const balanceTransaction = {
+      type: "object",
+      required: ["id", "amount"],
+      properties: { id: { type: "string" }, amount: { type: "integer" } },
+    };
+    const dispute = {
+      type: "object",
+      required: ["id", "object", "amount", "balance_transactions"],
+      properties: {
+        id: { type: "string" },
+        object: { type: "string", enum: ["dispute"] },
+        amount: { type: "integer" },
+        balance_transactions: {
+          type: "array",
+          minItems: 1,
+          items: balanceTransaction,
+        },
+      },
+    };
+    const disputeSpec = spec({
+      "/charges/{charge}/dispute": {
+        get: {
+          responses: { "200": { description: "d", content: json(dispute) } },
+        },
+        post: {
+          responses: { "200": { description: "d", content: json(dispute) } },
+        },
+      },
+    });
+
+    for (const validateResponses of [false, true]) {
+      it(`answers the declared item, not the collection, on GET (validateResponses: ${validateResponses})`, async () => {
+        const mock = await mockOf(disputeSpec, {
+          validateResponses,
+          fakerSeed: 1,
+        });
+
+        const before = await mock.handle("GET", "/charges/ch_1/dispute");
+        expect(before.status).toBe(200);
+        expect(before.body).toMatchObject({ object: "dispute" });
+        const transactions = (before.body as Record<string, unknown>)
+          .balance_transactions;
+        expect(Array.isArray(transactions) && transactions.length).toBeTruthy();
+
+        const created = await mock.handle("POST", "/charges/ch_1/dispute", {
+          body: { amount: 5 },
+        });
+        expect(created.status).toBe(200);
+
+        const after = await mock.handle("GET", "/charges/ch_1/dispute");
+        expect(after.status).toBe(200);
+        const injected = (
+          (after.body as Record<string, unknown>)
+            .balance_transactions as unknown[]
+        ).some(
+          (row) =>
+            typeof row === "object" &&
+            row !== null &&
+            (row as Record<string, unknown>).object === "dispute",
+        );
+        expect(injected).toBe(false);
+      });
+    }
+
+    it("still injects the collection into a collection envelope that has an id", async () => {
+      const item = {
+        type: "object",
+        properties: { id: { type: "integer" }, name: { type: "string" } },
+      };
+      const mock = await mockOf(
+        spec({
+          "/pets": {
+            get: {
+              responses: {
+                "200": {
+                  description: "list",
+                  content: json({
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      data: { type: "array", items: item },
+                    },
+                  }),
+                },
+              },
+            },
+            post: {
+              responses: { "201": { description: "c", content: json(item) } },
+            },
+          },
+          "/pets/{id}": {
+            get: {
+              responses: { "200": { description: "p", content: json(item) } },
+            },
+          },
+        }),
+      );
+      await mock.handle("POST", "/pets", { body: { name: "rex" } });
+      const list = await mock.handle("GET", "/pets");
+      expect((list.body as Record<string, unknown>).data).toEqual([
+        { id: 1, name: "rex" },
+      ]);
+    });
+  });
 });
