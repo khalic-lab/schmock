@@ -704,6 +704,28 @@ describe("generators", () => {
       expect(headers["X-Cache"]).toBe("HIT");
     });
 
+    it("uses a scalar const, ahead of every other keyword", () => {
+      const headers = generateHeaderValues({
+        "X-Api-Version": {
+          schema: { type: "string", const: "v2", enum: ["v1", "v2"] },
+          description: "API version",
+        },
+        "X-Shards": {
+          schema: { type: "integer", const: 3, minimum: 1 },
+          description: "Shard count",
+        },
+        "X-Beta": {
+          schema: { type: "boolean", const: true },
+          description: "Beta flag",
+        },
+      });
+      expect(headers).toEqual({
+        "X-Api-Version": "v2",
+        "X-Shards": "3",
+        "X-Beta": "true",
+      });
+    });
+
     it("uses default value from example normalization", () => {
       const headers = generateHeaderValues({
         "X-Total": {

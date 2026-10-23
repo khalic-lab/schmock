@@ -971,6 +971,7 @@ Response headers declared on the selected response are generated and returned,
 on both auto-detected CRUD routes and plain (non-CRUD) routes. Values come from
 the header schema:
 
+- a scalar `const` is used verbatim;
 - an `enum` uses its first non-null value;
 - a scalar `default` is used verbatim (an object or array default is ignored);
 - `format: uuid` and `format: date-time` are generated;
@@ -984,6 +985,12 @@ Nullable header schemas (3.0 `nullable: true`, 3.1 `type: [T, "null"]`) emit
 the placeholder of their non-null type. A header whose schema yields nothing is
 omitted — `array`, `object` and untyped header schemas are dropped deliberately,
 since there is no single obvious wire form for them.
+
+A declared `Content-Type` response header without a fixed value (a `const`,
+`enum`, `default` or `example`) is ignored, as OpenAPI 3 requires, with a parse
+warning; the media type comes from content negotiation. A fixed value is kept
+and selects the declared content entry, as described in
+[Response Validation](#response-validation).
 
 Header values obey `fakerSeed` too: see
 [Deterministic Generation](#deterministic-generation) for the fixed-clock trade

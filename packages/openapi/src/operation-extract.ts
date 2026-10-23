@@ -554,11 +554,13 @@ function isHeaderScalar(value: unknown): value is string | number | boolean {
 
 /**
  * The value header generation is pinned to, read the way the generator reads
- * it: the first scalar `enum` member, else a scalar `default` (which is also
- * where the normalizer puts a scalar `example`). Empty when there is none.
+ * it: a scalar `const`, else the first scalar `enum` member, else a scalar
+ * `default` (which is also where the normalizer puts a scalar `example`).
+ * Empty when there is none.
  */
 function fixedHeaderValue(schema: JSONSchema7 | undefined): string {
   if (!schema) return "";
+  if (isHeaderScalar(schema.const)) return String(schema.const);
   const fromEnum = Array.isArray(schema.enum)
     ? schema.enum.find(isHeaderScalar)
     : undefined;

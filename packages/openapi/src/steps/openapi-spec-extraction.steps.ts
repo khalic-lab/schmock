@@ -70,6 +70,42 @@ const freeContentTypeHeaderSpec = {
   },
 };
 
+const profileSchema = (profile: string) => ({
+  schema: {
+    type: "object",
+    required: ["profile"],
+    properties: { profile: { type: "string", const: profile } },
+  },
+});
+
+const pinnedHeaderSpec = {
+  openapi: "3.0.3",
+  info: { title: "reports", version: "1.0.0" },
+  paths: {
+    "/report": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            headers: {
+              "X-Api-Version": {
+                schema: { type: "string", const: "v2", enum: ["v1", "v2"] },
+              },
+              "Content-Type": {
+                schema: { type: "string", const: "application/json;profile=b" },
+              },
+            },
+            content: {
+              "application/json;profile=a": profileSchema("a"),
+              "application/json;profile=b": profileSchema("b"),
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 const mutualTlsSpec = {
   openapi: "3.1.0",
   info: { title: "secured", version: "1.0.0" },
@@ -185,6 +221,48 @@ describeFeature(feature, ({ Scenario }) => {
           expect(parsed.warnings).toContain(
             `security scheme "${name}": unsupported type "${type}", skipped; a requirement naming it is never satisfied`,
           );
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A response header pinned by const is sent with that value",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a mock whose report response pins its version and profile headers with const",
+        async () => {
+          mock = schmock();
+          mock.pipe(
+            await openapi({ spec: pinnedHeaderSpec, validateResponses: true }),
+          );
+        },
+      );
+
+      When("I fetch the pinned report", async () => {
+        response = await mock.handle("GET", "/report");
+      });
+
+      Then("the pinned report has status 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And(
+        "the pinned report's {string} header is {string}",
+        (_, name, value) => {
+          expect(response.headers[name]).toBe(value);
+        },
+      );
+
+      And("the pinned report's content type is {string}", (_, type) => {
+        // Kept under the name the spec declares it with.
+        expect(response.headers["Content-Type"]).toBe(type);
+      });
+
+      And(
+        "the pinned report body is the profile {string} representation",
+        (_, profile) => {
+          expect(response.body).toEqual({ profile });
         },
       );
     },

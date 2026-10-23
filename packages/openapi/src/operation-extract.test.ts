@@ -115,6 +115,7 @@ describe("operation extraction", () => {
     });
 
     it.each([
+      ["a const", { type: "string", const: "application/json;profile=b" }],
       ["an enum", { type: "string", enum: ["application/json;profile=b"] }],
       ["an example", { type: "string", example: "application/json;profile=b" }],
       ["a default", { type: "string", default: "application/json;profile=b" }],

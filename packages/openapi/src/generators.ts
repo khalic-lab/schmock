@@ -572,6 +572,10 @@ function generateSingleHeaderValue(
 ): string | undefined {
   if (!schema || typeof schema === "boolean") return undefined;
 
+  // A scalar const is the only value the header may hold. A nullable const
+  // reaches here as `enum: [x, null]` instead.
+  if (isHeaderScalar(schema.const)) return String(schema.const);
+
   // Has enum → first non-null scalar value (a nullable enum carries `null`)
   if (Array.isArray(schema.enum)) {
     const value = schema.enum.find(isHeaderScalar);

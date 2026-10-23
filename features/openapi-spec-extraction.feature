@@ -31,3 +31,11 @@ Feature: Reading an operation's contract out of a spec
     Given an OpenAPI 3.1 spec whose operations require a mutualTLS scheme
     When I parse the secured spec
     Then the parse warnings say the "clientCert" scheme of type "mutualTLS" is skipped
+
+  Scenario: A response header pinned by const is sent with that value
+    Given a mock whose report response pins its version and profile headers with const
+    When I fetch the pinned report
+    Then the pinned report has status 200
+    And the pinned report's "X-Api-Version" header is "v2"
+    And the pinned report's content type is "application/json;profile=b"
+    And the pinned report body is the profile "b" representation
