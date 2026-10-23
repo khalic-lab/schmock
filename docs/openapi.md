@@ -298,6 +298,15 @@ been seeded (or pre-loaded through `schmock({ state })`), it serves stored rows
 by id and answers 404 for any other id. Otherwise it answers from the declared
 response schema, like a static route.
 
+A single trailing slash does not change the grouping: `/api/pets/` with
+`/api/pets/{id}/` (the Django REST Framework style) is the same resource as
+`/api/pets` with `/api/pets/{id}`, and its routes stay registered at the paths
+the spec declares. Collection paths that differ only in their parent parameter
+names, such as `/fees/{id}/refunds` beside `/fees/{fee}/refunds/{id}`, stay
+separate resources that never share rows, because a collection's rows are keyed
+by those names. `debug: true` reports the split; name the parameters the same
+way to make them one resource.
+
 A resource is named after the last literal segment of its collection path. When
 that path ends in a parameter (`/repos/{owner}/{repo}` is grouped under
 `/repos/{owner}`), the parameter is skipped, so seed and `resources` keys use
@@ -319,6 +328,12 @@ schema:
 2. otherwise `id`, when the schema declares it;
 3. otherwise the path parameter's name — so a spec with no item schema keeps the
    historical behaviour.
+
+A polymorphic item schema (`oneOf` or `anyOf`, such as Stripe's
+`anyOf: [bank_account, card]`) is read branch by branch: a property counts as
+declared when any branch declares it, and the minted value below is a string
+only when every branch declaring the id says `string`, a UUID only when every
+one says `format: uuid`.
 
 Routing is untouched: the lookup *value* always comes from the path parameter
 (`GET /bookings/{bookingId}` still reads `bookingId`), only the stored and
@@ -817,13 +832,16 @@ on a scalar schema, so a property declaring `example: "active"` is returned as
 and seed rows are generated from the schema, so required properties hold,
 seeded rows differ, and a `writeOnly` field present in the example never
 reaches a response. Set an explicit `default` to pin an object value.
-Media-type examples for `Prefer: example=` are unaffected.
+Media-type examples for `Prefer: example=` are unaffected. OpenAPI 3.1 replaces
+`example` with the JSON Schema `examples` array; its first entry plays the same
+part when the schema declares neither a `default` nor an `example`.
 
 A nullable value is `null` about 5% of the time, whether the schema uses 3.0
 `nullable: true` or the 3.1 forms `type: [T, "null"]` and
 `oneOf: [{ $ref }, { type: "null" }]`. A 3.0 `nullable: true` on a schema with
 an `enum` or `const` and no `type` accepts `null`: `null` is appended to the
-enum, and `const: x` becomes `enum: [x, null]`.
+enum, and `const: x` becomes `enum: [x, null]`. One on a schema that also uses
+`allOf`, `anyOf` or `oneOf` accepts `null` whether or not it declares a `type`.
 
 ## Generation Failures
 
@@ -841,6 +859,17 @@ generator itself keeps its own code (for example `SCHEMA_VALIDATION_ERROR` for
 an unsupported `type`, or `RESOURCE_LIMIT_ERROR` for a nesting-depth breach);
 anything else is wrapped as `SCHEMA_GENERATION_ERROR` with the route in the
 message. Assert on the presence of `code`, not on one specific value.
+
+A recursive schema is not one of these failures. Generation stops where the
+schema first refers back to itself. An optional property that closes the cycle
+is left out of an open object. An array of the enclosing schema is empty,
+unless it sets `minItems`, and then its items are `null`. Any other
+back-reference is `null`, so the nullable `allOf: [{ $ref: Self }]` parent idiom
+is left out when it is optional and `null` when it is required. An optional
+recursive property of a closed object (`additionalProperties: false`, or a
+schema that uses `unevaluatedProperties` anywhere) is `null` as well, even when
+the spec does not mark it nullable, because the object would reject it if it
+were left out. Validation still accepts data nested to any depth.
 
 Two deliberate exceptions:
 
@@ -1074,6 +1103,12 @@ mock.pipe(await openapi({
   },
 }))
 ```
+
+Without an `errorSchema`, a CRUD `404` (and `400` or `409`) body is generated
+from the operation's own error response, picked the way response validation
+picks it: the exact status, then its range (`4XX`), then `default`, unless that
+`default` is the operation's success response. Only when none applies is the
+body the built-in `{ error, code }`.
 
 `listWrapProperty` and `listFlat` describe one list shape, so they also discard
 the operation's per-media-type response contracts: an overridden list answers
