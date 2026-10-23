@@ -1444,6 +1444,8 @@ register them the same way:
 - Generation avoids what `not` rejects when it is a `not.type` (a type union
   is narrowed), a `not.const` or `not.enum`, or a `not.required` (one optional
   listed property is left out).
+- A `oneOf`, `anyOf` or `if`/`then`/`else` beside `allOf` on the same node is
+  generated together with the `allOf`.
 - Union `type` arrays are checked member by member, and
   `type: ['array', 'null']` needs `items` like `type: 'array'`.
 - The json-schema-faker `chance` keyword is not supported. It is rejected with

@@ -46,6 +46,22 @@ function expectStatus(value: unknown): void {
   expect(["open", "closed"]).toContain(value);
 }
 
+const PET_BASE: JSONSchema7 = {
+  type: "object",
+  properties: { id: { type: "integer" } },
+  required: ["id"],
+};
+
+function petKind(kind: string): JSONSchema7 {
+  return { properties: { kind: { const: kind } }, required: ["kind"] };
+}
+
+function expectPet(value: unknown): void {
+  const pet = record(value);
+  expect(Number.isInteger(pet.id)).toBe(true);
+  expect(["cat", "dog"]).toContain(pet.kind);
+}
+
 /** No generated object holds a key copied from the schema's own keywords. */
 function expectNoSchemaKeys(value: unknown): void {
   const generated = record(value);
@@ -301,6 +317,37 @@ const CASES: Record<string, FidelityCase> = {
       expect(text(record(value).zzqx).length).toBeGreaterThanOrEqual(20);
     },
   },
+  "all-of-with-sibling-one-of": {
+    schema: { allOf: [PET_BASE], oneOf: [petKind("cat"), petKind("dog")] },
+    fits: expectPet,
+  },
+  "all-of-with-sibling-any-of": {
+    schema: { allOf: [PET_BASE], anyOf: [petKind("cat"), petKind("dog")] },
+    fits: expectPet,
+  },
+  "defs-base-with-sibling-one-of-refs": {
+    schema: {
+      allOf: [{ $ref: "#/$defs/Base" }],
+      oneOf: [{ $ref: "#/$defs/Cat" }, { $ref: "#/$defs/Dog" }],
+      $defs: { Base: PET_BASE, Cat: petKind("cat"), Dog: petKind("dog") },
+    },
+    fits: expectPet,
+  },
+  "all-of-with-sibling-if-then": {
+    schema: {
+      allOf: [PET_BASE],
+      if: { required: ["id"] },
+      // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+      then: {
+        properties: { tag: { type: "string", const: "tagged" } },
+        required: ["tag"],
+      },
+    },
+    fits: (value) => {
+      expect(Number.isInteger(record(value).id)).toBe(true);
+      expect(record(value).tag).toBe("tagged");
+    },
+  },
   "inclusive-maximum-tighter-than-exclusive": {
     schema: { type: "number", minimum: 0, maximum: 5, exclusiveMaximum: 100 },
     fits: (value) => {
@@ -324,6 +371,7 @@ const OUTLINES = [
   "Numeric bounds hold beside multipleOf and a second bound on the same side",
   "A not keyword rejects the values it names",
   "A property declared by several merged schemas honours every declaration",
+  "Composition beside allOf is generated with it",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {

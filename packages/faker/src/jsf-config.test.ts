@@ -649,3 +649,96 @@ describe("a property declared by several merged schemas (faker-4)", () => {
     );
   });
 });
+
+describe("composition beside allOf (faker-3)", () => {
+  const PET_BASE: JSONSchema7 = {
+    type: "object",
+    properties: { id: { type: "integer" } },
+    required: ["id"],
+  };
+  const kind = (value: string): JSONSchema7 => ({
+    properties: { kind: { const: value } },
+    required: ["kind"],
+  });
+
+  it("moves a sibling oneOf/anyOf into the allOf JSF merges", () => {
+    const normalized = normalizeSchemaForJsf({
+      allOf: [PET_BASE],
+      oneOf: [kind("cat"), kind("dog")],
+    });
+    expect(normalized.oneOf).toBeUndefined();
+    expect(normalized.allOf).toHaveLength(2);
+    expect(objectOf(normalized.allOf?.[1]).oneOf).toHaveLength(2);
+
+    const withAnyOf = normalizeSchemaForJsf({
+      allOf: [PET_BASE],
+      anyOf: [kind("cat")],
+    });
+    expect(withAnyOf.anyOf).toBeUndefined();
+    expect(objectOf(withAnyOf.allOf?.[1]).anyOf).toHaveLength(1);
+  });
+
+  it("leaves a sibling oneOf alone when an allOf entry already has one", () => {
+    const normalized = normalizeSchemaForJsf({
+      allOf: [{ ...PET_BASE, oneOf: [kind("cat")] }],
+      oneOf: [kind("dog")],
+    });
+    expect(normalized.oneOf).toHaveLength(1);
+    expect(normalized.allOf).toHaveLength(1);
+  });
+
+  it("generates a sibling oneOf or anyOf branch with the allOf", async () => {
+    for (const keyword of ["oneOf", "anyOf"] as const) {
+      const schema: JSONSchema7 = {
+        allOf: [PET_BASE],
+        [keyword]: [kind("cat"), kind("dog")],
+      };
+      for (const value of await generateSeeds(schema)) {
+        const pet = objectOf(value);
+        expect(Number.isInteger(pet.id)).toBe(true);
+        expect(["cat", "dog"]).toContain(pet.kind);
+      }
+    }
+  });
+
+  it("generates allOf + oneOf over $defs references", async () => {
+    const schema: JSONSchema7 = {
+      allOf: [{ $ref: "#/$defs/Base" }],
+      oneOf: [{ $ref: "#/$defs/Cat" }, { $ref: "#/$defs/Dog" }],
+      $defs: { Base: PET_BASE, Cat: kind("cat"), Dog: kind("dog") },
+    };
+    for (const value of await generateSeeds(schema)) {
+      const pet = objectOf(value);
+      expect(Number.isInteger(pet.id)).toBe(true);
+      expect(["cat", "dog"]).toContain(pet.kind);
+    }
+  });
+
+  it("applies an if/then beside allOf", async () => {
+    const schema: JSONSchema7 = {
+      allOf: [PET_BASE],
+      if: { required: ["id"] },
+      // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+      then: {
+        properties: { tag: { type: "string", const: "tagged" } },
+        required: ["tag"],
+      },
+    };
+    for (const value of await generateSeeds(schema)) {
+      const pet = objectOf(value);
+      expect(Number.isInteger(pet.id)).toBe(true);
+      expect(pet.tag).toBe("tagged");
+    }
+  });
+
+  it("keeps the allOf when only an else sits beside it", async () => {
+    const schema: JSONSchema7 = {
+      allOf: [PET_BASE],
+      if: { required: ["id"] },
+      else: { required: ["never"] },
+    };
+    for (const value of await generateSeeds(schema)) {
+      expect(Number.isInteger(objectOf(value).id)).toBe(true);
+    }
+  });
+});

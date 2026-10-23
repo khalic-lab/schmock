@@ -402,7 +402,10 @@ const TUPLE_TARGETS: Readonly<Record<string, string>> = {
 /**
  * json-schema-faker consumes tuple schemas through the 2020-12 `prefixItems`
  * keyword. Convert Draft 7 tuple `items` recursively at the library boundary,
- * then adapt every node whose subschemas JSF merges (see `adaptMerges`).
+ * then adapt every node whose subschemas JSF merges: drop the `faker` a merge
+ * would let override another declaration's constraints
+ * (`dropMergedPropertyFakers`), and restate composition beside `allOf` so the
+ * merge carries it (`carryCompositionThroughAllOf`).
  */
 export function normalizeSchemaForJsf(
   schema: JSONSchema7,
@@ -423,8 +426,13 @@ export function normalizeSchemaForJsf(
     const target = resolveLocalRef({ $ref: member.$ref }, schema);
     return target ? context.normalizedSchemas.get(target) : undefined;
   };
-  for (const copy of context.normalizedSchemas.values()) {
-    adaptMerges(copy, resolve);
+  const copies = [...context.normalizedSchemas.values()];
+  // Merge groups read the layout as written, so every node is grouped before
+  // any node is restated; the members replaced along the way are restated too.
+  const replaced: JsfObjectSchema[] = [];
+  for (const copy of copies) dropMergedPropertyFakers(copy, resolve, replaced);
+  for (const copy of [...copies, ...replaced]) {
+    carryCompositionThroughAllOf(copy);
   }
   return normalized;
 }
@@ -478,11 +486,17 @@ function singleMember(
 }
 
 /**
- * Adapt one node's copy to how json-schema-faker merges subschemas: the base
- * with every `allOf` entry, with one `oneOf`/`anyOf` branch, or with `if` and
- * `then` (or `else`).
+ * Group the members json-schema-faker merges into one node's value, in its
+ * merge order and in the layout `carryCompositionThroughAllOf` gives the copy:
+ * the base with every `allOf` entry, plus one `oneOf`/`anyOf` branch, or plus
+ * `if` and `then` (or `else`). Then drop the fakers each merge would let
+ * override a constraint; every replacement member is added to `replaced`.
  */
-function adaptMerges(copy: JsfObjectSchema, resolve: ResolveMember): void {
+function dropMergedPropertyFakers(
+  copy: JsfObjectSchema,
+  resolve: ResolveMember,
+  replaced: JsfObjectSchema[],
+): void {
   // JSF resolves a `$ref` before merging only in `allOf` and `oneOf`; a
   // `$ref` anywhere else replaces the merge, so it has no properties here.
   const allOf = listMembers(copy, "allOf", resolve);
@@ -505,15 +519,54 @@ function adaptMerges(copy: JsfObjectSchema, resolve: ResolveMember): void {
   const conditionThen = singleMember(copy, "then");
   const conditionElse = singleMember(copy, "else");
   if (conditionIf && (conditionThen || conditionElse)) {
-    groups.push([
-      own,
-      conditionIf,
-      ...allOf,
-      ...(conditionThen ? [conditionThen] : []),
-    ]);
+    if (conditionThen || allOf.length > 0) {
+      groups.push([
+        own,
+        conditionIf,
+        ...allOf,
+        ...(conditionThen ? [conditionThen] : []),
+      ]);
+    }
     if (conditionElse) groups.push([own, ...allOf, conditionElse]);
   }
-  for (const group of groups) dropOverriddenFakers(group);
+  for (const group of groups) dropOverriddenFakers(group, replaced);
+}
+
+/**
+ * json-schema-faker merges `allOf` with a base it strips of every other
+ * composition keyword, so a sibling `oneOf`/`anyOf` or `if`/`then`/`else` was
+ * never generated. Restate them so the `allOf` merge carries them: a sibling
+ * `oneOf`/`anyOf` becomes one more `allOf` entry (unless an entry already
+ * holds that keyword, which the merge would overwrite), and an `if` with a
+ * `then` or `else` takes the `allOf` into each branch. JSF's oneOf path then
+ * generates the base's required properties and the chosen branch's, as it
+ * does for any `oneOf`.
+ */
+function carryCompositionThroughAllOf(copy: JsfObjectSchema): void {
+  if (!Array.isArray(copy.allOf)) return;
+  let entries: JsonSchema[] = copy.allOf;
+  for (const keyword of ["oneOf", "anyOf"] as const) {
+    const branches = copy[keyword];
+    if (branches === undefined) continue;
+    const held = entries.some(
+      (entry) => isJsfObject(entry) && entry[keyword] !== undefined,
+    );
+    if (held) continue;
+    entries = [...entries, { [keyword]: branches }];
+    delete copy[keyword];
+  }
+  copy.allOf = entries;
+
+  if (copy.if === undefined) return;
+  if (copy.then === undefined && copy.else === undefined) return;
+  // An absent `then` accepts every value the `if` accepts, so the `if`
+  // branch can always carry the `allOf`. Reflect.set: `then` is a schema
+  // keyword here, not a thenable.
+  Reflect.set(copy, "then", {
+    allOf: copy.then === undefined ? entries : [...entries, copy.then],
+  });
+  if (copy.else !== undefined) copy.else = { allOf: [...entries, copy.else] };
+  delete copy.allOf;
 }
 
 /** Keywords that never change the value json-schema-faker generates. */
@@ -557,7 +610,10 @@ function addsConstraint(
  * in this node's copy; the schema it came from, and any other use of it,
  * keep their own.
  */
-function dropOverriddenFakers(group: MergeMember[]): void {
+function dropOverriddenFakers(
+  group: MergeMember[],
+  replaced: JsfObjectSchema[],
+): void {
   const names = new Set(
     group.flatMap((member) => Object.keys(propertiesOf(member.schema))),
   );
@@ -583,6 +639,7 @@ function dropOverriddenFakers(group: MergeMember[]): void {
     const next = { ...first.schema, properties };
     first.replace(next);
     first.schema = next;
+    replaced.push(next);
   }
 }
 

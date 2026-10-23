@@ -81,3 +81,16 @@ Feature: Faker output honours every keyword of its schema
       | all-of-enum-on-ref-target-email      |
       | then-pattern-on-zip                  |
       | all-of-min-length-on-unmapped-string |
+
+  # Review 2026-10-23 faker-3: json-schema-faker's allOf merge dropped sibling composition
+  Scenario Outline: Composition beside allOf is generated with it
+    Given the fidelity schema "<case>"
+    When I generate it with 40 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                               |
+      | all-of-with-sibling-one-of         |
+      | all-of-with-sibling-any-of         |
+      | defs-base-with-sibling-one-of-refs |
+      | all-of-with-sibling-if-then        |
