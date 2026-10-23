@@ -1,0 +1,141 @@
+import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
+import type { JSONSchema7 } from "json-schema";
+import { expect } from "vitest";
+import { generateFromSchema } from "../index";
+
+const feature = await loadFeature(
+  "../../features/review-faker-fidelity.feature",
+);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function record(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) throw new Error(`expected an object, got ${value}`);
+  return value;
+}
+
+function list(value: unknown): unknown[] {
+  if (!Array.isArray(value)) throw new Error(`expected an array, got ${value}`);
+  return value;
+}
+
+function text(value: unknown): string {
+  if (typeof value !== "string") throw new Error(`expected a string: ${value}`);
+  return value;
+}
+
+/** A schema, and what every value generated from it must satisfy. */
+interface FidelityCase {
+  schema: JSONSchema7;
+  fits: (value: unknown) => void;
+}
+
+const STATUS: JSONSchema7 = {
+  type: "string",
+  oneOf: [{ const: "open" }, { const: "closed" }],
+};
+
+function expectStatus(value: unknown): void {
+  expect(["open", "closed"]).toContain(value);
+}
+
+const CASES: Record<string, FidelityCase> = {
+  "root-string-one-of-const": {
+    schema: STATUS,
+    fits: expectStatus,
+  },
+  "defs-status-through-ref": {
+    schema: {
+      type: "object",
+      properties: { status: { $ref: "#/$defs/Status" } },
+      required: ["status"],
+      $defs: { Status: STATUS },
+    },
+    fits: (value) => expectStatus(record(value).status),
+  },
+  "array-items-any-of-const": {
+    schema: {
+      type: "array",
+      minItems: 3,
+      maxItems: 3,
+      items: { type: "string", anyOf: [{ const: "a" }, { const: "b" }] },
+    },
+    fits: (value) => {
+      for (const item of list(value)) expect(["a", "b"]).toContain(item);
+    },
+  },
+  "additional-properties-all-of": {
+    schema: {
+      type: "object",
+      minProperties: 1,
+      additionalProperties: { type: "string", allOf: [{ minLength: 15 }] },
+    },
+    fits: (value) => {
+      for (const entry of Object.values(record(value))) {
+        expect(text(entry).length).toBeGreaterThanOrEqual(15);
+      }
+    },
+  },
+  "property-if-then-pattern": {
+    schema: {
+      type: "object",
+      properties: {
+        code: {
+          type: "string",
+          if: { minLength: 1 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { pattern: "^[A-Z]{3}$" },
+        },
+      },
+      required: ["code"],
+    },
+    fits: (value) => {
+      const code = text(record(value).code);
+      if (code.length >= 1) expect(code).toMatch(/^[A-Z]{3}$/);
+    },
+  },
+  "boolean-not-const-true": {
+    schema: {
+      type: "object",
+      properties: { active: { type: "boolean", not: { const: true } } },
+      required: ["active"],
+    },
+    fits: (value) => expect(record(value).active).toBe(false),
+  },
+};
+
+function fidelityCase(name: string): FidelityCase {
+  const found = CASES[name];
+  if (!found) throw new Error(`Unknown fidelity case: ${name}`);
+  return found;
+}
+
+describeFeature(feature, ({ ScenarioOutline }) => {
+  let results: unknown[] = [];
+  let current: FidelityCase | undefined;
+
+  async function generateWithSeeds(seeds: number): Promise<void> {
+    if (!current) throw new Error("no fidelity schema was chosen");
+    results = [];
+    for (let seed = 1; seed <= seeds; seed += 1) {
+      results.push(await generateFromSchema({ schema: current.schema, seed }));
+    }
+  }
+
+  ScenarioOutline(
+    "A composed node is generated from its composition",
+    ({ Given, When, Then }, variables) => {
+      Given("the fidelity schema {string}", () => {
+        current = fidelityCase(variables.case);
+      });
+      When("I generate it with {int} different seeds", async (_, seeds) => {
+        await generateWithSeeds(seeds);
+      });
+      Then("every generated value fits {string}", () => {
+        for (const value of results) fidelityCase(variables.case).fits(value);
+      });
+    },
+  );
+});

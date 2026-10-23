@@ -295,12 +295,25 @@ export function scoreMatch(fieldTokens: string[], keywords: string[]): number {
 }
 
 /**
+ * Composition keywords json-schema-faker generates a node from. It reads a
+ * `faker` keyword before any of them, so a `faker` written onto such a node
+ * returns its value and never evaluates the composition.
+ */
+const COMPOSITION_KEYWORDS = ["allOf", "anyOf", "oneOf", "not", "if"] as const;
+
+/** True when `schema` is generated from `allOf`/`anyOf`/`oneOf`/`not`/`if`. */
+export function declaresComposition(schema: JSONSchema7): boolean {
+  return COMPOSITION_KEYWORDS.some((keyword) => schema[keyword] !== undefined);
+}
+
+/**
  * The single rule every heuristic in this package obeys: a schema that states
  * its own value source is never re-routed by the field name.
  *
  * `default` (which the OpenAPI normalizer also derives from `example`),
  * `const`, `enum` and `pattern` fix or constrain the value itself; `faker`
- * and `$ref` delegate it explicitly. `format` is handled by the caller, since
+ * and `$ref` delegate it explicitly, and so does composition (see
+ * `declaresComposition`). `format` is handled by the caller, since
  * `format: "uuid"` agrees with a name mapping and an unknown format defers to
  * it.
  */
@@ -311,7 +324,8 @@ export function declaresExplicitValue(schema: JSONSchema7): boolean {
     schema.enum !== undefined ||
     schema.pattern !== undefined ||
     schema.$ref !== undefined ||
-    ("faker" in schema && Boolean(schema.faker))
+    ("faker" in schema && Boolean(schema.faker)) ||
+    declaresComposition(schema)
   );
 }
 

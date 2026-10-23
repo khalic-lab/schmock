@@ -1339,7 +1339,10 @@ that declares `default`, `const`, `enum`, `pattern`, `faker` or `$ref` is never
 re-mapped by its name. Neither is one with a `format` the generator can
 produce: `date-time`, `date`, `time`, `duration`, `email`, `idn-email`,
 `hostname`, `idn-hostname`, `ipv4`, `ipv6`, `uri`, `uri-reference`, `iri`,
-`iri-reference`, `json-pointer`, `relative-json-pointer`, `uuid` or `byte`. The
+`iri-reference`, `json-pointer`, `relative-json-pointer`, `uuid` or `byte`. A
+node that carries `allOf`, `anyOf`, `oneOf`, `not` or `if` is generated from
+that composition wherever it sits, so it gets no name mapping, no lorem
+fallback and no boolean weighting. The
 OpenAPI normalizer turns `example` into `default`, so an OpenAPI example also
 wins. A declared `schmockTrueProbability` is never overwritten by the name
 weighting: `active: { type: 'boolean', schmockTrueProbability: 0.1 }` is 10%

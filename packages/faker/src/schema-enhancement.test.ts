@@ -1,6 +1,9 @@
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
+import { generateFromSchema } from "./index";
 import { enhanceSchemaWithSmartMapping } from "./schema-enhancement";
+
+const fakerOf = (node: unknown): unknown => Reflect.get(Object(node), "faker");
 
 describe("enhanceSchemaWithSmartMapping", () => {
   it("does NOT mutate the original schema", () => {
@@ -330,5 +333,130 @@ describe("enhanceSchemaWithSmartMapping", () => {
     expect(Array.isArray(items)).toBe(true);
     expect(items[0].properties.email.faker).toBeDefined();
     expect(items[1].properties.phone.faker).toBeDefined();
+  });
+});
+
+describe("composition declares the value (faker-1)", () => {
+  it("writes no faker onto a node that carries allOf/anyOf/oneOf/not/if", () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: {
+        status: { $ref: "#/$defs/Status" },
+        code: {
+          type: "string",
+          if: { minLength: 1 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { pattern: "^[A-Z]{3}$" },
+        },
+        email: { type: "string", not: { pattern: "@" } },
+        active: {
+          type: "boolean",
+          schmockTrueProbability: 0.9,
+          not: { const: true },
+        } as JSONSchema7,
+        isPublished: { type: "boolean", oneOf: [{ const: false }] },
+        tags: {
+          type: "array",
+          items: { type: "string", anyOf: [{ const: "a" }, { const: "b" }] },
+        },
+        labels: {
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            allOf: [{ minLength: 15 }],
+          },
+        },
+      },
+      $defs: {
+        Status: {
+          type: "string",
+          oneOf: [{ const: "open" }, { const: "closed" }],
+        },
+      },
+    };
+
+    const enhanced = enhanceSchemaWithSmartMapping(schema);
+    const props = enhanced.properties as Record<string, JSONSchema7>;
+    expect(fakerOf(Reflect.get(Object(enhanced.$defs), "Status"))).toBe(
+      undefined,
+    );
+    for (const name of ["code", "email", "active", "isPublished"]) {
+      expect(fakerOf(props[name])).toBe(undefined);
+    }
+    expect(fakerOf(props.tags.items)).toBe(undefined);
+    expect(fakerOf(props.labels.additionalProperties)).toBe(undefined);
+  });
+
+  it("writes no lorem fallback onto a composed root string or array item", () => {
+    for (const schema of [
+      { type: "string", oneOf: [{ format: "email" }, { format: "uuid" }] },
+      { type: "string", allOf: [{ minLength: 15 }] },
+      { type: "string", not: { const: "" } },
+    ] satisfies JSONSchema7[]) {
+      expect(fakerOf(enhanceSchemaWithSmartMapping(schema))).toBe(undefined);
+    }
+    const list = enhanceSchemaWithSmartMapping({
+      type: "array",
+      items: { type: "string", anyOf: [{ pattern: "^x-[0-9]{3}$" }] },
+    });
+    expect(fakerOf(list.items)).toBe(undefined);
+  });
+
+  it("still maps and falls back on uncomposed siblings", () => {
+    const enhanced = enhanceSchemaWithSmartMapping({
+      type: "object",
+      properties: {
+        email: { type: "string" },
+        zzqx: { type: "string" },
+        isActive: { type: "boolean" },
+      },
+    });
+    const props = enhanced.properties as Record<string, JSONSchema7>;
+    expect(fakerOf(props.email)).toBe("internet.email");
+    expect(fakerOf(props.zzqx)).toBe("lorem.word");
+    expect(fakerOf(props.isActive)).toEqual({
+      "datatype.boolean": [{ probability: 0.9 }],
+    });
+  });
+
+  it("generates values that satisfy the composition, not a faker word", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: {
+        status: { $ref: "#/$defs/Status" },
+        statuses: { type: "array", items: { $ref: "#/$defs/Status" } },
+        code: { type: "string", allOf: [{ minLength: 15 }] },
+        active: { type: "boolean", not: { const: true } },
+      },
+      required: ["status", "statuses", "code", "active"],
+      $defs: {
+        Status: {
+          type: "string",
+          oneOf: [{ const: "open" }, { const: "closed" }],
+        },
+      },
+    };
+    for (let seed = 1; seed <= 40; seed += 1) {
+      const value = Object(await generateFromSchema({ schema, seed }));
+      expect(["open", "closed"]).toContain(value.status);
+      for (const status of value.statuses) {
+        expect(["open", "closed"]).toContain(status);
+      }
+      expect(typeof value.code).toBe("string");
+      expect(value.code.length).toBeGreaterThanOrEqual(15);
+      expect(value.active).toBe(false);
+    }
+  });
+
+  it("generates a composed root string from its branches", async () => {
+    const schema: JSONSchema7 = {
+      type: "string",
+      oneOf: [{ const: "open" }, { const: "closed" }],
+    };
+    for (let seed = 1; seed <= 40; seed += 1) {
+      expect(["open", "closed"]).toContain(
+        await generateFromSchema({ schema, seed }),
+      );
+    }
   });
 });

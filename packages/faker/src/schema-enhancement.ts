@@ -1,5 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import {
+  declaresComposition,
   declaresExplicitValue,
   findBestMapping,
   GENERATABLE_FORMATS,
@@ -271,8 +272,9 @@ function childContext(request: ChildContextRequest): EnhancementContext {
  *
  * Explicit schema keywords always win: `findBestMapping` refuses a schema that
  * declares its own value (`default`, `const`, `enum`, `pattern`, `faker`,
- * `$ref`) or a generatable `format`; a mapping never overwrites a declared
- * `format` or `schmockTrueProbability`.
+ * `$ref`, or `allOf`/`anyOf`/`oneOf`/`not`/`if` composition) or a generatable
+ * `format`; a mapping never overwrites a declared `format` or
+ * `schmockTrueProbability`.
  */
 function applyNameMapping(
   enhanced: FakerSchema,
@@ -283,8 +285,7 @@ function applyNameMapping(
     return;
   }
 
-  const hasComposition = enhanced.allOf || enhanced.anyOf || enhanced.oneOf;
-  if (hasComposition || declaresExplicitValue(enhanced)) return;
+  if (declaresExplicitValue(enhanced)) return;
 
   const match = findBestMapping(context, enhanced);
   if (match) {
@@ -321,7 +322,7 @@ function applyNameMapping(
  *
  * `schmockTrueProbability` is either declared by the schema or set by a
  * name mapping that found none declared. A `const` or `enum` fixes the value
- * outright, so it is left alone.
+ * outright, and composition decides it, so those nodes are left alone.
  */
 function applyBooleanWeighting(enhanced: FakerSchema): void {
   const probability = enhanced.schmockTrueProbability;
@@ -330,7 +331,8 @@ function applyBooleanWeighting(enhanced: FakerSchema): void {
     typeof probability !== "number" ||
     !Number.isFinite(probability) ||
     enhanced.const !== undefined ||
-    enhanced.enum !== undefined
+    enhanced.enum !== undefined ||
+    declaresComposition(enhanced)
   ) {
     return;
   }
