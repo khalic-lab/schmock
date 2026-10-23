@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { Socket } from "node:net";
 import type * as Schmock from "@schmock/core";
 import { SchmockError, schmock } from "@schmock/core";
+import { toError } from "@schmock/core/adapter";
 import { openapi } from "@schmock/openapi";
 import { DEFAULT_ADMIN_HISTORY_LIMIT, resolveAdminToken } from "./admin.js";
 import { handleCliRequest } from "./request.js";
@@ -212,9 +213,7 @@ function startCliServer(
     // serving: a development mock server surviving a stray error is worth more
     // than exiting, and every other CLI diagnostic goes to stderr too.
     const reportServerError = (error: unknown): void => {
-      process.stderr.write(
-        `Server error: ${error instanceof Error ? error.message : String(error)}\n`,
-      );
+      process.stderr.write(`Server error: ${toError(error).message}\n`);
     };
 
     httpServer.once("error", onListenError);

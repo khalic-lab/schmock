@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { toError } from "@schmock/core/adapter";
 
 const USAGE = "Usage: schmock-devtools init <publicDir>\n";
 
@@ -58,7 +59,7 @@ export function runInit(
     copyFileSync(io.source, targetFile);
   } catch (error) {
     io.stderr(
-      `Could not copy schmock-sw.js to ${rel}: ${error instanceof Error ? error.message : String(error)}\n`,
+      `Could not copy schmock-sw.js to ${rel}: ${toError(error).message}\n`,
     );
     return 1;
   }

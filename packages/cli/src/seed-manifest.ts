@@ -15,6 +15,7 @@ import {
 } from "node:path";
 import type * as Schmock from "@schmock/core";
 import { ResourceLimitError, SchmockError } from "@schmock/core";
+import { toError } from "@schmock/core/adapter";
 import { MAX_SEED_MANIFEST_BYTES } from "@schmock/openapi";
 
 /** Bytes requested per read; the size cap is checked after each one. */
@@ -32,10 +33,6 @@ function invalidSeed(
     option: "seed",
     ...context,
   });
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function errorCode(error: unknown): unknown {
@@ -80,7 +77,7 @@ function resolveSeedEntryPath(
         { resource: key },
       );
     }
-    const reason = errorMessage(error);
+    const reason = toError(error).message;
     throw invalidSeed(`Seed entry "${key}" could not be resolved: ${reason}`, {
       resource: key,
       reason,
@@ -184,7 +181,7 @@ export function loadSeedFile(seedPath: string): Schmock.SeedConfig {
     parsed = JSON.parse(raw);
   } catch (error) {
     // The parser's message carries the position, which is what finds the typo.
-    const reason = errorMessage(error);
+    const reason = toError(error).message;
     throw invalidSeed(
       `Seed file "${seedPath}" contains invalid JSON: ${reason}`,
       { reason },

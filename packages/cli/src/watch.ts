@@ -2,6 +2,7 @@ import type { FSWatcher } from "node:fs";
 import { realpathSync, watch } from "node:fs";
 import { basename, dirname, relative, resolve as resolvePath } from "node:path";
 import type * as Schmock from "@schmock/core";
+import { toError } from "@schmock/core/adapter";
 import { loadSeedFile } from "./seed-manifest.js";
 import type { CliOptions } from "./types.js";
 
@@ -226,9 +227,6 @@ export function startWatch(input: WatchInput): WatchHandle {
    */
   const unwatched = new Set<string>();
 
-  const errorText = (error: unknown): string =>
-    error instanceof Error ? error.message : String(error);
-
   const closeWatchers = (): void => {
     for (const watcher of watchers.values()) watcher.close();
     watchers.clear();
@@ -257,7 +255,7 @@ export function startWatch(input: WatchInput): WatchHandle {
       unwatched.add(directory);
       const state = lost ? "stopped watching" : "not watching";
       process.stderr.write(
-        `Spec watch error: ${errorText(error)} (${state} ${directory}; retrying)\n`,
+        `Spec watch error: ${toError(error).message} (${state} ${directory}; retrying)\n`,
       );
     }
     scheduleRetry();
@@ -349,9 +347,7 @@ export function startWatch(input: WatchInput): WatchHandle {
           );
         } catch (err) {
           if (closed) return;
-          process.stderr.write(
-            `Reload failed: ${err instanceof Error ? err.message : String(err)}\n`,
-          );
+          process.stderr.write(`Reload failed: ${toError(err).message}\n`);
         }
         rearm();
       });
