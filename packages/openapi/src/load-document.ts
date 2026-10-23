@@ -1,6 +1,6 @@
 import { SchmockError } from "@schmock/core";
 import type { OpenAPI } from "openapi-types";
-import { assertNoRefRing } from "./deref-internal.js";
+import { assertInternalRefs } from "./deref-internal.js";
 import {
   buildRefParserOptions,
   checkRef,
@@ -156,7 +156,7 @@ export async function loadDocument(
   markDiscriminatorValues(raw);
   // After the marker, which reads the `$ref` a sibling rewrite would move.
   combineRefSiblings(raw);
-  assertNoRefRing(raw);
+  assertInternalRefs(raw);
 
   const api = await dereferenceDocument({
     resolver,
@@ -203,6 +203,27 @@ export async function loadDocument(
  * the whole `discriminator` object.
  */
 const DISCRIMINATOR_VALUES_MARKER = "x-schmock-discriminator-values";
+
+/**
+ * Whether `value` is an object the document holds, rather than a built-in
+ * prototype that a pointer through an inherited name dereferenced to.
+ *
+ * `assertInternalRefs` refuses such a pointer inside the root document, but a
+ * pointer into an external document is resolved by ref-parser alone, and the
+ * marker written on what `discriminator: { $ref: "other.yaml#/__proto__" }`
+ * dereferenced to would be a key on every object in the process. Every
+ * built-in prototype owns a function-valued `constructor`; data parsed from
+ * JSON or YAML, or copied by `structuredClone`, never holds a function.
+ */
+function isDocumentObject(value: unknown): value is Record<string, unknown> {
+  return (
+    isRecord(value) &&
+    !(
+      Object.hasOwn(value, "constructor") &&
+      typeof value.constructor === "function"
+    )
+  );
+}
 
 /**
  * The mapping keys naming `ref`, in declaration order.
@@ -258,7 +279,7 @@ function markDiscriminatorValues(root: unknown): void {
     if (!isRecord(node)) continue;
 
     const disc = node.discriminator;
-    if (isRecord(disc) && Array.isArray(node.oneOf)) {
+    if (isDocumentObject(disc) && Array.isArray(node.oneOf)) {
       const mapping = isRecord(disc.mapping) ? disc.mapping : {};
       const values = node.oneOf.map((branch) =>
         discriminatorValuesForBranch(mapping, branch),
@@ -474,8 +495,10 @@ function markDereferencedDiscriminatorValues(
     if (!isRecord(node)) continue;
 
     const disc = node.discriminator;
-    if (isRecord(disc) && Array.isArray(node.oneOf)) {
-      const existingRaw = disc[DISCRIMINATOR_VALUES_MARKER];
+    if (isDocumentObject(disc) && Array.isArray(node.oneOf)) {
+      const existingRaw = Object.hasOwn(disc, DISCRIMINATOR_VALUES_MARKER)
+        ? disc[DISCRIMINATOR_VALUES_MARKER]
+        : undefined;
       const existing = Array.isArray(existingRaw) ? existingRaw : [];
       const mapping = isRecord(disc.mapping) ? disc.mapping : {};
       const values = node.oneOf.map((branch, index) => {

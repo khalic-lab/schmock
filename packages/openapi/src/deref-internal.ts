@@ -17,13 +17,15 @@ import { SchmockError } from "@schmock/core";
  * and asserts the results are indistinguishable, so a divergence fails the
  * build instead of reaching a browser.
  *
- * Two departures are deliberate, and the Node path makes the same ones so the
+ * Three departures are deliberate, and the Node path makes the same ones so the
  * resolvers still agree: a `$ref`'s siblings win over its target even when the
  * target was cached by an earlier bare `$ref` (ref-parser lets the target win
  * there, so the result depended on document order; `resolver.ts` re-applies
- * the siblings through `onDereference`), and a ring of `$ref`s that never
- * reaches a value is a coded error rather than a stack overflow
- * ({@link assertNoRefRing} runs before either resolver).
+ * the siblings through `onDereference`), a ring of `$ref`s that never reaches
+ * a value is a coded error rather than a stack overflow, and a pointer naming
+ * an inherited member such as `__proto__` is a coded error rather than a
+ * reference to `Object.prototype` ({@link assertInternalRefs} runs before
+ * either resolver).
  *
  * External refs are out of scope by construction: `parseSpec` rules on them
  * through the ref policy before dereferencing starts, and the browser resolver
@@ -66,10 +68,22 @@ const NULL_TARGET = Symbol("null");
  */
 const MAX_REF_HOPS = 100;
 
-/** Hops taken so far while resolving one pointer, across recursion. */
-interface HopBudget {
+/** One pointer's resolution, shared across the recursion a chain triggers. */
+interface PointerWalk {
+  /** Hops taken so far. */
   hops: number;
+  /**
+   * Set by {@link assertInternalRefs}, which walks the document before either
+   * resolver has run. A `$ref` that leaves the document only has a target
+   * once the Node resolver has read it, so the walk stops there rather than
+   * failing, and a token the document does not hold is left for the resolver
+   * to report.
+   */
+  preflight: boolean;
 }
+
+/** Ends a preflight walk that cannot rule on its pointer. */
+class WalkStopped extends Error {}
 
 function isRefObject(value: unknown): value is RefObject {
   return (
@@ -106,6 +120,13 @@ function isWalkable(value: unknown): value is Record<string, unknown> {
 
 function refError(message: string, ref: string): SchmockError {
   return new SchmockError(message, "OPENAPI_INVALID_REF", { ref });
+}
+
+/** A pointer token the document does not hold. */
+function missingToken(ref: string, token: string, walk: PointerWalk): Error {
+  // The resolvers report a miss themselves, each in its own words.
+  if (walk.preflight) return new WalkStopped();
+  return refError(`$ref "${ref}" has no "${token}"`, ref);
 }
 
 /**
@@ -172,7 +193,7 @@ function mergeExtendedRef(ref: RefObject, target: unknown): unknown {
 function resolvePointer(
   document: unknown,
   refPath: string,
-  budget: HopBudget = { hops: 0 },
+  walk: PointerWalk = { hops: 0, preflight: false },
 ): Resolved {
   const tokens = parseTokens(refPath);
   let value: unknown = document;
@@ -187,7 +208,7 @@ function resolvePointer(
   const followRefs = (atRoot: boolean): boolean => {
     let moved = false;
     while (isInternalRef(value)) {
-      if (++budget.hops > MAX_REF_HOPS) {
+      if (++walk.hops > MAX_REF_HOPS) {
         throw refError(
           `$ref "${refPath}" chains through more than ${MAX_REF_HOPS} references`,
           refPath,
@@ -200,7 +221,7 @@ function resolvePointer(
         circular = true;
         return moved;
       }
-      const next = resolvePointer(document, target, budget);
+      const next = resolvePointer(document, target, walk);
       if (isExtendedRef(value)) {
         // The siblings derive a new object, so the path does NOT move: only
         // the value changes.
@@ -223,11 +244,26 @@ function resolvePointer(
     if (i > 0 && followRefs(false)) path = joinPointer(path, tokens.slice(i));
 
     const token = tokens[i];
+    if (walk.preflight && isRefObject(value) && !isInternalRef(value)) {
+      throw new WalkStopped();
+    }
     if (!isWalkable(value)) {
-      throw refError(`$ref "${refPath}" has no "${token}"`, refPath);
+      throw missingToken(refPath, token, walk);
     }
 
-    const next = value[token];
+    // Own keys only. ref-parser reads `value[token]`, so `#/__proto__` and
+    // `#/constructor/prototype` would land on `Object.prototype` itself, and
+    // whatever is later written to the "schema" would reach every object in
+    // the process. Refused, not treated as a miss: the preflight has to stop
+    // the Node resolver from ever following such a pointer.
+    if (!Object.hasOwn(value, token) && token in value) {
+      throw refError(
+        `$ref "${refPath}" names "${token}", which is inherited rather than held by the document`,
+        refPath,
+      );
+    }
+
+    const next = Object.hasOwn(value, token) ? value[token] : undefined;
     if (next !== undefined && !(next === null && i === tokens.length - 1)) {
       value = next;
       continue;
@@ -240,7 +276,10 @@ function resolvePointer(
     let rejoined = false;
     for (let j = tokens.length - 1; j > i; j--) {
       const candidate = tokens.slice(i, j + 1).join("/");
-      if (container[candidate] !== undefined) {
+      if (
+        Object.hasOwn(container, candidate) &&
+        container[candidate] !== undefined
+      ) {
         value = container[candidate];
         i = j;
         rejoined = true;
@@ -250,12 +289,12 @@ function resolvePointer(
     if (rejoined) continue;
 
     // A key that is present and explicitly `null` is a hit, not a miss.
-    if (token in container && container[token] === null) {
+    if (Object.hasOwn(container, token) && container[token] === null) {
       value = NULL_TARGET;
       continue;
     }
 
-    throw refError(`$ref "${refPath}" has no "${token}"`, refPath);
+    throw missingToken(refPath, token, walk);
   }
 
   followRefs(tokens.length === 0);
@@ -406,6 +445,7 @@ function literalTarget(document: unknown, pointer: string): unknown {
   let value: unknown = document;
   for (const token of parseTokens(pointer)) {
     if (!isWalkable(value) || isRefObject(value)) return undefined;
+    if (!Object.hasOwn(value, token)) return undefined;
     value = value[token];
   }
   return value;
@@ -416,18 +456,8 @@ function canonicalPointer(pointer: string): string {
   return joinPointer("#", parseTokens(pointer));
 }
 
-/**
- * Refuse a document holding a ring of internal `$ref`s that never reaches a
- * value (`A: {$ref: B}`, `B: {$ref: A}`).
- *
- * Runs before EITHER resolver, because they disagreed: this module used to
- * recurse until the stack overflowed, and ref-parser silently leaves the
- * `$ref` in the output, from where it reached AJV and the faker generator as a
- * schema. A `$ref` naming its own location is not a ring — both resolvers keep
- * it on purpose — and neither is a cycle through real schema content, which
- * dereferences to an object cycle.
- */
-export function assertNoRefRing(document: unknown): void {
+/** Every internal `$ref` in `document`, each spelling once. */
+function internalRefs(document: unknown): Set<string> {
   const refs = new Set<string>();
   const seen = new WeakSet<object>();
   const stack: unknown[] = [document];
@@ -438,7 +468,39 @@ export function assertNoRefRing(document: unknown): void {
     if (isInternalRef(node)) refs.add(node.$ref);
     for (const child of Object.values(node)) stack.push(child);
   }
+  return refs;
+}
 
+/**
+ * Refuse, before EITHER resolver runs, the internal `$ref`s the two would
+ * mishandle or disagree on. Each pointer is walked the way {@link
+ * dereferenceInternal} walks it, through any `$ref` on the way.
+ *
+ * - A ring of `$ref`s that never reaches a value (`A: {$ref: B}`,
+ *   `B: {$ref: A}`). This module used to recurse until the stack overflowed,
+ *   and ref-parser silently leaves the `$ref` in the output, from where it
+ *   reached AJV and the faker generator as a schema. A `$ref` naming its own
+ *   location is not a ring — both resolvers keep it on purpose — and neither
+ *   is a cycle through real schema content, which dereferences to an object
+ *   cycle.
+ * - A pointer through a name the document does not hold but every object
+ *   inherits (`#/__proto__`, `#/components/schemas/Pet/constructor`).
+ *   ref-parser follows it to a built-in prototype, and the discriminator pass
+ *   in `load-document.ts` then wrote its marker onto `Object.prototype`.
+ */
+export function assertInternalRefs(document: unknown): void {
+  const refs = internalRefs(document);
+  assertNoRefRing(document, refs);
+  for (const ref of refs) {
+    try {
+      resolvePointer(document, ref, { hops: 0, preflight: true });
+    } catch (error) {
+      if (!(error instanceof WalkStopped)) throw error;
+    }
+  }
+}
+
+function assertNoRefRing(document: unknown, refs: Set<string>): void {
   /** Pointers already known to end in a value, a self-reference or a miss. */
   const settled = new Set<string>();
   for (const start of refs) {

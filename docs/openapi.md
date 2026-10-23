@@ -191,6 +191,10 @@ not in the browser build.
 - **A ring of `$ref`s** that never reaches a value (`A` → `B` → `A`) fails with
   `OPENAPI_INVALID_REF` on both the Node and browser builds. A `$ref` pointing
   at its own location is allowed.
+- **A pointer through an inherited name**, such as `#/__proto__` or
+  `#/constructor/prototype`, fails with `OPENAPI_INVALID_REF` on both builds.
+  Only keys the document declares are followed, so a schema the document names
+  `constructor` still resolves.
 
 ### Running in a browser
 

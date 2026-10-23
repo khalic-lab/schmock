@@ -1,3 +1,4 @@
+import { SchmockError } from "@schmock/core";
 import { describe, expect, it } from "vitest";
 import { dereferenceInternal } from "./deref-internal";
 
@@ -35,6 +36,35 @@ describe("dereferenceInternal on documents outside the parity corpus", () => {
     const result = dereferenceInternal(document) as { value?: number };
 
     expect(result.value).toBe(2);
+  });
+
+  it("refuses a pointer through an inherited name instead of following it", () => {
+    // ref-parser reads `value[token]`, so the parity corpus cannot pin this:
+    // both would have handed back `Object.prototype` itself.
+    for (const pointer of ["#/__proto__", "#/a/constructor/prototype"]) {
+      const document = { a: { b: 1 }, use: { $ref: pointer } };
+      let thrown: unknown;
+      try {
+        dereferenceInternal(document);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown, pointer).toBeInstanceOf(SchmockError);
+      expect((thrown as SchmockError).code, pointer).toBe(
+        "OPENAPI_INVALID_REF",
+      );
+    }
+  });
+
+  it("still follows a key the document itself holds under an inherited name", () => {
+    const document = {
+      defs: { constructor: { type: "string" } },
+      use: { $ref: "#/defs/constructor" },
+    };
+
+    const result = dereferenceInternal(document);
+
+    expect(result.use).toEqual({ type: "string" });
   });
 
   it("still returns the same object when the root is not a $ref", () => {
