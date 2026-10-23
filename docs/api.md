@@ -1657,9 +1657,18 @@ Error response format:
 ```
 
 `details` entries are raw Ajv `ErrorObject`s — the instance location is
-`instancePath`, not `path`. The one exception is the `bodyRequired` rejection,
-which emits a synthetic detail carrying only `instancePath: ""`, `keyword` and
-`message`. Note that `@schmock/openapi` reshapes Ajv errors to `{ path, ... }`,
+`instancePath`, not `path`. Two rejections emit synthetic details instead, and
+neither carries a `schemaPath`:
+
+- The `bodyRequired` rejection carries only `instancePath: ""`,
+  `keyword: 'required'` and `message`.
+- A query or header value rejected for not being a finite number in plain
+  decimal notation carries `instancePath` (such as `'/page'`),
+  `keyword: 'type'`, `params: { value }` with the original string, and
+  `message: 'must be a finite number in plain decimal notation'`. Its `params`
+  differ from an Ajv `type` error's `params: { type }`.
+
+Note that `@schmock/openapi` reshapes Ajv errors to `{ path, ... }`,
 so the two packages' `details` differ despite similar error codes.
 
 #### What gets validated
