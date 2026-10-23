@@ -905,7 +905,7 @@ describe("generators", () => {
       expect(secondMock).toEqual(firstMock);
     });
 
-    it("keeps a seeded uuid header valid under validateResponses", async () => {
+    it("generates a seeded uuid header as a well-formed uuid", async () => {
       const mock = schmock({ state: {} });
       mock.pipe(
         await openapi({

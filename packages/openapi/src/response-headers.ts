@@ -38,8 +38,9 @@ export function createHeaderSeed(seed?: number): HeaderSeed | undefined {
  *
  * Deliberately a different variant nibble from {@link SYNTHETIC_UUID_PREFIX}, so
  * a header value can never be mistaken for a minted resource id by `idCounter`.
- * `ajv-formats` enforces `format: uuid` under `validateResponses`, so a seeded
- * header still has to be a real uuid.
+ * `validateResponses` never checks a header value (only the status, media type
+ * and body), so nothing in the mock rejects a malformed one: the value is a
+ * real uuid because a client that parses a `format: uuid` header expects one.
  */
 const SEEDED_HEADER_UUID_PREFIX = "00000000-0000-4000-9000-";
 
