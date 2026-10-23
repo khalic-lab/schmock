@@ -93,6 +93,19 @@ Feature: Faker creation-time checks
       | allof      |
       | anyof-null |
 
+  # The generation budget charges count against that array too: 10000 items
+  # of 200 integers each is far past the node limit.
+  Scenario Outline: A count past the generation budget through a wrapping root is rejected at construction
+    Given a root that reaches an array of 200-integer arrays through "<wrapper>"
+    When I create a faker plugin for it with count 10000
+    Then plugin creation fails with resource "generated_nodes"
+
+    Examples:
+      | wrapper    |
+      | ref        |
+      | allof      |
+      | anyof-null |
+
   # Review 2026-10-23 faker-2: json-schema-faker honours only some not bodies
   Scenario Outline: A not that generation cannot honour is rejected at construction
     Given the not schema "<case>"

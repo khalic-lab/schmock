@@ -467,6 +467,10 @@ function estimateSchemas(
   explicitCount: number | undefined,
 ): Map<JSONSchema7, Estimate> {
   const estimates = new Map<JSONSchema7, Estimate>();
+  // Generation sizes the array a root `$ref`, wrapper-only `allOf` or null
+  // union stands for as the root array, `count` included, so it is charged
+  // as one too.
+  const sized = countedArray(root, state.refs);
   for (const schema of state.postOrder) {
     estimates.set(
       schema,
@@ -474,7 +478,7 @@ function estimateSchemas(
         schema,
         estimates,
         state,
-        schema === root ? { explicitCount } : undefined,
+        schema === sized ? { explicitCount } : undefined,
       ),
     );
   }

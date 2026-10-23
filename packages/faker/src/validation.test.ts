@@ -855,6 +855,57 @@ describe("validateSchema", () => {
       expect(response).toHaveLength(7);
     });
 
+    /** The wrappers a root array is reached through, around `array`. */
+    const wrapped = (array: JSONSchema7): Array<[string, JSONSchema7]> => [
+      ["a $ref", { $ref: "#/$defs/List", $defs: { List: array } }],
+      [
+        "a single-entry allOf",
+        {
+          description: "Wrapped",
+          $defs: { List: array },
+          allOf: [{ $ref: "#/$defs/List" }],
+        },
+      ],
+      ["an anyOf null union", { anyOf: [array, { type: "null" }] }],
+    ];
+
+    it.each(
+      wrapped({
+        type: "array",
+        items: {
+          type: "array",
+          minItems: 200,
+          maxItems: 200,
+          items: { type: "integer" },
+        },
+      }),
+    )(
+      "charges the nodes a count generates through %s at creation",
+      (_, schema) => {
+        expectResource(
+          captureFailure(() => fakerPlugin({ schema, count: MAX_ARRAY_SIZE })),
+          { resource: "generated_nodes" },
+        );
+      },
+    );
+
+    // Not through a null union: its root may roll null, so none of the
+    // array's characters is certain.
+    it.each(
+      wrapped({
+        type: "array",
+        items: { type: "string", minLength: 2_000 },
+      }).filter(([label]) => !label.includes("null union")),
+    )(
+      "charges the characters a count generates through %s at creation",
+      (_, schema) => {
+        expectResource(
+          captureFailure(() => fakerPlugin({ schema, count: MAX_ARRAY_SIZE })),
+          { resource: "generated_chars" },
+        );
+      },
+    );
+
     it("leaves a union with a second non-null branch alone", () => {
       const schema: JSONSchema7 = {
         anyOf: [list, { type: "string" }],

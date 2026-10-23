@@ -223,9 +223,12 @@ function notSchema(name: string): JSONSchema7 {
   }
 }
 
-/** A root that reaches an integer array through `wrapper`. */
-function wrappedArraySchema(wrapper: string): JSONSchema7 {
-  const list: JSONSchema7 = { type: "array", items: { type: "integer" } };
+/** A root that reaches an array of `items` (integers) through `wrapper`. */
+function wrappedArraySchema(
+  wrapper: string,
+  items: JSONSchema7 = { type: "integer" },
+): JSONSchema7 {
+  const list: JSONSchema7 = { type: "array", items };
   switch (wrapper) {
     case "ref":
       return { $ref: "#/$defs/List", $defs: { List: list } };
@@ -509,6 +512,35 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       Given("a root that reaches an integer array through {string}", () => {
         schema = wrappedArraySchema(variables.wrapper);
       });
+      When(
+        "I create a faker plugin for it with count {int}",
+        (_, count: number) => {
+          createPluginWith(count);
+        },
+      );
+      Then(
+        "plugin creation fails with resource {string}",
+        (_, resource: string) => {
+          expectResourceFailure(creationError, resource);
+        },
+      );
+    },
+  );
+
+  ScenarioOutline(
+    "A count past the generation budget through a wrapping root is rejected at construction",
+    ({ Given, When, Then }, variables) => {
+      Given(
+        "a root that reaches an array of 200-integer arrays through {string}",
+        () => {
+          schema = wrappedArraySchema(variables.wrapper, {
+            type: "array",
+            minItems: 200,
+            maxItems: 200,
+            items: { type: "integer" },
+          });
+        },
+      );
       When(
         "I create a faker plugin for it with count {int}",
         (_, count: number) => {
