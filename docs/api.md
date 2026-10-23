@@ -1498,6 +1498,11 @@ from `@schmock/faker`.
 | `generated_chars` | not exported | 16,777,216 UTF-16 code units per response |
 | `schema_composition_depth` | not exported | 200 composition frames |
 
+`array_max_items` covers `minContains` and `maxContains` as well as
+`minItems` and `maxItems`: json-schema-faker generates every `contains` match
+it draws before trimming the array to `maxItems`, so each draw also counts
+against `generated_nodes`.
+
 `generated_chars` counts every string and object key in one response. At
 creation it is checked against the least the schema can produce: each
 `minLength` multiplied by its array counts. Nested arrays are bounded by

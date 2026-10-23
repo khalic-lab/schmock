@@ -730,17 +730,14 @@ function estimateSchema(
       itemChars + Math.max(0, certainCount - positional.length) * rest.chars,
     );
 
-    // json-schema-faker materializes every `containsAll` entry and at least
-    // one `contains` match (up to `minContains` of them), whatever the count.
-    // They take the place of items, so charging them on top overstates the
-    // array a little and never understates it.
+    // json-schema-faker materializes every `containsAll` entry and every
+    // `contains` draw, whatever the count. They take the place of items, so
+    // charging them on top overstates the array a little and never
+    // understates it.
     if (schema.contains !== undefined) {
-      const minContains: unknown = Reflect.get(schema, "minContains");
-      const copies = Math.max(
-        1,
-        Math.min(typeof minContains === "number" ? minContains : 1, count),
+      itemNodes = capped(
+        itemNodes + containsDraws(schema) * value(schema.contains).nodes,
       );
-      itemNodes = capped(itemNodes + copies * value(schema.contains).nodes);
     }
     const containsAll: unknown = Reflect.get(schema, "containsAll");
     if (Array.isArray(containsAll)) {
@@ -825,7 +822,9 @@ function estimateSchema(
     if (!edge.generates || handled.has(edge.keyword)) continue;
     const nested = edge.depthCost === 1;
     const estimate = nested ? value(edge.schema) : sibling(edge.schema);
-    nodes = capped(nodes + estimate.nodes - (nested ? 0 : 1));
+    // An untyped `contains` still makes json-schema-faker run its draws.
+    const copies = edge.keyword === "contains" ? containsDraws(schema) : 1;
+    nodes = capped(nodes + copies * estimate.nodes - (nested ? 0 : 1));
   }
 
   // A value that may come out null carries none of its strings for certain.
@@ -1589,9 +1588,29 @@ function normalizeExplicitCount(count: number | undefined): number | undefined {
 }
 
 /**
+ * The most times json-schema-faker generates an array's `contains` schema.
+ * It draws a count between `minContains` and `maxContains`, generates that
+ * many matches whatever `maxItems` allows, and only then trims the array, so
+ * the item count does not bound the work.
+ */
+function containsDraws(schema: JSONSchema7): number {
+  if (schema.contains === undefined) return 0;
+  let draws = 1;
+  for (const keyword of ["minContains", "maxContains"]) {
+    const bound: unknown = Reflect.get(schema, keyword);
+    // Math.max with NaN is NaN, which would hide every node estimate above
+    // it from MAX_GENERATED_NODES. Infinity stays and trips MAX_ARRAY_SIZE.
+    if (typeof bound === "number" && !Number.isNaN(bound)) {
+      draws = Math.max(draws, bound);
+    }
+  }
+  return draws;
+}
+
+/**
  * Record array-size breaches. `minItems` counts as much as `maxItems`: it is
  * a floor json-schema-faker has to reach, so a large one is exactly as
- * expensive.
+ * expensive. The `contains` draws count too, and no merged maximum caps them.
  */
 function recordDeclaredArrayLimit(
   schema: JSONSchema7,
@@ -1599,9 +1618,12 @@ function recordDeclaredArrayLimit(
   state: WalkState,
   caps: MergedCaps,
 ): void {
-  const declared = cappedBy(
-    Math.max(schema.minItems ?? 0, schema.maxItems ?? 0),
-    caps.maxItems,
+  const declared = Math.max(
+    cappedBy(
+      Math.max(schema.minItems ?? 0, schema.maxItems ?? 0),
+      caps.maxItems,
+    ),
+    containsDraws(schema),
   );
   if (declared > MAX_ARRAY_SIZE) {
     state.arraySize ??= {
