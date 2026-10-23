@@ -302,6 +302,8 @@ export function createServiceWorkerRelay(
       return state === "fallen-back" ? reason : undefined;
     },
     stop: () => {
+      // Every call shares one stop, so a second call made while the first
+      // waits for the acknowledgement waits for it too.
       stopPromise ??= stop();
       return stopPromise;
     },
@@ -499,6 +501,8 @@ export function createServiceWorkerRelay(
     }
     state = "stopped";
     releaseHold();
+    // Free the slot now, not after the acknowledgement: a start made while
+    // this one waits gets a new relay, not this stopping one.
     if (relaySlots.get(container)?.relay === relay) {
       relaySlots.delete(container);
     }

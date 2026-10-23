@@ -1192,6 +1192,62 @@ describe("PR20 stop()", () => {
     expect(outcome).toBe("stopped");
   });
 
+  it("keeps a second call pending until the worker acknowledges the goodbye", async () => {
+    const harnessed = harness();
+    const seen: Seen[] = [];
+    const released = gate();
+    harnessed.installWorker(
+      stubWorker({
+        seen,
+        onGoodbye: (event) => {
+          void released.promise.then(() => answerReleased(event));
+        },
+      }),
+    );
+    const relay = await start(harnessed.openPage());
+
+    const first = relay.stop();
+    const second = relay.stop();
+    const flags = [settledFlag(first), settledFlag(second)];
+    await delay(30);
+    expect(flags.map((flag) => flag.settled)).toEqual([false, false]);
+
+    released.release();
+    await Promise.all([first, second]);
+    expect(ofType(seen, "schmock:goodbye")).toHaveLength(1);
+  });
+
+  it("lets a start made while it waits for the acknowledgement begin a new, live relay", async () => {
+    const harnessed = harness();
+    const released = gate();
+    let goodbyes = 0;
+    harnessed.installWorker(
+      stubWorker({
+        onGoodbye: (event) => {
+          goodbyes += 1;
+          if (goodbyes === 1) {
+            void released.promise.then(() => answerReleased(event));
+          } else {
+            answerReleased(event);
+          }
+        },
+      }),
+    );
+    const page = harnessed.openPage();
+    const first = await start(page);
+
+    const stopping = first.stop();
+    const second = await start(page);
+
+    expect(second).not.toBe(first);
+    expect(second.active).toBe(true);
+    expect(first.active).toBe(false);
+    released.release();
+    await stopping;
+    expect(second.active).toBe(true);
+    expect(first.fallbackReason).toBeUndefined();
+  });
+
   it("is idempotent: one goodbye, both calls resolve", async () => {
     const harnessed = harness();
     const seen: Seen[] = [];
