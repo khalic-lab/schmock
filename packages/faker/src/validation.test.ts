@@ -526,6 +526,24 @@ describe("validateSchema", () => {
         { resource: "string_length", actual: 5_000_000 },
       );
     });
+
+    it("charges a placeholder's certain length and the literal text around it", () => {
+      const schema = rowsOf(fakeString("ab{{string.alpha(60000)}}"), 300);
+
+      expectResource(
+        captureFailure(() => fakerPlugin({ schema })),
+        { resource: "generated_chars", actual: 18_000_600 },
+      );
+    });
+
+    it("charges the shortest of several templates", () => {
+      const schema = rowsOf(
+        fakeString(["{{string.alpha(60000)}}", "{{string.numeric(1)}}"]),
+        300,
+      );
+
+      expect(() => fakerPlugin({ schema })).not.toThrow();
+    });
   });
 
   describe("references json-schema-faker cannot follow", () => {

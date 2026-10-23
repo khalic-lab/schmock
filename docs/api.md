@@ -1521,7 +1521,10 @@ characters (`string.alpha`, `string.alphanumeric`, `string.numeric`,
 up to the smallest `maxLength` on the schema or a branch json-schema-faker
 merges into it (`allOf`, `anyOf`, `oneOf`, `then`, `else`), and not at all when
 a `faker`, `format`, `enum`, `const` or `default` on the schema or such a
-branch supplies the value instead. Nested arrays are bounded by
+branch supplies the value instead. A `helpers.fake` template counts the
+certain length of each placeholder it calls plus its literal text (the
+placeholders alone when that text holds a brace), and an array of templates
+counts its shortest. Nested arrays are bounded by
 `generated_nodes`; there is no separate memory estimate.
 
 Faker arguments that set a size are held to the string limit:

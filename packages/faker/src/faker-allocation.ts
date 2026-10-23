@@ -296,6 +296,9 @@ export function fakerLengthFloor(config: unknown): number {
   let floor = 0;
   for (const [method, args] of Object.entries(config)) {
     if (!Array.isArray(args)) continue;
+    if (method === "helpers.fake") {
+      floor = Math.max(floor, fakeTemplatesFloor(args[0]));
+    }
     for (const rule of FAKER_ALLOCATION_POLICIES[method] ?? []) {
       if (!rule.exact) continue;
       const argument: unknown = args[rule.argumentIndex];
@@ -335,6 +338,47 @@ function validateTemplateArguments(method: string, args: unknown[]): void {
     default:
       return;
   }
+}
+
+/**
+ * The fewest characters `helpers.fake` produces: faker picks one template
+ * from an array, so the floor is the smallest over the templates.
+ */
+function fakeTemplatesFloor(templates: unknown): number {
+  const candidates = Array.isArray(templates) ? templates : [templates];
+  let floor: number | undefined;
+  for (const template of candidates) {
+    if (typeof template !== "string") continue;
+    const length = fakeTemplateFloor(template);
+    floor = floor === undefined ? length : Math.min(floor, length);
+  }
+  return floor ?? 0;
+}
+
+/**
+ * One template's floor: the certain length of each call placeholder, plus
+ * the literal text around them. faker scans the substituted string again,
+ * so a literal brace next to a placeholder's output can open a new
+ * placeholder that replaces text; literal text then counts for nothing.
+ */
+function fakeTemplateFloor(template: string): number {
+  let placeholders = 0;
+  let literal = "";
+  let offset = 0;
+  for (const placeholder of fakePlaceholders(template)) {
+    literal += template.slice(offset, placeholder.start);
+    offset = placeholder.end;
+    const call = fakeCall(placeholder.expression);
+    if (call) {
+      placeholders = capped(
+        placeholders + fakerLengthFloor({ [call.method]: call.args }),
+      );
+    }
+  }
+  literal += template.slice(offset);
+  return /[{}]/.test(literal)
+    ? placeholders
+    : capped(placeholders + literal.length);
 }
 
 interface FakePlaceholder {
