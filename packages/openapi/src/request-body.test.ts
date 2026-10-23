@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { schmock } from "@schmock/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { openapi } from "./plugin";
 import {
   NORMALIZED_BODY_STATE_KEY,
@@ -707,6 +707,68 @@ describe("normalizeRequestBody", () => {
       expect.objectContaining({ value: "x", enumerable: true }),
     );
     expect(({} as Record<string, unknown>).y).toBeUndefined();
+  });
+});
+
+describe("request schema compilation", () => {
+  function jsonContext(schema: Record<string, unknown>): Schmock.PluginContext {
+    return {
+      path: "/uploads",
+      route: {
+        "openapi:requestContent": new Map([["application/json", schema]]),
+      },
+      method: "POST",
+      params: {},
+      query: {},
+      headers: { "content-type": "application/json" },
+      body: { code: "x" },
+      state: new Map(),
+    };
+  }
+
+  it("compiles a request schema once", () => {
+    const context = jsonContext({
+      type: "object",
+      properties: { code: { type: "string" } },
+    });
+    const validator = createBodyValidatorContext();
+    const compile = vi.spyOn(validator.ajv, "compile");
+
+    expect(validateRequestBody(context, validator)).toBeUndefined();
+    expect(validateRequestBody(context, validator)).toBeUndefined();
+
+    expect(compile).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not recompile a request schema that failed to compile", () => {
+    // `(` is invalid in both regex grammars, so the compile cannot succeed.
+    const context = jsonContext({
+      type: "object",
+      properties: { code: { type: "string", pattern: "(" } },
+    });
+    const validator = createBodyValidatorContext();
+    const compile = vi.spyOn(validator.ajv, "compile");
+
+    const first = validateRequestBody(context, validator);
+    const second = validateRequestBody(context, validator);
+
+    expect(compile).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+    expect(first?.response).toEqual([
+      400,
+      expect.objectContaining({
+        code: "VALIDATION_ERROR",
+        details: [
+          {
+            path: "/",
+            message: expect.stringMatching(
+              /^request schema could not be compiled: Invalid regular expression/,
+            ),
+            keyword: "schema",
+          },
+        ],
+      }),
+    ]);
   });
 });
 

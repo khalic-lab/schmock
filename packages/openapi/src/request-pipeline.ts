@@ -342,6 +342,11 @@ const specPatternEngine: NonNullable<CodeOptions["regExp"]> = Object.assign(
 export interface BodyValidatorContext {
   ajv: Ajv2020;
   cache: WeakMap<object, ValidateFunction>;
+  /**
+   * Why a schema failed to compile, so a route whose schema cannot compile
+   * answers from the recorded error instead of compiling it on every request.
+   */
+  failures: WeakMap<object, Error>;
 }
 
 export function createBodyValidatorContext(): BodyValidatorContext {
@@ -363,6 +368,213 @@ export function createBodyValidatorContext(): BodyValidatorContext {
   return {
     ajv,
     cache: new WeakMap(),
+    failures: new WeakMap(),
+  };
+}
+
+/**
+ * The validator for `schema`, compiled once per context and cached on the
+ * schema object the parser handed over. A schema that fails to compile throws
+ * the same error on every later call without being compiled again.
+ */
+function getValidator(
+  validatorCtx: BodyValidatorContext,
+  schema: JSONSchema7,
+): ValidateFunction {
+  const cached = validatorCtx.cache.get(schema);
+  if (cached) return cached;
+  const failure = validatorCtx.failures.get(schema);
+  if (failure) throw failure;
+
+  try {
+    const validate = validatorCtx.ajv.compile(
+      isRecord(schema) ? shareRepeatedSubschemas(schema) : schema,
+    );
+    validatorCtx.cache.set(schema, validate);
+    return validate;
+  } catch (error) {
+    const compileError =
+      error instanceof Error ? error : new Error(String(error));
+    validatorCtx.failures.set(schema, compileError);
+    throw compileError;
+  }
+}
+
+/** Keywords whose value is a single subschema. */
+const SUBSCHEMA_KEYWORDS = [
+  "additionalItems",
+  "additionalProperties",
+  "contains",
+  "else",
+  "if",
+  "items",
+  "not",
+  "propertyNames",
+  "then",
+  "unevaluatedItems",
+  "unevaluatedProperties",
+] as const;
+
+/** Keywords whose value is a list of subschemas. */
+const SUBSCHEMA_LIST_KEYWORDS = [
+  "allOf",
+  "anyOf",
+  "items",
+  "oneOf",
+  "prefixItems",
+] as const;
+
+/** Keywords whose value maps names to subschemas. */
+const SUBSCHEMA_MAP_KEYWORDS = [
+  "$defs",
+  "definitions",
+  "dependencies",
+  "dependentSchemas",
+  "patternProperties",
+  "properties",
+] as const;
+
+/** Keywords that point at another schema by URI or JSON pointer. */
+const REFERENCE_KEYWORDS = ["$ref", "$dynamicRef", "$recursiveRef"] as const;
+
+/** Keywords that name a schema so that a reference can point at it. */
+const IDENTITY_KEYWORDS = [
+  "$id",
+  "$anchor",
+  "$dynamicAnchor",
+  "$recursiveAnchor",
+] as const;
+
+/** `$defs` key prefix for a subschema moved there by shareRepeatedSubschemas. */
+const SHARED_DEF_PREFIX = "schmockShared";
+
+function forEachSubschema(
+  node: Record<string, unknown>,
+  visit: (child: Record<string, unknown>) => void,
+): void {
+  for (const keyword of SUBSCHEMA_KEYWORDS) {
+    const value = node[keyword];
+    if (isRecord(value)) visit(value);
+  }
+  for (const keyword of SUBSCHEMA_LIST_KEYWORDS) {
+    const value = node[keyword];
+    if (!Array.isArray(value)) continue;
+    for (const child of value) if (isRecord(child)) visit(child);
+  }
+  for (const keyword of SUBSCHEMA_MAP_KEYWORDS) {
+    const value = node[keyword];
+    if (!isRecord(value)) continue;
+    for (const child of Object.values(value)) if (isRecord(child)) visit(child);
+  }
+}
+
+/** A shallow copy of `node` with every subschema replaced by `replace`'s result. */
+function mapSubschemas(
+  node: Record<string, unknown>,
+  replace: (child: Record<string, unknown>) => Record<string, unknown>,
+): Record<string, unknown> {
+  // Spread and fromEntries define keys, so a property named `__proto__`
+  // stays a property instead of setting the copy's prototype.
+  const copy: Record<string, unknown> = { ...node };
+  for (const keyword of IDENTITY_KEYWORDS) delete copy[keyword];
+  for (const keyword of SUBSCHEMA_KEYWORDS) {
+    const value = node[keyword];
+    if (isRecord(value)) copy[keyword] = replace(value);
+  }
+  for (const keyword of SUBSCHEMA_LIST_KEYWORDS) {
+    const value = node[keyword];
+    if (!Array.isArray(value)) continue;
+    copy[keyword] = value.map((child: unknown) =>
+      isRecord(child) ? replace(child) : child,
+    );
+  }
+  for (const keyword of SUBSCHEMA_MAP_KEYWORDS) {
+    const value = node[keyword];
+    if (!isRecord(value)) continue;
+    copy[keyword] = Object.fromEntries(
+      Object.entries(value).map(([name, child]) => [
+        name,
+        isRecord(child) ? replace(child) : child,
+      ]),
+    );
+  }
+  return copy;
+}
+
+/**
+ * `schema` with every subschema it reaches more than once moved under `$defs`
+ * and referenced from each place it occurred. The input is not modified.
+ *
+ * The parser dereferences a spec into a graph where every use of a component
+ * is the same object and no `$ref` is left. AJV compiles a schema as a tree,
+ * so it inlined a shared object once per path to it: Stripe's error schema
+ * holds about 9,000 objects but expands to three million nodes, and its first
+ * compile took about a minute and tens of gigabytes, or ran out of memory.
+ * Referenced from `$defs`, each shared subschema is compiled once, and a cycle
+ * (left in keywords the normalizer does not walk) becomes a recursive `$ref`
+ * instead of an endless descent.
+ *
+ * Identity keywords such as `$id` are dropped from the copy. With no reference
+ * left they name nothing, while a nested `$id` would re-base the `$ref`s placed
+ * under it, and AJV refuses one `$id` reached by two paths. A schema that still
+ * holds a reference is returned as it is: its pointers were written against
+ * the original layout.
+ */
+export function shareRepeatedSubschemas(
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  const uses = new Map<Record<string, unknown>, number>();
+  let shared = false;
+  let named = false;
+  let referenced = false;
+  const count = (node: Record<string, unknown>): void => {
+    const seen = uses.get(node);
+    uses.set(node, (seen ?? 0) + 1);
+    if (seen !== undefined) {
+      shared = true;
+      return;
+    }
+    if (REFERENCE_KEYWORDS.some((keyword) => keyword in node)) {
+      referenced = true;
+    }
+    if (IDENTITY_KEYWORDS.some((keyword) => keyword in node)) named = true;
+    forEachSubschema(node, count);
+  };
+  count(schema);
+  if (referenced || (!shared && !named)) return schema;
+
+  const reserved = new Set(
+    isRecord(schema.$defs) ? Object.keys(schema.$defs) : [],
+  );
+  const names = new Map<Record<string, unknown>, string>();
+  const definitions: Record<string, unknown> = {};
+  let nextIndex = 0;
+  const freshName = (): string => {
+    let name = `${SHARED_DEF_PREFIX}${nextIndex++}`;
+    while (reserved.has(name)) name = `${SHARED_DEF_PREFIX}${nextIndex++}`;
+    return name;
+  };
+  const reference = (
+    node: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    if (node === schema) return { $ref: "#" };
+    if ((uses.get(node) ?? 0) < 2) return mapSubschemas(node, reference);
+    let name = names.get(node);
+    if (name === undefined) {
+      name = freshName();
+      // Named before the copy is built, so a cycle back to this node finds
+      // the reference instead of copying it again.
+      names.set(node, name);
+      definitions[name] = mapSubschemas(node, reference);
+    }
+    return { $ref: `#/$defs/${name}` };
+  };
+
+  const root = mapSubschemas(schema, reference);
+  if (names.size === 0) return root;
+  return {
+    ...root,
+    $defs: { ...(isRecord(root.$defs) ? root.$defs : {}), ...definitions },
   };
 }
 
@@ -452,23 +664,20 @@ export function validateRequestBody(
     return undefined;
   }
 
-  let validate = validatorCtx.cache.get(requestBodySchema);
-  if (!validate) {
-    try {
-      validate = validatorCtx.ajv.compile(requestBodySchema);
-      validatorCtx.cache.set(requestBodySchema, validate);
-    } catch (error) {
-      return requestValidationError(context, [
-        {
-          path: "/",
-          message:
-            error instanceof Error
-              ? `request schema could not be compiled: ${error.message}`
-              : "request schema could not be compiled",
-          keyword: "schema",
-        },
-      ]);
-    }
+  let validate: ValidateFunction;
+  try {
+    validate = getValidator(validatorCtx, requestBodySchema);
+  } catch (error) {
+    return requestValidationError(context, [
+      {
+        path: "/",
+        message:
+          error instanceof Error
+            ? `request schema could not be compiled: ${error.message}`
+            : "request schema could not be compiled",
+        keyword: "schema",
+      },
+    ]);
   }
   // A form body is checked with its file parts read as strings (see
   // `toValidationInstance`); any other body is checked exactly as received.
@@ -654,12 +863,9 @@ export function validateResponse(
 
   if (!schema) return undefined;
 
-  let validate = validatorCtx.cache.get(schema);
+  let validate: ValidateFunction;
   try {
-    if (!validate) {
-      validate = validatorCtx.ajv.compile(schema);
-      validatorCtx.cache.set(schema, validate);
-    }
+    validate = getValidator(validatorCtx, schema);
   } catch (error) {
     return responseValidationError(context, parts.status, mediaType, [
       {

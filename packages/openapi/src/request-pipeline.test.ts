@@ -6,6 +6,7 @@ import {
   createBodyValidatorContext,
   processContentNegotiation,
   processPreferHeader,
+  shareRepeatedSubschemas,
   validateResponse,
 } from "./request-pipeline";
 
@@ -939,5 +940,241 @@ describe("vendor formats", () => {
       warn.mockRestore();
       log.mockRestore();
     }
+  });
+});
+
+/** A route context whose only response is a 200 with `schema`. */
+function contextWith200(schema: Schmock.JSONSchema7): Schmock.PluginContext {
+  return makeContext(
+    { "openapi:responses": new Map([[200, { description: "OK", schema }]]) },
+    {},
+  );
+}
+
+/**
+ * `depth` levels of objects whose `left` and `right` are the SAME next level,
+ * the shape a dereferenced spec has wherever one component is used twice.
+ */
+function sharedChain(depth: number): Schmock.JSONSchema7 {
+  let level: Schmock.JSONSchema7 = {
+    title: "shared-leaf",
+    type: "object",
+    required: ["id"],
+    properties: { id: { type: "integer" } },
+  };
+  for (let index = 0; index < depth; index++) {
+    level = { type: "object", properties: { left: level, right: level } };
+  }
+  return level;
+}
+
+/** An instance following `left` down `depth` levels to `leaf`. */
+function leftPath(depth: number, leaf: unknown): unknown {
+  let value = leaf;
+  for (let index = 0; index < depth; index++) value = { left: value };
+  return value;
+}
+
+describe("response schema compilation", () => {
+  it("compiles a subschema shared by many paths once", () => {
+    const depth = 12;
+    const schema = sharedChain(depth);
+    const validator = createBodyValidatorContext();
+    const compile = vi.spyOn(validator.ajv, "compile");
+    const context = contextWith200(schema);
+
+    expect(
+      validateResponse(context, [200, leftPath(depth, { id: 1 })], validator),
+    ).toBeUndefined();
+
+    // Inlined, the leaf would appear once per path to it: 2^12 times.
+    expect(compile).toHaveBeenCalledTimes(1);
+    const compiled = JSON.stringify(compile.mock.calls[0]?.[0]);
+    expect(compiled.split('"shared-leaf"')).toHaveLength(2);
+
+    const invalid = validateResponse(
+      context,
+      [200, leftPath(depth, { id: "one" })],
+      validator,
+    );
+    expect(invalid?.response).toEqual([
+      500,
+      expect.objectContaining({
+        code: "RESPONSE_VALIDATION_ERROR",
+        details: [
+          {
+            path: `${"/left".repeat(depth)}/id`,
+            message: "must be integer",
+            keyword: "type",
+          },
+        ],
+      }),
+    ]);
+  });
+
+  it("leaves the parsed schema untouched", () => {
+    const schema = sharedChain(3);
+    const { properties } = schema;
+
+    validateResponse(
+      contextWith200(schema),
+      [200, {}],
+      createBodyValidatorContext(),
+    );
+
+    expect(Object.keys(schema)).toEqual(["type", "properties"]);
+    expect(schema.properties).toBe(properties);
+    expect(properties?.left).toBe(properties?.right);
+  });
+
+  it("compiles a schema that contains itself", () => {
+    const children: Schmock.JSONSchema7 = { type: "array" };
+    const node: Schmock.JSONSchema7 = {
+      type: "object",
+      required: ["name"],
+      properties: { name: { type: "string" }, children },
+    };
+    children.items = node;
+    const validator = createBodyValidatorContext();
+    const context = contextWith200(node);
+
+    expect(
+      validateResponse(
+        context,
+        [200, { name: "root", children: [{ name: "kid", children: [] }] }],
+        validator,
+      ),
+    ).toBeUndefined();
+    expect(
+      validateResponse(
+        context,
+        [200, { name: "root", children: [{ children: [] }] }],
+        validator,
+      )?.response,
+    ).toEqual([
+      500,
+      expect.objectContaining({
+        details: [
+          {
+            path: "/children/0",
+            message: "must have required property 'name'",
+            keyword: "required",
+          },
+        ],
+      }),
+    ]);
+  });
+
+  it("compiles a shared subschema that carries an $id", () => {
+    const leaf: Schmock.JSONSchema7 = {
+      $id: "https://example.test/leaf",
+      type: "integer",
+    };
+    const context = contextWith200({
+      type: "object",
+      properties: { a: leaf, b: leaf },
+    });
+    const validator = createBodyValidatorContext();
+
+    expect(
+      validateResponse(context, [200, { a: 1, b: 2 }], validator),
+    ).toBeUndefined();
+    expect(
+      validateResponse(context, [200, { a: 1, b: "two" }], validator)?.response,
+    ).toEqual([
+      500,
+      expect.objectContaining({
+        details: [{ path: "/b", message: "must be integer", keyword: "type" }],
+      }),
+    ]);
+  });
+
+  it("compiles a schema that still holds a $ref as it is", () => {
+    const shared: Schmock.JSONSchema7 = { type: "string" };
+    const context = contextWith200({
+      $defs: { count: { type: "integer" } },
+      type: "object",
+      properties: {
+        total: { $ref: "#/$defs/count" },
+        first: shared,
+        last: shared,
+      },
+    });
+    const validator = createBodyValidatorContext();
+
+    expect(
+      validateResponse(
+        context,
+        [200, { total: 2, first: "a", last: "b" }],
+        validator,
+      ),
+    ).toBeUndefined();
+    expect(
+      validateResponse(context, [200, { total: "two" }], validator)?.response,
+    ).toEqual([
+      500,
+      expect.objectContaining({
+        details: [
+          { path: "/total", message: "must be integer", keyword: "type" },
+        ],
+      }),
+    ]);
+  });
+
+  it("hands back a schema with nothing shared and nothing named unchanged", () => {
+    const schema = {
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+    };
+
+    expect(shareRepeatedSubschemas(schema)).toBe(schema);
+  });
+
+  it("keeps the schema's own $defs entries next to the shared ones", () => {
+    const shared = { type: "string" };
+    const own = { type: "integer" };
+    const result = shareRepeatedSubschemas({
+      $defs: { schmockShared0: own },
+      properties: { a: shared, b: shared },
+    });
+
+    expect(result).toEqual({
+      $defs: { schmockShared0: own, schmockShared1: shared },
+      properties: {
+        a: { $ref: "#/$defs/schmockShared1" },
+        b: { $ref: "#/$defs/schmockShared1" },
+      },
+    });
+  });
+
+  it("does not recompile a schema that failed to compile", () => {
+    // `(` is invalid in both regex grammars, so the compile cannot succeed.
+    const context = contextWith200({
+      type: "object",
+      properties: { code: { type: "string", pattern: "(" } },
+    });
+    const validator = createBodyValidatorContext();
+    const compile = vi.spyOn(validator.ajv, "compile");
+
+    const first = validateResponse(context, [200, { code: "x" }], validator);
+    const second = validateResponse(context, [200, { code: "x" }], validator);
+
+    expect(compile).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+    expect(first?.response).toEqual([
+      500,
+      expect.objectContaining({
+        code: "RESPONSE_VALIDATION_ERROR",
+        details: [
+          {
+            path: "/",
+            message: expect.stringMatching(
+              /^response schema could not be compiled: Invalid regular expression/,
+            ),
+            keyword: "schema",
+          },
+        ],
+      }),
+    ]);
   });
 });
