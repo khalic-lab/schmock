@@ -1127,7 +1127,9 @@ The dispatched payload is generated from the **callback operation's own declared
 request body**, using `fakerSeed` when one is configured, so the webhook your
 application receives matches the contract the spec declares for it. Only when
 the callback declares no request body does the payload fall back to the primary
-endpoint's response body. The dispatched `content-type` is always
+endpoint's response body, and then each dispatch gets its own copy: a
+dispatcher that adds or deletes fields on its payload changes neither the
+stored row nor what the client receives. The dispatched `content-type` is always
 `application/json` — the parser extracts JSON callback bodies only. Generated
 callback bodies are not re-validated, since they are produced from the schema.
 If generation fails, the failure is logged and that one callback is skipped;

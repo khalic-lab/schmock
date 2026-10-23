@@ -1,7 +1,9 @@
 /// <reference path="../../core/schmock.d.ts" />
 
+import { schmock } from "@schmock/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { dispatchCallbacks } from "./callbacks.js";
+import { openapi } from "./plugin.js";
 
 function makeContext(
   overrides: Partial<Schmock.PluginContext> = {},
@@ -208,6 +210,81 @@ describe("dispatchCallbacks", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body,
+    });
+  });
+
+  describe("fallback payload ownership", () => {
+    const pet = {
+      type: "object",
+      properties: { id: { type: "integer" }, name: { type: "string" } },
+    };
+    const createSpec = {
+      openapi: "3.0.3",
+      info: { title: "callbacks", version: "1.0.0" },
+      paths: {
+        "/pets": {
+          get: {
+            responses: {
+              "200": {
+                description: "list",
+                content: {
+                  "application/json": {
+                    schema: { type: "array", items: pet },
+                  },
+                },
+              },
+            },
+          },
+          post: {
+            responses: {
+              "201": {
+                description: "created",
+                content: { "application/json": { schema: pet } },
+              },
+            },
+            callbacks: {
+              created: {
+                "https://hooks.example/first": {
+                  post: { responses: { "200": { description: "ok" } } },
+                },
+                "https://hooks.example/second": {
+                  post: { responses: { "200": { description: "ok" } } },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    it("gives each dispatch its own copy, never the stored row", async () => {
+      const received: unknown[] = [];
+      const mock = schmock({ state: {} });
+      mock.pipe(
+        await openapi({
+          spec: createSpec,
+          callbacks: {
+            dispatch: (request) => {
+              received.push(structuredClone(request.body));
+              const payload = request.body as Record<string, unknown>;
+              payload.event = "pet.created";
+              delete payload.name;
+            },
+          },
+        }),
+      );
+
+      const created = await mock.handle("POST", "/pets", {
+        body: { name: "rex" },
+      });
+      expect(created.body).toEqual({ id: 1, name: "rex" });
+      expect(received).toEqual([
+        { id: 1, name: "rex" },
+        { id: 1, name: "rex" },
+      ]);
+
+      const list = await mock.handle("GET", "/pets");
+      expect(list.body).toEqual([{ id: 1, name: "rex" }]);
     });
   });
 

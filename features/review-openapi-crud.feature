@@ -92,3 +92,9 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     Given an orders mock whose callback URL is "https://hooks.example.com/orders/{$request.body#/note}/paid"
     When I post an order whose note is "a/../../admin?x=1#"
     Then the callback is dispatched to a URL whose path starts with "/orders/" and ends with "/paid"
+
+  Scenario: A dispatcher that edits its payload leaves the created row alone
+    Given a pets mock whose create has a callback with no request body, and a dispatcher that edits its payload
+    When I create a pet named "rex"
+    Then the dispatcher received the pet named "rex"
+    And the pets list holds the pet named "rex" unedited

@@ -432,6 +432,29 @@ function ordersSpec(urlExpression: string) {
   });
 }
 
+const petCallbackSpec = spec({
+  "/pets": {
+    get: {
+      responses: {
+        "200": {
+          description: "list",
+          content: json({ type: "array", items: pet }),
+        },
+      },
+    },
+    post: {
+      responses: { "201": { description: "created", content: json(pet) } },
+      callbacks: {
+        petCreated: {
+          "https://hooks.example/pets": {
+            post: { responses: { "200": { description: "ok" } } },
+          },
+        },
+      },
+    },
+  },
+});
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -870,6 +893,49 @@ describeFeature(feature, ({ Scenario }) => {
           expect(url.hash).toBe("");
         },
       );
+    },
+  );
+
+  Scenario(
+    "A dispatcher that edits its payload leaves the created row alone",
+    ({ Given, When, Then, And }) => {
+      const received: unknown[] = [];
+
+      Given(
+        "a pets mock whose create has a callback with no request body, and a dispatcher that edits its payload",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: petCallbackSpec,
+              callbacks: {
+                dispatch: (request) => {
+                  received.push(structuredClone(request.body));
+                  const payload = request.body as Record<string, unknown>;
+                  payload.event = "pet.created";
+                  delete payload.name;
+                },
+              },
+            }),
+          );
+        },
+      );
+
+      When('I create a pet named "rex"', async () => {
+        response = await mock.handle("POST", "/pets", {
+          body: { name: "rex" },
+        });
+      });
+
+      Then('the dispatcher received the pet named "rex"', () => {
+        expect(received).toEqual([{ id: 1, name: "rex" }]);
+      });
+
+      And('the pets list holds the pet named "rex" unedited', async () => {
+        expect(response.body).toEqual({ id: 1, name: "rex" });
+        const list = await mock.handle("GET", "/pets");
+        expect(list.body).toEqual([{ id: 1, name: "rex" }]);
+      });
     },
   );
 });

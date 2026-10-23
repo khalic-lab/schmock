@@ -68,7 +68,7 @@ export async function dispatchCallbacks(
         continue;
       }
     } else {
-      body = getResponseParts(response).body;
+      body = copyPayload(getResponseParts(response).body);
     }
 
     try {
@@ -84,6 +84,23 @@ export async function dispatchCallbacks(
         error instanceof Error ? error.message : error,
       );
     }
+  }
+}
+
+/**
+ * The dispatcher's own copy of the fallback payload. The response body is,
+ * for a CRUD create or update, the very row stored in the collection, so a
+ * dispatcher that enriched or trimmed its payload in place rewrote the mock's
+ * state and the response. Each callback gets a fresh copy, as `onExchange`
+ * observers do. A body that cannot be cloned (it holds a function) is passed
+ * as it is.
+ */
+function copyPayload(body: unknown): unknown {
+  if (typeof body !== "object" || body === null) return body;
+  try {
+    return structuredClone(body);
+  } catch {
+    return body;
   }
 }
 
