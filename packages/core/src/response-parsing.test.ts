@@ -435,4 +435,45 @@ describe("response parsing", () => {
       expect(response.body).toMatchObject({ code: "INVALID_RESPONSE" });
     });
   });
+
+  describe("text/plain conversion", () => {
+    it("sends an object body as its JSON text", async () => {
+      const mock = schmock();
+      mock("GET /text", () => ({ a: 1 }), { contentType: "text/plain" });
+
+      const response = await mock.handle("GET", "/text");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toBe('{"a":1}');
+      expect(response.headers["content-type"]).toBe("text/plain");
+    });
+
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    it.each([
+      ["nested undefined", { a: 1, b: undefined }],
+      ["function", { a: 1, f() {} }],
+      // biome-ignore lint/suspicious/noSparseArray: the hole is the case under test
+      ["sparse array", { list: [1, , 3] }],
+      ["Map", { m: new Map([[1, 2]]) }],
+      ["NaN", { n: Number.NaN }],
+      ["bigint", { n: 10n }],
+      ["cycle", circular],
+    ] satisfies Array<[string, unknown]>)(
+      "rejects an object body with a %s as INVALID_RESPONSE, as JSON routes do",
+      async (_label, body) => {
+        const mock = schmock();
+        mock("GET /text", () => body, { contentType: "text/plain" });
+        mock("GET /json", () => body);
+
+        const text = await mock.handle("GET", "/text");
+        const json = await mock.handle("GET", "/json");
+
+        expect(text.status).toBe(500);
+        expect(text.body).toMatchObject({ code: "INVALID_RESPONSE" });
+        expect(text.body).toEqual(json.body);
+      },
+    );
+  });
 });

@@ -2,6 +2,7 @@ import { isBinaryBody } from "./binary.js";
 import { isStatusTuple } from "./constants.js";
 import { InvalidResponseError } from "./errors.js";
 import { hasHeader } from "./headers.js";
+import { stringifyJsonBody } from "./response-normalizer.js";
 
 const BINARY_CONTENT_TYPE = "application/octet-stream";
 
@@ -206,7 +207,9 @@ export function parseResponse(
     !binaryBody
   ) {
     if (typeof body === "object") {
-      body = JSON.stringify(body);
+      // The same validating serializer a JSON route goes through, so a value
+      // JSON.stringify would drop or alter is rejected here too.
+      body = stringifyJsonBody(body);
     } else if (typeof body !== "string") {
       body = String(body);
     }

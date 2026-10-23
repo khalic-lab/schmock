@@ -1,8 +1,10 @@
 import { isBinaryBody } from "./binary.js";
 import { normalizePath } from "./constants.js";
 import type { DebugLogger } from "./debug-logger.js";
-import { RouteDefinitionError } from "./errors.js";
+import { errorMessage, RouteDefinitionError } from "./errors.js";
 import { parseRouteKey } from "./parser.js";
+import { stringifyJsonBody } from "./response-normalizer.js";
+import { getResponseParts } from "./response-parser.js";
 import type { CompiledCallableRoute } from "./route-matcher.js";
 
 /** The route containers an admitted request routes with. */
@@ -35,6 +37,32 @@ function defaultContentType(generator: Schmock.Generator): string {
   }
   // Default to JSON for objects/arrays
   return "application/json";
+}
+
+/**
+ * Why static JSON data would fail every request, or `undefined` when it would
+ * not. The body is taken out of a tuple or envelope by the rule responses use,
+ * and checked by the serializer `normalizeResponse` applies, so data it would
+ * reject on each request (nested `undefined`, a Map, a sparse array) fails at
+ * definition instead. A body that is absent, a string or binary is never
+ * JSON-serialized and passes.
+ */
+function staticJsonProblem(data: Schmock.StaticData): string | undefined {
+  const { body } = getResponseParts(data);
+  if (
+    body === undefined ||
+    body === null ||
+    typeof body === "string" ||
+    isBinaryBody(body)
+  ) {
+    return undefined;
+  }
+  try {
+    stringifyJsonBody(body);
+    return undefined;
+  } catch (error) {
+    return errorMessage(error);
+  }
 }
 
 /**
@@ -78,12 +106,11 @@ export class RouteTable {
       typeof generator !== "function" &&
       routeConfig.contentType === "application/json"
     ) {
-      try {
-        JSON.stringify(generator);
-      } catch (_error) {
+      const problem = staticJsonProblem(generator);
+      if (problem !== undefined) {
         throw new RouteDefinitionError(
           route,
-          "Generator data is not valid JSON but contentType is application/json",
+          `Generator data is not valid JSON but contentType is application/json (${problem})`,
         );
       }
     }

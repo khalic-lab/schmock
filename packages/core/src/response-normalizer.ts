@@ -273,7 +273,15 @@ function assertJsonCompatible(value: unknown): void {
   }
 }
 
-function stringifyJsonBody(body: unknown): string {
+/**
+ * Serialize a body as JSON, rejecting with `InvalidResponseError` every value
+ * `JSON.stringify` would silently drop or alter (nested `undefined`, holes,
+ * maps, non-finite numbers) as well as the ones it throws on.
+ *
+ * @internal Shared with the response parser and route definition; not
+ * exported from the package.
+ */
+export function stringifyJsonBody(body: unknown): string {
   try {
     const serialized = JSON.stringify(body, (_key, value: unknown) => {
       assertJsonCompatible(value);

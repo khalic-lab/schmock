@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { schmock } from "./index";
+import { RouteDefinitionError, schmock } from "./index";
 
 describe("schmock callable API", () => {
   describe("callable instance", () => {
@@ -264,6 +264,56 @@ describe("schmock callable API", () => {
         "Generator data is not valid JSON but contentType is application/json",
       );
     });
+
+    const nestedCycle: Record<string, unknown> = {};
+    nestedCycle.self = nestedCycle;
+
+    it.each([
+      ["nested undefined", { a: undefined }, "unsupported undefined value"],
+      ["function", { f() {} }, "unsupported function value"],
+      ["Map", new Map([[1, 2]]), "unsupported object"],
+      // biome-ignore lint/suspicious/noSparseArray: the hole is the case under test
+      ["sparse array", [1, , 3], "unsupported undefined value"],
+      ["NaN", { n: Number.NaN }, "non-finite number"],
+      ["symbol key", { [Symbol("s")]: 1 }, "enumerable symbol property"],
+      ["tuple body cycle", [200, nestedCycle], "not JSON-serializable"],
+    ] satisfies Array<[string, unknown, string]>)(
+      "rejects static JSON data with a %s when the route is defined",
+      (_label, data, reason) => {
+        const mock = schmock();
+        let thrown: unknown;
+        try {
+          mock("GET /data", data as Schmock.StaticData);
+        } catch (error) {
+          thrown = error;
+        }
+
+        expect(thrown).toBeInstanceOf(RouteDefinitionError);
+        expect(thrown instanceof Error ? thrown.message : "").toContain(reason);
+        expect(mock.getRoutes()).toEqual([]);
+      },
+    );
+
+    it.each([
+      ["undefined", undefined],
+      ["null", null],
+      ["binary", new Uint8Array([1, 2])],
+      ["tuple with a binary body", [200, new Uint8Array([1])]],
+      ["tuple without a body", [204, undefined]],
+      ["string", "already text"],
+    ] satisfies Array<[string, unknown]>)(
+      "accepts static %s data under the JSON content type",
+      async (_label, data) => {
+        const mock = schmock();
+
+        expect(() => {
+          mock("GET /data", data as Schmock.StaticData, {
+            contentType: "application/json",
+          });
+        }).not.toThrow();
+        expect((await mock.handle("GET", "/data")).status).toBeLessThan(500);
+      },
+    );
   });
 
   describe("plugin integration", () => {

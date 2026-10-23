@@ -97,6 +97,20 @@ boolean defaults to `text/plain`, static binary values default to
 `application/octet-stream`, and everything else defaults to
 `application/json`.
 
+Static data under `application/json` is checked when the route is defined, by
+the same rules a response body is checked by on every request (see
+[Response Result](#response-result)). Data that every request would reject,
+such as a nested `undefined`, a function, a `Map`, a sparse array, a
+non-finite number or a cycle, throws `RouteDefinitionError`
+(`ROUTE_DEFINITION_ERROR`) with the reason, and the route is not registered.
+The body of a static tuple or envelope is what gets checked; an absent, string
+or binary body is never serialized as JSON and always passes.
+
+A `text/plain` route that returns an object sends the object's JSON text. That
+text is produced by the same validating serializer, so an object a JSON route
+would reject gets the same `INVALID_RESPONSE` 500 instead of being silently
+altered.
+
 ##### Path parameters
 
 | Syntax | Meaning | Example |
