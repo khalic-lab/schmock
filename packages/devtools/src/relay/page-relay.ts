@@ -32,6 +32,11 @@ import type {
 } from "./types.js";
 
 const DEFAULT_TIMEOUT = 5000;
+/**
+ * setTimeout keeps its delay in a signed 32-bit integer, so a longer timeout
+ * would fire at once and make the relay fall back with "timeout".
+ */
+const MAX_TIMEOUT = 2147483647;
 const INIT_HINT = 'Run "npx @schmock/devtools init <publicDir>"';
 
 interface ResolvedOptions {
@@ -94,6 +99,9 @@ function resolveOptions(
     !(typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0)
   ) {
     throw invalidRelayOption("timeout", "a positive finite number", timeout);
+  }
+  if (typeof timeout === "number" && timeout > MAX_TIMEOUT) {
+    throw invalidRelayOption("timeout", `at most ${MAX_TIMEOUT}`, timeout);
   }
   let resolvedUrl: string;
   try {

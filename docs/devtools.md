@@ -214,7 +214,8 @@ in this order:
 
 - `options` must be an object when given;
 - `url` and `scope` must be non-empty strings;
-- `timeout` must be a positive finite number;
+- `timeout` must be a positive finite number, and at most 2147483647 (about
+  24.8 days), the longest delay `setTimeout` can hold;
 - `url` and `scope` must resolve against the page URL.
 
 Only the first invalid option is reported. `context.option` names it and

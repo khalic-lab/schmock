@@ -41,7 +41,7 @@ export interface ServiceWorkerRelayOptions {
   url?: string;
   /** Registration scope. Default: the browser's (the script's directory). Non-empty when set. */
   scope?: string;
-  /** Milliseconds for the whole start (registration, activation, control and the handshake), and for stop()'s acknowledgement. Default 5000. Positive and finite. */
+  /** Milliseconds for the whole start (registration, activation, control and the handshake), and for stop()'s acknowledgement. Default 5000. Positive, finite and at most 2147483647, the longest delay setTimeout can hold. */
   timeout?: number;
 }
 export type RelayFallbackReason =

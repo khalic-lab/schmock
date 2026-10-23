@@ -359,6 +359,8 @@ describe("PR1 option validation", () => {
     ["NaN timeout", { timeout: Number.NaN }, "timeout"],
     ["infinite timeout", { timeout: Number.POSITIVE_INFINITY }, "timeout"],
     ["string timeout", { timeout: "100" }, "timeout"],
+    ["timeout past setTimeout's range", { timeout: 2 ** 31 }, "timeout"],
+    ["huge timeout", { timeout: Number.MAX_SAFE_INTEGER }, "timeout"],
   ];
 
   it.each(cases)(
@@ -380,6 +382,28 @@ describe("PR1 option validation", () => {
       );
     },
   );
+
+  it("names setTimeout's limit for a timeout past it", async () => {
+    const rejected = await rejectionOf(
+      createServiceWorkerRelay(envOf(undefined), { timeout: 2 ** 31 }),
+    );
+    expect(rejected).toMatchObject({
+      code: "DEVTOOLS_CONFIG_INVALID",
+      message:
+        "startServiceWorkerRelay: timeout must be at most 2147483647 (received 2147483648)",
+      context: { option: "timeout", received: 2 ** 31 },
+    });
+  });
+
+  it("accepts the longest timeout setTimeout can hold", async () => {
+    const harnessed = harness();
+    harnessed.installWorker(stubWorker());
+    const relay = await start(harnessed.openPage(), {
+      timeout: 2147483647,
+    });
+    expect(relay.active).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+  });
 
   it("validates before looking at the container and logs no warning", async () => {
     const rejected = await rejectionOf(

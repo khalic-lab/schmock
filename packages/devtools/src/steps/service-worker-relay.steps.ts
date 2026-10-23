@@ -2043,7 +2043,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       Then(
         'each start rejected with a SchmockError with code "DEVTOOLS_CONFIG_INVALID", the listed option, received value and message',
         () => {
-          expect(outcomes).toHaveLength(9);
+          expect(outcomes).toHaveLength(10);
           for (const { expected, error } of outcomes) {
             expect(error).toBeInstanceOf(SchmockError);
             expect(error).toMatchObject({

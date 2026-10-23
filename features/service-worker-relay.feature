@@ -324,6 +324,8 @@ Feature: Service worker relay
           "message": "startServiceWorkerRelay: timeout must be a positive finite number (received 0)" },
         { "options": { "timeout": "5000" }, "option": "timeout", "received": "5000",
           "message": "startServiceWorkerRelay: timeout must be a positive finite number (received \"5000\")" },
+        { "options": { "timeout": 2147483648, "url": "http://[" }, "option": "timeout", "received": 2147483648,
+          "message": "startServiceWorkerRelay: timeout must be at most 2147483647 (received 2147483648)" },
         { "options": { "url": "http://[", "scope": "http://[" }, "option": "url", "received": "http://[",
           "message": "startServiceWorkerRelay: url must be a URL that resolves against the page URL (received \"http://[\")" },
         { "options": { "scope": "http://[" }, "option": "scope", "received": "http://[",
