@@ -354,6 +354,38 @@ interface MatchResult {
   score: number;
 }
 
+/** Keywords that only constrain an object or an array. */
+const STRUCTURE_KEYWORDS = [
+  "properties",
+  "required",
+  "additionalProperties",
+  "patternProperties",
+  "propertyNames",
+  "minProperties",
+  "maxProperties",
+  "dependencies",
+  "dependentRequired",
+  "dependentSchemas",
+  "items",
+  "prefixItems",
+  "additionalItems",
+  "contains",
+  "minItems",
+  "maxItems",
+  "uniqueItems",
+];
+
+/**
+ * True when an untyped node describes an object or an array. Every mapping
+ * produces a primitive, and json-schema-faker reads `faker` before it infers a
+ * type from these keywords, so a mapping would replace the object or array.
+ */
+function declaresStructure(schema: JSONSchema7): boolean {
+  return STRUCTURE_KEYWORDS.some(
+    (keyword) => Reflect.get(schema, keyword) !== undefined,
+  );
+}
+
 /**
  * Find the best field mapping for a given field name and schema.
  * Returns the highest-scoring match above its threshold, or undefined.
@@ -370,6 +402,10 @@ export function findBestMapping(
   const typeInfo = mappableType(schema);
   if (!typeInfo.mappable) return undefined;
   const schemaType = typeInfo.type;
+  // An untyped node generates whatever its keywords imply, so the type gates
+  // below would never fire for it; its keywords gate instead.
+  const untyped = schemaType === undefined;
+  if (untyped && declaresStructure(schema)) return undefined;
 
   // Priority: format:uuid always maps to string.uuid
   if (schemaType === "string" && schema.format === "uuid") {
@@ -398,10 +434,11 @@ export function findBestMapping(
   // Also skip string mappings when minLength/maxLength is set — name-based
   // mappings (e.g. lorem.word for "label") don't honor JSON Schema length
   // constraints, so they'd produce out-of-range strings ~20% of the time.
-  // Mirrors the numeric constraint skip just below.
+  // Mirrors the numeric constraint skip just below. An untyped node may
+  // generate a string, so its length bounds count too.
   if (
     isGeneratableFormat(schema.format) ||
-    (schemaType === "string" &&
+    ((schemaType === "string" || untyped) &&
       (schema.minLength !== undefined || schema.maxLength !== undefined))
   ) {
     return undefined;
@@ -419,8 +456,12 @@ export function findBestMapping(
 
   // A constrained number/integer schema can't be satisfied by any name-based
   // mapping, whatever the mapping declares — several mappings (e.g. "price")
-  // carry no schemaType at all and would otherwise slip through.
-  const isNumericSchema = schemaType === "number" || schemaType === "integer";
+  // carry no schemaType at all and would otherwise slip through. Numeric
+  // bounds on an untyped node make it numeric for json-schema-faker as well.
+  const isNumericSchema =
+    schemaType === "number" ||
+    schemaType === "integer" ||
+    (untyped && hasNumericConstraints);
 
   const tokens = tokenizeFieldName(fieldName);
   const field = tokenizeField(tokens);

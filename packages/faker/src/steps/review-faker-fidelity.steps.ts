@@ -104,6 +104,54 @@ const CASES: Record<string, FidelityCase> = {
     },
     fits: (value) => expect(record(value).active).toBe(false),
   },
+  "untyped-name-max-length": {
+    schema: {
+      type: "object",
+      properties: { name: { maxLength: 4 } },
+      required: ["name"],
+    },
+    fits: (value) => {
+      expect(text(record(value).name).length).toBeLessThanOrEqual(4);
+    },
+  },
+  "untyped-address-object": {
+    schema: {
+      type: "object",
+      properties: {
+        address: {
+          properties: { city: { type: "string" } },
+          required: ["city"],
+        },
+      },
+      required: ["address"],
+    },
+    fits: (value) => {
+      expect(typeof record(record(value).address).city).toBe("string");
+    },
+  },
+  "untyped-emails-array": {
+    schema: {
+      type: "object",
+      properties: { emails: { items: { format: "email" }, minItems: 1 } },
+      required: ["emails"],
+    },
+    fits: (value) => {
+      expect(list(record(value).emails).length).toBeGreaterThanOrEqual(1);
+    },
+  },
+  "untyped-price-bounds": {
+    schema: {
+      type: "object",
+      properties: { price: { minimum: 1, maximum: 5 } },
+      required: ["price"],
+    },
+    fits: (value) => {
+      const price = record(value).price;
+      expect(typeof price).toBe("number");
+      expect(price).toBeGreaterThanOrEqual(1);
+      expect(price).toBeLessThanOrEqual(5);
+    },
+  },
 };
 
 function fidelityCase(name: string): FidelityCase {
@@ -111,6 +159,12 @@ function fidelityCase(name: string): FidelityCase {
   if (!found) throw new Error(`Unknown fidelity case: ${name}`);
   return found;
 }
+
+/** Every outline in the feature runs the same three steps over a case. */
+const OUTLINES = [
+  "A composed node is generated from its composition",
+  "An untyped node keeps the shape and bounds its keywords declare",
+];
 
 describeFeature(feature, ({ ScenarioOutline }) => {
   let results: unknown[] = [];
@@ -124,9 +178,8 @@ describeFeature(feature, ({ ScenarioOutline }) => {
     }
   }
 
-  ScenarioOutline(
-    "A composed node is generated from its composition",
-    ({ Given, When, Then }, variables) => {
+  for (const title of OUTLINES) {
+    ScenarioOutline(title, ({ Given, When, Then }, variables) => {
       Given("the fidelity schema {string}", () => {
         current = fidelityCase(variables.case);
       });
@@ -136,6 +189,6 @@ describeFeature(feature, ({ ScenarioOutline }) => {
       Then("every generated value fits {string}", () => {
         for (const value of results) fidelityCase(variables.case).fits(value);
       });
-    },
-  );
+    });
+  }
 });

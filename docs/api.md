@@ -1342,7 +1342,9 @@ produce: `date-time`, `date`, `time`, `duration`, `email`, `idn-email`,
 `iri-reference`, `json-pointer`, `relative-json-pointer`, `uuid` or `byte`. A
 node that carries `allOf`, `anyOf`, `oneOf`, `not` or `if` is generated from
 that composition wherever it sits, so it gets no name mapping, no lorem
-fallback and no boolean weighting. The
+fallback and no boolean weighting. A node without a `type` is not mapped when
+it bounds a length or a number, or carries an object or array keyword such as
+`properties` or `items`. The
 OpenAPI normalizer turns `example` into `default`, so an OpenAPI example also
 wins. A declared `schmockTrueProbability` is never overwritten by the name
 weighting: `active: { type: 'boolean', schmockTrueProbability: 0.1 }` is 10%

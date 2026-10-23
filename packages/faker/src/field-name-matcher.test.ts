@@ -6,6 +6,7 @@ import {
   scoreMatch,
   tokenizeFieldName,
 } from "./field-name-matcher";
+import { generateFromSchema } from "./index";
 import { generateWithJsf } from "./jsf-config";
 
 describe("tokenizeFieldName", () => {
@@ -359,6 +360,70 @@ describe("findBestMapping", () => {
     });
     expect(result).toBeDefined();
     expect(result?.mapping.fakerMethod).toBe("string.uuid");
+  });
+
+  describe("untyped nodes keep their constraints (faker-5)", () => {
+    it("skips a mapping when an untyped node bounds the string length", () => {
+      expect(findBestMapping("name", { maxLength: 4 })).toBeUndefined();
+      expect(findBestMapping("email", { minLength: 30 })).toBeUndefined();
+    });
+
+    it("skips every mapping when an untyped node bounds the number", () => {
+      for (const field of ["price", "total", "amount", "cost", "balance"]) {
+        expect(
+          findBestMapping(field, { minimum: 1, maximum: 5 }),
+        ).toBeUndefined();
+      }
+      expect(findBestMapping("price", { multipleOf: 0.5 })).toBeUndefined();
+    });
+
+    it("skips a mapping when an untyped node carries object or array keywords", () => {
+      for (const schema of [
+        { properties: { city: { type: "string" } }, required: ["city"] },
+        { additionalProperties: { type: "string" } },
+        { minProperties: 1 },
+        { items: { format: "email" }, minItems: 1 },
+        { maxItems: 2 },
+        { uniqueItems: true },
+      ] satisfies JSONSchema7[]) {
+        expect(findBestMapping("address", schema)).toBeUndefined();
+        expect(findBestMapping("emails", schema)).toBeUndefined();
+      }
+    });
+
+    it("still maps an unconstrained untyped node", () => {
+      expect(findBestMapping("email", {})?.mapping.fakerMethod).toBe(
+        "internet.email",
+      );
+    });
+
+    it("generates the shape and bounds an untyped schema declares", async () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: {
+          name: { maxLength: 4 },
+          address: {
+            properties: { city: { type: "string" } },
+            required: ["city"],
+          },
+          emails: { items: { format: "email" }, minItems: 1 },
+          price: { minimum: 1, maximum: 5 },
+        },
+        required: ["name", "address", "emails", "price"],
+      };
+      for (let seed = 1; seed <= 40; seed += 1) {
+        const value = Object(await generateFromSchema({ schema, seed }));
+        expect(typeof value.name).toBe("string");
+        expect(value.name.length).toBeLessThanOrEqual(4);
+        expect(typeof value.address).toBe("object");
+        expect(typeof value.address.city).toBe("string");
+        expect(Array.isArray(value.emails)).toBe(true);
+        expect(value.emails.length).toBeGreaterThanOrEqual(1);
+        expect(typeof value.price).toBe("number");
+        expect(value.price).toBeGreaterThanOrEqual(1);
+        expect(value.price).toBeLessThanOrEqual(5);
+      }
+    });
   });
 });
 

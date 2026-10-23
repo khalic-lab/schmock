@@ -18,3 +18,16 @@ Feature: Faker output honours every keyword of its schema
       | additional-properties-all-of |
       | property-if-then-pattern     |
       | boolean-not-const-true       |
+
+  # Review 2026-10-23 faker-5: a field name never overrides an untyped node's keywords
+  Scenario Outline: An untyped node keeps the shape and bounds its keywords declare
+    Given the fidelity schema "<case>"
+    When I generate it with 40 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                    |
+      | untyped-name-max-length |
+      | untyped-address-object  |
+      | untyped-emails-array    |
+      | untyped-price-bounds    |
