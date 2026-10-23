@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { ESLint } from "eslint";
 
 /**
@@ -107,5 +107,42 @@ test("eslint skips agent worktrees and skill copies", async () => {
 
   for (const path of ["packages/core/src/index.ts", "eslint.config.mjs"]) {
     assert.equal(await eslint.isPathIgnored(join(ROOT_DIR, path)), false, path);
+  }
+});
+
+test("eslint does not lint a nested worktree with its own config", async () => {
+  // ESLint looks up the config per file, so without the ignore a worktree
+  // under .claude/ is linted with its own config (and, in a real worktree,
+  // its own typed project service). Build a scratch tree that uses the root
+  // config, holding a nested worktree and an unignored control directory,
+  // each with a config that turns on no-debugger and a file that breaks it.
+  const scratch = mkdtempSync(join(tmpdir(), "schmock-eslint-worktree-"));
+  try {
+    writeFileSync(
+      join(scratch, "eslint.config.mjs"),
+      `export { default } from ${JSON.stringify(
+        pathToFileURL(join(ROOT_DIR, "eslint.config.mjs")).href,
+      )};\n`,
+    );
+    const nestedConfig =
+      'export default [{ rules: { "no-debugger": "error" } }];\n';
+    for (const dir of [".claude/worktrees/agent-x", "control/agent-x"]) {
+      mkdirSync(join(scratch, dir), { recursive: true });
+      writeFileSync(join(scratch, dir, "eslint.config.mjs"), nestedConfig);
+      writeFileSync(join(scratch, dir, "bad.js"), "debugger;\n");
+    }
+
+    const eslint = new ESLint({ cwd: scratch });
+    const linted = (await eslint.lintFiles(["."])).map((result) =>
+      relative(scratch, result.filePath).split(sep).join("/"),
+    );
+
+    assert.ok(linted.includes("control/agent-x/bad.js"), linted.join(", "));
+    assert.deepEqual(
+      linted.filter((path) => path.startsWith(".claude/")),
+      [],
+    );
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 });
