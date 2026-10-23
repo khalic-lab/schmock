@@ -320,9 +320,15 @@ const transactionalSpec = {
             description: "Deleted",
             content: {
               "application/json": {
+                // The confirmation is generated with the row's own fields
+                // copied in, and the row's integer petId breaks the string
+                // declared here, so response validation fails.
                 schema: {
                   type: "object",
-                  properties: { deletedAt: { type: "string" } },
+                  properties: {
+                    deletedAt: { type: "string" },
+                    petId: { type: "string" },
+                  },
                   required: ["deletedAt"],
                 },
               },
