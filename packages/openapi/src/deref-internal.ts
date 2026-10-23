@@ -89,8 +89,7 @@ interface PointerWalk {
    * Set by {@link assertInternalRefs}, which walks the document before either
    * resolver has run. A `$ref` that leaves the document only has a target
    * once the Node resolver has read it, so the walk stops there rather than
-   * failing, and a token the document does not hold is left for the resolver
-   * to report.
+   * failing.
    */
   preflight: boolean;
   /**
@@ -101,7 +100,7 @@ interface PointerWalk {
   slashKeys: WeakMap<object, number>;
 }
 
-/** Ends a preflight walk that cannot rule on its pointer. */
+/** Ends a preflight walk at a `$ref` that leaves the document. */
 class WalkStopped extends Error {}
 
 function isRefObject(value: unknown): value is RefObject {
@@ -141,10 +140,7 @@ function refError(message: string, ref: string): SchmockError {
   return new SchmockError(message, "OPENAPI_INVALID_REF", { ref });
 }
 
-/** A pointer token the document does not hold. */
-function missingToken(ref: string, token: string, walk: PointerWalk): Error {
-  // The resolvers report a miss themselves, each in its own words.
-  if (walk.preflight) return new WalkStopped();
+function missingToken(ref: string, token: string): SchmockError {
   return refError(`$ref "${ref}" has no "${token}"`, ref);
 }
 
@@ -318,7 +314,7 @@ function resolvePointer(
       throw new WalkStopped();
     }
     if (!isWalkable(value)) {
-      throw missingToken(refPath, token, walk);
+      throw missingToken(refPath, token);
     }
 
     // Own keys only. ref-parser reads `value[token]`, so `#/__proto__` and
@@ -353,7 +349,7 @@ function resolvePointer(
       continue;
     }
 
-    throw missingToken(refPath, token, walk);
+    throw missingToken(refPath, token);
   }
 
   followRefs(tokens.length === 0);
@@ -553,6 +549,9 @@ function internalRefs(document: unknown): Set<string> {
  *   in `load-document.ts` then wrote its marker onto `Object.prototype`.
  * - A pointer of more than {@link MAX_POINTER_TOKENS} tokens, which is what
  *   keeps ref-parser's re-joining of slash-split keys from stalling a load.
+ * - A pointer to nothing. Both resolvers refused it, but ref-parser with a
+ *   `MissingPointerError` that escaped `openapi()` uncoded, and this module
+ *   with `OPENAPI_INVALID_REF`; refusing it here gives one answer.
  */
 export function assertInternalRefs(document: unknown): void {
   const refs = internalRefs(document);

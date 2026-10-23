@@ -561,6 +561,17 @@ async function dereferenceDocument({
     ) {
       throw rawError;
     }
+    // A pointer to nothing in another document. One into the root document
+    // never gets here — `assertInternalRefs` refuses it first, with this code.
+    if (isMissingPointer(rawError)) {
+      const missing = new SchmockError(
+        `OpenAPI spec has a $ref to nothing: ${rawError.message}`,
+        "OPENAPI_INVALID_REF",
+        { spec: typeof source === "string" ? source : undefined },
+      );
+      missing.cause = rawError;
+      throw missing;
+    }
     // BOTH branches, not just the SchmockError one: `strict` is off by default,
     // so the non-strict rethrow is the path a real consumer hits.
     const error = enrichResolverError(rawError, diagnostics);
@@ -571,6 +582,15 @@ async function dereferenceDocument({
       { spec: typeof source === "string" ? source : undefined },
     );
   }
+}
+
+/** ref-parser's `MissingPointerError`, recognised by its code. */
+function isMissingPointer(error: unknown): error is Error {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    error.code === "EMISSINGPOINTER"
+  );
 }
 
 /**

@@ -111,4 +111,28 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       Then("creating the plugin fails with code {string}", expectFailureCode);
     },
   );
+
+  Scenario(
+    "A $ref to nothing fails with a coded error",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a spec whose response schema is a reference to {string}",
+        (_, pointer: string) => {
+          spec = specWithResponseSchema({ $ref: pointer });
+          spec.components = { schemas: {} };
+        },
+      );
+      When(
+        "I create an openapi plugin from the spec expecting a failure",
+        createExpectingFailure,
+      );
+      Then("creating the plugin fails with code {string}", expectFailureCode);
+      And(
+        "the failure names the missing token {string}",
+        (_, token: string) => {
+          expect((failure as Error).message).toContain(`"${token}"`);
+        },
+      );
+    },
+  );
 });

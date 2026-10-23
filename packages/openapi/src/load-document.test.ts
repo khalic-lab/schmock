@@ -108,7 +108,103 @@ function specWithSlashChain(depth: number): Record<string, unknown> {
   };
 }
 
+function specWithResponseSchema(
+  schema: object,
+  schemas: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    openapi: "3.0.3",
+    info: { title: "Load", version: "1.0.0" },
+    paths: {
+      "/x": {
+        get: {
+          responses: {
+            "200": {
+              description: "ok",
+              content: { "application/json": { schema } },
+            },
+          },
+        },
+      },
+    },
+    components: { schemas },
+  };
+}
+
 describe("loadDocument", () => {
+  describe("$refs to nothing", () => {
+    let dir: string;
+
+    beforeAll(() => {
+      dir = mkdtempSync(join(tmpdir(), "schmock-missing-"));
+      writeFileSync(
+        join(dir, "other.json"),
+        JSON.stringify({
+          type: "object",
+          properties: { name: { type: "string" } },
+        }),
+      );
+    });
+
+    afterAll(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("refuses an internal one with OPENAPI_INVALID_REF, as the browser build does", async () => {
+      // It used to escape as ref-parser's uncoded MissingPointerError.
+      const error = await failureOf(
+        loadDocument(
+          specWithResponseSchema({ $ref: "#/components/schemas/Missing" }),
+          {},
+        ),
+      );
+
+      expect(codeOf(error)).toBe("OPENAPI_INVALID_REF");
+      expect((error as Error).message).toContain('has no "Missing"');
+    });
+
+    it("refuses an internal one with the same code under strict", async () => {
+      const error = await failureOf(
+        loadDocument(
+          specWithResponseSchema({ $ref: "#/components/schemas/Missing" }),
+          { strict: true },
+        ),
+      );
+
+      expect(codeOf(error)).toBe("OPENAPI_INVALID_REF");
+    });
+
+    it("refuses one into another document with the same code", async () => {
+      const error = await failureOf(
+        loadDocument(
+          specWithResponseSchema({
+            $ref: `${join(dir, "other.json")}#/definitions/Nope`,
+          }),
+          { refs: { external: true } },
+        ),
+      );
+
+      expect(codeOf(error)).toBe("OPENAPI_INVALID_REF");
+      expect((error as Error).cause).toMatchObject({ code: "EMISSINGPOINTER" });
+    });
+
+    it("leaves a pointer through another document to the resolver that reads it", async () => {
+      // Nothing under `Ext` exists until ref-parser has read `other.json`, so
+      // the walk before resolution must not call `properties` a miss.
+      const api = (await loadDocument(
+        specWithResponseSchema(
+          { $ref: "#/components/schemas/Ext/properties/name" },
+          { Ext: { $ref: join(dir, "other.json") } },
+        ),
+        { refs: { external: true } },
+      )) as unknown as { paths: Record<string, any> };
+
+      expect(
+        api.paths["/x"].get.responses["200"].content["application/json"].schema,
+      ).toEqual({ type: "string" });
+    });
+  });
+
   describe("pointer length", () => {
     it("refuses a pointer of more than 64 tokens before either resolver runs", async () => {
       // ref-parser re-joins slash-split keys by trying every run of tokens

@@ -191,6 +191,10 @@ not in the browser build.
 - **A ring of `$ref`s** that never reaches a value (`A` → `B` → `A`) fails with
   `OPENAPI_INVALID_REF` on both the Node and browser builds. A `$ref` pointing
   at its own location is allowed.
+- **A `$ref` to nothing**, such as `#/components/schemas/Missing` when there is
+  no `Missing`, fails with `OPENAPI_INVALID_REF` on both builds, with `strict`
+  on or off. Under Node the same holds for a pointer into another document
+  (`./pet.yaml#/Missing`); the original swagger-parser error is the `cause`.
 - **A pointer through an inherited name**, such as `#/__proto__` or
   `#/constructor/prototype`, fails with `OPENAPI_INVALID_REF` on both builds.
   Only keys the document declares are followed, so a schema the document names

@@ -327,9 +327,10 @@ describe("internal dereference parity with swagger-parser", () => {
   });
 
   it("reports an unresolvable pointer rather than silently dropping it", async () => {
-    // The message differs between implementations; that it throws at all does
+    // The error differs between implementations; that it throws at all does
     // not, and a resolver that returned `undefined` here would produce a mock
-    // that answers with nothing.
+    // that answers with nothing. `loadDocument` refuses the pointer before
+    // either runs, with one code: `load-document-parity.test.ts` pins that.
     const spec = specWith({ Uses: { $ref: "#/components/schemas/Missing" } });
     await expect(dereferenceWithSwaggerParser(spec)).rejects.toThrow();
     expect(() => dereferenceInternal(structuredClone(spec))).toThrow();

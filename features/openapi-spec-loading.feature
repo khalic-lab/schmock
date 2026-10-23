@@ -13,3 +13,9 @@ Feature: OpenAPI spec loading
     Given a spec whose response schema is a reference with 100 tokens
     When I create an openapi plugin from the spec expecting a failure
     Then creating the plugin fails with code "OPENAPI_INVALID_REF"
+
+  Scenario: A $ref to nothing fails with a coded error
+    Given a spec whose response schema is a reference to "#/components/schemas/Missing"
+    When I create an openapi plugin from the spec expecting a failure
+    Then creating the plugin fails with code "OPENAPI_INVALID_REF"
+    And the failure names the missing token "Missing"
