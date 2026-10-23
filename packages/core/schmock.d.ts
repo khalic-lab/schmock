@@ -1064,18 +1064,23 @@ declare namespace Schmock {
       headers: Record<string, string | string[] | undefined>,
     ) => Record<string, string>;
     transformQuery?: (query: Record<string, unknown>) => Record<string, string>;
+    /**
+     * `void` is accepted, as `@schmock/express` accepts it, so a named hook
+     * declared to return `void` (one that writes its own response) compiles.
+     */
     beforeRequest?: (
       req: unknown,
       res: unknown,
     ) =>
       | AdapterRequestOverride
       | undefined
-      | Promise<AdapterRequestOverride | undefined>;
+      | void
+      | Promise<AdapterRequestOverride | undefined | void>;
     beforeResponse?: (
       response: Response,
       req: unknown,
       res: unknown,
-    ) => Response | undefined | Promise<Response | undefined>;
+    ) => Response | undefined | void | Promise<Response | undefined | void>;
   }
 
   // ===== Angular Adapter Types =====

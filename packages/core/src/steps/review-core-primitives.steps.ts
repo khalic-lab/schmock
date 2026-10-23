@@ -4,6 +4,7 @@ import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
 import type {
   AngularAdapterOptions,
+  ExpressAdapterOptions,
   FakerPluginOptions,
   NodeRequestLike,
   NodeResponseLike,
@@ -87,6 +88,20 @@ const asyncUninstallPlugin: Schmock.Plugin = {
 const deprecatedAngularOptions: AngularAdapterOptions = {
   beforeRequest: () => undefined,
   beforeResponse: async (response) => response,
+};
+
+// The deprecated core copy of the Express options accepts a hook declared to
+// return void, as @schmock/express does: a named hook that only writes its
+// own response is no compile error, sync or async.
+function respondInHook(_req: unknown, _res: unknown): void {}
+async function respondInHookLater(
+  _response: Schmock.Response,
+  _req: unknown,
+  _res: unknown,
+): Promise<void> {}
+const deprecatedExpressOptions: ExpressAdapterOptions = {
+  beforeRequest: respondInHook,
+  beforeResponse: respondInHookLater,
 };
 
 // Faker options take a `Schema`, so an inline literal may use the Schmock
@@ -544,6 +559,9 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         () => {
           expect(valueReturningPlugins).toHaveLength(3);
           expect(deprecatedAngularOptions.beforeRequest?.({})).toBeUndefined();
+          expect(
+            deprecatedExpressOptions.beforeRequest?.({}, {}),
+          ).toBeUndefined();
         },
       );
 
