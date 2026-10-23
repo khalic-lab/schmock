@@ -589,6 +589,10 @@ Seed loading runs after those checks and raises the same code, with context
 These four used to be plain `Error`s; the messages are unchanged, and
 `openapi()` rejects with the error.
 
+A seed path that is not a regular file, such as a FIFO or a device like
+`/dev/stdin` (both report a size of 0), is refused with the same code and
+context `{ option: 'seed', file }` before anything is read from it.
+
 `seed: null` is treated as no seed.
 
 **Known limitation — seed entries are keyed by resource name, collections by
@@ -609,7 +613,7 @@ at **plugin construction** (`await openapi({...})` rejects), not per request.
 |---|---|---|
 | `MAX_SEED_ITEMS_PER_RESOURCE` | 10 000 | one resource's inline array, seed file, or `{ count }` |
 | `MAX_SEED_ITEMS_TOTAL` | 50 000 | all resources in one `seed` config |
-| `MAX_SEED_FILE_BYTES` | 5 MiB | one seed JSON file, measured before it is read |
+| `MAX_SEED_FILE_BYTES` | 5 MiB | one seed JSON file, measured before it is read and again while it is read |
 | `MAX_SEED_GENERATED_NODES` | 1 000 000 | JSON nodes produced by `{ count }` generation |
 | `MAX_SEED_MANIFEST_BYTES` | 1 MiB | a CLI `--seed` manifest |
 

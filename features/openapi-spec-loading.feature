@@ -36,3 +36,9 @@ Feature: OpenAPI spec loading
     Given a spec whose response schema is a reference to "//169.254.169.254/latest/meta-data"
     When I create an openapi plugin with external references enabled expecting a failure
     Then creating the plugin fails with code "OPENAPI_EXTERNAL_REF_BLOCKED"
+
+  Scenario: A seed path that is not a regular file is refused
+    Given the Petstore spec with "pets" seeded from "/dev/null"
+    When I create the seeded openapi plugin expecting a failure
+    Then creating the plugin fails with code "OPENAPI_INVALID_OPTION"
+    And the failure says the seed file is not a regular file

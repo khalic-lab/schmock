@@ -1,5 +1,8 @@
-import { ResourceLimitError } from "@schmock/core";
+import { ResourceLimitError, SchmockError } from "@schmock/core";
 import { MAX_SEED_FILE_BYTES } from "./limits.js";
+
+/** Bytes requested per read; the size cap is checked after each one. */
+const READ_CHUNK_BYTES = 64 * 1024;
 
 /**
  * Reading a seed file, behind the same build-time seam as `resolver.ts`.
@@ -16,16 +19,56 @@ import { MAX_SEED_FILE_BYTES } from "./limits.js";
  * loadable by a bundler that never looks at the `browser` condition.
  */
 export async function readSeedFile(path: string): Promise<string> {
-  const { readFileSync, statSync } = await import("node:fs");
-  // Measured with statSync *before* the read: a read-then-measure check does
-  // not prevent the allocation it exists to bound.
-  const { size } = statSync(path);
-  if (size > MAX_SEED_FILE_BYTES) {
-    throw new ResourceLimitError(
-      `seed file "${path}"`,
-      MAX_SEED_FILE_BYTES,
-      size,
-    );
+  const fs = await import("node:fs");
+  // Non-blocking, so a FIFO with no writer opens at once instead of freezing
+  // the process until one appears, a `--watch` reload included. It changes
+  // nothing for a regular file. Windows does not define the flag.
+  const fd = fs.openSync(
+    path,
+    fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0),
+  );
+  try {
+    const stat = fs.fstatSync(fd);
+    // A FIFO, a device or a procfs-style file reports a size of 0, which the
+    // check below would wave through whatever it then streams.
+    if (!stat.isFile()) {
+      throw new SchmockError(
+        `Seed file "${path}" is not a regular file`,
+        "OPENAPI_INVALID_OPTION",
+        { option: "seed", file: path },
+      );
+    }
+    // Measured *before* the read: a read-then-measure check does not prevent
+    // the allocation it exists to bound.
+    if (stat.size > MAX_SEED_FILE_BYTES) {
+      throw new ResourceLimitError(
+        `seed file "${path}"`,
+        MAX_SEED_FILE_BYTES,
+        stat.size,
+      );
+    }
+    // And again while reading, so a file that grows after the stat is still
+    // stopped one chunk past the cap rather than read whole.
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const chunk = new Uint8Array(READ_CHUNK_BYTES);
+      const read = fs.readSync(fd, chunk, 0, chunk.length, null);
+      if (read === 0) break;
+      total += read;
+      if (total > MAX_SEED_FILE_BYTES) {
+        throw new ResourceLimitError(
+          `seed file "${path}"`,
+          MAX_SEED_FILE_BYTES,
+          total,
+        );
+      }
+      chunks.push(chunk.subarray(0, read));
+    }
+    // `Buffer` decodes exactly as `readFileSync(path, "utf-8")` did: a BOM is
+    // kept, where `TextDecoder` would drop it.
+    return Buffer.concat(chunks, total).toString("utf-8");
+  } finally {
+    fs.closeSync(fd);
   }
-  return readFileSync(path, "utf-8");
 }

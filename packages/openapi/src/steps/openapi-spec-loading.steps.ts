@@ -10,6 +10,8 @@ const feature = await loadFeature(
 
 const MARKER = "x-schmock-discriminator-values";
 
+const FIXTURES_DIR = resolve(import.meta.dirname, "../__fixtures__");
+
 /**
  * The BUILT entries, for the scenario comparing them: `scripts/build.ts` swaps
  * the resolver in the browser one, so importing `src/` would compare the Node
@@ -279,6 +281,37 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       );
 
       Then("creating the plugin fails with code {string}", expectFailureCode);
+    },
+  );
+
+  Scenario(
+    "A seed path that is not a regular file is refused",
+    ({ Given, When, Then, And }) => {
+      let seed: Record<string, string>;
+
+      Given(
+        "the Petstore spec with {string} seeded from {string}",
+        (_, resource: string, path: string) => {
+          seed = { [resource]: path };
+        },
+      );
+
+      When(
+        "I create the seeded openapi plugin expecting a failure",
+        async () => {
+          // A device reports a size of 0, so the size cap alone let it
+          // stream whatever it produced.
+          failure = await failureOf(
+            openapi({ spec: `${FIXTURES_DIR}/petstore-swagger2.json`, seed }),
+          );
+        },
+      );
+
+      Then("creating the plugin fails with code {string}", expectFailureCode);
+
+      And("the failure says the seed file is not a regular file", () => {
+        expect((failure as Error).message).toContain("not a regular file");
+      });
     },
   );
 });
