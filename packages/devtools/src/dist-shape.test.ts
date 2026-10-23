@@ -4,9 +4,9 @@ import { describe, expect, it } from "vitest";
 
 const distFile = (name: string) => resolve(__dirname, "..", "dist", name);
 const read = (name: string) => readFileSync(distFile(name), "utf8");
+// Only an unbuilt package skips: once dist/index.js exists, the worker and
+// the bin are asserted, so a build that stops emitting them fails here.
 const hasIndex = existsSync(distFile("index.js"));
-const hasWorker = existsSync(distFile("schmock-sw.js"));
-const hasBin = existsSync(distFile("bin.js"));
 const hasTypes = existsSync(distFile("index.d.ts"));
 
 // Static ESM imports from node: modules; dynamic imports have no `from`.
@@ -61,9 +61,11 @@ describe("dist shape", () => {
     },
   );
 
-  it.skipIf(!hasWorker)(
-    "dist/schmock-sw.js is a classic script with no module syntax",
+  // `init` copies this file; nothing else in the release gate looks for it.
+  it.skipIf(!hasIndex)(
+    "dist/schmock-sw.js ships beside dist/index.js as a classic script with no module syntax",
     () => {
+      expect(existsSync(distFile("schmock-sw.js"))).toBe(true);
       const source = read("schmock-sw.js");
       expect(source).not.toMatch(/^\s*(import|export)\b/m);
       expect(source).not.toContain("@schmock");
@@ -84,7 +86,11 @@ describe("dist shape", () => {
     },
   );
 
-  it.skipIf(!hasBin)("dist/bin.js starts with a node shebang", () => {
-    expect(read("bin.js").startsWith("#!/usr/bin/env node")).toBe(true);
-  });
+  it.skipIf(!hasIndex)(
+    "dist/bin.js ships beside dist/index.js and starts with a node shebang",
+    () => {
+      expect(existsSync(distFile("bin.js"))).toBe(true);
+      expect(read("bin.js").startsWith("#!/usr/bin/env node")).toBe(true);
+    },
+  );
 });
