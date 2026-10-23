@@ -353,6 +353,16 @@ describe("R15: seed failures are coded SchmockErrors", () => {
     return error;
   }
 
+  /** What this runtime's `JSON.parse` says about `content`. */
+  function parseFailure(content: string): string {
+    try {
+      JSON.parse(content);
+    } catch (error) {
+      return (error as Error).message;
+    }
+    throw new Error("expected the content to be invalid JSON");
+  }
+
   async function withSeedFile(
     content: string,
     run: (path: string) => Promise<void>,
@@ -369,17 +379,21 @@ describe("R15: seed failures are coded SchmockErrors", () => {
     }
   }
 
-  it("codes an unparseable seed file, message unchanged", async () => {
-    await withSeedFile("not json {{{", async (path) => {
+  it("codes an unparseable seed file and keeps the parser's reason", async () => {
+    const content = '[{"id": 1,}]';
+    // Node and Bun word it differently; whichever runs this is the reference.
+    const reason = parseFailure(content);
+    await withSeedFile(content, async (path) => {
       const error = await seedError({ items: path });
       expect(error.code).toBe("OPENAPI_INVALID_OPTION");
       expect(error.message).toBe(
-        `Seed file "${path}" for resource "items" contains invalid JSON`,
+        `Seed file "${path}" for resource "items" contains invalid JSON: ${reason}`,
       );
       expect(error.context).toEqual({
         option: "seed",
         resource: "items",
         file: path,
+        reason,
       });
     });
   });
@@ -424,7 +438,7 @@ describe("R15: seed failures are coded SchmockErrors", () => {
         }),
       ).rejects.toMatchObject({
         code: "OPENAPI_INVALID_OPTION",
-        message: `Seed file "${path}" for resource "pets" contains invalid JSON`,
+        message: `Seed file "${path}" for resource "pets" contains invalid JSON: ${parseFailure("[")}`,
       });
     });
   });

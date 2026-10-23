@@ -586,8 +586,10 @@ Seed loading runs after those checks and raises the same code, with context
 - a `{ count }` that is not a non-negative integer;
 - a `{ count }` for a resource whose spec has no schema to generate from.
 
-These four used to be plain `Error`s; the messages are unchanged, and
-`openapi()` rejects with the error.
+These four used to be plain `Error`s, and `openapi()` rejects with the error.
+The invalid-JSON message ends with the JSON parser's own reason
+(`… contains invalid JSON: <reason>`), which is also `context.reason`; under
+Node it gives the line and column.
 
 A seed path that is not a regular file, such as a FIFO or a device like
 `/dev/stdin` (both report a size of 0), is refused with the same code and

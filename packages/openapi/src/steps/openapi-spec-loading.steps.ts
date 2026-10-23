@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { SchmockError, schmock } from "@schmock/core";
 import { expect, type MockInstance, vi } from "vitest";
@@ -30,6 +32,10 @@ function animal(sound: string): Record<string, unknown> {
     required: ["petType", sound],
     properties: { petType: { type: "string" }, [sound]: { type: "boolean" } },
   };
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function failureOf(promise: Promise<unknown>): Promise<unknown> {
@@ -64,10 +70,23 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let spec: Record<string, unknown>;
   let failure: unknown;
 
+  let seed: Record<string, string>;
+  let scratchDir: string | undefined;
+
   AfterEachScenario(() => {
     Reflect.deleteProperty(Object.prototype, MARKER);
     vi.restoreAllMocks();
+    if (scratchDir !== undefined) {
+      rmSync(scratchDir, { recursive: true, force: true });
+      scratchDir = undefined;
+    }
   });
+
+  const createSeededExpectingFailure = async (): Promise<void> => {
+    failure = await failureOf(
+      openapi({ spec: `${FIXTURES_DIR}/petstore-swagger2.json`, seed }),
+    );
+  };
 
   const createExpectingFailure = async (): Promise<void> => {
     failure = await failureOf(openapi({ spec }));
@@ -287,31 +306,61 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   Scenario(
     "A seed path that is not a regular file is refused",
     ({ Given, When, Then, And }) => {
-      let seed: Record<string, string>;
-
       Given(
         "the Petstore spec with {string} seeded from {string}",
         (_, resource: string, path: string) => {
+          // A device reports a size of 0, so the size cap alone let it
+          // stream whatever it produced.
           seed = { [resource]: path };
         },
       );
-
       When(
         "I create the seeded openapi plugin expecting a failure",
-        async () => {
-          // A device reports a size of 0, so the size cap alone let it
-          // stream whatever it produced.
-          failure = await failureOf(
-            openapi({ spec: `${FIXTURES_DIR}/petstore-swagger2.json`, seed }),
-          );
-        },
+        createSeededExpectingFailure,
       );
-
       Then("creating the plugin fails with code {string}", expectFailureCode);
-
       And("the failure says the seed file is not a regular file", () => {
         expect((failure as Error).message).toContain("not a regular file");
       });
+    },
+  );
+
+  Scenario(
+    "A malformed seed file error carries the parser's reason",
+    ({ Given, When, Then, And }) => {
+      let content: string;
+
+      Given(
+        "the Petstore spec with {string} seeded from a file holding {string}",
+        (_, resource: string, text: string) => {
+          content = text;
+          scratchDir = mkdtempSync(join(tmpdir(), "schmock-seed-"));
+          const path = join(scratchDir, "seed.json");
+          writeFileSync(path, content);
+          seed = { [resource]: path };
+        },
+      );
+      When(
+        "I create the seeded openapi plugin expecting a failure",
+        createSeededExpectingFailure,
+      );
+      Then("creating the plugin fails with code {string}", expectFailureCode);
+      And(
+        "the failure ends with what JSON.parse says about that content",
+        () => {
+          // Node and Bun word it differently; this runtime is the reference.
+          let reason = "";
+          try {
+            JSON.parse(content);
+          } catch (error) {
+            reason = (error as Error).message;
+          }
+          expect(reason).not.toBe("");
+          expect((failure as Error).message).toMatch(
+            new RegExp(`invalid JSON: ${escapeRegExp(reason)}$`),
+          );
+        },
+      );
     },
   );
 });

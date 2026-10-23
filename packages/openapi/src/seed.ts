@@ -17,12 +17,13 @@ export type SeedConfig = Schmock.SeedConfig;
 function invalidSeedEntry(
   message: string,
   resource: string,
-  file?: string,
+  details: { file?: string; reason?: string } = {},
 ): SchmockError {
   return new SchmockError(message, "OPENAPI_INVALID_OPTION", {
     option: "seed",
     resource,
-    ...(file === undefined ? {} : { file }),
+    ...(details.file === undefined ? {} : { file: details.file }),
+    ...(details.reason === undefined ? {} : { reason: details.reason }),
   });
 }
 
@@ -142,18 +143,21 @@ export async function loadSeed(
       let parsed: unknown;
       try {
         parsed = JSON.parse(content);
-      } catch {
+      } catch (error) {
+        // The parser's own words say where the file breaks — a trailing
+        // comma, an unquoted key — and Node adds the line and column.
+        const reason = error instanceof Error ? error.message : String(error);
         throw invalidSeedEntry(
-          `Seed file "${source}" for resource "${resourceName}" contains invalid JSON`,
+          `Seed file "${source}" for resource "${resourceName}" contains invalid JSON: ${reason}`,
           resourceName,
-          source,
+          { file: source, reason },
         );
       }
       if (!Array.isArray(parsed)) {
         throw invalidSeedEntry(
           `Seed file "${source}" for resource "${resourceName}" must contain a JSON array`,
           resourceName,
-          source,
+          { file: source },
         );
       }
       admit(resourceName, parsed.length);

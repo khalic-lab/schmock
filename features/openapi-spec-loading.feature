@@ -42,3 +42,9 @@ Feature: OpenAPI spec loading
     When I create the seeded openapi plugin expecting a failure
     Then creating the plugin fails with code "OPENAPI_INVALID_OPTION"
     And the failure says the seed file is not a regular file
+
+  Scenario: A malformed seed file error carries the parser's reason
+    Given the Petstore spec with "pets" seeded from a file holding '[{"id": 1,}]'
+    When I create the seeded openapi plugin expecting a failure
+    Then creating the plugin fails with code "OPENAPI_INVALID_OPTION"
+    And the failure ends with what JSON.parse says about that content
