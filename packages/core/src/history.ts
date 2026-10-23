@@ -28,7 +28,9 @@ function cloneRecord(r: Schmock.RequestRecord): Schmock.RequestRecord {
     params: { ...r.params },
     query: { ...r.query },
     headers: { ...r.headers },
-    body: snapshotValue(r.body),
+    // The stored body is already a snapshotValue copy, free of shared memory,
+    // so a plain clone is enough on every read.
+    body: snapshotNormalizedBody(r.body),
     timestamp: r.timestamp,
     response: {
       status: r.response.status,

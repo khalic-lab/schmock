@@ -44,6 +44,15 @@ function removeSharedMemory(
     return copy;
   }
 
+  // structuredClone already gave every other binary value private, non-shared
+  // memory, and it holds nothing to walk: visiting a typed array index by
+  // index cost seconds per megabyte, and past 2^24 elements Reflect.ownKeys
+  // throws, which turned the whole body into an unavailable descriptor.
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+    seen.set(value, value);
+    return value;
+  }
+
   seen.set(value, value);
   if (value instanceof Map) {
     const entries = [...value.entries()];
