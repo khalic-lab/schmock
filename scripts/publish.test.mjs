@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -10,8 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { after, beforeEach, describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -28,6 +28,7 @@ let fixtureRoot = "";
 let binDir = "";
 let commandLog = "";
 let guardedScript = "";
+const createdFixtures = [];
 
 function writeStub(name, body) {
   const path = join(binDir, name);
@@ -62,6 +63,7 @@ function commands() {
 describe("scripts/publish.sh", () => {
   beforeEach(() => {
     fixtureRoot = mkdtempSync(join(tmpdir(), "schmock-publish-wrapper-"));
+    createdFixtures.push(fixtureRoot);
     binDir = join(fixtureRoot, "bin");
     commandLog = join(fixtureRoot, "commands.log");
     mkdirSync(binDir, { recursive: true });
@@ -91,7 +93,8 @@ esac`,
     );
   });
 
-  after(() => {
+  // Each test gets its own fixture, so each one is removed after its test.
+  afterEach(() => {
     if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
@@ -169,5 +172,16 @@ esac`,
 
     assert.notEqual(result.exitCode, 0);
     assert.match(result.stderr, /guarded publish script not found/);
+  });
+
+  // Keep this test last: it checks that no earlier test left its fixture in
+  // the temp directory.
+  it("removes each earlier test's fixture workspace", () => {
+    const earlier = createdFixtures.slice(0, -1);
+    assert.ok(earlier.length > 0);
+    assert.deepEqual(
+      earlier.filter((path) => existsSync(path)),
+      [],
+    );
   });
 });
