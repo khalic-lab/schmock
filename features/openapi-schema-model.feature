@@ -96,3 +96,10 @@ Feature: OpenAPI schema model fixes
     When I load it in debug mode
     Then a warning says the TRACE operation on "/x" is not supported
     And GET "/x" still answers 200
+
+  # ── Discriminators ────────────────────────────────────────────────────────
+
+  Scenario: A discriminator beside anyOf generates each branch with its own mapping key
+    Given a mock whose pet is a discriminated anyOf of Cat and Dog mapped as "cat" and "dog"
+    When I read the pet with 12 different faker seeds
+    Then every pet that meows has petType "cat" and every pet that barks has petType "dog"

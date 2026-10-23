@@ -176,8 +176,8 @@ export async function loadDocument(
   }
   if (blocked.length > 0) throw externalRefBlocked(blocked, source);
 
-  // MUST run before dereference: it is the last moment a `oneOf` branch is
-  // still a `$ref` string and can be paired with its `mapping` entry.
+  // MUST run before dereference: it is the last moment a discriminated branch
+  // is still a `$ref` string and can be paired with its `mapping` entry.
   markDiscriminatorValues(raw);
   // After the marker, which reads the `$ref` a sibling rewrite would move.
   combineRefSiblings(raw);
@@ -215,8 +215,9 @@ export async function loadDocument(
 }
 
 /**
- * Resolve each `oneOf` reference to its explicit discriminator mapping key or
- * implicit component name, then record the answers index-aligned.
+ * Resolve each `oneOf` (or `anyOf`) reference to its explicit discriminator
+ * mapping key or implicit component name, then record the answers
+ * index-aligned.
  *
  * Why a marker rather than resolving in the normalizer: dereference replaces
  * every `$ref` branch with the component object, at which point NOTHING on the
@@ -334,6 +335,19 @@ function schemaNameForRef(ref: string): string | null {
   }
 }
 
+/**
+ * The branches a discriminator selects between: `oneOf`, else `anyOf`, both of
+ * which OAS allows it beside. The normalizer picks the keyword in the same
+ * order and reads the marker index-aligned against it.
+ */
+function discriminatedBranches(
+  node: Record<string, unknown>,
+): unknown[] | undefined {
+  if (Array.isArray(node.oneOf)) return node.oneOf;
+  if (Array.isArray(node.anyOf)) return node.anyOf;
+  return undefined;
+}
+
 function markDiscriminatorValues(root: unknown): void {
   const seen = new WeakSet<object>();
   const stack: unknown[] = [root];
@@ -351,9 +365,10 @@ function markDiscriminatorValues(root: unknown): void {
     if (!isRecord(node)) continue;
 
     const disc = node.discriminator;
-    if (isDocumentObject(disc) && Array.isArray(node.oneOf)) {
+    const branches = discriminatedBranches(node);
+    if (isDocumentObject(disc) && branches) {
       const mapping = isRecord(disc.mapping) ? disc.mapping : {};
-      const values = node.oneOf.map((branch) =>
+      const values = branches.map((branch) =>
         discriminatorValuesForBranch(mapping, branch),
       );
       if (values.some((value) => value !== null)) {
@@ -550,7 +565,8 @@ function valuesForDereferencedBranch(
 const ROOT_DOCUMENT_URI = "schmock:root";
 
 /**
- * Every document a dereferenced `oneOf` branch can come from, root included.
+ * Every document a dereferenced discriminator branch can come from, root
+ * included.
  *
  * The Node resolver lists the root only when the spec went through it: a
  * ref-free object spec takes the fast path in `dereferenceDocument`, and the
@@ -600,13 +616,14 @@ function markDereferencedDiscriminatorValues(
     if (!isRecord(node)) continue;
 
     const disc = node.discriminator;
-    if (isDocumentObject(disc) && Array.isArray(node.oneOf)) {
+    const branches = discriminatedBranches(node);
+    if (isDocumentObject(disc) && branches) {
       const existingRaw = Object.hasOwn(disc, DISCRIMINATOR_VALUES_MARKER)
         ? disc[DISCRIMINATOR_VALUES_MARKER]
         : undefined;
       const existing = Array.isArray(existingRaw) ? existingRaw : [];
       const mapping = isRecord(disc.mapping) ? disc.mapping : {};
-      const values = node.oneOf.map((branch, index) => {
+      const values = branches.map((branch, index) => {
         const marked = existing[index];
         return Array.isArray(marked) && marked.length > 0
           ? marked

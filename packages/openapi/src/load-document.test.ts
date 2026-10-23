@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SchmockError } from "@schmock/core";
+import { SchmockError, schmock } from "@schmock/core";
 import {
   afterAll,
   afterEach,
@@ -546,6 +546,142 @@ describe("loadDocument", () => {
 
         expect(codeOf(error)).toBe("OPENAPI_INVALID_REF");
       });
+    });
+  });
+
+  describe("discriminators beside anyOf", () => {
+    const animal = (sound: "meow" | "bark") => ({
+      type: "object",
+      required: ["petType", sound],
+      properties: {
+        petType: { type: "string" },
+        [sound]: { type: "boolean" },
+      },
+    });
+
+    /** `anyOf` lists Cat first; a mapping, when given, lists dog first. */
+    function anyOfPetSpec(
+      pet: Record<string, unknown>,
+      schemas: Record<string, unknown> = {},
+    ): Record<string, unknown> {
+      return {
+        openapi: "3.0.3",
+        info: { title: "Pets", version: "1.0.0" },
+        paths: {
+          "/pet": {
+            get: {
+              responses: {
+                "200": {
+                  description: "OK",
+                  content: {
+                    "application/json": {
+                      schema: { $ref: "#/components/schemas/Pet" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        components: { schemas: { Pet: pet, ...schemas } },
+      };
+    }
+
+    const refBranches = [
+      { $ref: "#/components/schemas/Cat" },
+      { $ref: "#/components/schemas/Dog" },
+    ];
+
+    async function markerOf(
+      spec: Record<string, unknown>,
+      keyword = "anyOf",
+    ): Promise<unknown> {
+      const api = (await loadDocument(spec, {})) as unknown as {
+        components: {
+          schemas: { Pet: { discriminator: Record<string, unknown> } };
+        };
+      };
+      expect(api.components.schemas.Pet).toHaveProperty(keyword);
+      return api.components.schemas.Pet.discriminator[MARKER];
+    }
+
+    it("names $ref branches by their mapping keys", async () => {
+      const spec = anyOfPetSpec(
+        {
+          anyOf: refBranches,
+          discriminator: {
+            propertyName: "petType",
+            mapping: {
+              dog: "#/components/schemas/Dog",
+              cat: "#/components/schemas/Cat",
+            },
+          },
+        },
+        { Cat: animal("meow"), Dog: animal("bark") },
+      );
+
+      expect(await markerOf(spec)).toEqual([["cat"], ["dog"]]);
+    });
+
+    it("names $ref branches by their component names without a mapping", async () => {
+      const spec = anyOfPetSpec(
+        { anyOf: refBranches, discriminator: { propertyName: "petType" } },
+        { Cat: animal("meow"), Dog: animal("bark") },
+      );
+
+      expect(await markerOf(spec)).toEqual([["Cat"], ["Dog"]]);
+    });
+
+    it("names branches that are the component objects themselves", async () => {
+      const cat = animal("meow");
+      const dog = animal("bark");
+      const spec = anyOfPetSpec(
+        { anyOf: [cat, dog], discriminator: { propertyName: "petType" } },
+        { Cat: cat, Dog: dog },
+      );
+
+      expect(await markerOf(spec)).toEqual([["Cat"], ["Dog"]]);
+    });
+
+    it("aligns the marker with oneOf when a node declares both", async () => {
+      const spec = anyOfPetSpec(
+        {
+          oneOf: [{ $ref: "#/components/schemas/Dog" }],
+          anyOf: [{ $ref: "#/components/schemas/Cat" }],
+          discriminator: { propertyName: "petType" },
+        },
+        { Cat: animal("meow"), Dog: animal("bark") },
+      );
+
+      expect(await markerOf(spec, "oneOf")).toEqual([["Dog"]]);
+    });
+
+    it("generates each branch with its own discriminator value", async () => {
+      const spec = anyOfPetSpec(
+        {
+          anyOf: refBranches,
+          discriminator: {
+            propertyName: "petType",
+            mapping: {
+              dog: "#/components/schemas/Dog",
+              cat: "#/components/schemas/Cat",
+            },
+          },
+        },
+        { Cat: animal("meow"), Dog: animal("bark") },
+      );
+
+      const seen = new Set<unknown>();
+      for (let fakerSeed = 0; fakerSeed < 12; fakerSeed++) {
+        const mock = schmock();
+        mock.pipe(await openapi({ spec: structuredClone(spec), fakerSeed }));
+        const response = await mock.handle("GET", "/pet");
+        const pet = response.body as Record<string, unknown>;
+        expect(response.status).toBe(200);
+        expect(pet.petType).toBe("meow" in pet ? "cat" : "dog");
+        seen.add(pet.petType);
+      }
+      expect(seen).toEqual(new Set(["cat", "dog"]));
     });
   });
 });

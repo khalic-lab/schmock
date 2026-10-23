@@ -676,4 +676,77 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       });
     },
   );
+
+  Scenario(
+    "A discriminator beside anyOf generates each branch with its own mapping key",
+    ({ Given, When, Then }) => {
+      let petSpec: Record<string, unknown>;
+      const pets: Record<string, unknown>[] = [];
+      const animal = (sound: "meow" | "bark") => ({
+        type: "object",
+        required: ["petType", sound],
+        properties: {
+          petType: { type: "string" },
+          [sound]: { type: "boolean" },
+        },
+      });
+
+      Given(
+        'a mock whose pet is a discriminated anyOf of Cat and Dog mapped as "cat" and "dog"',
+        () => {
+          petSpec = specWith(
+            {
+              "/pet": {
+                get: {
+                  responses: {
+                    "200": {
+                      description: "OK",
+                      content: json({ $ref: "#/components/schemas/Pet" }),
+                    },
+                  },
+                },
+              },
+            },
+            {
+              Pet: {
+                anyOf: [
+                  { $ref: "#/components/schemas/Cat" },
+                  { $ref: "#/components/schemas/Dog" },
+                ],
+                discriminator: {
+                  propertyName: "petType",
+                  mapping: {
+                    dog: "#/components/schemas/Dog",
+                    cat: "#/components/schemas/Cat",
+                  },
+                },
+              },
+              Cat: animal("meow"),
+              Dog: animal("bark"),
+            },
+          );
+        },
+      );
+
+      When("I read the pet with 12 different faker seeds", async () => {
+        for (let fakerSeed = 0; fakerSeed < 12; fakerSeed++) {
+          await build({ spec: structuredClone(petSpec), fakerSeed });
+          response = await mock.handle("GET", "/pet");
+          expect(response.status).toBe(200);
+          if (isRecord(response.body)) pets.push(response.body);
+        }
+      });
+
+      Then(
+        'every pet that meows has petType "cat" and every pet that barks has petType "dog"',
+        () => {
+          expect(pets).toHaveLength(12);
+          for (const pet of pets) {
+            expect(pet.petType).toBe("meow" in pet ? "cat" : "dog");
+            expect("meow" in pet || "bark" in pet).toBe(true);
+          }
+        },
+      );
+    },
+  );
 });
