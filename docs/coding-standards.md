@@ -36,13 +36,13 @@ export function plugin(): Schmock.Plugin {
 ```typescript
 // Good — runtime validation narrows the type
 export function isHttpMethod(method: string): method is HttpMethod {
-  return HTTP_METHODS.includes(method as HttpMethod);
+  return (HTTP_METHODS as readonly string[]).includes(method);
 }
 
 export function toHttpMethod(method: string): HttpMethod {
   const upper = method.toUpperCase();
   if (!isHttpMethod(upper)) {
-    throw new Error(`Invalid HTTP method: "${method}"`);
+    throw new InvalidHttpMethodError(method); // code INVALID_HTTP_METHOD
   }
   return upper;
 }
