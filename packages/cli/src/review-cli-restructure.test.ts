@@ -658,15 +658,21 @@ describe("CLI errors carry SchmockError codes", () => {
     },
   );
 
-  it("keeps an invalid-JSON manifest's message and gives it the seed code", () => {
+  it("names the parser's complaint in an invalid-JSON manifest's message and gives it the seed code", () => {
     tempDir = mkdtempSync(join(tmpdir(), "schmock-seed-codes-"));
     const seedPath = join(tempDir, "seed.json");
     writeFileSync(seedPath, "{not json");
+    // The wording is the runtime's own, so it is taken from the same parser.
+    const reason = captureError(() => JSON.parse("{not json"));
+    expect(reason).toBeInstanceOf(SyntaxError);
+    const parserMessage = (reason as SyntaxError).message;
+
     const error = captureError(() => loadSeedFile(seedPath));
     expect(error).toBeInstanceOf(SchmockError);
     expect(error).toMatchObject({
       code: "OPENAPI_INVALID_OPTION",
-      message: `Seed file "${seedPath}" contains invalid JSON`,
+      message: `Seed file "${seedPath}" contains invalid JSON: ${parserMessage}`,
+      context: { option: "seed", reason: parserMessage },
     });
   });
 });

@@ -34,6 +34,16 @@ function invalidSeed(
   });
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function errorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error
+    ? error.code
+    : undefined;
+}
+
 function isCountSource(value: unknown): value is { count: number } {
   return (
     typeof value === "object" &&
@@ -60,13 +70,21 @@ function resolveSeedEntryPath(
   let real: string;
   try {
     real = realpathSync(resolvePath(baseDir, entry));
-  } catch {
-    throw invalidSeed(
-      `Seed entry "${key}" points to a missing file: ${entry}`,
-      {
-        resource: key,
-      },
-    );
+  } catch (error) {
+    // Only ENOENT is a missing file. A symlink loop (ELOOP) or an unreadable
+    // directory (EACCES) used to be reported as missing too, which sent the
+    // user looking for a typo in a path that exists.
+    if (errorCode(error) === "ENOENT") {
+      throw invalidSeed(
+        `Seed entry "${key}" points to a missing file: ${entry}`,
+        { resource: key },
+      );
+    }
+    const reason = errorMessage(error);
+    throw invalidSeed(`Seed entry "${key}" could not be resolved: ${reason}`, {
+      resource: key,
+      reason,
+    });
   }
   const rel = relative(baseDir, real);
   // `relative()` signals an escape only when the FIRST path segment is exactly
@@ -162,8 +180,13 @@ export function loadSeedFile(seedPath: string): Schmock.SeedConfig {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
-    throw invalidSeed(`Seed file "${seedPath}" contains invalid JSON`);
+  } catch (error) {
+    // The parser's message carries the position, which is what finds the typo.
+    const reason = errorMessage(error);
+    throw invalidSeed(
+      `Seed file "${seedPath}" contains invalid JSON: ${reason}`,
+      { reason },
+    );
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw invalidSeed(

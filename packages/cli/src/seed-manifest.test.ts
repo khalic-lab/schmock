@@ -150,6 +150,34 @@ describe("loadSeedFile", () => {
     );
   });
 
+  posixOnly(
+    "reports an entry that exists but cannot be resolved by the reason, not as missing",
+    () => {
+      const dir = makeDir();
+      // A symlink loop: the entry exists, realpath fails with ELOOP.
+      symlinkSync(join(dir, "b.json"), join(dir, "a.json"));
+      symlinkSync(join(dir, "a.json"), join(dir, "b.json"));
+      const manifestPath = join(dir, "seed.json");
+      writeFileSync(manifestPath, JSON.stringify({ pets: "./a.json" }));
+
+      const error = failureOf(() => loadSeedFile(manifestPath));
+
+      expect(error).toBeInstanceOf(SchmockError);
+      expect((error as Error).message).not.toContain("missing file");
+      expect(error).toMatchObject({
+        code: "OPENAPI_INVALID_OPTION",
+        message: expect.stringMatching(
+          /^Seed entry "pets" could not be resolved: ELOOP\b/,
+        ),
+        context: {
+          option: "seed",
+          resource: "pets",
+          reason: expect.stringMatching(/^ELOOP\b/),
+        },
+      });
+    },
+  );
+
   it("rejects an unknown entry shape instead of dropping it silently", () => {
     const dir = makeDir();
     const manifestPath = join(dir, "seed.json");

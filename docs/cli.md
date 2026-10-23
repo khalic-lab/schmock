@@ -162,7 +162,11 @@ with `Seed entry "…" must stay inside the seed manifest directory`.
 
 Because entry paths are resolved when the manifest is read, a typo'd path now
 fails at startup with `Seed entry "…" points to a missing file` rather than
-later, from inside seed loading.
+later, from inside seed loading. Only a path that does not exist is reported as
+missing. An entry that exists but cannot be resolved, such as a symlink loop
+or a directory the server may not read, fails with
+`Seed entry "…" could not be resolved: <reason>`, where the reason is the
+operating system's error (`ELOOP: …`, `EACCES: …`).
 
 A manifest key must name a CRUD resource the spec declares. An unknown key makes
 the server fail at startup with `OPENAPI_UNKNOWN_SEED_RESOURCE`, and the message
@@ -175,14 +179,18 @@ checked before it is read and again while it is read, so a file that grows in
 between is still stopped. It must be a regular file: a directory, a FIFO or a
 device is refused with `Seed file "…" is not a regular file`, and a FIFO is
 refused at once rather than waiting for a writer. Malformed JSON is reported as
-`Seed file "…" contains invalid JSON` instead of a raw `SyntaxError`.
+`Seed file "…" contains invalid JSON: <parser message>` instead of a raw
+`SyntaxError`; the parser message says where the JSON broke.
 
 Manifest mistakes (a manifest that is not a regular file, invalid JSON, a
 manifest that is not an object, an entry of the wrong shape, a missing file, an
-entry that escapes the directory) are `SchmockError` with code
-`OPENAPI_INVALID_OPTION` and context `{ option: 'seed', resource? }`: the code
-the openapi plugin raises for the same mistakes in its `seed` option. The same code, with `file` in the context,
-covers a referenced seed file that is not valid JSON or not a JSON array.
+entry that cannot be resolved, an entry that escapes the directory) are
+`SchmockError` with code `OPENAPI_INVALID_OPTION` and context
+`{ option: 'seed', resource?, reason? }`: the code the openapi plugin raises
+for the same mistakes in its `seed` option. `reason` carries the parser's or
+the operating system's message for invalid JSON and for an entry that cannot be
+resolved. The same code, with `file` in the context, covers a referenced seed
+file that is not valid JSON or not a JSON array.
 
 ### CORS for frontend development
 
