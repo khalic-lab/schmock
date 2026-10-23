@@ -576,4 +576,46 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       });
     },
   );
+
+  // ── Request history ────────────────────────────────────────────────────
+
+  Scenario(
+    "A typed-array request body is recorded byte for byte, however large",
+    ({ Given, When, Then, And }) => {
+      Given("a route that accepts uploads", () => {
+        mock = schmock();
+        mock("POST /uploads", [201, { stored: true }]);
+      });
+
+      When(
+        "I upload a Uint8Array body of {int} bytes whose first and last bytes are set",
+        async (_, size: number) => {
+          const body = new Uint8Array(size);
+          body[0] = 1;
+          body[size - 1] = 2;
+          handled = await mock?.handle("POST", "/uploads", { body });
+          expect(handled?.status).toBe(201);
+        },
+      );
+
+      Then(
+        "the last request body should be a Uint8Array of {int} bytes",
+        (_, size: number) => {
+          const body = mock?.lastRequest()?.body;
+          expect(body).toBeInstanceOf(Uint8Array);
+          if (!(body instanceof Uint8Array)) return;
+          expect(body.byteLength).toBe(size);
+        },
+      );
+
+      And("its first and last bytes should be the ones sent", () => {
+        const body = mock?.lastRequest()?.body;
+        if (!(body instanceof Uint8Array)) {
+          throw new Error("Expected the recorded body to be a Uint8Array");
+        }
+        expect(body[0]).toBe(1);
+        expect(body[body.byteLength - 1]).toBe(2);
+      });
+    },
+  );
 });

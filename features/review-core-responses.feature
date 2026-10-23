@@ -88,3 +88,11 @@ Feature: Core response and error-path review fixes
     When I pipe the plugin into a mock with a route "GET /users" and fetch it through intercept
     Then the observer saw one answered exchange with status 200
     And the dispatcher records the request it is given
+
+  # ── Request history ──────────────────────────────────────────────────────
+
+  Scenario: A typed-array request body is recorded byte for byte, however large
+    Given a route that accepts uploads
+    When I upload a Uint8Array body of 16777217 bytes whose first and last bytes are set
+    Then the last request body should be a Uint8Array of 16777217 bytes
+    And its first and last bytes should be the ones sent
