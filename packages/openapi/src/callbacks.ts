@@ -80,6 +80,8 @@ export async function dispatchCallbacks(
         method: callback.method,
         headers: { "content-type": "application/json" },
         body,
+        // So a dispatcher can stop a delivery the client no longer waits for.
+        ...(context.signal ? { signal: context.signal } : {}),
       });
     } catch (error) {
       console.warn(

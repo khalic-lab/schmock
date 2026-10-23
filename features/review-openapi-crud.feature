@@ -120,6 +120,12 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     Then the patch response status is 404
     And no callback was dispatched
 
+  Scenario: A dispatcher is handed the request's abort signal
+    Given a pets mock whose create has a callback, with a dispatcher that waits until its signal aborts
+    When I create a pet named "rex" and abort it while the dispatcher is pending
+    Then the create is rejected with an AbortError
+    And the dispatcher's signal has aborted
+
   # ── Settling once the response is final (decision #39) ─────────────────────
 
   # Design Decision #39: the plugin commits staged CRUD writes and dispatches

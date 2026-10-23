@@ -1145,8 +1145,14 @@ delivery and return without awaiting it. When the request is aborted while a
 dispatcher is pending, `handle()` rejects with the abort as usual and the
 callbacks after that one are not dispatched. The CRUD write was committed
 before the first dispatch, so it stays stored: unlike an abort during the
-`delay`, an abort at this point does not roll it back. The dispatcher is not handed the
-request's abort signal.
+`delay`, an abort at this point does not roll it back. The dispatcher is
+handed the request's abort signal as `signal` (absent when the request has
+none), so it can stop a delivery the client is no longer waiting for:
+
+```typescript
+dispatch: ({ url, method, headers, body, signal }) =>
+  fetch(url, { method, headers, body: JSON.stringify(body), signal }),
+```
 
 Callbacks report something that happened, so a response whose final status is
 400 or above dispatches none: a CRUD `PATCH` or `DELETE` of a missing item

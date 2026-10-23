@@ -2008,6 +2008,14 @@ interface ResourceOverride {
   listFlat?: boolean              // force flat array response
   errorSchema?: JSONSchema7       // body of the CRUD 404 for a missing item
 }
+
+interface OpenApiCallbackRequest {
+  url: string
+  method: HttpMethod
+  headers: Record<string, string> // { 'content-type': 'application/json' }
+  body?: unknown
+  signal?: AbortSignal            // the request's; absent when it has none
+}
 ```
 
 A `spec` given as an `http(s)` URL is read like an http `$ref`, so it needs
@@ -2033,7 +2041,8 @@ The plugin commits CRUD writes and dispatches callbacks in its
 when its status is below 400 (a `Prefer`-simulated status still dispatches).
 A plugin piped after it that answers 500 or throws therefore leaves the
 collection unchanged, and the dispatcher's promise is awaited before
-`handle()` resolves. See
+`handle()` resolves. The dispatcher gets the request's abort signal as
+`signal`, so it can stop a delivery when the request is cancelled. See
 [Transactional mutations](./openapi.md#transactional-mutations).
 
 Invalid `seed` and `resources` options throw `SchmockError` when the plugin is

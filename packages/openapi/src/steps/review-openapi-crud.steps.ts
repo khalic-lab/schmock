@@ -1074,6 +1074,64 @@ describeFeature(feature, ({ Scenario }) => {
   );
 
   Scenario(
+    "A dispatcher is handed the request's abort signal",
+    ({ Given, When, Then, And }) => {
+      let outcome: Promise<Schmock.Response>;
+      let signal: AbortSignal | undefined;
+      let dispatching: Promise<void>;
+
+      Given(
+        "a pets mock whose create has a callback, with a dispatcher that waits until its signal aborts",
+        async () => {
+          let entered: () => void = () => {};
+          dispatching = new Promise((resolve) => {
+            entered = resolve;
+          });
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: petCallbackSpec,
+              callbacks: {
+                dispatch: (request) => {
+                  signal = request.signal;
+                  entered();
+                  return new Promise<void>((resolve) => {
+                    request.signal?.addEventListener("abort", () => resolve());
+                  });
+                },
+              },
+            }),
+          );
+        },
+      );
+
+      When(
+        'I create a pet named "rex" and abort it while the dispatcher is pending',
+        async () => {
+          const controller = new AbortController();
+          outcome = mock.handle("POST", "/pets", {
+            body: { name: "rex" },
+            signal: controller.signal,
+          });
+          // Settle the rejection now, so it is never reported as unhandled.
+          outcome.catch(() => undefined);
+          await dispatching;
+          expect(signal?.aborted).toBe(false);
+          controller.abort();
+        },
+      );
+
+      Then("the create is rejected with an AbortError", async () => {
+        await expect(outcome).rejects.toMatchObject({ name: "AbortError" });
+      });
+
+      And("the dispatcher's signal has aborted", () => {
+        expect(signal?.aborted).toBe(true);
+      });
+    },
+  );
+
+  Scenario(
     "A plugin piped after openapi that answers 500 leaves the collection unchanged",
     ({ Given, When, Then, And }) => {
       Given(

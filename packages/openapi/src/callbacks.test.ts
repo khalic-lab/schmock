@@ -313,6 +313,78 @@ describe("dispatchCallbacks", () => {
     });
   });
 
+  describe("the request's abort signal", () => {
+    const spec = {
+      openapi: "3.0.3",
+      info: { title: "callbacks", version: "1.0.0" },
+      paths: {
+        "/jobs": {
+          post: {
+            responses: { "202": { description: "accepted" } },
+            callbacks: {
+              done: {
+                "https://hooks.example/done": {
+                  post: { responses: { "200": { description: "ok" } } },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    it("hands the dispatcher a signal that aborts with the request", async () => {
+      let seen: AbortSignal | undefined;
+      let entered: () => void = () => {};
+      const dispatching = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const mock = schmock();
+      mock.pipe(
+        await openapi({
+          spec,
+          callbacks: {
+            dispatch: ({ signal }) => {
+              seen = signal;
+              entered();
+              // A delivery that only ends when it is told to.
+              return new Promise<void>((resolve) => {
+                signal?.addEventListener("abort", () => resolve());
+              });
+            },
+          },
+        }),
+      );
+      const controller = new AbortController();
+
+      const pending = mock.handle("POST", "/jobs", {
+        signal: controller.signal,
+      });
+      await dispatching;
+      expect(seen?.aborted).toBe(false);
+      controller.abort();
+
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(seen?.aborted).toBe(true);
+    });
+
+    it("leaves the signal out for a request without one", async () => {
+      const requests: Schmock.OpenApiCallbackRequest[] = [];
+      const mock = schmock();
+      mock.pipe(
+        await openapi({
+          spec,
+          callbacks: { dispatch: (request) => requests.push(request) },
+        }),
+      );
+
+      await mock.handle("POST", "/jobs");
+
+      expect(requests).toHaveLength(1);
+      expect("signal" in (requests[0] ?? {})).toBe(false);
+    });
+  });
+
   describe("fallback payload ownership", () => {
     const pet = {
       type: "object",

@@ -1131,6 +1131,13 @@ declare namespace Schmock {
     method: HttpMethod;
     headers: Record<string, string>;
     body?: unknown;
+    /**
+     * The mocked request's abort signal, when it has one. It aborts when
+     * the request is cancelled while the dispatcher is pending, so a
+     * dispatcher can stop its delivery; `handle()` rejects with the abort
+     * either way. Optional, so a hand-built request still type-checks.
+     */
+    signal?: AbortSignal;
   }
 
   /** Explicit application-owned delivery for OpenAPI callbacks. */
