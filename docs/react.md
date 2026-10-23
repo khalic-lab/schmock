@@ -127,6 +127,13 @@ Only intercept requests whose pathname starts with this string. Non-matching req
 prefix, so register routes with the full path (`GET /api/users`). The Angular
 adapter's `baseUrl` strips the prefix instead.
 
+To register routes without the prefix, give the mock a `namespace`:
+`schmock({ namespace: '/api' })` serves `mock('GET /users', ...)` at
+`/api/users`. That works the same under `intercept()`, `mock.listen()`,
+Express and the CLI, so it is the portable way to leave the prefix out of
+route keys. Do not also set the Angular adapter's `baseUrl` to it: see
+[`baseUrl`](./angular.md#baseurl) in the Angular guide.
+
 ### `errorFormatter`
 
 `errorFormatter(error, request)` formats core-marked internal exceptions — an

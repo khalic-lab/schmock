@@ -249,7 +249,10 @@ Two things differ from the other adapters:
 - The Angular adapter's `baseUrl` both filters requests **and strips** the
   prefix before route lookup, so `/api/users` is matched against the route
   `GET /users`. (Core's `mock.intercept()` filters without stripping — routes
-  there keep the prefix.)
+  there keep the prefix.) A mock's `namespace` strips on every transport, but
+  it does not compose with the Angular `baseUrl`: with both set to `/api`, the
+  adapter strips the prefix the namespace then requires, and every request
+  misses.
 - Use `provideSchmockInterceptor`, not a hand-written
   `{ provide: HTTP_INTERCEPTORS, useClass: ... }` entry. The interceptor class
   is built at runtime, so `useClass` fails with NG0204 ("needs JIT compiler")

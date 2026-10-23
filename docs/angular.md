@@ -94,6 +94,15 @@ The prefix is matched the way the fetch interceptor matches it:
 
 The stripped remainder keeps the spelling the request used.
 
+`baseUrl` and a mock's `namespace` do not compose. With
+`schmock({ namespace: '/api' })` and `baseUrl: '/api'`, the adapter strips
+`/api` and the namespace then requires it again, so every request misses
+(a 404 with `passthrough: false`). For a namespaced mock, leave `baseUrl`
+unset: the namespace already maps `/api/users` to the route `GET /users`, as
+it does under `mock.intercept()`, `mock.listen()`, Express and the CLI. That
+makes `namespace` the portable choice for a mock shared with those transports,
+such as the DevTools setup below.
+
 ### `transformRequest`
 
 Rewrite the request before Schmock matches it. Return any subset of
@@ -294,7 +303,9 @@ out of the providers: it would answer first, and nothing would be reported.
 What changes on this path:
 
 - `mock.intercept()`'s `baseUrl` filters requests but does not strip the
-  prefix, so routes use the full path: `GET /api/users`, not `GET /users`.
+  prefix, so routes use the full path: `GET /api/users`, not `GET /users`. To
+  keep route keys without the prefix on both paths, give the mock
+  `namespace: '/api'` and leave the Angular adapter's `baseUrl` unset.
 - `transformRequest` and `transformResponse` do not apply. Use the
   [`intercept()` options](./api.md#interceptoptions) `beforeRequest`,
   `beforeResponse` and `errorFormatter`, whose hooks receive an
