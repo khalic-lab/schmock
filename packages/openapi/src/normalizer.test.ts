@@ -115,6 +115,63 @@ describe("normalizeSchema", () => {
       expect(acceptsNull(result)).toBe(true);
     });
 
+    it("wraps a typed nullable that also composes, so the branches cannot reject null", () => {
+      const owner = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
+      for (const keyword of ["allOf", "anyOf", "oneOf"]) {
+        const result = normalizeSchema(
+          { type: "object", nullable: true, [keyword]: [owner] },
+          "request",
+        );
+        expect(result).toEqual({
+          anyOf: [{ type: "null" }, { type: "object", [keyword]: [owner] }],
+          schmockNullable: true,
+        });
+        expect(acceptsNull(result)).toBe(true);
+        expect(accepts(result, { name: "Ada" })).toBe(true);
+        expect(accepts(result, "Ada")).toBe(false);
+      }
+    });
+
+    it("lets a nullable typed allOf property accept null through the plugin", async () => {
+      const mock = await mockFor(
+        specWith(
+          {
+            "/pets": {
+              post: {
+                requestBody: {
+                  required: true,
+                  content: json({
+                    type: "object",
+                    required: ["owner"],
+                    properties: {
+                      owner: {
+                        type: "object",
+                        nullable: true,
+                        allOf: [{ $ref: "#/components/schemas/Owner" }],
+                      },
+                    },
+                  }),
+                },
+                responses: { "204": { description: "ok" } },
+              },
+            },
+          },
+          {
+            Owner: { type: "object", properties: { name: { type: "string" } } },
+          },
+        ),
+        { validateRequests: true },
+      );
+
+      const response = await mock.handle("POST", "/pets", {
+        body: { owner: null },
+      });
+      expect(response.status).toBe(204);
+    });
+
     it("leaves a typeless composition-free schema alone but marks it", () => {
       const result = normalizeSchema({ nullable: true }, "response");
       expect(result).toEqual({ schmockNullable: true });

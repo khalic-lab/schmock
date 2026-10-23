@@ -338,4 +338,57 @@ describeFeature(feature, ({ Scenario }) => {
       });
     },
   );
+
+  Scenario(
+    "A nullable property that declares a type and an allOf accepts null",
+    ({ Given, When, Then }) => {
+      Given(
+        "a request-validating mock whose pet owner is a nullable object composed with allOf",
+        async () => {
+          await build({
+            spec: specWith(
+              {
+                "/pets": {
+                  post: {
+                    requestBody: {
+                      required: true,
+                      content: json({
+                        type: "object",
+                        required: ["owner"],
+                        properties: {
+                          owner: {
+                            type: "object",
+                            nullable: true,
+                            allOf: [{ $ref: "#/components/schemas/Owner" }],
+                          },
+                        },
+                      }),
+                    },
+                    responses: { "204": { description: "No Content" } },
+                  },
+                },
+              },
+              {
+                Owner: {
+                  type: "object",
+                  properties: { name: { type: "string" } },
+                },
+              },
+            ),
+            validateRequests: true,
+          });
+        },
+      );
+
+      When("I post a pet whose owner is null", async () => {
+        response = await mock.handle("POST", "/pets", {
+          body: { owner: null },
+        });
+      });
+
+      Then("the pet response has status 204", () => {
+        expect(response.status).toBe(204);
+      });
+    },
+  );
 });

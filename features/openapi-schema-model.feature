@@ -54,3 +54,10 @@ Feature: OpenAPI schema model fixes
     When I list the planets
     Then the planets response has status 200
     And the planet list holds 2 planets
+
+  # ── Nullable compositions ─────────────────────────────────────────────────
+
+  Scenario: A nullable property that declares a type and an allOf accepts null
+    Given a request-validating mock whose pet owner is a nullable object composed with allOf
+    When I post a pet whose owner is null
+    Then the pet response has status 204

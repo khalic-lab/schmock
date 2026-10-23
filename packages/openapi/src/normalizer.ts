@@ -101,8 +101,9 @@ function isPrimitive(value: unknown): boolean {
  *
  * Transforms applied:
  * - nullable: true -> validation-visible null (`type: [T, "null"]`, or
- *   `anyOf: [{type:"null"}, rest]` for composition-only schemas) plus the
- *   `schmockNullable` marker the faker plugin uses to roll nulls at ~5%
+ *   `anyOf: [{type:"null"}, rest]` for any schema that composes, typed or
+ *   not) plus the `schmockNullable` marker the faker plugin uses to roll nulls
+ *   at ~5%
  * - discriminator -> required + enum on branches
  * - readOnly/writeOnly -> strip based on direction (names recorded, see
  *   {@link collectAccessModes})
@@ -183,16 +184,18 @@ function closesEvaluation(schema: unknown, seen = new Set<object>()): boolean {
 function applyNullability(
   node: Record<string, unknown>,
 ): Record<string, unknown> {
+  if (node.allOf || node.anyOf || node.oneOf || node.$ref) {
+    // A composing node (the standard `allOf: [{$ref}], nullable: true` idiom)
+    // moves whole into the non-null branch. Widening only its `type` left the
+    // branches demanding the non-null type, so null still failed.
+    return { anyOf: [{ type: "null" }, node], schmockNullable: true };
+  }
   if (typeof node.type === "string") {
     node.type = [node.type, "null"];
   } else if (Array.isArray(node.type)) {
     if (!node.type.includes("null")) {
       node.type = [...node.type, "null"];
     }
-  } else if (node.allOf || node.anyOf || node.oneOf || node.$ref) {
-    // Composition-only nullable (the standard `allOf: [{$ref}], nullable: true`
-    // idiom): the whole node moves into the non-null branch.
-    return { anyOf: [{ type: "null" }, node], schmockNullable: true };
   }
   // A typeless, composition-free node accepts null by type — but an `enum` or
   // `const` still constrains the value regardless of `type`, so it falls
