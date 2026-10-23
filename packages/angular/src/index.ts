@@ -284,9 +284,9 @@ export interface AngularAdapterOptions {
    */
   beforeRequest?: (request: HttpRequest<unknown>) =>
     | Schmock.AdapterRequestOverride
-    // biome-ignore lint/suspicious/noConfusingVoidType: as in InterceptOptions, a hook declared to return void must be accepted
     | void
-    | Promise<Schmock.AdapterRequestOverride | undefined>;
+    // biome-ignore lint/suspicious/noConfusingVoidType: as in InterceptOptions, a hook declared to return void must be accepted
+    | Promise<Schmock.AdapterRequestOverride | undefined | void>;
 
   /**
    * Response hook under the name the fetch interceptor, React, Vue and
@@ -302,9 +302,9 @@ export interface AngularAdapterOptions {
     request: HttpRequest<unknown>,
   ) =>
     | Schmock.Response
-    // biome-ignore lint/suspicious/noConfusingVoidType: as in InterceptOptions, a hook declared to return void must be accepted
     | void
-    | Promise<Schmock.Response | undefined>;
+    // biome-ignore lint/suspicious/noConfusingVoidType: as in InterceptOptions, a hook declared to return void must be accepted
+    | Promise<Schmock.Response | undefined | void>;
 }
 
 /**

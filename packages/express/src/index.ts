@@ -66,7 +66,8 @@ export interface ExpressAdapterOptions {
   transformQuery?: (query: Request["query"]) => Record<string, string>;
 
   /**
-   * Request interceptor - called before handling request
+   * Request interceptor - called before handling request. A hook declared to
+   * return `void` (one that writes its own response) is accepted.
    * @param req - Express request
    * @param res - Express response
    * @returns Modified request data or void
@@ -77,10 +78,13 @@ export interface ExpressAdapterOptions {
   ) =>
     | Schmock.AdapterRequestOverride
     | undefined
-    | Promise<Schmock.AdapterRequestOverride | undefined>;
+    | void
+    // biome-ignore lint/suspicious/noConfusingVoidType: as in InterceptOptions, a hook declared to return void must be accepted
+    | Promise<Schmock.AdapterRequestOverride | undefined | void>;
 
   /**
-   * Response interceptor - called before sending response
+   * Response interceptor - called before sending response. A hook declared
+   * to return `void` keeps the response.
    * @param schmockResponse - Response from Schmock
    * @param req - Express request
    * @param res - Express response
@@ -90,7 +94,12 @@ export interface ExpressAdapterOptions {
     schmockResponse: Schmock.Response,
     req: Request,
     res: Response,
-  ) => Schmock.Response | undefined | Promise<Schmock.Response | undefined>;
+  ) =>
+    | Schmock.Response
+    | undefined
+    | void
+    // biome-ignore lint/suspicious/noConfusingVoidType: as in InterceptOptions, a hook declared to return void must be accepted
+    | Promise<Schmock.Response | undefined | void>;
 }
 
 /**

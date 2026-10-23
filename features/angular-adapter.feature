@@ -109,6 +109,15 @@ Feature: Angular Adapter
     And the error status should be 500
     And the error body should use the custom error format
 
+  # A named async hook with nothing to return infers Promise<void>. The hook
+  # types accept it, so this scenario's step file only compiles when they do.
+  Scenario: A named async beforeRequest that returns nothing leaves the request unchanged
+    Given I create an Angular mock with a named async beforeRequest that returns nothing
+    When I make an Angular request to "GET /api/users"
+    Then the response should be an HttpResponse
+    And the status should be 200
+    And the named beforeRequest should have run once
+
   # Request and Response Shaping
 
   Scenario: Request header names are lowercased for handlers

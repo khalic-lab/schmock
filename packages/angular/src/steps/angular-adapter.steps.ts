@@ -24,6 +24,14 @@ import {
 
 const feature = await loadFeature("../../features/angular-adapter.feature");
 
+let namedRequestHookCalls = 0;
+
+// A hoisted, named async hook with no override to return: TypeScript infers
+// `Promise<void>`, a shape the hook types must accept.
+async function countRequests(_request: HttpRequest<unknown>): Promise<void> {
+  namedRequestHookCalls += 1;
+}
+
 describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   let mock: CallableMockInstance;
   let response: HttpResponse<unknown> | null = null;
@@ -460,6 +468,41 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           "Custom error",
         );
         expect(errorResponse?.error).toHaveProperty("timestamp");
+      });
+    },
+  );
+
+  Scenario(
+    "A named async beforeRequest that returns nothing leaves the request unchanged",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Angular mock with a named async beforeRequest that returns nothing",
+        () => {
+          resetState();
+          namedRequestHookCalls = 0;
+          interceptorOptions = { beforeRequest: countRequests };
+          mock("GET /api/users", [200, { users: [] }]);
+        },
+      );
+
+      When(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          await makeRequest(method, path);
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And("the status should be {int}", (_, status: number) => {
+        expect(response?.status).toBe(status);
+      });
+
+      And("the named beforeRequest should have run once", () => {
+        expect(namedRequestHookCalls).toBe(1);
       });
     },
   );

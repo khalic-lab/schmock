@@ -118,6 +118,15 @@ Feature: Express Adapter
     Then the Express fallback should return status 418
     And the Express error middleware should not have handled the request
 
+  # A hook hoisted into a named function infers a void return. The hook types
+  # accept it, so this scenario's step file only compiles when they do.
+  Scenario: Named hooks declared to return void are accepted
+    Given I create an Express middleware with named void hooks that answer 401 without authorization
+    When a request is made to "GET /users"
+    Then the Express response should have status 401
+    And the fallback middleware should not have handled the request
+    And the named void response hook should not have run
+
   Scenario: A non-Error hook failure is answered as mock.handle() answers it
     Given I create an Express middleware whose beforeRequest throws a plain object with passErrorsToNext disabled
     When a request is made to "GET /failure"

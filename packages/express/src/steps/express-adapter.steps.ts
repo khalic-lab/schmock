@@ -1,7 +1,13 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import type { CallableMockInstance } from "@schmock/core";
 import { schmock } from "@schmock/core";
-import type { ErrorRequestHandler, Express, RequestHandler } from "express";
+import type {
+  ErrorRequestHandler,
+  Express,
+  Request as ExpressRequest,
+  Response as ExpressResponse,
+  RequestHandler,
+} from "express";
 import express from "express";
 import request from "supertest";
 import { expect } from "vitest";
@@ -19,6 +25,21 @@ function parseJson(text: string): unknown {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+let namedResponseHookCalls = 0;
+
+// Hoisted, named hooks with no override to return: TypeScript infers `void`
+// for the first and `Promise<void>` for the second, the shapes the hook
+// types must accept.
+function requireAuthorization(req: ExpressRequest, res: ExpressResponse) {
+  if (!req.headers.authorization) {
+    res.status(401).json({ error: "unauthorized" });
+  }
+}
+
+async function countResponses(): Promise<void> {
+  namedResponseHookCalls += 1;
 }
 
 function parseRequest(requestSpec: string): { method: string; path: string } {
@@ -708,6 +729,43 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           expect(errorHandlerCalls).toBe(0);
         },
       );
+    },
+  );
+
+  Scenario(
+    "Named hooks declared to return void are accepted",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Express middleware with named void hooks that answer 401 without authorization",
+        () => {
+          const mock = schmock();
+          mock("GET /users", [{ id: 1, name: "John" }]);
+          namedResponseHookCalls = 0;
+          mount(mock, {
+            beforeRequest: requireAuthorization,
+            beforeResponse: countResponses,
+          });
+        },
+      );
+
+      When("a request is made to {string}", async (_, requestSpec: string) => {
+        await makeRequest(requestSpec);
+      });
+
+      Then(
+        "the Express response should have status {int}",
+        (_, status: number) => {
+          expect(currentResponse().status).toBe(status);
+        },
+      );
+
+      And("the fallback middleware should not have handled the request", () => {
+        expect(fallbackCalls).toBe(0);
+      });
+
+      And("the named void response hook should not have run", () => {
+        expect(namedResponseHookCalls).toBe(0);
+      });
     },
   );
 
