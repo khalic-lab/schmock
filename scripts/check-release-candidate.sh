@@ -338,14 +338,11 @@ echo "[types-ts56 1/1] Compiling the Core declaration entry with TypeScript 5.6"
 # and turns an unresolvable CommonJS `require` into a shim that throws only when
 # called.
 #
-# `node:http` is allowlisted as a dynamic import only: it is core's `listen()`,
-# imported lazily on a branch a browser never takes (#395). `--external:node:*`
-# would let a static `import "node:http"` through, but Angular's application
-# builder externalises nothing and fails on one, so the gate checks the kind.
-# packages/openapi/src/browser-bundle.test.ts covers the same case the other
-# way: it bundles with no externals at all, and esbuild leaves `node:http`
-# external only because core's `import()` carries its own rejection handler.
-BROWSER_NODE_IMPORT_ALLOWLIST=(--allow node:http)
+# Nothing is allowlisted. Both stages resolve `@schmock/core` through its
+# `browser` export condition, a build without the Node server, so neither
+# reaches a `node:` import at all; `node:http` used to be admitted as core's
+# lazy `listen()` import (#395). packages/openapi/src/browser-bundle.test.ts
+# pins the same thing with no externals at all.
 
 echo "[browser 1/2] Bundling the validation candidate with esbuild for a browser target"
 (
@@ -360,7 +357,6 @@ echo "[browser 1/2] Bundling the validation candidate with esbuild for a browser
     --outfile=./browser-dist/bundle.js
 )
 node "$ROOT_DIR/scripts/check-browser-node-imports.mjs" \
-  "${BROWSER_NODE_IMPORT_ALLOWLIST[@]}" \
   "$FIXTURE_DIR/browser-dist/meta.json"
 
 # The stage that would have caught the swagger-parser regression.
@@ -377,7 +373,6 @@ echo "[browser 2/2] Bundling the OpenAPI candidate with esbuild for a browser ta
     --outfile=./browser-openapi-dist/bundle.js
 )
 node "$ROOT_DIR/scripts/check-browser-node-imports.mjs" \
-  "${BROWSER_NODE_IMPORT_ALLOWLIST[@]}" \
   "$FIXTURE_DIR/browser-openapi-dist/meta.json"
 
 # Resolving is not running. The reported app compiled once `path` and `fs` were

@@ -3,7 +3,7 @@
  * Fail when a browser bundle still imports a Node built-in, unless that
  * built-in is on the allowlist AND every import of it is a lazy `import()`.
  *
- *   node scripts/check-browser-node-imports.mjs --allow node:http meta.json [...]
+ *   node scripts/check-browser-node-imports.mjs [--allow <specifier>]... meta.json [...]
  *
  * Each argument after the options is an esbuild metafile (`--metafile=`). The
  * bundle must be built with `--platform=browser --external:node:*`, so every
@@ -22,8 +22,9 @@
  * static `import "node:http"` or a `require("node:http")`. An allowlisted
  * specifier reached any other way therefore fails the gate.
  *
- * `node:http` is allowlisted by the release gate on purpose: it is core's
- * `listen()`, imported lazily on a branch a browser never takes (#395).
+ * The release gate allowlists nothing: a browser bundle resolves
+ * `@schmock/core` to its browser build, which has no `node:` import. It used
+ * to admit `node:http`, core's lazy `listen()` import (#395).
  */
 import { readFileSync } from "node:fs";
 import { builtinModules } from "node:module";

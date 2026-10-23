@@ -485,12 +485,13 @@ bundle, runs the release-script tests, and runs `publint` plus `attw`.
 
 Both browser stages bundle with esbuild (`--platform=browser --external:node:*
 --metafile`) and run `scripts/check-browser-node-imports.mjs`, which reads each
-external import's `kind` from the metafile. It fails on any external Node
-built-in outside the allowlist, and on an allowlisted one reached any way other
-than a lazy `import()`: a static `import` or a `require` of it breaks Angular's
-application builder, which externalises nothing. The allowlist holds only
-`node:http`, core's lazy `listen()` import. A bare built-in such as `path` or
-`util` fails the esbuild bundle itself.
+external import's `kind` from the metafile. The allowlist is empty: a browser
+bundle resolves `@schmock/core` to its browser build, which imports no Node
+built-in, so any external Node built-in fails the stage. (The script's
+`--allow` still admits a built-in reached only through a lazy `import()`; a
+static `import` or a `require` of one breaks Angular's application builder,
+which externalises nothing.) A bare built-in such as `path` or `util` fails
+the esbuild bundle itself.
 
 ## Releasing
 
