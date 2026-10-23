@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { Socket } from "node:net";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -716,6 +716,81 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         "the server refuses to start with code {string}",
         thenRefusedWithCode,
       );
+    },
+  );
+
+  // cli-3: on Linux, deleting a watched directory kills its watch while the
+  // dead watcher stayed in the watcher map, so every later edit was missed.
+  // (macOS FSEvents watches by path and passed before the fix too.)
+  Scenario(
+    "A spec directory deleted and recreated under watch is still watched",
+    ({ Given, And, When, Then }) => {
+      let specDirectory = "";
+
+      function writeThingSpec(version: string): void {
+        writeFileSync(
+          specPath,
+          JSON.stringify({
+            openapi: "3.0.3",
+            info: { title: "Thing", version: "1.0.0" },
+            paths: {
+              "/thing": {
+                get: {
+                  responses: {
+                    "200": {
+                      description: "OK",
+                      content: {
+                        "application/json": {
+                          schema: JSON.parse(thingSchemas(version)).Thing,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          }),
+        );
+      }
+
+      Given(
+        "a temp spec in its own directory serving {string}",
+        (_, version: string) => {
+          specDirectory = join(makeTempDir(), "api");
+          mkdirSync(specDirectory);
+          specPath = join(specDirectory, "spec.json");
+          writeThingSpec(version);
+        },
+      );
+      And("a CLI server is started watching that spec", async () => {
+        await startWatched({ spec: specPath });
+        expect(await servesThing("v1")).toBe(true);
+      });
+      When(
+        "the spec directory is deleted and recreated with the spec serving {string}",
+        async (_, version: string) => {
+          // A code generator that wipes its output directory, then refills it.
+          rmSync(specDirectory, { recursive: true, force: true });
+          await sleep(300);
+          mkdirSync(specDirectory);
+          writeThingSpec(version);
+        },
+      );
+      Then("the thing endpoint serves {string}", async (_, version: string) => {
+        expect(await eventually(() => servesThing(version), 8_000)).toBe(true);
+      });
+      When(
+        "the recreated spec is edited to serve {string}",
+        async (_, version: string) => {
+          // Let the reloads the recreation set off settle first, so only a
+          // live watch can see this edit.
+          await sleep(1_500);
+          writeThingSpec(version);
+        },
+      );
+      Then("the edit is served as {string}", async (_, version: string) => {
+        expect(await eventually(() => servesThing(version), 8_000)).toBe(true);
+      });
     },
   );
 });

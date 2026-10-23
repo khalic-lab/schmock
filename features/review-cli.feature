@@ -95,3 +95,11 @@ Feature: CLI review fixes
   Scenario: An unbounded shutdown grace window is refused instead of cutting requests off at once
     When a CLI server is created for the petstore spec with a shutdown grace of "Infinity" milliseconds
     Then the server refuses to start with code "INVALID_CONFIG"
+
+  Scenario: A spec directory deleted and recreated under watch is still watched
+    Given a temp spec in its own directory serving "v1"
+    And a CLI server is started watching that spec
+    When the spec directory is deleted and recreated with the spec serving "v2"
+    Then the thing endpoint serves "v2"
+    When the recreated spec is edited to serve "v3"
+    Then the edit is served as "v3"

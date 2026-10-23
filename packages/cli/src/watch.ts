@@ -6,6 +6,8 @@ import { loadSeedFile } from "./seed-manifest.js";
 import type { CliOptions } from "./types.js";
 
 const WATCH_DEBOUNCE_MS = 500;
+/** How often a directory that lost its watcher is tried again. */
+const WATCH_RETRY_MS = 1_000;
 
 /**
  * The one mutable cell a reload writes to. The socket, the admin token and the
@@ -198,29 +200,93 @@ function matchesWatchTarget(
  * (Consequence: an editor saving the symlink's TARGET, in another directory,
  * fires no event. Watching the target instead would break the far commoner
  * case of a linked spec edited in place.)
+ *
+ * A directory watch can die under the server: the watcher emits 'error'
+ * (Node has already closed it by then; Windows reports a deleted directory
+ * this way), or the directory itself is deleted or renamed, which Linux
+ * reports as a 'rename' event named after the directory while the kernel
+ * watch is gone. Either way the watcher is replaced, and a directory that
+ * cannot be watched yet (a code generator wiping and recreating it) is tried
+ * every {@link WATCH_RETRY_MS} until it can, then reloaded, since edits made
+ * while it was unwatched were missed. Without this the directory stayed in
+ * the watcher map with a dead watcher and `--watch` went deaf for good.
  */
 export function startWatch(input: WatchInput): WatchHandle {
   const { options, url } = input;
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
   let reloadQueue = Promise.resolve();
   let targets = collectWatchTargets(options);
   const watchers = new Map<string, FSWatcher>();
+  /**
+   * Target directories with no live watcher, retried on a timer. Membership
+   * also means the failure was already reported, so a directory that stays
+   * unwatchable is reported once, not every retry.
+   */
+  const unwatched = new Set<string>();
 
-  const reportWatchError = (error: unknown): void => {
-    process.stderr.write(
-      `Spec watch error: ${error instanceof Error ? error.message : String(error)}\n`,
-    );
-  };
+  const errorText = (error: unknown): string =>
+    error instanceof Error ? error.message : String(error);
 
   const closeWatchers = (): void => {
     for (const watcher of watchers.values()) watcher.close();
     watchers.clear();
   };
 
+  const scheduleRetry = (): void => {
+    if (closed || retryTimer !== undefined) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = undefined;
+      watchMissing();
+    }, WATCH_RETRY_MS);
+    // The server is what keeps the process alive, never a retry.
+    retryTimer.unref();
+  };
+
+  /**
+   * Record that `directory` has no watcher and keep trying it. `lost` says it
+   * had one until now, which the report spells out.
+   */
+  const markUnwatched = (
+    directory: string,
+    error: unknown,
+    lost: boolean,
+  ): void => {
+    if (!unwatched.has(directory)) {
+      unwatched.add(directory);
+      const state = lost ? "stopped watching" : "not watching";
+      process.stderr.write(
+        `Spec watch error: ${errorText(error)} (${state} ${directory}; retrying)\n`,
+      );
+    }
+    scheduleRetry();
+  };
+
+  // Watch every target directory that has no watcher. A directory that cannot
+  // be watched is reported, not fatal: the server keeps serving, the other
+  // watches keep working, and the retry timer keeps trying it.
+  function watchMissing(): void {
+    if (closed) return;
+    let recovered = false;
+    for (const directory of targets.keys()) {
+      if (watchers.has(directory)) continue;
+      try {
+        watchers.set(directory, watchDirectory(directory));
+      } catch (error) {
+        markUnwatched(directory, error, false);
+        continue;
+      }
+      if (unwatched.delete(directory)) {
+        recovered = true;
+        process.stderr.write(`Spec watch resumed: ${directory}\n`);
+      }
+    }
+    if (recovered) scheduleReload();
+  }
+
   // Follow a changed file set: drop directories no longer needed and watch
-  // new ones. A directory that cannot be watched is reported, not fatal — the
-  // server keeps serving and the other watches keep working.
+  // new ones.
   const rearm = (): void => {
     if (closed) return;
     targets = collectWatchTargets(options);
@@ -229,13 +295,41 @@ export function startWatch(input: WatchInput): WatchHandle {
       watcher.close();
       watchers.delete(directory);
     }
-    for (const directory of targets.keys()) {
-      if (watchers.has(directory)) continue;
-      try {
-        watchers.set(directory, watchDirectory(directory));
-      } catch (error) {
-        reportWatchError(error);
-      }
+    for (const directory of unwatched) {
+      if (!targets.has(directory)) unwatched.delete(directory);
+    }
+    watchMissing();
+  };
+
+  /**
+   * Drop a watcher that errored. Node closed it before emitting, so it watches
+   * nothing; the directory goes to the retry timer rather than being watched
+   * again on the spot, where a watcher that errors at once would loop.
+   */
+  const retireWatcher = (
+    directory: string,
+    dead: FSWatcher,
+    error: unknown,
+  ): void => {
+    dead.close();
+    watchers.delete(directory);
+    if (targets.has(directory)) markUnwatched(directory, error, true);
+  };
+
+  /**
+   * Watch `directory` afresh after an event named after the directory itself:
+   * on Linux that is the directory being deleted or renamed away, after which
+   * the old watcher hears nothing more. Some platforms spell an in-place
+   * write the same way, so the swap must be cheap and lose nothing: the new
+   * watcher is armed at once, and the event has already scheduled a reload.
+   */
+  const rewatch = (directory: string, previous: FSWatcher): void => {
+    previous.close();
+    watchers.delete(directory);
+    try {
+      watchers.set(directory, watchDirectory(directory));
+    } catch (error) {
+      markUnwatched(directory, error, true);
     }
   };
 
@@ -265,17 +359,28 @@ export function startWatch(input: WatchInput): WatchHandle {
   };
 
   function watchDirectory(directory: string): FSWatcher {
-    const watcher = watch(directory, (_event, filename) => {
-      if (closed) return;
+    const watcher = watch(directory, (event, filename) => {
+      // A watcher already replaced may still deliver what the OS queued.
+      if (closed || watchers.get(directory) !== watcher) return;
       const matcher = targets.get(directory);
       if (matcher === undefined) return;
       if (!matchesWatchTarget(matcher, directory, filename)) return;
       scheduleReload();
+      if (
+        event === "rename" &&
+        filename != null &&
+        basename(filename.toString()) === basename(directory)
+      ) {
+        rewatch(directory, watcher);
+      }
     });
     // An unhandled 'error' event (the directory unmounted, an unlink race)
     // would take the whole process down; watching is a convenience, so it is
     // reported and the server keeps serving the mock it already has.
-    watcher.on("error", reportWatchError);
+    watcher.on("error", (error: unknown) => {
+      if (closed || watchers.get(directory) !== watcher) return;
+      retireWatcher(directory, watcher, error);
+    });
     return watcher;
   }
 
@@ -294,6 +399,7 @@ export function startWatch(input: WatchInput): WatchHandle {
       closed = true;
       closeWatchers();
       if (debounceTimer) clearTimeout(debounceTimer);
+      if (retryTimer) clearTimeout(retryTimer);
       // A reload already parsing must be awaited: otherwise it would swap the
       // mock, or write to stderr, after shutdown has reported itself complete.
       await reloadQueue;

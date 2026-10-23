@@ -264,6 +264,20 @@ directories are ignored: log files (so output redirected there cannot feed a
 reload loop), text files, `.DS_Store`, and editor swap or backup files
 (`*.swp`, `*~`, `.#*`).
 
+A watched directory can itself go away: a code generator that wipes and
+recreates its output directory deletes it, and a watcher can fail. Either way
+the CLI says so on stderr, tries the directory again every second, and once it
+can watch it again reloads, because edits made in between were missed:
+
+```
+Spec watch error: ENOENT: no such file or directory, watch '/app/api' (stopped watching /app/api; retrying)
+Spec watch resumed: /app/api
+```
+
+A directory that stays unwatchable is reported once, not on every retry. Before
+this, on Linux and Windows, a deleted or failed directory watch was never
+replaced, and `--watch` stopped reloading for the rest of the process.
+
 A reload builds a fresh mock: CRUD rows created since startup and the admin
 request history are discarded, and `--seed` data is applied again. The reload
 line on stderr says so:

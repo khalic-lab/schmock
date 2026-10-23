@@ -2,7 +2,7 @@ import type { FSWatcher } from "node:fs";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -546,6 +546,115 @@ describe("watcher lifecycle", () => {
 
       // The reload that could not arm the new watch still went live.
       expect(await petNames()).toEqual(["Rex"]);
+    });
+  });
+
+  // Review 2026-10-23, cli-3: a directory whose watcher died stayed in the
+  // watcher map, so it was never watched again and --watch went deaf.
+  describe("a watched directory that loses its watcher", () => {
+    const specDir = dirname(PETSTORE_SPEC);
+    let stderr: string[] = [];
+    const reloads = (): number =>
+      stderr.join("").split("Spec changed, reloading").length - 1;
+    const sleep = (ms: number): Promise<void> =>
+      new Promise((tick) => setTimeout(tick, ms));
+
+    async function startInert(): Promise<FSWatcher> {
+      watchControl.inert = true;
+      stderr = [];
+      vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+        stderr.push(String(chunk));
+        return true;
+      });
+      server = await createCliServer({
+        spec: PETSTORE_SPEC,
+        port: 0,
+        watch: true,
+        shutdownGraceMs: 100,
+      });
+      expect(watchControl.directories).toEqual([specDir]);
+      const watcher = watchControl.watchers[0];
+      if (!watcher) throw new Error("Expected a watcher on the spec directory");
+      return watcher;
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("is watched again after its watcher errors, and the mock reloads", async () => {
+      const dead = await startInert();
+
+      dead.emit("error", new Error("EPERM: watch lost"));
+
+      expect(dead.close).toHaveBeenCalled();
+      expect(stderr.join("")).toContain(
+        `Spec watch error: EPERM: watch lost (stopped watching ${specDir}; retrying)`,
+      );
+      await vi.waitFor(
+        () => expect(watchControl.directories).toEqual([specDir, specDir]),
+        { timeout: 3_000 },
+      );
+      // Edits made while it was unwatched were missed, so the return reloads.
+      await vi.waitFor(
+        () => expect(stderr.join("")).toContain("Schmock server reloaded on"),
+        { timeout: 3_000 },
+      );
+      expect(stderr.join("")).toContain(`Spec watch resumed: ${specDir}`);
+
+      // The replacement is live: an edit reaches the mock again.
+      const before = reloads();
+      watchControl.watchers[1]?.emit(
+        "change",
+        "change",
+        basename(PETSTORE_SPEC),
+      );
+      await vi.waitFor(() => expect(reloads()).toBe(before + 1), {
+        timeout: 3_000,
+      });
+    });
+
+    it("is retried while deleted, reported once, and watched once it is back", async () => {
+      const first = await startInert();
+      // Linux reports the deletion of the watched directory as a 'rename'
+      // named after it; until it exists again it cannot be watched.
+      watchControl.failFor = specDir;
+
+      first.emit("change", "rename", basename(specDir));
+
+      expect(first.close).toHaveBeenCalled();
+      // Past at least one retry.
+      await sleep(1_500);
+      expect(watchControl.directories).toEqual([specDir]);
+      expect(
+        stderr.join("").split(`(stopped watching ${specDir}; retrying)`)
+          .length - 1,
+      ).toBe(1);
+
+      watchControl.failFor = undefined;
+      await vi.waitFor(
+        () => expect(watchControl.directories).toEqual([specDir, specDir]),
+        { timeout: 3_000 },
+      );
+      expect(stderr.join("")).toContain(`Spec watch resumed: ${specDir}`);
+    });
+
+    it("is swapped at once when the directory is still there, with one reload", async () => {
+      const first = await startInert();
+
+      // Some platforms spell an in-place write this way too.
+      first.emit("change", "rename", basename(specDir));
+
+      expect(first.close).toHaveBeenCalled();
+      expect(watchControl.directories).toEqual([specDir, specDir]);
+      await vi.waitFor(() => expect(reloads()).toBe(1), { timeout: 3_000 });
+
+      // An event the OS had queued for the replaced watcher is ignored.
+      first.emit("change", "change", basename(PETSTORE_SPEC));
+      // Past the 500 ms debounce and the 1 s retry interval.
+      await sleep(1_200);
+      expect(reloads()).toBe(1);
+      expect(stderr.join("")).not.toContain("Spec watch error");
     });
   });
 
