@@ -1,8 +1,10 @@
 import { schmock } from "@schmock/core";
+import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import { detectCrudResources } from "./crud-detector";
 import type { ParsedPath } from "./parser";
 import { openapi } from "./plugin";
+import type { ResponseStatusKey } from "./response-status";
 
 function makePath(
   method: Schmock.HttpMethod,
@@ -262,6 +264,124 @@ describe("detectCrudResources", () => {
 
     const leftovers = result.nonCrudPaths.map((p) => `${p.method} ${p.path}`);
     expect(leftovers).toContain("PUT /pets/:id");
+  });
+});
+
+describe("CRUD error schemas", () => {
+  const pet = { type: "object", properties: { id: { type: "integer" } } };
+  const problem = {
+    type: "object",
+    required: ["code", "message"],
+    properties: { code: { type: "integer" }, message: { type: "string" } },
+  };
+  const other = { type: "object", properties: { reason: { type: "string" } } };
+
+  function itemRead(
+    responses: Array<[ResponseStatusKey, Record<string, unknown>]>,
+  ): Schmock.CrudOperationMeta {
+    const read: ParsedPath = {
+      path: "/pets/:id",
+      method: "GET",
+      parameters: [],
+      responses: new Map(
+        responses.map(([key, schema]) => [
+          key,
+          { schema: schema as JSONSchema7, description: String(key) },
+        ]),
+      ),
+      tags: [],
+    };
+    const resource = detectCrudResources([makePath("GET", "/pets"), read])
+      .resources[0];
+    const route = resource.routes.find((r) => r.op === "read");
+    if (!route) throw new Error("expected a read route");
+    return route.meta;
+  }
+
+  it("uses a `default` error response for the CRUD error statuses", () => {
+    const meta = itemRead([
+      [200, pet],
+      ["default", problem],
+    ]);
+    for (const status of [400, 404, 409]) {
+      expect(meta.errorSchemas?.get(status)).toBe(problem);
+    }
+  });
+
+  it("prefers the exact status, then the range, then `default`", () => {
+    const meta = itemRead([
+      [200, pet],
+      [404, other],
+      ["4XX", problem],
+      ["default", pet],
+    ]);
+    expect(meta.errorSchemas?.get(404)).toBe(other);
+    expect(meta.errorSchemas?.get(400)).toBe(problem);
+    expect(meta.errorSchemas?.get(409)).toBe(problem);
+  });
+
+  it("never answers a CRUD error with the `default` entry that is the success contract", () => {
+    const meta = itemRead([["default", pet]]);
+    expect(meta.responseSchema).toBe(pet);
+    expect(meta.errorSchemas).toBeUndefined();
+  });
+
+  it("answers a missing row with the declared `default` error body under validateResponses", async () => {
+    const json = (schema: object) => ({ "application/json": { schema } });
+    const errors = {
+      default: { description: "error", content: json(problem) },
+    };
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: {
+          openapi: "3.0.3",
+          info: { title: "Defaults", version: "1.0.0" },
+          paths: {
+            "/pets": {
+              get: {
+                responses: {
+                  "200": {
+                    description: "ok",
+                    content: json({ type: "array", items: pet }),
+                  },
+                  ...errors,
+                },
+              },
+            },
+            "/pets/{id}": {
+              parameters: [
+                {
+                  name: "id",
+                  in: "path",
+                  required: true,
+                  schema: { type: "integer" },
+                },
+              ],
+              get: {
+                responses: {
+                  "200": { description: "ok", content: json(pet) },
+                  ...errors,
+                },
+              },
+              delete: {
+                responses: { "204": { description: "gone" }, ...errors },
+              },
+            },
+          },
+        },
+        validateResponses: true,
+      }),
+    );
+
+    for (const method of ["GET", "DELETE"] as const) {
+      const response = await mock.handle(method, "/pets/999");
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({
+        code: expect.any(Number),
+        message: expect.any(String),
+      });
+    }
   });
 });
 

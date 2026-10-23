@@ -499,4 +499,78 @@ describeFeature(feature, ({ Scenario }) => {
       });
     },
   );
+
+  Scenario(
+    "A missing row answers with the error schema the spec declares under default",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a response-validating pets mock whose operations declare their errors only under "default"',
+        async () => {
+          const pet = {
+            type: "object",
+            properties: { id: { type: "integer" } },
+          };
+          const errors = {
+            default: {
+              description: "Error",
+              content: json({
+                type: "object",
+                required: ["code", "message"],
+                properties: {
+                  code: { type: "integer" },
+                  message: { type: "string" },
+                },
+              }),
+            },
+          };
+          await build({
+            spec: specWith({
+              "/pets": {
+                get: {
+                  responses: {
+                    "200": {
+                      description: "OK",
+                      content: json({ type: "array", items: pet }),
+                    },
+                    ...errors,
+                  },
+                },
+              },
+              "/pets/{id}": {
+                parameters: [
+                  {
+                    name: "id",
+                    in: "path",
+                    required: true,
+                    schema: { type: "integer" },
+                  },
+                ],
+                get: {
+                  responses: {
+                    "200": { description: "OK", content: json(pet) },
+                    ...errors,
+                  },
+                },
+              },
+            }),
+            validateResponses: true,
+          });
+        },
+      );
+
+      When("I read pet 999", async () => {
+        response = await mock.handle("GET", "/pets/999");
+      });
+
+      Then("the read response has status 404", () => {
+        expect(response.status).toBe(404);
+      });
+
+      And('the error body has a numeric "code" and a string "message"', () => {
+        const body = isRecord(response.body) ? response.body : {};
+        expect(typeof body.code).toBe("number");
+        expect(typeof body.message).toBe("string");
+      });
+    },
+  );
 });

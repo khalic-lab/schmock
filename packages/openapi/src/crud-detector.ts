@@ -6,10 +6,17 @@ import type { ParsedPath } from "./parser.js";
 import { segmentParamName } from "./path-template.js";
 import {
   CREATE_SUCCESS_STATUS_ORDER,
+  findResponseEntry,
   findSuccessResponse,
 } from "./response-status.js";
 
 export type CrudOperation = "list" | "create" | "read" | "update" | "delete";
+
+/**
+ * The error statuses CRUD handlers produce themselves; the same three an
+ * `errorSchema` resource override covers.
+ */
+const CRUD_ERROR_STATUSES = [400, 404, 409] as const;
 
 /** How new identifier values are minted for a resource. */
 export type IdKind = "integer" | "string" | "uuid";
@@ -390,6 +397,17 @@ function buildOperationMeta(
   for (const [code, resp] of p.responses) {
     if (typeof code === "number" && code >= 400 && code < 600 && resp.schema) {
       errorSchemas.set(code, resp.schema);
+    }
+  }
+  // The statuses a CRUD handler answers on its own resolve the way response
+  // validation resolves them (exact, range, then `default`), so a spec that
+  // declares its errors only under `default` or `4XX` gets its own body back.
+  // A `default` entry that is the success contract is not an error schema.
+  for (const status of CRUD_ERROR_STATUSES) {
+    if (errorSchemas.has(status)) continue;
+    const entry = findResponseEntry(p.responses, status);
+    if (entry?.schema && entry !== successResponse?.[1]) {
+      errorSchemas.set(status, entry.schema);
     }
   }
   if (errorSchemas.size > 0) {

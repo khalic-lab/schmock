@@ -76,3 +76,9 @@ Feature: OpenAPI schema model fixes
     When I create a pet named "Rex" at "/api/pets/"
     Then reading "/api/pets/1/" returns the pet named "Rex"
     And listing "/api/pets/" returns only the pet named "Rex"
+
+  Scenario: A missing row answers with the error schema the spec declares under default
+    Given a response-validating pets mock whose operations declare their errors only under "default"
+    When I read pet 999
+    Then the read response has status 404
+    And the error body has a numeric "code" and a string "message"
