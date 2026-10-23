@@ -4,9 +4,10 @@ import { createServer } from "node:http";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { CallableMockInstance } from "@schmock/core";
+import type { CallableMockInstance, RequestRecord } from "@schmock/core";
 import { SchmockError, SENSITIVE_HEADER_NAMES, schmock } from "@schmock/core";
 import { afterEach, describe, expect, it } from "vitest";
+import { answerAdminRequest } from "./admin";
 import { isLoopbackHost, parseCliArgs } from "./args";
 import * as facade from "./cli";
 import { type CliServer, createCliServer } from "./cli";
@@ -515,6 +516,70 @@ describe("admin history redaction", () => {
       expect(headers[name], name).toBe("[redacted]");
     }
     expect(headers.accept).toBe("application/json");
+  });
+
+  // Review 2026-10-23, cli-4: JSON.stringify showed a binary upload as `{}`.
+  it("describes a binary upload by its size instead of showing it as {}", async () => {
+    server = await createCliServer({
+      spec: PETSTORE_SPEC,
+      port: 0,
+      admin: true,
+    });
+    const url = `http://127.0.0.1:${server.port}/pets`;
+    await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: new Uint8Array(1000),
+    }).then((response) => response.arrayBuffer());
+    await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }).then((response) => response.arrayBuffer());
+
+    const history = await fetch(
+      `http://127.0.0.1:${server.port}/schmock-admin/history`,
+      { headers: { authorization: `Bearer ${server.adminToken}` } },
+    );
+    const records: Array<{ body: unknown }> = await history.json();
+
+    // The JSON `{}` still reads as `{}`; only the binary body is described.
+    expect(records.map((record) => record.body)).toEqual([
+      { kind: "binary", byteLength: 1000 },
+      {},
+    ]);
+  });
+
+  it("describes typed-array and binary response bodies the same way", () => {
+    const record: RequestRecord = {
+      method: "POST",
+      path: "/upload",
+      params: {},
+      query: {},
+      headers: {},
+      body: new Uint8Array([1, 2, 3]),
+      timestamp: 0,
+      response: { status: 200, body: new ArrayBuffer(16) },
+    };
+    const mock = {
+      history: () => [record],
+    } as unknown as CallableMockInstance;
+
+    const response = answerAdminRequest({
+      req: { headers: { authorization: "Bearer t0k" } },
+      method: "GET",
+      path: "/schmock-admin/history",
+      mock,
+      adminToken: "t0k",
+    });
+
+    expect(JSON.parse(String(response.body))).toEqual([
+      {
+        ...record,
+        body: { kind: "binary", byteLength: 3 },
+        response: { status: 200, body: { kind: "binary", byteLength: 16 } },
+      },
+    ]);
   });
 });
 

@@ -81,3 +81,9 @@ Feature: CLI review fixes
     When the CLI is run on the petstore spec with the extra arguments "--admin --admin-token s3cretFromVault"
     Then the startup output does not contain "s3cretFromVault"
     And the startup output contains "Admin token: (from --admin-token)"
+
+  Scenario: Admin history describes a binary upload by its size
+    Given a CLI server with the admin API and a known token
+    When a client posts 1000 bytes of application/octet-stream to the mock
+    And the admin history is fetched with the token
+    Then the recorded upload body reads as binary of 1000 bytes

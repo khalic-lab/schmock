@@ -158,6 +158,20 @@ function redactEntries(
 }
 
 /**
+ * A recorded body as the history projection shows it. `JSON.stringify` turns
+ * an `ArrayBuffer` into `{}`, indistinguishable from an empty JSON object, and
+ * a typed array into one key per byte, so a binary body is shown by its size.
+ * (A multipart body needs nothing here: core records a `FormData` as its own
+ * `{ kind: "unavailable" }` descriptor.)
+ */
+function describeBody(body: unknown): unknown {
+  if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+    return { kind: "binary", byteLength: body.byteLength };
+  }
+  return body;
+}
+
+/**
  * Project history for the admin API. New objects throughout — never a mutation
  * of what `mock.history()` returned — so redaction cannot leak back into core.
  */
@@ -166,6 +180,10 @@ function redactHistory(records: Schmock.RequestRecord[]): unknown[] {
     ...record,
     query: redactEntries(record.query, isSensitiveQueryKey),
     headers: redactEntries(record.headers, isSensitiveHeader),
+    body: describeBody(record.body),
+    response: isObjectLike(record.response)
+      ? { ...record.response, body: describeBody(record.response.body) }
+      : record.response,
   }));
 }
 

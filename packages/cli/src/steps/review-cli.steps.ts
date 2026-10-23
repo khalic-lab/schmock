@@ -366,6 +366,24 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
   // ── #92: history redaction covers query keys and custom key headers ─────
 
+  async function givenAdminServer(): Promise<void> {
+    server = await createCliServer({
+      spec: PETSTORE_SPEC,
+      port: 0,
+      admin: true,
+      adminToken: ADMIN_TOKEN,
+      shutdownGraceMs: 100,
+    });
+  }
+
+  async function whenHistoryFetched(): Promise<void> {
+    const response = await fetch(`${baseUrl()}/schmock-admin/history`, {
+      headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+    });
+    expect(response.status).toBe(200);
+    historyBody = await response.json();
+  }
+
   Scenario(
     "Admin history masks credential-shaped query parameters and headers",
     ({ Given, When, And, Then }) => {
@@ -382,15 +400,10 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         return value;
       }
 
-      Given("a CLI server with the admin API and a known token", async () => {
-        server = await createCliServer({
-          spec: PETSTORE_SPEC,
-          port: 0,
-          admin: true,
-          adminToken: ADMIN_TOKEN,
-          shutdownGraceMs: 100,
-        });
-      });
+      Given(
+        "a CLI server with the admin API and a known token",
+        givenAdminServer,
+      );
 
       When(
         "a client calls the mock with an api key in the query and in a custom header",
@@ -405,13 +418,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         },
       );
 
-      And("the admin history is fetched with the token", async () => {
-        const response = await fetch(`${baseUrl()}/schmock-admin/history`, {
-          headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-        });
-        expect(response.status).toBe(200);
-        historyBody = await response.json();
-      });
+      And("the admin history is fetched with the token", whenHistoryFetched);
 
       Then('the recorded query masks "api_key" and "access_token"', () => {
         const query = recorded("query");
@@ -641,6 +648,40 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       );
       Then("the startup output does not contain {string}", thenOutputOmits);
       And("the startup output contains {string}", thenOutputContains);
+    },
+  );
+
+  // cli-4: JSON.stringify showed an ArrayBuffer body as `{}`, the same as an
+  // empty JSON object.
+  Scenario(
+    "Admin history describes a binary upload by its size",
+    ({ Given, When, And, Then }) => {
+      Given(
+        "a CLI server with the admin API and a known token",
+        givenAdminServer,
+      );
+      When(
+        "a client posts 1000 bytes of application/octet-stream to the mock",
+        async () => {
+          const response = await fetch(`${baseUrl()}/pets`, {
+            method: "POST",
+            headers: { "content-type": "application/octet-stream" },
+            body: new Uint8Array(1000),
+          });
+          await response.arrayBuffer();
+        },
+      );
+      And("the admin history is fetched with the token", whenHistoryFetched);
+      Then("the recorded upload body reads as binary of 1000 bytes", () => {
+        if (!Array.isArray(historyBody)) {
+          throw new Error("Expected the history body to be an array");
+        }
+        const upload: unknown = historyBody.find(
+          (entry) => isRecord(entry) && entry.method === "POST",
+        );
+        if (!isRecord(upload)) throw new Error("Expected a POST record");
+        expect(upload.body).toEqual({ kind: "binary", byteLength: 1000 });
+      });
     },
   );
 });

@@ -358,6 +358,14 @@ way. This covers the usual spellings of spec-declared apiKey schemes, but a name
 outside that pattern (such as `X-Pet-Credential`) is shown as sent. The core
 `mock.history()` API is untouched and still returns raw values.
 
+A binary body (an `ArrayBuffer`, which is what the server hands the mock for
+`application/octet-stream` and any other unrecognised content type, or a typed
+array) is shown by its size, as `{ "kind": "binary", "byteLength": 1000 }`, in
+the request `body` and in `response.body`. Serialized as is, it used to read
+`{}`, the same as an empty JSON object. A multipart body is shown as core
+records it, `{ "kind": "unavailable", "reason": "not-structured-cloneable",
+"type": "[object FormData]" }`.
+
 ### Binding beyond loopback
 
 `--admin --hostname 0.0.0.0` is allowed — containers need it — but the CLI
