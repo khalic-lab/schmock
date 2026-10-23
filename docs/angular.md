@@ -357,6 +357,18 @@ describe('UserService', () => {
   always reads `headers.authorization` however the caller spelled it. A header
   the caller set more than once arrives as all of its values joined with `, `
   in Angular's order, not as the first value alone
+- Handlers receive the request as Angular's backends send it, although an
+  interceptor runs before them: the `Accept` header
+  (`application/json, text/plain, */*`) and the detected `Content-Type` the
+  backends add when the caller set none are added, and the body is serialized
+  with `HttpRequest.serializeBody()`, then decoded by its content type as
+  `mock.listen()` and the fetch interceptor decode one. JSON is parsed, a
+  urlencoded form (an `HttpParams` body included) becomes a flat object,
+  `text/*` a string, `FormData` stays `FormData`, and anything else is an
+  `ArrayBuffer`. A bodyless request has no body (`undefined`, not `null`), and
+  a JSON-labelled body that does not parse arrives as its text. Angular labels
+  a `URLSearchParams` body `application/json`, as its backends do, so set
+  `Content-Type: application/x-www-form-urlencoded` to receive its fields
 - Bodies are shaped to the request's `responseType`: `text` yields a string,
   `arraybuffer` an `ArrayBuffer`, `blob` a `Blob`. `json` passes the value
   through untouched — a route returning a pre-serialized string stays a string

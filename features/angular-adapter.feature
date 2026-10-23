@@ -138,6 +138,20 @@ Feature: Angular Adapter
     Then the response should be an HttpResponse
     And the echoed x-tag header should be "a, b"
 
+  # Angular serializes a request body, and adds Content-Type and Accept, only
+  # in its backend, after every interceptor. The adapter does it the same way.
+  Scenario: An HttpParams form reaches the handler as its fields
+    Given I create an Angular mock that echoes the request body and content type
+    When I make an Angular request to "POST /api/token" with an HttpParams form body
+    Then the response should be an HttpResponse
+    And the echoed body should be the form fields under a urlencoded content type
+
+  Scenario: A bodyless request reaches the handler without a body
+    Given I create an Angular mock that echoes the request body and content type
+    When I make an Angular request to "POST /api/token" with no body
+    Then the response should be an HttpResponse
+    And the echoed request should have no body and no content type
+
   Scenario: responseType text yields a string body
     Given I create an Angular mock returning an object for "GET /api/users"
     When I make an Angular request to "GET /api/users" with responseType "text"

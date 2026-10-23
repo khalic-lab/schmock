@@ -433,6 +433,111 @@ function headersToObject(
   return headers;
 }
 
+/** The `Accept` value Angular's backends send when the caller set none. */
+const DEFAULT_ACCEPT = "application/json, text/plain, */*";
+
+/**
+ * The request headers as Angular's backends put them on the wire: the
+ * caller's own, plus the `Accept` and the detected `Content-Type` that
+ * HttpXhrBackend and FetchBackend add when the caller set none. An
+ * interceptor runs before the backend, so it has to add them itself.
+ */
+function wireHeaders(request: HttpRequest<unknown>): Record<string, string> {
+  const headers = headersToObject(request);
+  if (!request.headers.has("Accept")) {
+    headers.accept = DEFAULT_ACCEPT;
+  }
+  if (!request.headers.has("Content-Type")) {
+    const detected = request.detectContentTypeHeader();
+    if (detected !== null) headers["content-type"] = detected;
+  }
+  return headers;
+}
+
+/**
+ * How a request body of a media type decodes, as core decodes it for
+ * `collectBody()` and the fetch interceptor (`request-body.ts`, which
+ * `@schmock/core` does not export).
+ */
+type RequestBodyKind = "json" | "form" | "text" | "multipart" | "binary";
+
+function requestBodyKindOf(contentType: string | undefined): RequestBodyKind {
+  const mediaType =
+    (contentType ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (mediaType === "application/json" || mediaType.endsWith("+json")) {
+    return "json";
+  }
+  if (mediaType === "application/x-www-form-urlencoded") return "form";
+  if (mediaType.startsWith("text/")) return "text";
+  if (mediaType.startsWith("multipart/")) return "multipart";
+  return "binary";
+}
+
+function decodeBodyText(text: string, kind: RequestBodyKind): unknown {
+  switch (kind) {
+    case "json":
+      // An empty JSON body is no body at all, as the Node ingress reads it.
+      if (text === "") return undefined;
+      try {
+        return JSON.parse(text);
+      } catch {
+        // The fetch interceptor's passthrough rule: the raw text, unparsed.
+        return text;
+      }
+    case "form":
+      // Own-property definition, so a `__proto__` field stays an entry.
+      return Object.fromEntries(new URLSearchParams(text));
+    case "text":
+    case "multipart":
+      return text;
+    case "binary":
+      return toArrayBufferCopy(new TextEncoder().encode(text));
+  }
+}
+
+function decodeBodyBytes(bytes: ArrayBuffer, kind: RequestBodyKind): unknown {
+  if (kind === "binary" || kind === "multipart") {
+    return toArrayBufferCopy(new Uint8Array(bytes));
+  }
+  return decodeBodyText(new TextDecoder().decode(bytes), kind);
+}
+
+/**
+ * The request body as a handler receives it on every other transport.
+ *
+ * Angular serializes a body only in its backend (`serializeBody()`), after
+ * every interceptor, so here it is still what the caller passed: `null` for a
+ * bodyless request, an `HttpParams` or `URLSearchParams` instance for a form,
+ * a `Blob`. The serialized body is decoded by its content type the way core
+ * decodes one: JSON parsed, a urlencoded form a flat object, `text/*` a
+ * string, `FormData` as is, anything else an `ArrayBuffer`. A `Blob` can only
+ * be read asynchronously; every other body is decoded at once.
+ */
+function routedRequestBody(
+  request: HttpRequest<unknown>,
+  contentType: string | undefined,
+): unknown {
+  const serialized: unknown = request.serializeBody();
+  if (serialized === null || serialized === undefined) return undefined;
+  const kind = requestBodyKindOf(contentType);
+  if (typeof serialized === "string") return decodeBodyText(serialized, kind);
+  if (typeof FormData === "function" && serialized instanceof FormData) {
+    return serialized;
+  }
+  if (typeof Blob === "function" && serialized instanceof Blob) {
+    return serialized
+      .arrayBuffer()
+      .then((bytes) => decodeBodyBytes(bytes, kind));
+  }
+  if (serialized instanceof ArrayBuffer) {
+    return decodeBodyBytes(serialized, kind);
+  }
+  if (serialized instanceof URLSearchParams) {
+    return decodeBodyText(serialized.toString(), kind);
+  }
+  return serialized;
+}
+
 type RequestHook = (
   request: HttpRequest<unknown>,
 ) =>
@@ -748,37 +853,58 @@ function dispatchRequest(
  * other adapter failure instead of escaping intercept() as a bare Error.
  */
 function runInterception(interception: Interception, routePath: string): void {
-  const { req, config } = interception;
+  const { req } = interception;
   try {
-    const requestData: RoutedRequest = {
+    const headers = wireHeaders(req);
+    const routedRequest = (decoded: unknown): RoutedRequest => ({
       method: interception.responseMethod,
       path: routePath,
-      headers: headersToObject(req),
-      body: req.body,
+      headers,
+      body: decoded,
       // Angular's HttpParams are already parsed
       query: extractQueryParams(req),
-    };
+    });
 
-    const { requestHook } = config;
-    if (!requestHook) {
-      dispatchRequest(interception, requestData);
+    const body = routedRequestBody(req, getHeader(headers, "content-type"));
+    if (!isPromiseLike(body)) {
+      runRequestHook(interception, routedRequest(body));
       return;
     }
-    const override = requestHook(req);
-    if (!isPromiseLike(override)) {
-      applyRequestOverride(interception, requestData, override);
-      return;
-    }
-    Promise.resolve(override)
-      .then((settled) => {
+    Promise.resolve(body)
+      .then((decoded) => {
         if (!interception.aborted) {
-          applyRequestOverride(interception, requestData, settled);
+          runRequestHook(interception, routedRequest(decoded));
         }
       })
       .catch((error: unknown) => emitFailure(interception, error));
   } catch (error) {
     emitFailure(interception, error);
   }
+}
+
+/** Apply the request hook, if any, and hand the request to the mock. */
+function runRequestHook(
+  interception: Interception,
+  requestData: RoutedRequest,
+): void {
+  const { req, config } = interception;
+  const { requestHook } = config;
+  if (!requestHook) {
+    dispatchRequest(interception, requestData);
+    return;
+  }
+  const override = requestHook(req);
+  if (!isPromiseLike(override)) {
+    applyRequestOverride(interception, requestData, override);
+    return;
+  }
+  Promise.resolve(override)
+    .then((settled) => {
+      if (!interception.aborted) {
+        applyRequestOverride(interception, requestData, settled);
+      }
+    })
+    .catch((error: unknown) => emitFailure(interception, error));
 }
 
 /**

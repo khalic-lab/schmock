@@ -17,6 +17,9 @@ import { of } from "rxjs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSchmockInterceptor, provideSchmockInterceptor } from "./index";
 
+/** The Accept header Angular's backends add when the caller set none. */
+const ANGULAR_ACCEPT = "application/json, text/plain, */*";
+
 describe("Angular Adapter", () => {
   let mockInstance: CallableMockInstance;
 
@@ -73,8 +76,8 @@ describe("Angular Adapter", () => {
         "GET",
         "/api/test",
         expect.objectContaining({
-          headers: {},
-          body: null,
+          headers: { accept: ANGULAR_ACCEPT },
+          body: undefined,
           query: {},
           signal: expect.any(AbortSignal),
         }),
@@ -594,7 +597,9 @@ describe("Angular Adapter", () => {
       expect(mockInstance.handle).toHaveBeenCalledWith(
         "POST",
         "/transformed",
-        expect.objectContaining({ headers: { "x-custom": "value" } }),
+        expect.objectContaining({
+          headers: { accept: ANGULAR_ACCEPT, "x-custom": "value" },
+        }),
       );
     });
   });
@@ -907,7 +912,11 @@ describe("Angular Adapter", () => {
           Authorization: "Bearer token123",
           "X-Tenant": "acme",
         }),
-      ).toEqual({ authorization: "Bearer token123", "x-tenant": "acme" });
+      ).toEqual({
+        accept: ANGULAR_ACCEPT,
+        authorization: "Bearer token123",
+        "x-tenant": "acme",
+      });
     });
 
     it("lowercases capitalized keys returned by transformRequest", async () => {
@@ -917,7 +926,7 @@ describe("Angular Adapter", () => {
         await capturedHeaders({
           transformRequest: () => ({ headers: { "X-Override": "yes" } }),
         }),
-      ).toEqual({ "x-override": "yes" });
+      ).toEqual({ accept: ANGULAR_ACCEPT, "x-override": "yes" });
     });
   });
 
@@ -1526,13 +1535,19 @@ describe("Angular Adapter", () => {
         .append("x-tag", "b")
         .append("x-tag", "c");
 
-      expect(await capturedHeaders(headers)).toEqual({ "x-tag": "a, b, c" });
+      expect(await capturedHeaders(headers)).toEqual({
+        accept: ANGULAR_ACCEPT,
+        "x-tag": "a, b, c",
+      });
     });
 
     it("leaves a single-valued header untouched", async () => {
       const headers = new HttpHeaders({ "x-single": "only" });
 
-      expect(await capturedHeaders(headers)).toEqual({ "x-single": "only" });
+      expect(await capturedHeaders(headers)).toEqual({
+        accept: ANGULAR_ACCEPT,
+        "x-single": "only",
+      });
     });
 
     it("omits a header whose value list is empty", async () => {
@@ -1540,7 +1555,10 @@ describe("Angular Adapter", () => {
       // unguarded join would deliver an empty-string header.
       const headers = new HttpHeaders({ "x-empty": [], "x-kept": "yes" });
 
-      expect(await capturedHeaders(headers)).toEqual({ "x-kept": "yes" });
+      expect(await capturedHeaders(headers)).toEqual({
+        accept: ANGULAR_ACCEPT,
+        "x-kept": "yes",
+      });
     });
   });
 

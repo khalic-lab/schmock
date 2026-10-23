@@ -645,6 +645,83 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
     },
   );
 
+  function echoRequestBody() {
+    resetState();
+    mock("POST /api/token", ({ body, headers }) => [
+      200,
+      {
+        hasBody: body !== undefined,
+        body: body ?? null,
+        contentType: headers["content-type"] ?? null,
+      },
+    ]);
+  }
+
+  Scenario(
+    "An HttpParams form reaches the handler as its fields",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Angular mock that echoes the request body and content type",
+        echoRequestBody,
+      );
+
+      When(
+        'I make an Angular request to "POST /api/token" with an HttpParams form body',
+        async () => {
+          await makeRequest(
+            "POST",
+            "/api/token",
+            new HttpParams().set("grant_type", "password").set("user", "alice"),
+          );
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And(
+        "the echoed body should be the form fields under a urlencoded content type",
+        () => {
+          expect(response?.body).toEqual({
+            hasBody: true,
+            body: { grant_type: "password", user: "alice" },
+            contentType: "application/x-www-form-urlencoded;charset=UTF-8",
+          });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A bodyless request reaches the handler without a body",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Angular mock that echoes the request body and content type",
+        echoRequestBody,
+      );
+
+      When(
+        'I make an Angular request to "POST /api/token" with no body',
+        async () => {
+          await makeRequest("POST", "/api/token", null);
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And("the echoed request should have no body and no content type", () => {
+        expect(response?.body).toEqual({
+          hasBody: false,
+          body: null,
+          contentType: null,
+        });
+      });
+    },
+  );
+
   Scenario(
     "responseType text yields a string body",
     ({ Given, When, Then, And }) => {
