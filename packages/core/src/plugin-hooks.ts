@@ -1,3 +1,4 @@
+import { awaitWithAbort, throwIfAborted } from "./abort.js";
 import type { DebugLogger } from "./debug-logger.js";
 import { errorMessage, SchmockError } from "./errors.js";
 import { snapshotNormalizedBody, snapshotRequestBody } from "./snapshot.js";
@@ -21,14 +22,19 @@ const PLUGIN_HOOK_ERROR_CODES = {
 /**
  * Optional hooks rejected when set to a truthy non-function. `install` threw a
  * TypeError from pipe() and `beforeRequest` failed every matched request, so
- * rejecting them breaks no working setup. `onExchange` is new: no working
- * setup relies on another shape, and a non-function would otherwise silently
- * observe nothing. Falsy values (`onError: null`, `install: false`,
- * `onExchange: undefined`) still switch a hook off. `onError`/`uninstall`
- * failures only ever surfaced on paths that already fail or log, so they are
- * left alone.
+ * rejecting them breaks no working setup. `onExchange` and `afterResponse` are
+ * new: no working setup relies on another shape, and a non-function would
+ * otherwise silently do nothing. Falsy values (`onError: null`,
+ * `install: false`, `onExchange: undefined`) still switch a hook off.
+ * `onError`/`uninstall` failures only ever surfaced on paths that already fail
+ * or log, so they are left alone.
  */
-const EAGER_PLUGIN_HOOKS = ["install", "beforeRequest", "onExchange"] as const;
+const EAGER_PLUGIN_HOOKS = [
+  "install",
+  "beforeRequest",
+  "onExchange",
+  "afterResponse",
+] as const;
 
 export function isThenable(value: unknown): value is PromiseLike<unknown> {
   return (
@@ -61,9 +67,9 @@ function describeInvalidPlugin(plugin: unknown): string | undefined {
 /**
  * Reject, when it is piped, a plugin that could never work: one without a
  * `process` function (it answered every matched request with a 500), or one
- * whose `install`, `beforeRequest` or `onExchange` is a truthy non-function.
- * The `install` and `beforeRequest` shapes already failed before this check;
- * `onExchange` is new, so no working setup breaks.
+ * whose `install`, `beforeRequest`, `onExchange` or `afterResponse` is a
+ * truthy non-function. The `install` and `beforeRequest` shapes already failed
+ * before this check; the other two are new, so no working setup breaks.
  */
 export function assertValidPlugin(
   plugin: unknown,
@@ -171,6 +177,70 @@ export function runExchangeHooks(input: {
       logger.log(
         "plugin",
         `Plugin ${plugin.name} onExchange failed: ${errorMessage(error)}`,
+      );
+    }
+  }
+}
+
+/** Whether any plugin settles responses (a function `afterResponse`). */
+export function hasAfterResponseHook(
+  plugins: readonly Schmock.Plugin[],
+): boolean {
+  return plugins.some((plugin) => typeof plugin.afterResponse === "function");
+}
+
+/**
+ * A read-only copy of a final response for one `afterResponse` hook. The body
+ * is copied on first read, so a hook that never looks at it costs nothing.
+ */
+function settledResponseCopy(
+  response: Schmock.Response,
+): Readonly<Schmock.Response> {
+  let body: unknown;
+  let copied = false;
+  return Object.freeze({
+    status: response.status,
+    headers: Object.freeze({ ...response.headers }),
+    get body() {
+      if (!copied) {
+        body = snapshotNormalizedBody(response.body);
+        copied = true;
+      }
+      return body;
+    },
+  });
+}
+
+/**
+ * Run each plugin's `afterResponse`, in pipe order, once a matched request's
+ * response is final. A returned promise is awaited, raced against the
+ * request's signal: an abort while a hook is pending rejects with the abort
+ * reason. Any other throw or rejection is logged and never stops the next
+ * hook or changes the response.
+ */
+export async function runAfterResponseHooks(input: {
+  plugins: readonly Schmock.Plugin[];
+  context: Schmock.PluginContext;
+  response: Schmock.Response;
+  logger: Pick<DebugLogger, "log">;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const { plugins, context, response, logger, signal } = input;
+  for (const plugin of plugins) {
+    const settle: unknown = plugin.afterResponse;
+    if (typeof settle !== "function") continue;
+    throwIfAborted(signal);
+    try {
+      const result: unknown = Reflect.apply(settle, plugin, [
+        context,
+        settledResponseCopy(response),
+      ]);
+      if (isThenable(result)) await awaitWithAbort(result, signal);
+    } catch (error) {
+      throwIfAborted(signal);
+      logger.log(
+        "plugin",
+        `Plugin ${plugin.name} afterResponse failed: ${errorMessage(error)}`,
       );
     }
   }

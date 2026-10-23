@@ -175,7 +175,7 @@ pipe(plugin: Plugin): CallableMockInstance
 
 `pipe()` throws `SchmockError` `PLUGIN_INVALID` for a plugin that could never
 work: a non-object, a missing or non-function `process`, or an `install`,
-`beforeRequest` or `onExchange` set to a truthy non-function. Falsy hooks
+`beforeRequest`, `onExchange` or `afterResponse` set to a truthy non-function. Falsy hooks
 (`onError: null`, `install: false`) are accepted. Piping the same plugin object
 again is a no-op, and debug mode logs
 `Plugin <name> is already piped into this mock — ignored`.
@@ -427,8 +427,10 @@ interface RequestContext {
 
 `pluginState` is the channel a generator uses to hand request-scoped data to the
 plugins that post-process its response — `@schmock/openapi` stages CRUD
-mutations there and commits them once the final status is known. It is absent
-when a generator is called outside the request pipeline.
+mutations there and commits them once the final status is known. A plugin's
+[`afterResponse`](#plugin-interface) hook sees the same `Map` as
+`context.state` once that status is final. It is absent when a generator is
+called outside the request pipeline.
 
 A repeated query key resolves to its last value (`?tag=a&tag=b` gives `'b'`)
 on every transport: the CLI, `mock.listen()`, `mock.intercept()` (React and
@@ -509,6 +511,7 @@ interface Plugin {
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
   onExchange?(exchange: Exchange): unknown   // return value ignored
+  afterResponse?(context: PluginContext, response: Readonly<Response>): unknown  // awaited; value ignored
 }
 
 interface PluginContext {
@@ -545,6 +548,32 @@ also rejected at runtime with `PLUGIN_ASYNC_INSTALL_UNSUPPORTED`. An async
 
 `onExchange` returns `unknown` instead: core ignores the value and does not
 await a promise, so an expression-bodied or `async` observer type-checks.
+
+`afterResponse(context, response)` settles a matched request once its response
+is final, on every transport (`handle()`, `listen()`, the CLI, Express,
+Angular, `intercept()`):
+
+- It runs after the whole plugin pipeline, or with the 500 a failing route,
+  plugin or response produced, and after the response delay. It runs before
+  the request enters history and before `request:end`, so a listener or the
+  next request sees what it settled.
+- It is not called for a route miss, nor for a request aborted before that
+  point. An abort while a hook is pending still rejects `handle()` with the
+  abort reason and reports `request:end` with 499.
+- `context` is the request's latest plugin context, and `context.state` is the
+  same `Map` as the generator's `pluginState`. Work a generator or `process()`
+  staged there can be committed when `response.status` is below 400 and
+  dropped otherwise. That is safe where a commit inside `process()` is not: a
+  plugin piped later can still turn the response into a 500 after `process()`
+  returns.
+- `response` (`{ status, headers, body }`) is the hook's own read-only copy;
+  its body is copied on first read.
+- Hooks run in `.pipe()` order and a returned promise is awaited. The value is
+  ignored. A throw or rejection is logged under the `PLUGIN` debug category,
+  never changes the response, and never stops the next hook.
+- Adapter hooks (`beforeResponse`, `errorFormatter`) run after it and can
+  still change what the client receives; `onExchange` reports that final
+  outcome.
 
 A `process` hook that returns something other than a `PluginResult`, or a
 `beforeRequest` hook that returns something other than a `PluginResult` or

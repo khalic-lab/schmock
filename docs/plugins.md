@@ -14,6 +14,7 @@ interface Plugin {
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>
   onExchange?(exchange: Exchange): unknown   // return value ignored
+  afterResponse?(context: PluginContext, response: Readonly<Response>): unknown  // awaited; value ignored
 }
 ```
 
@@ -52,7 +53,7 @@ uninstall immediately, before the new `install()`.
 
 `pipe()` throws `SchmockError` `PLUGIN_INVALID` for a plugin that could never
 work: a non-object, a missing or non-function `process`, or an `install`,
-`beforeRequest` or `onExchange` set to a truthy non-function. Falsy hooks
+`beforeRequest`, `onExchange` or `afterResponse` set to a truthy non-function. Falsy hooks
 (`onError: null`, `install: false`) are accepted. Piping the same plugin object
 again is a no-op, and debug mode logs
 `Plugin <name> is already piped into this mock — ignored`.
@@ -212,6 +213,38 @@ function slowRequestPlugin(thresholdMs: number): Schmock.Plugin {
 
 `process` is still required, so an observer passes the response through
 unchanged. See [Observing exchanges](#observing-exchanges).
+
+### Settler — Commit staged work once the status is final
+
+A write committed inside `process()` survives a plugin piped later that turns
+the response into a 500, because `process()` returns before that plugin runs.
+Stage the write in the per-request state instead, and commit it in
+`afterResponse`, which runs once the response is final:
+
+```typescript
+function auditLogPlugin(log: string[]): Schmock.Plugin {
+  return {
+    name: 'audit-log',
+    process(context, response) {
+      context.state.set('audit:entry', `${context.method} ${context.path}`)
+      return { context, response }
+    },
+    afterResponse(context, response) {
+      const entry = context.state.get('audit:entry')
+      context.state.delete('audit:entry')
+      if (response.status < 400 && typeof entry === 'string') log.push(entry)
+    },
+  }
+}
+```
+
+`afterResponse` runs after the plugin pipeline (or with the 500 a failure
+produced) and after the response delay, before history and `request:end`. It
+is skipped for a route miss and for a request aborted before then. A route
+generator can stage work too, through `ctx.pluginState`, which is the same
+`Map` as `context.state`. A returned promise is awaited; a throw or rejection
+is logged under the `PLUGIN` debug category and never changes the response.
+See the [Plugin Interface](./api.md#plugin-interface) reference.
 
 ## Context and State
 

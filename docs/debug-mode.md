@@ -70,7 +70,7 @@ without Web Crypto. Generating it never fails a request.
 |----------|--------------|
 | `CONFIG` | Instance creation and configuration |
 | `ROUTE` | Route definition and matching |
-| `PLUGIN` | Plugin registration, install and uninstall |
+| `PLUGIN` | Plugin registration, install and uninstall, and failing `onExchange` and `afterResponse` hooks |
 | `REQUEST` | Request start and details |
 | `PIPELINE` | Plugin pipeline execution |
 | `RESPONSE` | Response generation |

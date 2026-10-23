@@ -207,6 +207,31 @@ declare namespace Schmock {
      * expression-bodied observer such as `(e) => seen.push(e)` type-checks.
      */
     onExchange?(exchange: Exchange): unknown;
+
+    /**
+     * Settle a matched request once its response is final. Called after the
+     * plugin pipeline, or with the 500 a failure produced, and after the
+     * response delay, right before the request enters history and
+     * `request:end` fires; so on every transport (`handle()`, `listen()`, the
+     * CLI, Express, Angular, `intercept()`). Not called for a route miss, nor
+     * for a request aborted before it settled.
+     *
+     * `context` is the request's latest plugin context: `context.state` is the
+     * same Map as `RequestContext.pluginState`, so work a generator or
+     * `process()` staged there can be committed or dropped by the final
+     * `response.status`. `response` is this hook's own read-only copy.
+     *
+     * Runs in `.pipe()` order. A returned promise is awaited, and an abort of
+     * the request still rejects `handle()` while it is pending. The value is
+     * ignored, and a throw or rejection is logged under the `plugin` debug
+     * category without changing the response. Adapter hooks (`beforeResponse`,
+     * `errorFormatter`) run after it and can still change what the client
+     * receives.
+     */
+    afterResponse?(
+      context: PluginContext,
+      response: Readonly<Response>,
+    ): unknown;
   }
 
   /**

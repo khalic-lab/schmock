@@ -29,7 +29,9 @@ import {
 import { NodeServerController } from "./node-server.js";
 import {
   assertValidPlugin,
+  hasAfterResponseHook,
   hasExchangeObserver,
+  runAfterResponseHooks,
   runExchangeHooks,
   runInstallHook,
   runUninstallHooks,
@@ -837,7 +839,8 @@ export class CallableMockInstance {
     try {
       await this.#finalizeMatchedRequest(scope, errorResponse);
     } catch (finalizeError) {
-      // Only the delay can reject here, and only with the abort reason.
+      // Only the delay and a pending afterResponse hook can reject here, and
+      // only with the abort reason.
       this.#throwIfRequestAborted(scope);
       throw finalizeError;
     }
@@ -849,7 +852,8 @@ export class CallableMockInstance {
    * Finish a request after `request:start`, matched or failed.
    *
    * Order matters: delay first (an abort during it must escape before anything
-   * is committed), then the history record, then `request:end`, then the logs.
+   * is committed), then the plugins' `afterResponse` settle hooks, then the
+   * history record, then `request:end`, then the logs.
    */
   async #finalizeMatchedRequest(
     scope: RequestScope,
@@ -867,6 +871,22 @@ export class CallableMockInstance {
       signal,
     });
     throwIfAborted(signal);
+
+    // The response is final and the request was not cancelled: the plugins
+    // settle it (commit what they staged) before history and request:end
+    // report it, so a listener or the next request sees the settled state.
+    if (
+      scope.context !== undefined &&
+      hasAfterResponseHook(admission.plugins)
+    ) {
+      await runAfterResponseHooks({
+        plugins: admission.plugins,
+        context: scope.context,
+        response,
+        logger: this.logger,
+        signal,
+      });
+    }
 
     // Record request in history (FIFO-bounded when maxHistorySize is set)
     const historySnapshot = match?.historySnapshot;
