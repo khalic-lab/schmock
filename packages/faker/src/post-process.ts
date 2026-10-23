@@ -134,7 +134,7 @@ function collectApplicable(
   const descend = (next: JSONSchema7) =>
     collectApplicable({ ...collection, schema: next }, nested);
 
-  const target = resolveRef(schema, context.root);
+  const target = resolveLocalRef(schema, context.root);
   if (target) descend(target);
 
   for (const branch of schema.allOf ?? []) {
@@ -152,8 +152,8 @@ function collectApplicable(
   }
 }
 
-/** Resolve a local JSON Pointer `$ref` against the enhanced root schema. */
-function resolveRef(
+/** Resolve a local JSON Pointer `$ref` against the root schema it sits in. */
+export function resolveLocalRef(
   schema: JSONSchema7,
   root: JSONSchema7,
 ): JSONSchema7 | undefined {
@@ -288,7 +288,7 @@ function couldMatch(
   depth: number,
 ): boolean {
   if (depth <= 0) return true;
-  const target = resolveRef(schema, context.root);
+  const target = resolveLocalRef(schema, context.root);
   if (target && !couldMatch(data, target, context, depth - 1)) return false;
 
   if (schema.type !== undefined) {

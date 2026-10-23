@@ -525,3 +525,127 @@ describe("not bodies json-schema-faker misses (faker-2)", () => {
     }
   });
 });
+
+/** The string at `key` of every value generated from `schema`. */
+async function stringsAt(schema: JSONSchema7, key: string): Promise<string[]> {
+  return (await generateSeeds(schema)).map((value) => {
+    const entry = objectOf(value)[key];
+    if (typeof entry !== "string") {
+      throw new Error(`Expected a string at ${key}, got ${String(entry)}`);
+    }
+    return entry;
+  });
+}
+
+describe("a property declared by several merged schemas (faker-4)", () => {
+  it("honours a maxLength another allOf branch adds to a mapped property", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      allOf: [
+        { properties: { email: { type: "string" } }, required: ["email"] },
+        { properties: { email: { maxLength: 12 } } },
+      ],
+    };
+    for (const email of await stringsAt(schema, "email")) {
+      expect(email.length).toBeLessThanOrEqual(12);
+    }
+  });
+
+  it("honours an enum an allOf branch adds to a $ref target's property", async () => {
+    const schema: JSONSchema7 = {
+      allOf: [
+        { $ref: "#/$defs/Base" },
+        { properties: { email: { enum: ["a@x.io", "b@x.io"] } } },
+      ],
+      $defs: {
+        Base: {
+          type: "object",
+          properties: { email: { type: "string" } },
+          required: ["email"],
+        },
+      },
+    };
+    for (const email of await stringsAt(schema, "email")) {
+      expect(["a@x.io", "b@x.io"]).toContain(email);
+    }
+  });
+
+  it("honours a pattern a then adds to a base property", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: { zip: { type: "string" } },
+      required: ["zip"],
+      if: { required: ["zip"] },
+      // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+      then: { properties: { zip: { pattern: "^[0-9]{5}$" } } },
+    };
+    for (const zip of await stringsAt(schema, "zip")) {
+      expect(zip).toMatch(/^[0-9]{5}$/);
+    }
+  });
+
+  it("honours a maxLength a oneOf branch adds to a base property", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: { email: { type: "string" } },
+      required: ["email"],
+      oneOf: [{ properties: { email: { maxLength: 10 } } }],
+    };
+    for (const email of await stringsAt(schema, "email")) {
+      expect(email.length).toBeLessThanOrEqual(10);
+    }
+  });
+
+  it("drops the lorem fallback when a merged branch bounds the length", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      allOf: [
+        { properties: { zzqx: { type: "string" } }, required: ["zzqx"] },
+        { properties: { zzqx: { minLength: 20 } } },
+      ],
+    };
+    for (const zzqx of await stringsAt(schema, "zzqx")) {
+      expect(zzqx.length).toBeGreaterThanOrEqual(20);
+    }
+  });
+
+  it("keeps the mapping when the other declarations only annotate", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      allOf: [
+        { properties: { email: { type: "string" } }, required: ["email"] },
+        { properties: { email: { type: "string", description: "Contact" } } },
+      ],
+    };
+    for (const email of await stringsAt(schema, "email")) {
+      expect(email).toContain("@");
+    }
+  });
+
+  it("strips the faker only from the copy JSF merges first", () => {
+    const base: JSONSchema7 = {
+      type: "object",
+      properties: { email: { type: "string" } },
+    };
+    Reflect.set(Object(base.properties).email, "faker", "internet.email");
+    const schema: JSONSchema7 = {
+      allOf: [
+        { $ref: "#/$defs/Base" },
+        { properties: { email: { maxLength: 9 } } },
+      ],
+      $defs: { Base: base },
+    };
+    const normalized = normalizeSchemaForJsf(schema);
+    const first = objectOf(normalized.allOf?.[0]);
+    expect(first.$ref).toBeUndefined();
+    expect(objectOf(objectOf(first.properties).email).faker).toBeUndefined();
+    // The definition itself still maps wherever it is used alone.
+    const defs = objectOf(normalized.$defs);
+    expect(objectOf(objectOf(objectOf(defs.Base).properties).email).faker).toBe(
+      "internet.email",
+    );
+    expect(Reflect.get(Object(base.properties).email, "faker")).toBe(
+      "internet.email",
+    );
+  });
+});

@@ -249,6 +249,58 @@ const CASES: Record<string, FidelityCase> = {
     },
     fits: (value) => expect(text(record(value).nickname)).not.toBe(""),
   },
+  "all-of-max-length-on-mapped-email": {
+    schema: {
+      type: "object",
+      allOf: [
+        { properties: { email: { type: "string" } }, required: ["email"] },
+        { properties: { email: { maxLength: 12 } } },
+      ],
+    },
+    fits: (value) => {
+      expect(text(record(value).email).length).toBeLessThanOrEqual(12);
+    },
+  },
+  "all-of-enum-on-ref-target-email": {
+    schema: {
+      allOf: [
+        { $ref: "#/$defs/Base" },
+        { properties: { email: { enum: ["a@x.io", "b@x.io"] } } },
+      ],
+      $defs: {
+        Base: {
+          type: "object",
+          properties: { email: { type: "string" } },
+          required: ["email"],
+        },
+      },
+    },
+    fits: (value) =>
+      expect(["a@x.io", "b@x.io"]).toContain(record(value).email),
+  },
+  "then-pattern-on-zip": {
+    schema: {
+      type: "object",
+      properties: { zip: { type: "string" } },
+      required: ["zip"],
+      if: { required: ["zip"] },
+      // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+      then: { properties: { zip: { pattern: "^[0-9]{5}$" } } },
+    },
+    fits: (value) => expect(text(record(value).zip)).toMatch(/^[0-9]{5}$/),
+  },
+  "all-of-min-length-on-unmapped-string": {
+    schema: {
+      type: "object",
+      allOf: [
+        { properties: { zzqx: { type: "string" } }, required: ["zzqx"] },
+        { properties: { zzqx: { minLength: 20 } } },
+      ],
+    },
+    fits: (value) => {
+      expect(text(record(value).zzqx).length).toBeGreaterThanOrEqual(20);
+    },
+  },
   "inclusive-maximum-tighter-than-exclusive": {
     schema: { type: "number", minimum: 0, maximum: 5, exclusiveMaximum: 100 },
     fits: (value) => {
@@ -271,6 +323,7 @@ const OUTLINES = [
   "An object without properties never echoes schema keywords into the body",
   "Numeric bounds hold beside multipleOf and a second bound on the same side",
   "A not keyword rejects the values it names",
+  "A property declared by several merged schemas honours every declaration",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {

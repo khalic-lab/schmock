@@ -9,6 +9,7 @@ import {
 } from "json-schema-faker-private";
 import { DETERMINISTIC_REF_DATE, JSF_MAX_DEPTH } from "./constants.js";
 import { assertOutputWithinLimits } from "./output-limits.js";
+import { resolveLocalRef } from "./post-process.js";
 import { mapSchemaChildren, type SchemaChildSlot } from "./schema-children.js";
 import { compilePattern, isJSONSchema7 } from "./utils.js";
 
@@ -400,17 +401,189 @@ const TUPLE_TARGETS: Readonly<Record<string, string>> = {
 
 /**
  * json-schema-faker consumes tuple schemas through the 2020-12 `prefixItems`
- * keyword. Convert Draft 7 tuple `items` recursively at the library boundary.
+ * keyword. Convert Draft 7 tuple `items` recursively at the library boundary,
+ * then adapt every node whose subschemas JSF merges (see `adaptMerges`).
  */
 export function normalizeSchemaForJsf(
   schema: JSONSchema7,
   options: NormalizeSchemaOptions = {},
 ): JsfObjectSchema {
-  return normalizeSchemaNodeForJsf(schema, {
+  const context: NormalizeContext = {
     normalizedSchemas: new Map(),
     patternKeySeed: options.patternKeySeed,
     patternKeyCount: 0,
+  };
+  const normalized = normalizeSchemaNodeForJsf(schema, context);
+  // Only once the walk is complete: resolving a `$ref` mid-walk would
+  // normalize its target early and reorder the seeds pattern keys draw.
+  const resolve = (member: unknown): JsfObjectSchema | undefined => {
+    if (!isJsfObject(member) || typeof member.$ref !== "string") {
+      return isJsfObject(member) ? member : undefined;
+    }
+    const target = resolveLocalRef({ $ref: member.$ref }, schema);
+    return target ? context.normalizedSchemas.get(target) : undefined;
+  };
+  for (const copy of context.normalizedSchemas.values()) {
+    adaptMerges(copy, resolve);
+  }
+  return normalized;
+}
+
+function isJsfObject(value: unknown): value is JsfObjectSchema {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** One schema json-schema-faker merges into a node's value. */
+interface MergeMember {
+  /** The schema JSF merges, after any `$ref` it resolves first. */
+  schema: JsfObjectSchema;
+  /** Put `next` in the member's place in the node's copy. */
+  replace: (next: JsfObjectSchema) => void;
+}
+
+type ResolveMember = (member: unknown) => JsfObjectSchema | undefined;
+
+/** The members of a list keyword (`allOf`, `oneOf`, `anyOf`) of `copy`. */
+function listMembers(
+  copy: JsfObjectSchema,
+  keyword: "allOf" | "oneOf" | "anyOf",
+  resolve: ResolveMember,
+): MergeMember[] {
+  const list = copy[keyword];
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry, index) => {
+    const schema = resolve(entry);
+    if (!schema) return [];
+    const replace = (next: JsfObjectSchema) => {
+      const current = copy[keyword];
+      if (Array.isArray(current)) current[index] = next;
+    };
+    return [{ schema, replace }];
   });
+}
+
+/** The member a single-schema keyword (`if`, `then`, `else`) of `copy` holds. */
+function singleMember(
+  copy: JsfObjectSchema,
+  keyword: "if" | "then" | "else",
+): MergeMember | undefined {
+  const schema = copy[keyword];
+  if (!isJsfObject(schema)) return undefined;
+  return {
+    schema,
+    replace: (next) => {
+      copy[keyword] = next;
+    },
+  };
+}
+
+/**
+ * Adapt one node's copy to how json-schema-faker merges subschemas: the base
+ * with every `allOf` entry, with one `oneOf`/`anyOf` branch, or with `if` and
+ * `then` (or `else`).
+ */
+function adaptMerges(copy: JsfObjectSchema, resolve: ResolveMember): void {
+  // JSF resolves a `$ref` before merging only in `allOf` and `oneOf`; a
+  // `$ref` anywhere else replaces the merge, so it has no properties here.
+  const allOf = listMembers(copy, "allOf", resolve);
+  const branches = [
+    ...listMembers(copy, "oneOf", resolve),
+    ...listMembers(copy, "anyOf", (entry) =>
+      isJsfObject(entry) ? entry : undefined,
+    ),
+  ];
+  const own: MergeMember = {
+    schema: copy,
+    replace: (next) => {
+      copy.properties = next.properties;
+    },
+  };
+  const groups: MergeMember[][] = [];
+  if (allOf.length > 0) groups.push([own, ...allOf]);
+  for (const branch of branches) groups.push([own, ...allOf, branch]);
+  const conditionIf = singleMember(copy, "if");
+  const conditionThen = singleMember(copy, "then");
+  const conditionElse = singleMember(copy, "else");
+  if (conditionIf && (conditionThen || conditionElse)) {
+    groups.push([
+      own,
+      conditionIf,
+      ...allOf,
+      ...(conditionThen ? [conditionThen] : []),
+    ]);
+    if (conditionElse) groups.push([own, ...allOf, conditionElse]);
+  }
+  for (const group of groups) dropOverriddenFakers(group);
+}
+
+/** Keywords that never change the value json-schema-faker generates. */
+const ANNOTATION_KEYWORDS = new Set([
+  "title",
+  "description",
+  "$comment",
+  "readOnly",
+  "writeOnly",
+  "deprecated",
+  "examples",
+  "example",
+  "default",
+  "faker",
+]);
+
+function propertiesOf(schema: JsfObjectSchema): Record<string, JsonSchema> {
+  return isJsfObject(schema.properties) ? schema.properties : {};
+}
+
+/** True when merging `declaration` into `first` adds a constraint. */
+function addsConstraint(
+  declaration: JsonSchema | undefined,
+  first: JsfObjectSchema,
+): boolean {
+  if (!isJsfObject(declaration)) return declaration === false;
+  return Object.keys(declaration).some((key) =>
+    key === "type"
+      ? JSON.stringify(declaration.type) !== JSON.stringify(first.type)
+      : !ANNOTATION_KEYWORDS.has(key),
+  );
+}
+
+/**
+ * json-schema-faker merges a property declared by several members of one
+ * merge by copying the first declaration and merging the later ones'
+ * keywords into it. `faker` is not a keyword it merges, so the first
+ * declaration's `faker` survives and its value overrides every constraint
+ * the later declarations add (an `enum`, a `maxLength`). When a later
+ * declaration does add one, drop that first `faker` from the member's place
+ * in this node's copy; the schema it came from, and any other use of it,
+ * keep their own.
+ */
+function dropOverriddenFakers(group: MergeMember[]): void {
+  const names = new Set(
+    group.flatMap((member) => Object.keys(propertiesOf(member.schema))),
+  );
+  for (const name of names) {
+    const [first, ...later] = group.filter((member) =>
+      Object.hasOwn(propertiesOf(member.schema), name),
+    );
+    if (!first || later.length === 0) continue;
+    const declaration = propertiesOf(first.schema)[name];
+    if (!isJsfObject(declaration) || declaration.faker === undefined) continue;
+    const overridden = later.some((member) =>
+      addsConstraint(propertiesOf(member.schema)[name], declaration),
+    );
+    if (!overridden) continue;
+    const { faker: _dropped, ...rest } = declaration;
+    const properties = { ...propertiesOf(first.schema) };
+    Object.defineProperty(properties, name, {
+      value: rest,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    const next = { ...first.schema, properties };
+    first.replace(next);
+    first.schema = next;
+  }
 }
 
 function normalizeSchemaNodeForJsf(

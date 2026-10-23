@@ -68,3 +68,16 @@ Feature: Faker output honours every keyword of its schema
       | not-required-pair      |
       | not-type-in-union      |
       | not-const-empty-string |
+
+  # Review 2026-10-23 faker-4: json-schema-faker keeps the first declaration's faker
+  Scenario Outline: A property declared by several merged schemas honours every declaration
+    Given the fidelity schema "<case>"
+    When I generate it with 40 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                                 |
+      | all-of-max-length-on-mapped-email    |
+      | all-of-enum-on-ref-target-email      |
+      | then-pattern-on-zip                  |
+      | all-of-min-length-on-unmapped-string |
