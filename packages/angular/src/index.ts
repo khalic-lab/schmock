@@ -26,7 +26,14 @@ import {
   schmock,
   serializeResponseBody,
 } from "@schmock/core";
-import { buildJsonErrorResponse, toError } from "@schmock/core/adapter";
+import {
+  buildJsonErrorResponse,
+  HttpIngressError,
+  parseFormBody,
+  parseJsonBody,
+  requestBodyKindOf,
+  toError,
+} from "@schmock/core/adapter";
 import { Observable, type Subscriber } from "rxjs";
 
 type AngularResponseType = HttpRequest<unknown>["responseType"];
@@ -536,51 +543,79 @@ function wireHeaders(request: HttpRequest<unknown>): Record<string, string> {
 }
 
 /**
- * How a request body of a media type decodes, as core decodes it for
- * `collectBody()` and the fetch interceptor (`request-body.ts`, which
- * `@schmock/core` does not export).
+ * A request body decoded for the mock, and why a JSON body was refused, as
+ * core's fetch interceptor reports it: a body that does not parse, or nests
+ * past the depth limit, is refused with a 400 when the mock owns every
+ * request, and otherwise routed as its text.
  */
-type RequestBodyKind = "json" | "form" | "text" | "multipart" | "binary";
-
-function requestBodyKindOf(contentType: string | undefined): RequestBodyKind {
-  const mediaType =
-    (contentType ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  if (mediaType === "application/json" || mediaType.endsWith("+json")) {
-    return "json";
-  }
-  if (mediaType === "application/x-www-form-urlencoded") return "form";
-  if (mediaType.startsWith("text/")) return "text";
-  if (mediaType.startsWith("multipart/")) return "multipart";
-  return "binary";
+interface DecodedBody {
+  value: unknown;
+  rejected?: HttpIngressError;
 }
 
-function decodeBodyText(text: string, kind: RequestBodyKind): unknown {
-  switch (kind) {
+function decodeBodyText(
+  text: string,
+  contentType: string | undefined,
+): DecodedBody | Promise<DecodedBody> {
+  switch (requestBodyKindOf(contentType)) {
     case "json":
       // An empty JSON body is no body at all, as the Node ingress reads it.
-      if (text === "") return undefined;
+      if (text === "") return { value: undefined };
       try {
-        return JSON.parse(text);
-      } catch {
-        // The fetch interceptor's passthrough rule: the raw text, unparsed.
-        return text;
+        return { value: parseJsonBody(text) };
+      } catch (error) {
+        if (error instanceof HttpIngressError) {
+          return { value: text, rejected: error };
+        }
+        throw error;
       }
     case "form":
-      // Own-property definition, so a `__proto__` field stays an entry.
-      return Object.fromEntries(new URLSearchParams(text));
+      return { value: parseFormBody(text) };
     case "text":
+      return { value: text };
     case "multipart":
-      return text;
+      return decodeMultipart(text, contentType);
     case "binary":
-      return toArrayBufferCopy(new TextEncoder().encode(text));
+      return { value: toArrayBufferCopy(new TextEncoder().encode(text)) };
   }
 }
 
-function decodeBodyBytes(bytes: ArrayBuffer, kind: RequestBodyKind): unknown {
-  if (kind === "binary" || kind === "multipart") {
-    return toArrayBufferCopy(new Uint8Array(bytes));
+function decodeBodyBytes(
+  bytes: ArrayBuffer,
+  contentType: string | undefined,
+): DecodedBody | Promise<DecodedBody> {
+  switch (requestBodyKindOf(contentType)) {
+    case "binary":
+      return { value: toArrayBufferCopy(new Uint8Array(bytes)) };
+    case "multipart":
+      return decodeMultipart(bytes, contentType);
+    default:
+      return decodeBodyText(new TextDecoder().decode(bytes), contentType);
   }
-  return decodeBodyText(new TextDecoder().decode(bytes), kind);
+}
+
+/**
+ * A `multipart/*` body read into `FormData` by the platform's own parser, as
+ * the fetch interceptor reads one; a body it cannot parse rejects, and that
+ * rejection fails the request. Without a fetch `Response` (an old jsdom)
+ * there is no parser, so the body is delivered as it came.
+ */
+async function decodeMultipart(
+  body: string | ArrayBuffer,
+  contentType: string | undefined,
+): Promise<DecodedBody> {
+  if (typeof Response !== "function") {
+    return {
+      value:
+        typeof body === "string"
+          ? body
+          : toArrayBufferCopy(new Uint8Array(body)),
+    };
+  }
+  const parsed = new Response(body, {
+    headers: { "content-type": contentType ?? "" },
+  });
+  return { value: await parsed.formData() };
 }
 
 /**
@@ -589,34 +624,39 @@ function decodeBodyBytes(bytes: ArrayBuffer, kind: RequestBodyKind): unknown {
  * Angular serializes a body only in its backend (`serializeBody()`), after
  * every interceptor, so here it is still what the caller passed: `null` for a
  * bodyless request, an `HttpParams` or `URLSearchParams` instance for a form,
- * a `Blob`. The serialized body is decoded by its content type the way core
- * decodes one: JSON parsed, a urlencoded form a flat object, `text/*` a
- * string, `FormData` as is, anything else an `ArrayBuffer`. A `Blob` can only
- * be read asynchronously; every other body is decoded at once.
+ * a `Blob`. The serialized body is decoded by its content type with core's
+ * own decode table and JSON parser (`@schmock/core/adapter`), the ones
+ * `mock.listen()` and the fetch interceptor use: JSON parsed, a urlencoded
+ * form a flat object, `text/*` a string, `multipart/*` and `FormData` a
+ * `FormData`, anything else an `ArrayBuffer`. A `Blob` or a multipart body
+ * can only be read asynchronously; every other body is decoded at once.
  */
 function routedRequestBody(
   request: HttpRequest<unknown>,
   contentType: string | undefined,
-): unknown {
+): DecodedBody | Promise<DecodedBody> {
   const serialized: unknown = request.serializeBody();
-  if (serialized === null || serialized === undefined) return undefined;
-  const kind = requestBodyKindOf(contentType);
-  if (typeof serialized === "string") return decodeBodyText(serialized, kind);
+  if (serialized === null || serialized === undefined) {
+    return { value: undefined };
+  }
+  if (typeof serialized === "string") {
+    return decodeBodyText(serialized, contentType);
+  }
   if (typeof FormData === "function" && serialized instanceof FormData) {
-    return serialized;
+    return { value: serialized };
   }
   if (typeof Blob === "function" && serialized instanceof Blob) {
     return serialized
       .arrayBuffer()
-      .then((bytes) => decodeBodyBytes(bytes, kind));
+      .then((bytes) => decodeBodyBytes(bytes, contentType));
   }
   if (serialized instanceof ArrayBuffer) {
-    return decodeBodyBytes(serialized, kind);
+    return decodeBodyBytes(serialized, contentType);
   }
   if (serialized instanceof URLSearchParams) {
-    return decodeBodyText(serialized.toString(), kind);
+    return decodeBodyText(serialized.toString(), contentType);
   }
-  return serialized;
+  return { value: serialized };
 }
 
 type RequestHook = (
@@ -781,6 +821,26 @@ function emitFailure(interception: Interception, error: unknown): void {
       })
     : unformatted;
   emitHttpError(interception.observer, req, response, response.body);
+}
+
+/**
+ * Refuse a request body the way core's ingress does (400 `MALFORMED_JSON` or
+ * `JSON_TOO_DEEP`), without a route or history entry. The mock owns the
+ * answer, so `Sent` comes first, as for the 404 of an unmatched request.
+ */
+function emitIngressError(
+  interception: Interception,
+  rejected: HttpIngressError,
+): void {
+  const { observer, req } = interception;
+  observer.next({ type: HttpEventType.Sent });
+  const response = buildJsonErrorResponse({
+    status: rejected.status,
+    error: rejected.message,
+    code: rejected.code,
+    method: interception.responseMethod,
+  });
+  emitHttpError(observer, req, response, response.body);
 }
 
 /**
@@ -963,16 +1023,26 @@ function runInterception(interception: Interception, routePath: string): void {
       query: extractQueryParams(req),
     });
 
+    const route = (decoded: DecodedBody): void => {
+      // With passthrough off the mock owns every request, so a JSON body
+      // that does not parse, or nests too deep to be serialized back, gets
+      // the 400 the Node server and a strict fetch interceptor answer with,
+      // before any hook or route runs.
+      if (decoded.rejected !== undefined && !interception.config.passthrough) {
+        emitIngressError(interception, decoded.rejected);
+        return;
+      }
+      runRequestHook(interception, routedRequest(decoded.value));
+    };
+
     const body = routedRequestBody(req, getHeader(headers, "content-type"));
     if (!isPromiseLike(body)) {
-      runRequestHook(interception, routedRequest(body));
+      route(body);
       return;
     }
     Promise.resolve(body)
       .then((decoded) => {
-        if (!interception.aborted) {
-          runRequestHook(interception, routedRequest(decoded));
-        }
+        if (!interception.aborted) route(decoded);
       })
       .catch((error: unknown) => emitFailure(interception, error));
   } catch (error) {

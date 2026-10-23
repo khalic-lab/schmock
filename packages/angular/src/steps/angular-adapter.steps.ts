@@ -694,7 +694,12 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       200,
       {
         hasBody: body !== undefined,
-        body: body ?? null,
+        // FormData has no JSON form, so it is echoed as its `name` field.
+        body:
+          body instanceof FormData
+            ? { name: body.get("name") }
+            : (body ?? null),
+        isFormData: body instanceof FormData,
         contentType: headers["content-type"] ?? null,
       },
     ]);
@@ -729,6 +734,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           expect(response?.body).toEqual({
             hasBody: true,
             body: { grant_type: "password", user: "alice" },
+            isFormData: false,
             contentType: "application/x-www-form-urlencoded;charset=UTF-8",
           });
         },
@@ -759,9 +765,85 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
         expect(response?.body).toEqual({
           hasBody: false,
           body: null,
+          isFormData: false,
           contentType: null,
         });
       });
+    },
+  );
+
+  Scenario(
+    "A strict interceptor answers a JSON body that does not parse with 400",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create a strict Angular mock that echoes the request body and content type",
+        () => {
+          echoRequestBody();
+          interceptorOptions = { passthrough: false };
+        },
+      );
+
+      When(
+        'I make an Angular request to "POST /api/token" with the JSON-labelled text {string}',
+        async (_, text: string) => {
+          await makeRequest("POST", "/api/token", text, {
+            "Content-Type": "application/json",
+          });
+        },
+      );
+
+      Then("the response should be an HttpErrorResponse", () => {
+        expect(errorResponse).toBeInstanceOf(HttpErrorResponse);
+      });
+
+      And("the error status should be {int}", (_, status: number) => {
+        expect(errorResponse?.status).toBe(status);
+      });
+
+      And("the error body should contain {string}", (_, text: string) => {
+        expect(JSON.stringify(errorResponse?.error)).toContain(text);
+      });
+
+      And("the route should not have run", () => {
+        expect(mock.called("POST", "/api/token")).toBe(false);
+      });
+    },
+  );
+
+  Scenario(
+    "A multipart-labelled body reaches the handler as FormData",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Angular mock that echoes the request body and content type",
+        echoRequestBody,
+      );
+
+      When(
+        'I make an Angular request to "POST /api/token" with a multipart text body',
+        async () => {
+          const body =
+            "--xyz\r\n" +
+            'Content-Disposition: form-data; name="name"\r\n\r\n' +
+            "Rex\r\n--xyz--\r\n";
+          await makeRequest("POST", "/api/token", body, {
+            "Content-Type": "multipart/form-data; boundary=xyz",
+          });
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And(
+        "the echoed body should be the form data field name = {string}",
+        (_, value: string) => {
+          expect(response?.body).toMatchObject({
+            isFormData: true,
+            body: { name: value },
+          });
+        },
+      );
     },
   );
 

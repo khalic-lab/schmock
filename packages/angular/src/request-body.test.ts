@@ -2,7 +2,9 @@
 import "@angular/compiler";
 
 import {
+  HttpErrorResponse,
   type HttpEvent,
+  HttpEventType,
   HttpHeaders,
   HttpParams,
   HttpRequest,
@@ -11,7 +13,7 @@ import {
 import { schmock } from "@schmock/core";
 import { lastValueFrom, of } from "rxjs";
 import { describe, expect, it } from "vitest";
-import { createSchmockInterceptor } from "./index";
+import { type AngularAdapterOptions, createSchmockInterceptor } from "./index";
 
 /** The Accept header Angular's backends add when the caller set none. */
 const ANGULAR_ACCEPT = "application/json, text/plain, */*";
@@ -20,6 +22,38 @@ interface Received {
   body: unknown;
   contentType: string | undefined;
   accept: string | undefined;
+}
+
+interface Outcome {
+  events: HttpEvent<unknown>[];
+  error?: unknown;
+  routed: boolean;
+  body?: unknown;
+  contentType?: string;
+}
+
+/** Every event an Angular request emits, its error, and the body the route saw. */
+async function outcome(
+  request: HttpRequest<unknown>,
+  options: AngularAdapterOptions,
+): Promise<Outcome> {
+  const mock = schmock();
+  const result: Outcome = { events: [], routed: false };
+  mock("POST /echo", ({ body, headers }) => {
+    result.routed = true;
+    result.body = body;
+    result.contentType = headers["content-type"];
+    return [200, { ok: true }];
+  });
+  const Interceptor = createSchmockInterceptor(mock, options);
+  const real: HttpEvent<unknown> = new HttpResponse({ body: "real" });
+  return new Promise((resolve) => {
+    new Interceptor().intercept(request, { handle: () => of(real) }).subscribe({
+      next: (event) => result.events.push(event),
+      complete: () => resolve(result),
+      error: (error: unknown) => resolve({ ...result, error }),
+    });
+  });
 }
 
 /** What a route handler receives for an Angular request sent through the adapter. */
@@ -119,12 +153,17 @@ describe("Angular request bodies reach handlers as the backend sends them", () =
 
     it("keeps Angular's application/json label on an unlabelled URLSearchParams", async () => {
       // Angular's backends label it this way too, so a real server receives
-      // urlencoded text under a JSON content type; the text is not JSON.
+      // urlencoded text under a JSON content type. The text is not JSON: a
+      // passthrough interceptor routes it as text, a strict one refuses it.
+      const request = () =>
+        new HttpRequest("POST", "/echo", new URLSearchParams({ a: "1" }));
+      expect(await outcome(request(), { passthrough: true })).toMatchObject({
+        body: "a=1",
+        contentType: "application/json",
+      });
       expect(
-        await received(
-          new HttpRequest("POST", "/echo", new URLSearchParams({ a: "1" })),
-        ),
-      ).toMatchObject({ body: "a=1", contentType: "application/json" });
+        (await outcome(request(), { passthrough: false })).error,
+      ).toMatchObject({ status: 400, error: { code: "MALFORMED_JSON" } });
     });
 
     it("delivers a Blob decoded by its own type", async () => {
@@ -176,18 +215,86 @@ describe("Angular request bodies reach handlers as the backend sends them", () =
       });
     });
 
-    it("delivers a JSON-labelled string that does not parse as its text", async () => {
-      const request = new HttpRequest("POST", "/echo", "not json", {
-        headers: new HttpHeaders({ "Content-Type": "application/json" }),
-      });
-      expect(await received(request)).toMatchObject({ body: "not json" });
-    });
-
     it("parses a JSON-labelled string", async () => {
       const request = new HttpRequest("POST", "/echo", '{"a":1}', {
         headers: new HttpHeaders({ "Content-Type": "application/json" }),
       });
       expect(await received(request)).toMatchObject({ body: { a: 1 } });
+    });
+  });
+
+  describe("bodies core's ingress refuses or parses", () => {
+    /** A multipart body with one `name` field, delimited by `boundary`. */
+    const multipart = (boundary: string): string =>
+      `--${boundary}\r\n` +
+      'Content-Disposition: form-data; name="name"\r\n\r\n' +
+      `Rex\r\n--${boundary}--\r\n`;
+
+    const jsonText = (text: string) =>
+      new HttpRequest("POST", "/echo", text, {
+        headers: new HttpHeaders({ "Content-Type": "application/json" }),
+      });
+
+    it("answers a JSON-labelled string that does not parse with 400 MALFORMED_JSON", async () => {
+      const { events, error, routed } = await outcome(jsonText("not json"), {
+        passthrough: false,
+      });
+      expect(routed).toBe(false);
+      expect(events.map((event) => event.type)).toEqual([HttpEventType.Sent]);
+      expect(error).toBeInstanceOf(HttpErrorResponse);
+      expect(error).toMatchObject({
+        status: 400,
+        error: { error: "Malformed JSON request body", code: "MALFORMED_JSON" },
+      });
+    });
+
+    it("answers JSON nested past 256 levels with 400 JSON_TOO_DEEP", async () => {
+      const deep = `${"[".repeat(257)}${"]".repeat(257)}`;
+      const { error, routed } = await outcome(jsonText(deep), {
+        passthrough: false,
+      });
+      expect(routed).toBe(false);
+      expect(error).toMatchObject({
+        status: 400,
+        error: { code: "JSON_TOO_DEEP" },
+      });
+    });
+
+    it("routes a JSON body it refuses as its text when passthrough is on", async () => {
+      const { body, error } = await outcome(jsonText("not json"), {
+        passthrough: true,
+      });
+      expect(error).toBeUndefined();
+      expect(body).toBe("not json");
+    });
+
+    it("decodes a multipart-labelled string to FormData", async () => {
+      const request = new HttpRequest("POST", "/echo", multipart("xyz"), {
+        headers: new HttpHeaders({
+          "Content-Type": "multipart/form-data; boundary=xyz",
+        }),
+      });
+      const { body } = await received(request);
+      expect(body).toBeInstanceOf(FormData);
+      expect((body as FormData).get("name")).toBe("Rex");
+    });
+
+    it("decodes a multipart Blob to FormData", async () => {
+      const blob = new Blob([multipart("xyz")], {
+        type: "multipart/form-data; boundary=xyz",
+      });
+      const { body } = await received(new HttpRequest("PUT", "/echo", blob));
+      expect(body).toBeInstanceOf(FormData);
+      expect((body as FormData).get("name")).toBe("Rex");
+    });
+
+    it("fails a multipart body the platform cannot parse", async () => {
+      const request = new HttpRequest("POST", "/echo", multipart("xyz"), {
+        headers: new HttpHeaders({ "Content-Type": "multipart/form-data" }),
+      });
+      const { error, routed } = await outcome(request, { passthrough: false });
+      expect(routed).toBe(false);
+      expect(error).toMatchObject({ status: 500 });
     });
   });
 });

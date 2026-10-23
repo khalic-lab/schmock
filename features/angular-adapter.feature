@@ -160,6 +160,22 @@ Feature: Angular Adapter
     Then the response should be an HttpResponse
     And the echoed request should have no body and no content type
 
+  # The body is decoded with core's own table and JSON parser, so a strict
+  # interceptor refuses what mock.listen() and a strict fetch interceptor refuse.
+  Scenario: A strict interceptor answers a JSON body that does not parse with 400
+    Given I create a strict Angular mock that echoes the request body and content type
+    When I make an Angular request to "POST /api/token" with the JSON-labelled text "not json"
+    Then the response should be an HttpErrorResponse
+    And the error status should be 400
+    And the error body should contain "MALFORMED_JSON"
+    And the route should not have run
+
+  Scenario: A multipart-labelled body reaches the handler as FormData
+    Given I create an Angular mock that echoes the request body and content type
+    When I make an Angular request to "POST /api/token" with a multipart text body
+    Then the response should be an HttpResponse
+    And the echoed body should be the form data field name = "Rex"
+
   Scenario: A URL fragment does not affect routing or the query
     Given I create a strict Angular mock that echoes the query for "GET /echo" under baseUrl "/api"
     When I make an Angular request to "GET /api/echo?a=1#top"
