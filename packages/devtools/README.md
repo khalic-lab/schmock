@@ -65,7 +65,7 @@ This includes XHR. A service worker answers each request using your page's
 Copy the worker script to the directory your dev server serves at `/`:
 
 ```bash
-npx schmock-devtools init public
+npx @schmock/devtools init public
 ```
 
 Start the relay before the app renders:

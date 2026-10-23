@@ -32,7 +32,7 @@ import type {
 } from "./types.js";
 
 const DEFAULT_TIMEOUT = 5000;
-const INIT_HINT = 'Run "npx schmock-devtools init <publicDir>"';
+const INIT_HINT = 'Run "npx @schmock/devtools init <publicDir>"';
 
 interface ResolvedOptions {
   url: string;

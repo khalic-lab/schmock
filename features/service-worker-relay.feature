@@ -119,7 +119,7 @@ Feature: Service worker relay
       { "url": "/mocks/schmock-sw.js", "scope": "/" }
       """
     Then the relay fell back with reason "registration-failed"
-    And the page console warned with "npx schmock-devtools init"
+    And the page console warned with "npx @schmock/devtools init"
 
   Scenario: A worker script that fails to install falls back
     Given a page whose worker script throws while installing
@@ -233,7 +233,7 @@ Feature: Service worker relay
     Given a page whose worker answers the handshake with protocol 99
     When the page starts the relay
     Then the relay fell back with reason "protocol-mismatch"
-    And the page console warned with "npx schmock-devtools init"
+    And the page console warned with "npx @schmock/devtools init"
     And the page's fetches are still answered in the page
 
   Scenario: A worker copied from another package version only warns
@@ -246,7 +246,7 @@ Feature: Service worker relay
     Given a page whose worker script is not served
     When the page starts the relay
     Then the relay fell back with reason "registration-failed"
-    And the page console warned with "npx schmock-devtools init"
+    And the page console warned with "npx @schmock/devtools init"
 
   Scenario: A worker that never answers the handshake falls back
     Given a page whose worker never answers the handshake

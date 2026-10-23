@@ -43,11 +43,11 @@ const TEXT = {
   foreign: (script: string) =>
     `Schmock relay: this page is controlled by ${script}, which Schmock will not replace. Unregister it while developing, or give Schmock a scope that covers this page.`,
   mismatch: (n: number) =>
-    `Schmock relay: ${SCRIPT} speaks relay protocol ${n}, this page expects ${PROTOCOL}. Run "npx schmock-devtools init <publicDir>" again.`,
+    `Schmock relay: ${SCRIPT} speaks relay protocol ${n}, this page expects ${PROTOCOL}. Run "npx @schmock/devtools init <publicDir>" again.`,
   timeout: (ms: number) =>
     `Schmock relay: the service worker did not get ready within ${ms} ms, so mocked requests stay in the page.`,
   version: (v: string) =>
-    `Schmock relay: ${SCRIPT} comes from @schmock/devtools ${v}, this page uses ${VERSION}. Run "npx schmock-devtools init <publicDir>" to update it.`,
+    `Schmock relay: ${SCRIPT} comes from @schmock/devtools ${v}, this page uses ${VERSION}. Run "npx @schmock/devtools init <publicDir>" to update it.`,
   mockFailureFormat:
     "Schmock relay: %s %s failed in the mock, so the page receives a network error.",
 };
@@ -590,7 +590,7 @@ describe("PR6 registration failures", () => {
     expectFallback(
       relay,
       "registration-failed",
-      `Schmock relay: could not register ${SCRIPT} (the worker failed to install). Run "npx schmock-devtools init <publicDir>" and serve the file at ${SCRIPT}.`,
+      `Schmock relay: could not register ${SCRIPT} (the worker failed to install). Run "npx @schmock/devtools init <publicDir>" and serve the file at ${SCRIPT}.`,
     );
   });
 

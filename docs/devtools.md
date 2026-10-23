@@ -108,12 +108,18 @@ both showed as Network rows served by the service worker (observed).
 dev server serves at the site root:
 
 ```sh
-npx schmock-devtools init public
+npx @schmock/devtools init public
 ```
 
 The command creates the directory if it is missing, replaces an older copy,
 and prints the next step. Run it again after each upgrade of
 `@schmock/devtools` so the script matches the page library.
+
+Name the scoped package. The package installs a `schmock-devtools` command,
+but no npm package has that name: when the command is not installed yet,
+`npx schmock-devtools` looks the bare name up on the registry and fails, or
+runs whatever someone later publishes under it. `npx @schmock/devtools`
+runs the package's own command, and fetches the package when it is missing.
 
 To copy the script during the build instead, point your bundler's copy plugin
 at `node_modules/@schmock/devtools/dist/schmock-sw.js`. The package does not
@@ -256,18 +262,18 @@ script's absolute URL, such as `http://localhost:5173/schmock-sw.js`, and
 | `unsupported` | No `navigator.serviceWorker`: Node, a browser without service workers, an insecure page in Chrome, or a sandboxed iframe without `allow-same-origin`, where reading it throws (observed). | `Schmock relay: service workers are unavailable here, so mocked requests stay in the page and do not appear in the Network panel.` |
 | `insecure-context` | The browser exposes service workers on a page that is not a secure context. Chrome does not, so there the reason is `unsupported`. | `Schmock relay: service workers need a secure context (https or localhost), so mocked requests stay in the page.` |
 | `scope-taken` | Another script is registered at exactly the relay's scope. Nothing is registered. | `Schmock relay: <scriptURL> already controls this scope; Schmock will not replace it. Unregister it while developing, or give Schmock its own scope.` |
-| `registration-failed` | The browser refused the registration (script not served, script error, scope wider than the script's directory), or the worker failed to install. | `Schmock relay: could not register <url> (<message>). Run "npx schmock-devtools init <publicDir>" and serve the file at <url>.` |
+| `registration-failed` | The browser refused the registration (script not served, script error, scope wider than the script's directory), or the worker failed to install. | `Schmock relay: could not register <url> (<message>). Run "npx @schmock/devtools init <publicDir>" and serve the file at <url>.` |
 | `not-controlled` | The URL the page was loaded at is outside the scope: the script's directory, or the `scope` option. Nothing is registered and nothing waits. Not checked for a page the Schmock worker already controls, or for a srcdoc, blob or `about:blank` document. | `Schmock relay: <url> can only control pages under <scope>, and this page is <pageUrl>. Serve the script at or above this page, or pass a scope that covers it.` |
 | `not-controlled` | The worker could not take control of the page within `timeout`, and no worker controls it. | `Schmock relay: this page is not controlled by the Schmock service worker (a hard reload bypasses service workers); reload normally.` |
 | `not-controlled` | Another worker still controls the page when `timeout` expires, or took it over after a worker update. | `Schmock relay: this page is controlled by <scriptURL>, which Schmock will not replace. Unregister it while developing, or give Schmock a scope that covers this page.` |
-| `protocol-mismatch` | The served script speaks another relay protocol: it was copied from an incompatible version. | `Schmock relay: <url> speaks relay protocol <n>, this page expects <m>. Run "npx schmock-devtools init <publicDir>" again.` |
+| `protocol-mismatch` | The served script speaks another relay protocol: it was copied from an incompatible version. | `Schmock relay: <url> speaks relay protocol <n>, this page expects <m>. Run "npx @schmock/devtools init <publicDir>" again.` |
 | `timeout` | The deadline expired while the relay looked up, registered or activated the worker, or the worker never answered the handshake. | `Schmock relay: the service worker did not get ready within <timeout> ms, so mocked requests stay in the page.` |
 
 Two other messages leave the relay running:
 
 - A script copied from another `@schmock/devtools` version that speaks the
   same protocol warns
-  `Schmock relay: <url> comes from @schmock/devtools <version>, this page uses <version>. Run "npx schmock-devtools init <publicDir>" to update it.`
+  `Schmock relay: <url> comes from @schmock/devtools <version>, this page uses <version>. Run "npx @schmock/devtools init <publicDir>" to update it.`
   and the relay goes live.
 - A relayed request whose mock fails, for example through a hook that throws
   with no `errorFormatter`, logs
@@ -501,7 +507,7 @@ if (import.meta.env.DEV) {
 }
 ```
 
-`npx schmock-devtools init public` puts the script in a directory that the
+`npx @schmock/devtools init public` puts the script in a directory that the
 production build copies too. A script that no page registers does nothing. To
 keep it out of production output, copy it only in development builds.
 

@@ -1101,8 +1101,8 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         expectFellBack("registration-failed");
       });
 
-      And('the page console warned with "npx schmock-devtools init"', () => {
-        expectWarnedWith("npx schmock-devtools init");
+      And('the page console warned with "npx @schmock/devtools init"', () => {
+        expectWarnedWith("npx @schmock/devtools init");
       });
     },
   );
@@ -1643,8 +1643,8 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         expectFellBack("protocol-mismatch");
       });
 
-      And('the page console warned with "npx schmock-devtools init"', () => {
-        expectWarnedWith("npx schmock-devtools init");
+      And('the page console warned with "npx @schmock/devtools init"', () => {
+        expectWarnedWith("npx @schmock/devtools init");
       });
 
       And("the page's fetches are still answered in the page", async () => {
@@ -1705,8 +1705,8 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         expectFellBack("registration-failed");
       });
 
-      And('the page console warned with "npx schmock-devtools init"', () => {
-        expectWarnedWith("npx schmock-devtools init");
+      And('the page console warned with "npx @schmock/devtools init"', () => {
+        expectWarnedWith("npx @schmock/devtools init");
       });
     },
   );
