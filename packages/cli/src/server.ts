@@ -254,6 +254,9 @@ export function serverUrl(address: { hostname: string; port: number }): string {
   return `http://${formatUrlHost(address.hostname)}:${address.port}`;
 }
 
+/** A spec the openapi plugin reads over http(s) rather than from disk. */
+const HTTP_SPEC = /^https?:/i;
+
 /**
  * The checks `createCliServer` makes before it reads the spec. The flag parser
  * makes its own, but this entry point is public.
@@ -283,14 +286,25 @@ function assertServerOptions(options: CliOptions): void {
       { option: "shutdownGraceMs", value: graceMs },
     );
   }
+  // A URL has no directory to watch: the watcher resolved it as a local path
+  // and reported a missing directory on every retry, and no edit to the
+  // remote spec could ever reach it.
+  if (options.watch && HTTP_SPEC.test(options.spec)) {
+    throw new SchmockError(
+      "Invalid watch. A spec read from a URL cannot be watched; watch a local copy instead.",
+      "INVALID_CONFIG",
+      { option: "watch", spec: options.spec },
+    );
+  }
 }
 
 /**
  * Start a mock server for an OpenAPI spec, as the `schmock` command does.
  *
  * @throws SchmockError `INVALID_CONFIG` for a blank hostname or seed path, a
- *   `shutdownGraceMs` that is not an integer from 0 to 2147483647, or an
- *   unusable admin token, before anything is bound
+ *   `shutdownGraceMs` that is not an integer from 0 to 2147483647, `watch`
+ *   with an http(s) spec URL, or an unusable admin token, before anything is
+ *   bound
  */
 export async function createCliServer(options: CliOptions): Promise<CliServer> {
   assertServerOptions(options);

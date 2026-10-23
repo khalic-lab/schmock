@@ -103,3 +103,7 @@ Feature: CLI review fixes
     Then the thing endpoint serves "v2"
     When the recreated spec is edited to serve "v3"
     Then the edit is served as "v3"
+
+  Scenario: Watching a spec read from a URL is refused at startup
+    When a CLI server is created watching the spec URL "https://specs.example.com/api.json"
+    Then the server refuses to start with code "INVALID_CONFIG"

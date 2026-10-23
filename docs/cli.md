@@ -304,6 +304,12 @@ line on stderr says so:
 Schmock server reloaded on http://127.0.0.1:3000 (state and request history reset)
 ```
 
+Only a spec on disk can be watched. With a spec URL (`http:` or `https:`),
+`--watch` is refused at startup with `INVALID_CONFIG` and `Invalid watch. A
+spec read from a URL cannot be watched; watch a local copy instead.` (context
+`{ option: 'watch', spec }`). It used to watch a local directory named after
+the URL, report it missing on every retry, and never reload.
+
 `--watch` is also available programmatically as `watch: true` — see
 [Programmatic usage](#programmatic-usage).
 

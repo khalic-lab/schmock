@@ -736,6 +736,25 @@ describe("CLI errors carry SchmockError codes", () => {
     },
   );
 
+  // Review 2026-10-23, cli-6: the watcher read a URL as a local path.
+  it.each([
+    ["https://specs.example.com/api.json"],
+    ["HTTP://specs.example.com/api.yaml"],
+  ])(
+    "createCliServer refuses to watch the spec URL %s, before reading it",
+    async (spec) => {
+      await expect(
+        createCliServer({ spec, port: 0, watch: true }),
+      ).rejects.toMatchObject({
+        name: "SchmockError",
+        code: "INVALID_CONFIG",
+        message:
+          "Invalid watch. A spec read from a URL cannot be watched; watch a local copy instead.",
+        context: { option: "watch", spec },
+      });
+    },
+  );
+
   it("createCliServer refuses the blank seed path before reading the spec", async () => {
     // A spec that does not exist would fail first if it were read first.
     await expect(

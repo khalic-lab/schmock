@@ -1263,6 +1263,11 @@ declare namespace Schmock {
     debug?: boolean;
     fakerSeed?: number;
     errors?: boolean;
+    /**
+     * Reload when the spec, the seed manifest or a file they read changes
+     * (`--watch`). Only a spec on disk can be watched: with an http(s) spec
+     * URL, `createCliServer` throws `INVALID_CONFIG`.
+     */
     watch?: boolean;
     admin?: boolean;
     /**

@@ -793,4 +793,19 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       });
     },
   );
+
+  // cli-6: the watcher resolved a URL as a local path and never reloaded.
+  Scenario(
+    "Watching a spec read from a URL is refused at startup",
+    ({ When, Then }) => {
+      When(
+        "a CLI server is created watching the spec URL {string}",
+        (_, spec: string) => attemptStart({ spec, port: 0, watch: true }),
+      );
+      Then(
+        "the server refuses to start with code {string}",
+        thenRefusedWithCode,
+      );
+    },
+  );
 });
