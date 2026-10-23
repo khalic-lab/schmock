@@ -26,6 +26,7 @@ import {
 } from "./list-envelope.js";
 import { OWNER_KEY } from "./owner.js";
 import type { ParsedPath } from "./parser.js";
+import { selectRequestMediaType } from "./request-pipeline.js";
 import {
   findRepresentativeResponse,
   findSuccessResponse,
@@ -75,15 +76,13 @@ export function selectRequestSchema(
 ): JSONSchema7 | undefined {
   const fallback = isRecord(requestBody) ? requestBody : undefined;
   if (!contentType || !(requestContent instanceof Map)) return fallback;
-  const mediaType = normalizeMediaType(contentType);
-  const range = `${mediaType.split("/", 1)[0]}/*`;
-  for (const key of [mediaType, range, "*/*"]) {
-    if (requestContent.has(key)) {
-      const schema: unknown = requestContent.get(key);
-      return isRecord(schema) ? schema : undefined;
-    }
-  }
-  return fallback;
+  const key = selectRequestMediaType(
+    requestContent,
+    normalizeMediaType(contentType),
+  );
+  if (key === undefined) return fallback;
+  const schema: unknown = requestContent.get(key);
+  return isRecord(schema) ? schema : undefined;
 }
 
 /**

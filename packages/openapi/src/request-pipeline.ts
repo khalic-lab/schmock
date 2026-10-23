@@ -92,7 +92,7 @@ function getRouteRequestContent(
  * Wildcards are matched the way a spec author means them: an explicit key wins,
  * then `type/*`, then `*​/*`.
  */
-function selectRequestMediaType(
+export function selectRequestMediaType(
   content: Map<string, JSONSchema7 | undefined>,
   mediaType: string,
 ): string | undefined {
