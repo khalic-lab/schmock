@@ -695,3 +695,221 @@ describe("identifier resolution", () => {
     expect(read.body).toMatchObject({ id, last4: "4242" });
   });
 });
+
+describe("item envelopes on the item GET", () => {
+  const pet = {
+    type: "object",
+    required: ["id", "name"],
+    properties: { id: { type: "integer" }, name: { type: "string" } },
+  };
+  // On `/users/{id}` the id falls back to `id`, which only `team` declares.
+  const user = {
+    type: "object",
+    properties: {
+      userId: { type: "integer" },
+      name: { type: "string" },
+      team: {
+        type: "object",
+        properties: { id: { type: "integer" }, label: { type: "string" } },
+      },
+    },
+  };
+  const envelope = (key: string, item: Record<string, unknown>) => ({
+    type: "object",
+    required: [key],
+    properties: { [key]: item },
+  });
+  const pets = (item: Record<string, unknown>) =>
+    makePath("GET", "/pets", {
+      type: "object",
+      properties: { data: { type: "array", items: item } },
+    });
+  const detect = (paths: ParsedPath[]) =>
+    detectCrudResources(paths).resources[0];
+
+  describe("detection", () => {
+    it("stores what the envelope wraps when the item path comes first", () => {
+      const resource = detect([
+        makePath("GET", "/pets/:petId", envelope("data", pet)),
+        pets(pet),
+        makePath("POST", "/pets"),
+      ]);
+
+      expect(resource.schema).toBe(pet);
+      expect(resource.idProperty).toBe("id");
+    });
+
+    it("stores what the envelope wraps when there is no list GET", () => {
+      const resource = detect([
+        makePath("POST", "/pets"),
+        makePath("GET", "/pets/:petId", envelope("data", pet)),
+        makePath("DELETE", "/pets/:petId"),
+      ]);
+
+      expect(resource.schema).toBe(pet);
+      expect(resource.idProperty).toBe("id");
+    });
+
+    it("takes a slot under any name when the list's item has its properties", () => {
+      const resource = detect([
+        makePath("GET", "/pets/:petId", envelope("pet", pet)),
+        pets({ ...pet }),
+        makePath("POST", "/pets"),
+      ]);
+
+      expect(resource.schema).toBe(pet);
+    });
+
+    it("keeps a slot under an unconventional name that no list corroborates", () => {
+      const owned = envelope("owner", pet);
+      const resource = detect([
+        makePath("POST", "/pets"),
+        makePath("GET", "/pets/:petId", owned),
+      ]);
+
+      expect(resource.schema).toBe(owned);
+      expect(resource.idProperty).toBe("petId");
+    });
+
+    for (const [ordering, paths] of [
+      [
+        "the item path first",
+        [
+          makePath("GET", "/users/:id", user),
+          makePath("GET", "/users", { type: "array", items: user }),
+          makePath("POST", "/users"),
+        ],
+      ],
+      [
+        "no list GET",
+        [makePath("POST", "/users"), makePath("GET", "/users/:id", user)],
+      ],
+    ] satisfies Array<[string, ParsedPath[]]>) {
+      it(`keeps an item whose nested object declares the id (${ordering})`, () => {
+        const resource = detect(paths);
+
+        expect(resource.schema).toBe(user);
+        expect(resource.idProperty).toBe("id");
+      });
+    }
+  });
+
+  describe("through the plugin", () => {
+    const json = (schema: object) => ({ "application/json": { schema } });
+    const ok = (schema: object) => ({
+      "200": { description: "ok", content: json(schema) },
+    });
+    const petId = [
+      {
+        name: "petId",
+        in: "path",
+        required: true,
+        schema: { type: "integer" },
+      },
+    ];
+    const itemPath = {
+      parameters: petId,
+      get: {
+        responses: {
+          ...ok(envelope("data", pet)),
+          "404": { description: "missing" },
+        },
+      },
+      patch: {
+        requestBody: { content: json(pet) },
+        responses: ok(envelope("data", pet)),
+      },
+      delete: { responses: ok(envelope("data", pet)) },
+    };
+    const post = {
+      requestBody: { content: json(pet) },
+      responses: {
+        "201": { description: "created", content: json(envelope("data", pet)) },
+      },
+    };
+    const list = {
+      responses: ok({
+        type: "object",
+        properties: { data: { type: "array", items: pet } },
+      }),
+    };
+
+    async function mockOf(paths: Record<string, unknown>, validate: boolean) {
+      const mock = schmock({ state: {} });
+      mock.pipe(
+        await openapi({
+          spec: {
+            openapi: "3.0.3",
+            info: { title: "Envelopes", version: "1.0.0" },
+            paths,
+          },
+          validateResponses: validate,
+        }),
+      );
+      return mock;
+    }
+
+    for (const [ordering, paths] of [
+      [
+        "the item path first",
+        { "/pets/{petId}": itemPath, "/pets": { get: list, post } },
+      ],
+      ["no list GET", { "/pets/{petId}": itemPath, "/pets": { post } }],
+    ] satisfies Array<[string, Record<string, unknown>]>) {
+      for (const validate of [false, true]) {
+        it(`answers a created item by its id in the envelope (${ordering}, validateResponses: ${validate})`, async () => {
+          const mock = await mockOf(paths, validate);
+
+          const created = await mock.handle("POST", "/pets", {
+            body: { name: "rex" },
+          });
+          expect(created.body).toEqual({ data: { id: 1, name: "rex" } });
+
+          const read = await mock.handle("GET", "/pets/1");
+          expect(read.status).toBe(200);
+          expect(read.body).toEqual({ data: { id: 1, name: "rex" } });
+
+          const patched = await mock.handle("PATCH", "/pets/1", {
+            body: { name: "max" },
+          });
+          expect(patched.body).toEqual({ data: { id: 1, name: "max" } });
+
+          const deleted = await mock.handle("DELETE", "/pets/1");
+          expect(deleted.body).toEqual({ data: { id: 1, name: "max" } });
+          expect((await mock.handle("GET", "/pets/1")).status).toBe(404);
+        });
+      }
+    }
+
+    it("keeps a user's nested team a field of the user when no list GET exists", async () => {
+      const id = [
+        { name: "id", in: "path", required: true, schema: { type: "integer" } },
+      ];
+      const mock = await mockOf(
+        {
+          "/users/{id}": {
+            parameters: id,
+            get: { responses: ok(user) },
+            patch: { responses: ok(user) },
+          },
+          "/users": {
+            post: {
+              responses: { "201": { description: "c", content: json(user) } },
+            },
+          },
+        },
+        false,
+      );
+      const row = { userId: 7, name: "ann", team: { id: 3, label: "core" } };
+
+      const created = await mock.handle("POST", "/users", { body: row });
+      expect(created.body).toEqual({ ...row, id: 1 });
+      const read = await mock.handle("GET", "/users/1");
+      expect(read.body).toEqual({ ...row, id: 1 });
+      const patched = await mock.handle("PATCH", "/users/1", {
+        body: { name: "bob" },
+      });
+      expect(patched.body).toEqual({ ...row, id: 1, name: "bob" });
+    });
+  });
+});

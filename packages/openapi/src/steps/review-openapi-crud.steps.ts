@@ -97,6 +97,28 @@ const envelopedPetsSpec = spec({
   },
 });
 
+const petsCollectionPath = envelopedPetsSpec.paths["/pets"];
+const petItemPath = envelopedPetsSpec.paths["/pets/{petId}"];
+
+/** The enveloped pets, with the item path declared before the collection. */
+const itemFirstPetsSpec = spec({
+  "/pets/{petId}": petItemPath,
+  "/pets": petsCollectionPath,
+});
+
+/** The enveloped pets with no list GET: only the create on the collection. */
+const unlistedPetsSpec = spec({
+  "/pets": {
+    post: {
+      requestBody: { content: json(pet) },
+      responses: {
+        "201": { description: "created", content: json(petEnvelope) },
+      },
+    },
+  },
+  "/pets/{petId}": petItemPath,
+});
+
 const closedPet = { ...pet, additionalProperties: false };
 
 const closedPetsSpec = spec({
@@ -577,6 +599,49 @@ describeFeature(feature, ({ Scenario }) => {
       });
     },
   );
+
+  for (const [title, given, document] of [
+    [
+      "A spec declaring the item path first stores what the item envelope wraps",
+      'a validating pets mock whose item path is declared first and answers a "data" envelope',
+      itemFirstPetsSpec,
+    ],
+    [
+      "A spec without a list GET stores what the item envelope wraps",
+      'a validating pets mock with no list GET whose item path answers a "data" envelope',
+      unlistedPetsSpec,
+    ],
+  ] as const) {
+    Scenario(title, ({ Given, When, Then, And }) => {
+      Given(given, async () => {
+        await validatingMock(document);
+      });
+
+      And('a pet named "rex" has been created', async () => {
+        const created = await mock.handle("POST", "/pets", {
+          body: { name: "rex" },
+        });
+        expect(created.status).toBe(201);
+        expect(created.body).toEqual({ data: { id: 1, name: "rex" } });
+      });
+
+      When('I read, patch to "max" and delete pet 1', async () => {
+        responses = [
+          await mock.handle("GET", "/pets/1"),
+          await mock.handle("PATCH", "/pets/1", { body: { name: "max" } }),
+          await mock.handle("DELETE", "/pets/1"),
+        ];
+      });
+
+      Then('each item response is the pet wrapped under "data"', () => {
+        expect(responses.map((r) => [r.status, r.body])).toEqual([
+          [200, { data: { id: 1, name: "rex" } }],
+          [200, { data: { id: 1, name: "max" } }],
+          [200, { data: { id: 1, name: "max" } }],
+        ]);
+      });
+    });
+  }
 
   Scenario(
     "A delete that declares a confirmation object answers it around the deleted row",

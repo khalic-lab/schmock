@@ -438,7 +438,17 @@ when it declares the resource itself, the row is answered bare. The envelope's
 other properties are generated. A response counts as an envelope only when the
 resource schema declares the id property at its top level and the response
 does not: on `/users/{id}` with a `User { userId, team: { id } }`, the id falls
-back to the path parameter's `id`, and `team` stays a field of the user. When the operation declares no response schema
+back to the path parameter's `id`, and `team` stays a field of the user. The
+resource schema comes from whichever of the list `GET` and the item `GET` is
+declared first. When it comes from the item `GET` (declared first, or with no
+list `GET` at all) and that response is an envelope, the resource is what the
+envelope wraps: the response declares neither the path parameter nor `id` at
+its top level, exactly one of its properties declares one of them, and that
+property either is the list's item (the same schema, or the same top-level
+property names) or has a conventional envelope name (`data`, `item`,
+`result`, `resource`, `record`, `entity` or `payload`). So
+`GET /pets/{petId}` answering `{ data: Pet }` stores a `Pet`, while the
+`User` above stays the resource in either order. When the operation declares no response schema
 (or a non-object one), create falls back to echoing the request body and
 stamping the id. An object contract may omit `type`: `properties` or `allOf`
 alone, a polymorphic `oneOf`/`anyOf` whose branches are all objects (Stripe's

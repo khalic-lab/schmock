@@ -26,6 +26,21 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     Then each item response is the pet wrapped under "data"
     And the pets list is empty afterwards
 
+  # When the item GET supplies the resource schema (its path is declared
+  # before the collection, or there is no list GET), the resource is what its
+  # envelope wraps, so the row a create stores is found again by its id.
+  Scenario: A spec declaring the item path first stores what the item envelope wraps
+    Given a validating pets mock whose item path is declared first and answers a "data" envelope
+    And a pet named "rex" has been created
+    When I read, patch to "max" and delete pet 1
+    Then each item response is the pet wrapped under "data"
+
+  Scenario: A spec without a list GET stores what the item envelope wraps
+    Given a validating pets mock with no list GET whose item path answers a "data" envelope
+    And a pet named "rex" has been created
+    When I read, patch to "max" and delete pet 1
+    Then each item response is the pet wrapped under "data"
+
   Scenario: A delete that declares a confirmation object answers it around the deleted row
     Given a validating widgets mock whose DELETE declares an id, object and deleted confirmation
     And a widget named "x" has been created

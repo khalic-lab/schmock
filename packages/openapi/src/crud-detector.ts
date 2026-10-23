@@ -1,6 +1,11 @@
 import type * as Schmock from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
-import { collectSchemaProperties, findArrayProperty } from "./list-envelope.js";
+import {
+  collectSchemaProperties,
+  findArrayProperty,
+  propertyDeclarations,
+  unwrapNullable,
+} from "./list-envelope.js";
 import { type AccessModes, collectAccessModes } from "./normalizer.js";
 import type { ParsedPath } from "./parser.js";
 import { segmentParamName } from "./path-template.js";
@@ -330,9 +335,13 @@ function buildResource(
         itemSchema: readSchema,
       }).itemSchema
     : undefined;
+  // The item GET may wrap the resource (`{ data: Pet }`); what it wraps is
+  // the item create stores and read, update and delete replay.
+  const itemSchema =
+    readSchema && unwrapItemEnvelope(readSchema, idParam, listItemSchema);
   const schema = listFirst
-    ? (listItemSchema ?? readSchema)
-    : (readSchema ?? listItemSchema);
+    ? (listItemSchema ?? itemSchema)
+    : (itemSchema ?? listItemSchema);
 
   const name = deriveResourceName(basePath);
   const { idProperty, idKind } = resolveIdentifier(schema, idParam);
@@ -350,7 +359,7 @@ function buildResource(
   };
 
   const accessModes = collectAccessModes({
-    allOf: [schema, readSchema, listItemSchema].filter(
+    allOf: [schema, itemSchema, listItemSchema].filter(
       (s): s is JSONSchema7 => s !== undefined,
     ),
   });
@@ -363,6 +372,72 @@ function buildResource(
   }
 
   return { resource, leftovers };
+}
+
+/** Names an item envelope conventionally keeps its one resource under. */
+const ITEM_ENVELOPE_KEYS = new Set([
+  "data",
+  "item",
+  "result",
+  "resource",
+  "record",
+  "entity",
+  "payload",
+]);
+
+/**
+ * The resource an item GET answers, unwrapped from its envelope when the
+ * response is one, such as `{ data: Pet }` on `/pets/{petId}`.
+ *
+ * The slot is found by the rule create finds it by (`findResourceWrapper`):
+ * the response declares neither the path parameter nor `id` at its top
+ * level, and exactly one of its properties declares one of them. That rule
+ * alone also fits an item with a nested object, `User { userId, team: { id }
+ * }` on `/users/{id}`, so the slot must be corroborated: it is the list GET's
+ * item schema (by identity or by its top-level property names), or its name
+ * is a conventional envelope key. An item GET that answers the list's item
+ * itself is never an envelope. Anything else is returned as declared.
+ */
+function unwrapItemEnvelope(
+  readSchema: JSONSchema7,
+  idParam: string,
+  listItemSchema: JSONSchema7 | undefined,
+): JSONSchema7 {
+  const idNames = [idParam, "id"].filter((id) => id.length > 0);
+  const declaresId = (schema: JSONSchema7) => {
+    const properties = collectSchemaProperties(schema);
+    return idNames.some((id) => Object.hasOwn(properties, id));
+  };
+  if (declaresId(readSchema)) return readSchema;
+  if (listItemSchema && sameItem(readSchema, listItemSchema)) return readSchema;
+
+  const slots = new Map<string, JSONSchema7>();
+  for (const [key, declared] of propertyDeclarations(
+    unwrapNullable(readSchema),
+  )) {
+    if (!slots.has(key) && declaresId(declared)) slots.set(key, declared);
+  }
+  if (slots.size !== 1) return readSchema;
+  const [[key, slot]] = slots;
+  const corroborated =
+    (listItemSchema !== undefined && sameItem(slot, listItemSchema)) ||
+    ITEM_ENVELOPE_KEYS.has(key);
+  return corroborated ? slot : readSchema;
+}
+
+/**
+ * Whether two schemas describe the same item: the same declared object, or
+ * the same non-empty set of top-level property names.
+ */
+function sameItem(a: JSONSchema7, b: JSONSchema7): boolean {
+  if (unwrapNullable(a) === unwrapNullable(b)) return true;
+  const left = Object.keys(collectSchemaProperties(a));
+  const right = new Set(Object.keys(collectSchemaProperties(b)));
+  return (
+    left.length > 0 &&
+    left.length === right.size &&
+    left.every((name) => right.has(name))
+  );
 }
 
 /**
