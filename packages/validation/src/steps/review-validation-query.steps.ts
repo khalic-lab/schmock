@@ -814,4 +814,39 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       });
     },
   );
+
+  // ── Decimal multipleOf (review 2026-10-23) ───────────────────────────────
+
+  ScenarioOutline(
+    "A decimal multipleOf accepts an exact two-decimal price",
+    ({ Given, When, Then }, variables) => {
+      Given(
+        "a route that echoes a price whose request and response schemas require a multiple of 0.01",
+        () => {
+          const priceSchema: ResponseRules["body"] = {
+            type: "object",
+            properties: { price: { type: "number", multipleOf: 0.01 } },
+            required: ["price"],
+          };
+          mock = schmock();
+          mock("POST /prices", ({ body }) => [201, body]).pipe(
+            validationPlugin({
+              request: { body: priceSchema },
+              response: { body: priceSchema, statuses: "2xx" },
+            }),
+          );
+        },
+      );
+
+      When("I post the price <price>", async () => {
+        response = await mock.handle("POST", "/prices", {
+          body: { price: Number(variables.price) },
+        });
+      });
+
+      Then("the price response status should be <status>", () => {
+        expect(response.status).toBe(Number(variables.status));
+      });
+    },
+  );
 });

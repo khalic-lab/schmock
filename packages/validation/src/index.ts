@@ -76,11 +76,24 @@ interface AjvOptions {
   coerceTypes: boolean;
 }
 
+/**
+ * With this precision, Ajv accepts a `multipleOf` when `value / multipleOf`
+ * is within 1e-9 of an integer. Without it, floating-point division rejects
+ * exact values: 19.99 / 0.01 is 1998.9999999999998, so `multipleOf: 0.01`
+ * would reject 19.99. Very large values can still miss the tolerance.
+ */
+const MULTIPLE_OF_PRECISION = 9;
+
 function createAjv({ coerceTypes }: AjvOptions = { coerceTypes: false }): Ajv {
   // `ownProperties` keeps validation aligned with the transport: JSON.stringify
   // emits own enumerable properties only, so inherited members must neither
   // satisfy `required` nor trip `additionalProperties`.
-  const ajv = new Ajv({ allErrors: true, ownProperties: true, coerceTypes });
+  const ajv = new Ajv({
+    allErrors: true,
+    ownProperties: true,
+    coerceTypes,
+    multipleOfPrecision: MULTIPLE_OF_PRECISION,
+  });
   // Schemas produced by @schmock/openapi carry schmock generation markers.
   // Draft-07 Ajv defaults to strictSchema:true and would throw
   // "strict mode: unknown keyword" at compile time on any of them.

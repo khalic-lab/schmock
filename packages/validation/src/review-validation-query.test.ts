@@ -629,3 +629,54 @@ describe("validationPlugin query and header coercion", () => {
     });
   });
 });
+
+describe("validationPlugin decimal multipleOf", () => {
+  const price = {
+    type: "object" as const,
+    properties: { price: { type: "number" as const, multipleOf: 0.01 } },
+  };
+  const plugin = validationPlugin({
+    request: { body: price, query: price, headers: price },
+    response: { body: price },
+  });
+
+  // 19.99 / 0.01 is 1998.9999999999998 in binary floating point.
+  it("accepts an exact multiple in every slot", async () => {
+    const request = await runBeforeRequest(
+      plugin,
+      context({
+        method: "POST",
+        body: { price: 19.99 },
+        query: { price: "19.99" },
+        headers: { price: "19.99" },
+      }),
+    );
+    const response = await plugin.process(context(), { price: 19.99 });
+
+    expect(request.response).toBeUndefined();
+    expect(response.response).toEqual({ price: 19.99 });
+  });
+
+  it("still rejects a value that is not a multiple", async () => {
+    const request = await runBeforeRequest(
+      plugin,
+      context({ method: "POST", body: { price: 19.995 } }),
+    );
+    const response = await plugin.process(context(), { price: 19.995 });
+
+    expect(request.response).toMatchObject({
+      status: 400,
+      body: {
+        code: "REQUEST_VALIDATION_ERROR",
+        details: [{ keyword: "multipleOf" }],
+      },
+    });
+    expect(response.response).toMatchObject({
+      status: 500,
+      body: {
+        code: "RESPONSE_VALIDATION_ERROR",
+        details: [{ keyword: "multipleOf" }],
+      },
+    });
+  });
+});

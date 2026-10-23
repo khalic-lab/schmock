@@ -153,3 +153,16 @@ Feature: Validation plugin review fixes
       | value      | status |
       | abcdefghij | 200    |
       | short      | 400    |
+
+  # ── Decimal multipleOf (review 2026-10-23) ───────────────────────────────
+
+  Scenario Outline: A decimal multipleOf accepts an exact two-decimal price
+    Given a route that echoes a price whose request and response schemas require a multiple of 0.01
+    When I post the price <price>
+    Then the price response status should be <status>
+
+    Examples:
+      | price  | status |
+      | 19.99  | 201    |
+      | 0.07   | 201    |
+      | 19.995 | 400    |

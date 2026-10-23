@@ -1605,6 +1605,12 @@ Coercion happens on a copy: the route and later plugins still receive the
 original strings in `context.query`. Request and response bodies keep strict
 typing, so `'3'` does not satisfy `type: 'integer'` in `request.body`.
 
+`multipleOf` tolerates floating-point error in every slot: a value passes when
+`value / multipleOf` is within `1e-9` of an integer. That accepts exact
+amounts of ordinary size, so `19.99` satisfies `multipleOf: 0.01` even though
+`19.99 / 0.01` is `1998.9999999999998`. Very large values can still be
+rejected: `1234567.89 / 0.01` is `123456788.99999999`, too far from an integer.
+
 Header schemas may spell names in any case (`'X-Api-Key'`). Incoming header
 names are matched case-insensitively against every name declared in
 `properties`, `required` and `dependencies` by the header schema itself, by its
