@@ -2471,37 +2471,36 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   );
 
   Scenario(
-    "A beacon from a relaying page goes to the network without visiting the page",
+    "A keepalive request from a relaying page is answered by the mock through the service worker",
     ({ Given, When, Then }) => {
       Given(
         'a page whose mock answers "GET /api/users" with users and whose relay has started',
         () => givenRelayingPage(usersRoute),
       );
 
-      When('the page sends a beacon to "/api/events"', async () => {
-        // sendBeacon never goes through window.fetch: a keepalive POST
-        // straight from the browser.
-        response = await withTimeout(
-          currentPage().networkFetch("/api/events", {
-            method: "POST",
-            body: "event",
-            keepalive: true,
-          }),
-          "beacon /api/events",
-        );
-      });
+      When(
+        'the page sends a keepalive request for "/api/users" that bypasses its fetch',
+        async () => {
+          // As sendBeacon does, the request goes from the browser to the
+          // worker without passing through window.fetch.
+          response = await withTimeout(
+            currentPage().networkFetch("/api/users", { keepalive: true }),
+            "keepalive /api/users",
+          );
+        },
+      );
 
       Then(
-        "the network received the beacon without the page seeing it",
+        "the mock answered the keepalive request with users through the service worker",
         async () => {
-          await expectNetworkBody(await receivedResponse());
+          await expectUsers();
           expect(currentPage().browserLog.at(-1)).toEqual({
-            method: "POST",
-            url: "http://localhost/api/events",
-            servedBy: "network",
+            method: "GET",
+            url: USERS_URL,
+            servedBy: "worker",
           });
-          expect(currentPage().relayedFrames).toEqual([]);
-          expect(currentMock().callCount()).toBe(0);
+          expect(currentPage().relayedFrames).toHaveLength(1);
+          expect(currentMock().callCount()).toBe(1);
         },
       );
     },

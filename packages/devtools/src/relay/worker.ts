@@ -19,23 +19,35 @@ import type {
 
 /**
  * Whether a request may be relayed to its page: sub-resource fetches the page
- * itself made (fetch/XHR), never navigations, loads with a destination,
- * cross-mode only-if-cached requests, or keepalive requests (sendBeacon, a
- * keepalive fetch): those exist to outlive their page, and a page that is
- * going away may never answer them.
+ * itself made (fetch/XHR), never navigations, loads with a destination, or
+ * cross-mode only-if-cached requests.
  */
 export function isRelayCandidate(request: Request, clientId: string): boolean {
   return (
     clientId !== "" &&
     request.mode !== "navigate" &&
     request.destination === "" &&
-    !request.keepalive &&
     !(request.cache === "only-if-cached" && request.mode !== "same-origin")
   );
 }
 
-/** Installs the relay listeners on a worker scope. Called once per worker start. */
-export function installRelayWorker(scope: RelayWorkerScope): void {
+/**
+ * How long the worker waits for a page to answer a relayed keepalive request
+ * (sendBeacon, a keepalive fetch) before sending it to the network instead.
+ * Those requests exist to outlive their page, and a page that is going away
+ * may never answer.
+ */
+const KEEPALIVE_ANSWER_MS = 5000;
+
+/**
+ * Installs the relay listeners on a worker scope. Called once per worker
+ * start. keepaliveAnswerMs overrides KEEPALIVE_ANSWER_MS, for tests.
+ */
+export function installRelayWorker(
+  scope: RelayWorkerScope,
+  options: { readonly keepaliveAnswerMs?: number } = {},
+): void {
+  const keepaliveAnswerMs = options.keepaliveAnswerMs ?? KEEPALIVE_ANSWER_MS;
   const registry = new ClientRegistry(
     scope.caches,
     RELAY_REGISTRY_CACHE,
@@ -50,14 +62,27 @@ export function installRelayWorker(scope: RelayWorkerScope): void {
       // prunes the registry.
       if (client === undefined) return await scope.fetch(event.request);
       const serialized = await serializeRequest(event.request.clone());
-      const reply = await ask(
-        client,
-        { type: "schmock:request" as const, request: serialized },
-        {
-          transfer: transferablesOf(serialized),
-          abortSignal: event.request.signal,
-        },
-      );
+      // A keepalive request is bounded: past the bound, its page is taken to
+      // be going away and the request goes to the network.
+      const unanswered = new AbortController();
+      const bound = event.request.keepalive
+        ? setTimeout(() => unanswered.abort(), keepaliveAnswerMs)
+        : undefined;
+      let reply: unknown;
+      try {
+        reply = await ask(
+          client,
+          { type: "schmock:request" as const, request: serialized },
+          {
+            transfer: transferablesOf(serialized),
+            abortSignal: event.request.signal,
+            cancelSignal: unanswered.signal,
+          },
+        );
+      } finally {
+        clearTimeout(bound);
+      }
+      if (unanswered.signal.aborted) return await scope.fetch(event.request);
       if (isRelayReply(reply)) {
         if (reply.type === "schmock:response") {
           return deserializeResponse(reply.response);

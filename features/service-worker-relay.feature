@@ -406,10 +406,10 @@ Feature: Service worker relay
     And the new worker version finishes installing and takes control
     Then the page's XHR for "/api/users" reaches the network without the mock
 
-  Scenario: A beacon from a relaying page goes to the network without visiting the page
+  Scenario: A keepalive request from a relaying page is answered by the mock through the service worker
     Given a page whose mock answers "GET /api/users" with users and whose relay has started
-    When the page sends a beacon to "/api/events"
-    Then the network received the beacon without the page seeing it
+    When the page sends a keepalive request for "/api/users" that bypasses its fetch
+    Then the mock answered the keepalive request with users through the service worker
 
   Scenario: Documented hazard - an abort the worker never sees leaves the route to finish
     Given a page whose mock answers "GET /api/slow" after it is released and whose relay has started

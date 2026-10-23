@@ -181,8 +181,8 @@ describe("isRelayCandidate", () => {
     ).toBe(true);
   });
 
-  it("W1 rejects keepalive requests, which may outlive their page", () => {
-    expect(isRelayCandidate(req({ keepalive: true }), "c1")).toBe(false);
+  it("W24 accepts keepalive requests, which relay() bounds", () => {
+    expect(isRelayCandidate(req({ keepalive: true }), "c1")).toBe(true);
     expect(
       isRelayCandidate(
         new Request("http://localhost/beacon", {
@@ -192,7 +192,7 @@ describe("isRelayCandidate", () => {
         }),
         "c1",
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(isRelayCandidate(req({ keepalive: false }), "c1")).toBe(true);
   });
 });
@@ -582,7 +582,7 @@ describe("fetch", () => {
     expect(page.browserLog).toEqual([]);
   });
 
-  it("W21 leaves a relaying page's keepalive request to the network", async () => {
+  it("W21 relays a keepalive request its live page answers", async () => {
     await relayWorker();
     const page = h.openPage();
     await page.respondToRelaysWith({ tab: "A" });
@@ -593,20 +593,38 @@ describe("fetch", () => {
       keepalive: true,
     });
 
-    expect(await response.text()).toBe("real network");
+    expect(await response.json()).toEqual({ tab: "A" });
     expect(page.browserLog.at(-1)).toEqual({
       method: "POST",
       url: "http://localhost/api/beacon",
-      servedBy: "network",
+      servedBy: "worker",
     });
-    expect(page.relayedFrames).toEqual([]);
+    expect(page.relayedFrames).toHaveLength(1);
+    expect(h.network).not.toHaveBeenCalled();
+  });
 
-    // positive control: the same request without keepalive is relayed
-    const relayed = await page.networkFetch("/api/beacon", {
+  it("W25 sends a keepalive request to the network when its page does not answer within the bound", async () => {
+    h.installWorker((scope) =>
+      installRelayWorker(scope, { keepaliveAnswerMs: 50 }),
+    );
+    await h.activateWorker();
+    await h.flush();
+    const page = await registered();
+    const frames = answerFrames(page, undefined);
+
+    const response = await page.networkFetch("/api/beacon", {
       method: "POST",
       body: "event",
+      keepalive: true,
     });
-    expect(await relayed.json()).toEqual({ tab: "A" });
+
+    expect(await response.text()).toBe("real network");
+    expect(frames).toHaveLength(1);
+    expect(h.network).toHaveBeenCalledTimes(1);
+    const sent: unknown = h.network.mock.calls[0]?.[0];
+    if (!(sent instanceof Request)) throw new Error("no network request");
+    expect(sent.method).toBe("POST");
+    expect(await sent.text()).toBe("event");
   });
 
   it("W14 falls back to scope.fetch for a client it cannot find, and keeps its id", async () => {

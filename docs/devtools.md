@@ -423,8 +423,8 @@ leave `provideSchmockInterceptor`.
 | Cross-origin request a lease answers (origin-form `baseUrl` for another origin) | readable | readable, custom headers such as `x-total-count` included (observed) |
 | Bodiless `POST` (`fetch` or XHR) | no body | no body (observed) |
 | Explicit empty request body | empty | empty |
-| `fetch` with `keepalive: true` | mocked | not relayed: reaches the network unmocked |
-| `navigator.sendBeacon()` | never seen | not relayed: reaches the network |
+| `fetch` with `keepalive: true` | mocked | mocked; reaches the network instead when the page does not answer within 5 seconds |
+| `navigator.sendBeacon()` | never seen | relayed like a `fetch`; reaches the network when the page does not answer within 5 seconds |
 | Before the relay is live | n/a | `fetch` answered in the page, XHR not mocked |
 | Performance entry vs Network row | no row | the entry is shorter by the worker round trip |
 
@@ -439,16 +439,15 @@ worker, so it is usually a few milliseconds shorter than the Network row.
   tab. Another page under the same worker that never started the relay is
   untouched (observed).
 - **Only requests with an empty destination:** `fetch()` and XHR, and also
-  `EventSource`. Navigations, scripts, styles, images and fonts are never
-  relayed, so a `passthrough: false` lease cannot answer the app's own assets
-  with 404s.
-- **Not keepalive requests:** `navigator.sendBeacon()` and
-  `fetch(url, { keepalive: true })`. They exist to outlive their page, often
-  sent as it unloads, and a page that is going away may never answer the
-  worker, so the request would reach neither the mock nor the network. The
-  worker sends them to the network. While the relay is live, the page hands
-  every `fetch` to the worker, so a keepalive `fetch` that fetch mode would
-  mock reaches the network unmocked.
+  `navigator.sendBeacon()` and `EventSource`. Navigations, scripts, styles,
+  images and fonts are never relayed, so a `passthrough: false` lease cannot
+  answer the app's own assets with 404s.
+- **Keepalive requests within a bound:** `navigator.sendBeacon()` and
+  `fetch(url, { keepalive: true })` exist to outlive their page, often sent
+  as it unloads, and a page that is going away may never answer the worker.
+  The worker relays them like any other request but waits at most 5 seconds
+  for the page's answer, then sends the request to the network. A route
+  slower than that still runs in the page, and its answer is dropped.
 - **Not `only-if-cached` requests** whose mode is not `same-origin`.
 
 The worker stores its list of pages in Cache Storage, in a cache named
@@ -512,7 +511,8 @@ list in memory.
   mode the mock gets the abort and ends the request with 499.
 - **A page that dies mid-request.** If a tab closes or crashes after the
   worker relayed one of its requests, no answer comes, and the request stays
-  pending in the worker until Chrome stops the worker. Nothing is visible.
+  pending in the worker until Chrome stops the worker. Nothing is visible. A
+  keepalive request is the exception: it goes to the network after 5 seconds.
 - **Two rows for a request no mock answers.** The page's row, served by the
   worker, comes with the worker's own fetch to the network (observed). Hide
   the second with the filter `-is:service-worker-initiated`. Only `fetch` and
