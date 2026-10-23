@@ -104,6 +104,25 @@ function validateHostname(value: string | undefined): string | undefined {
   return value;
 }
 
+/**
+ * A blank path is a typo (an unset shell variable), never "no file":
+ * `--seed=` used to start a server with empty collections and no warning, and
+ * `--spec=` to report that no spec was given at all.
+ */
+function validatePath(
+  flag: "--spec" | "--seed",
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (value.trim() === "") {
+    throw invalidFlag(`Invalid ${flag}. The path must be non-empty.`, {
+      flag,
+      value,
+    });
+  }
+  return value;
+}
+
 function validateAdminToken(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   if (!isUsableAdminToken(value)) {
@@ -132,9 +151,10 @@ function parseAllowedHosts(value: string | undefined): string[] | undefined {
 /**
  * Parse `schmock` command-line arguments into {@link CliOptions}.
  *
- * @throws SchmockError `INVALID_CONFIG` for a flag value the CLI refuses, a
- *   second positional argument, or `--admin-token` without `--admin`. An
- *   unknown flag throws Node's own `parseArgs` error.
+ * @throws SchmockError `INVALID_CONFIG` for a flag value the CLI refuses
+ *   (a blank `--spec` or `--seed` included), a second positional argument, or
+ *   `--admin-token` without `--admin`. An unknown flag throws Node's own
+ *   `parseArgs` error.
  */
 export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
   const { values, positionals } = parseArgs({
@@ -170,7 +190,7 @@ export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
     );
   }
 
-  const spec = values.spec ?? positionals[0] ?? "";
+  const spec = validatePath("--spec", values.spec) ?? positionals[0] ?? "";
 
   // A token alone used to be dropped silently: the admin paths fell through to
   // the mock and every authenticated call 404'd with no hint why. Implying
@@ -187,7 +207,7 @@ export function parseCliArgs(args: string[]): CliOptions & { help: boolean } {
     // a typo to reject, not a request for the 3000 default.
     port: values.port === undefined ? undefined : validatePort(values.port),
     hostname: validateHostname(values.hostname),
-    seed: values.seed,
+    seed: validatePath("--seed", values.seed),
     cors: values.cors,
     debug: values.debug,
     errors: values.errors,

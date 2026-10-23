@@ -576,6 +576,21 @@ describe("CLI errors carry SchmockError codes", () => {
         "Unexpected extra arguments: b.json. Pass exactly one spec path.",
       context: { flag: "<spec>" },
     },
+    {
+      args: ["spec.json", "--seed="],
+      message: "Invalid --seed. The path must be non-empty.",
+      context: { flag: "--seed", value: "" },
+    },
+    {
+      args: ["spec.json", "--seed", "  "],
+      message: "Invalid --seed. The path must be non-empty.",
+      context: { flag: "--seed", value: "  " },
+    },
+    {
+      args: ["--spec=", "spec.json"],
+      message: "Invalid --spec. The path must be non-empty.",
+      context: { flag: "--spec", value: "" },
+    },
   ])(
     "parseCliArgs($args) throws INVALID_CONFIG",
     ({ args, message, context }) => {
@@ -594,6 +609,27 @@ describe("CLI errors carry SchmockError codes", () => {
       message:
         "Invalid hostname. The hostname must be a non-empty host, address or interface.",
     });
+  });
+
+  it.each([[""], ["  "]])(
+    "createCliServer refuses the blank seed path %j with INVALID_CONFIG",
+    async (seed) => {
+      await expect(
+        createCliServer({ spec: PETSTORE_SPEC, port: 0, seed }),
+      ).rejects.toMatchObject({
+        name: "SchmockError",
+        code: "INVALID_CONFIG",
+        message: "Invalid seed. The seed manifest path must be non-empty.",
+        context: { option: "seed", value: seed },
+      });
+    },
+  );
+
+  it("createCliServer refuses the blank seed path before reading the spec", async () => {
+    // A spec that does not exist would fail first if it were read first.
+    await expect(
+      createCliServer({ spec: "missing-spec.json", port: 0, seed: "" }),
+    ).rejects.toMatchObject({ code: "INVALID_CONFIG" });
   });
 
   it("createCliServer refuses an unusable admin token without echoing it", async () => {

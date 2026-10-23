@@ -71,3 +71,8 @@ Feature: CLI review fixes
     Given a seed manifest that seeds pets under the key "__proto__"
     When a CLI server is created for the petstore spec with that seed manifest
     Then the server refuses to start with code "OPENAPI_UNKNOWN_SEED_RESOURCE"
+
+  Scenario: An empty --seed value is refused instead of starting an unseeded server
+    When the CLI is run on the petstore spec with the extra arguments "--seed="
+    Then the run is refused with code "INVALID_CONFIG" for the flag "--seed"
+    And no server is announced

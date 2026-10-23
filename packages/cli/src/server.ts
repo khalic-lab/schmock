@@ -43,7 +43,9 @@ async function createCliMock(
     },
   };
 
-  if (options.seed) {
+  // `!== undefined`, not truthiness: an empty path must fail, not quietly
+  // start an unseeded mock (`assertServerOptions` refuses it up front).
+  if (options.seed !== undefined) {
     openapiOptions.seed = loadSeedFile(options.seed);
   }
 
@@ -250,12 +252,30 @@ export function serverUrl(address: { hostname: string; port: number }): string {
 }
 
 /**
+ * The checks `createCliServer` makes before it reads the spec. The flag parser
+ * makes its own, but this entry point is public.
+ */
+function assertServerOptions(options: CliOptions): void {
+  // A blank seed path is a typo, never "no seed": the truthiness test this
+  // replaces started an unseeded server with no warning, and `--watch` read
+  // the path as the working directory.
+  if (options.seed !== undefined && options.seed.trim() === "") {
+    throw new SchmockError(
+      "Invalid seed. The seed manifest path must be non-empty.",
+      "INVALID_CONFIG",
+      { option: "seed", value: options.seed },
+    );
+  }
+}
+
+/**
  * Start a mock server for an OpenAPI spec, as the `schmock` command does.
  *
- * @throws SchmockError `INVALID_CONFIG` for a blank hostname or an unusable
- *   admin token, before anything is bound
+ * @throws SchmockError `INVALID_CONFIG` for a blank hostname or seed path, or
+ *   an unusable admin token, before anything is bound
  */
 export async function createCliServer(options: CliOptions): Promise<CliServer> {
+  assertServerOptions(options);
   const resolved: CliOptions = {
     ...options,
     adminToken: resolveAdminToken(options),

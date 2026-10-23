@@ -536,6 +536,42 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     expect(startError).toMatchObject({ code });
   }
 
+  /**
+   * Run the CLI on the petstore spec with `extra` (space-separated) appended,
+   * until it is refused or announces a server; a server that did start is
+   * shut down through the SIGINT handler `run` registered.
+   */
+  async function whenRunWithArguments(
+    _: unknown,
+    extra: string,
+  ): Promise<void> {
+    const baseline = process.listeners("SIGINT");
+    captureStderr();
+    const runPromise = run([
+      "--spec",
+      PETSTORE_SPEC,
+      "--port",
+      "0",
+      ...extra.split(" "),
+    ]);
+    runPromise.catch((error: unknown) => {
+      startError = error;
+    });
+    await eventually(
+      () =>
+        startError !== undefined || /Schmock server running on/.test(stderr),
+      10_000,
+    );
+    // Warnings and the admin lines follow the banner synchronously, but give
+    // them a tick before the shutdown below.
+    await sleep(50);
+    const added = process
+      .listeners("SIGINT")
+      .filter((listener) => !baseline.includes(listener));
+    for (const listener of added) listener("SIGINT");
+    await runPromise.catch(() => {});
+  }
+
   // cli-5: a `__proto__` manifest key used to vanish through the prototype
   // setter instead of reaching openapi's unknown-resource check.
   Scenario(
@@ -561,6 +597,28 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         "the server refuses to start with code {string}",
         thenRefusedWithCode,
       );
+    },
+  );
+
+  // cli-2: `--seed=` (an unset shell variable) used to start an unseeded
+  // server with no warning.
+  Scenario(
+    "An empty --seed value is refused instead of starting an unseeded server",
+    ({ When, Then, And }) => {
+      When(
+        "the CLI is run on the petstore spec with the extra arguments {string}",
+        whenRunWithArguments,
+      );
+      Then(
+        "the run is refused with code {string} for the flag {string}",
+        (_, code: string, flag: string) => {
+          expect(startError).toBeInstanceOf(SchmockError);
+          expect(startError).toMatchObject({ code, context: { flag } });
+        },
+      );
+      And("no server is announced", () => {
+        expect(stderr).not.toContain("Schmock server running on");
+      });
     },
   );
 });

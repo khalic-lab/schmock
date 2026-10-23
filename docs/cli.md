@@ -66,13 +66,19 @@ something else:
   `createCliServer({ hostname })`.
 - Exactly one spec path. `schmock a.json b.json` is an error instead of silently
   serving `a.json`. (`--spec` still wins over a single positional.)
+- `--seed` and `--spec` must be non-empty paths. `--seed=` (for example an
+  unset shell variable) is rejected with `Invalid --seed. The path must be
+  non-empty.` where it used to start a server with empty collections and no
+  warning; `--spec=` is rejected the same way. `createCliServer({ seed: '' })`
+  throws `Invalid seed. The seed manifest path must be non-empty.`
 
 Each of these is a `SchmockError` with code `INVALID_CONFIG`; the messages are
 the ones quoted above. From `parseCliArgs`, the error's `context` is
 `{ flag, value }`. `--admin-token` errors carry `{ flag }` only, so the token
 never lands in a log, and an extra spec path carries `{ flag: '<spec>' }`. From
-`createCliServer`, a blank hostname carries `{ option: 'hostname', value }` and
-an unusable admin token `{ option: 'adminToken' }`. The binary still prints
+`createCliServer`, a blank hostname carries `{ option: 'hostname', value }`, a
+blank seed path `{ option: 'seed', value }` and an unusable admin token
+`{ option: 'adminToken' }`. The binary still prints
 `Schmock failed: <message>`, but `err.name` (and so `String(err)`) is now
 `SchmockError` rather than `Error`.
 
