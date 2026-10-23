@@ -418,3 +418,21 @@ Feature: Service worker relay
     And the route is released
     Then the XHR rejected with an AbortError
     And the mock ended the request with status 200
+
+  Scenario: A stopped page stays stopped when another page says hello to the new worker version before it prunes
+    Given a page whose mock answers "GET /api/users" with users and whose relay has started
+    And a second page whose relay answers every request with:
+      """
+      { "tab": "B" }
+      """
+    When a new worker version whose claim is slow starts installing and waits
+    And the page stops the relay
+    And the new worker version finishes installing and takes over both pages
+    And the second page says hello to the new worker version before it claims
+    And the new worker version claims and prunes
+    And the second page sends an XHR for "/api/users"
+    Then the page's XHR for "/api/users" reaches the network without the mock
+    And the second page received through the service worker:
+      """
+      { "tab": "B" }
+      """

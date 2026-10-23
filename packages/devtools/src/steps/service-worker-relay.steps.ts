@@ -2549,4 +2549,137 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       });
     },
   );
+
+  Scenario(
+    "A stopped page stays stopped when another page says hello to the new worker version before it prunes",
+    ({ Given, When, Then, And }) => {
+      let releaseInstall = () => {};
+      let releaseClaim = () => {};
+      let replacing: Promise<void> = Promise.resolve();
+      let secondPageController: unknown;
+
+      Given(
+        'a page whose mock answers "GET /api/users" with users and whose relay has started',
+        () => givenRelayingPage(usersRoute),
+      );
+
+      And(
+        "a second page whose relay answers every request with:",
+        async (_, docString: string) => {
+          secondPage = currentHarness().openPage();
+          await withTimeout(
+            secondPage.respondToRelaysWith(parseJson(docString)),
+            "the second page's hello",
+          );
+        },
+      );
+
+      When(
+        "a new worker version whose claim is slow starts installing and waits",
+        async () => {
+          const target = currentHarness();
+          const old = target.worker;
+          secondPageController =
+            currentSecondPage().environment.container?.controller;
+          const installing = new Promise<void>((resolve) => {
+            releaseInstall = resolve;
+          });
+          const claiming = new Promise<void>((resolve) => {
+            releaseClaim = resolve;
+          });
+          // The new version reads the stored page list when its script runs,
+          // waits in install, and once active claims only when released.
+          replacing = target.replaceWorker((scope) => {
+            scope.addEventListener("install", (event) => {
+              event.waitUntil(installing);
+            });
+            installRelayWorker({
+              ...scope,
+              clients: {
+                ...scope.clients,
+                claim: async () => {
+                  await claiming;
+                  await scope.clients.claim();
+                },
+              },
+            });
+          });
+          replacing.catch(() => undefined);
+          await vi.waitFor(() => expect(target.worker).not.toBe(old), {
+            timeout: SETTLE_MS,
+          });
+          await delay(30);
+        },
+      );
+
+      And("the page stops the relay", async () => {
+        await withTimeout(currentRelay().stop(), "stop()");
+      });
+
+      And(
+        "the new worker version finishes installing and takes over both pages",
+        async () => {
+          releaseInstall();
+          // Activation hands every controlled page to the new version
+          // before its activate event runs.
+          await vi.waitFor(
+            () =>
+              expect(
+                currentSecondPage().environment.container?.controller,
+              ).not.toBe(secondPageController),
+            { timeout: SETTLE_MS },
+          );
+        },
+      );
+
+      And(
+        "the second page says hello to the new worker version before it claims",
+        async () => {
+          await withTimeout(
+            currentSecondPage().respondToRelaysWith({ tab: "B" }),
+            "the second page's hello to the new version",
+          );
+        },
+      );
+
+      And("the new worker version claims and prunes", async () => {
+        releaseClaim();
+        await withTimeout(replacing, "replaceWorker()");
+        await currentHarness().flush();
+      });
+
+      And('the second page sends an XHR for "/api/users"', () =>
+        secondPageXhr("/api/users"),
+      );
+
+      Then(
+        `the page's XHR for "/api/users" reaches the network without the mock`,
+        async () => {
+          const target = currentPage();
+          const framesBefore = target.relayedFrames.length;
+          const received = await withTimeout(
+            target.xhr("/api/users"),
+            "XHR /api/users",
+          );
+          await expectNetworkBody(received);
+          expect(target.browserLog.at(-1)).toEqual({
+            method: "GET",
+            url: USERS_URL,
+            servedBy: "network",
+          });
+          expect(target.relayedFrames).toHaveLength(framesBefore);
+          expect(currentMock().callCount()).toBe(0);
+        },
+      );
+
+      And(
+        "the second page received through the service worker:",
+        async (_, docString: string) => {
+          if (secondResponse === undefined) throw new Error("No XHR was sent");
+          expect(await bodyOf(secondResponse)).toEqual(parseJson(docString));
+          expectSeenByBrowser(currentSecondPage(), "GET", USERS_URL, "worker");
+        },
+      );
+    },
+  );
 });
