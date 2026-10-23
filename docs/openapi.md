@@ -1050,9 +1050,10 @@ on a scalar schema, so a property declaring `example: "active"` is returned as
 and seed rows are generated from the schema, so required properties hold,
 seeded rows differ, and a `writeOnly` field present in the example never
 reaches a response. Set an explicit `default` to pin an object value.
-Media-type examples for `Prefer: example=` are unaffected. OpenAPI 3.1 replaces
-`example` with the JSON Schema `examples` array; its first entry plays the same
-part when the schema declares neither a `default` nor an `example`.
+Media-type examples for `Prefer: example=` are unaffected. The JSON Schema
+`examples` array that OpenAPI 3.1 uses instead of `example` is not promoted: it
+lists sample values, and generation stays varied. Set a `default` (or a 3.0
+`example`) to pin a scalar value.
 
 A nullable value is `null` about 5% of the time, whether the schema uses 3.0
 `nullable: true` or the 3.1 forms `type: [T, "null"]` and

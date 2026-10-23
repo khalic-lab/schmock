@@ -397,22 +397,26 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   );
 
   Scenario(
-    "A 3.1 examples array becomes the generation default the way a 3.0 example does",
+    "A 3.1 examples array does not pin the generated value",
     ({ Given, When, Then }) => {
+      const malformed = "4f4e4e1-c824-4d63-b37a-d8d698862f1d";
+      const ids: unknown[] = [];
+
       Given(
-        'a 3.1 mock whose status string declares the examples "active" and "idle"',
+        "a 3.1 mock whose trip id is a uuid declaring a malformed example",
         async () => {
           await build({
             spec: specWith(
               {
-                "/status": {
+                "/trips/{id}": {
                   get: {
                     responses: {
                       "200": {
                         description: "OK",
                         content: json({
                           type: "string",
-                          examples: ["active", "idle"],
+                          format: "uuid",
+                          examples: [malformed],
                         }),
                       },
                     },
@@ -426,13 +430,23 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         },
       );
 
-      When("I read the status", async () => {
-        response = await mock.handle("GET", "/status");
+      When("I read the trip id three times", async () => {
+        for (let i = 0; i < 3; i++) {
+          ids.push((await mock.handle("GET", "/trips/1")).body);
+        }
       });
 
-      Then('the status is "active"', () => {
-        expect(response.body).toBe("active");
-      });
+      Then(
+        "every trip id is a well-formed uuid and none is the example",
+        () => {
+          for (const id of ids) {
+            expect(id).toMatch(
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+            );
+          }
+          expect(ids).not.toContain(malformed);
+        },
+      );
     },
   );
 

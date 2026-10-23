@@ -107,8 +107,8 @@ function isPrimitive(value: unknown): boolean {
  * - discriminator beside oneOf or anyOf -> required + enum on branches
  * - readOnly/writeOnly -> strip based on direction (names recorded, see
  *   {@link collectAccessModes})
- * - example, or else the first entry of a 3.1 `examples` array -> default (if
- *   default not set), on scalar nodes only
+ * - example -> default (if default not set), on scalar nodes only; a 3.1
+ *   `examples` array is left alone
  * - exclusiveMinimum/exclusiveMaximum boolean -> number format
  * - x-* extensions -> stripped
  * - a cycle -> ended where generation can stop: an optional property closing
@@ -488,19 +488,16 @@ function normalizeNode(
 
   // Handle example -> default, for scalar values on scalar nodes only. An object
   // or array default is returned verbatim by json-schema-faker, so promoting a
-  // composite example replaced every generated body with it. OAS 3.1 replaces
-  // `example` with the JSON Schema `examples` array; its first entry stands in
-  // when no `example` is given.
-  if (!("default" in node) && !isCompositeNode(node)) {
-    const example =
-      "example" in node
-        ? node.example
-        : Array.isArray(node.examples) && node.examples.length > 0
-          ? node.examples[0]
-          : undefined;
-    if (example !== undefined && isPrimitive(example)) {
-      node.default = example;
-    }
+  // composite example replaced every generated body with it. A 3.1 `examples`
+  // array is not promoted: it lists sample values rather than naming one, and
+  // pinning its first entry made every generated value that sample.
+  if (
+    "example" in node &&
+    !("default" in node) &&
+    isPrimitive(node.example) &&
+    !isCompositeNode(node)
+  ) {
+    node.default = node.example;
   }
   delete node.example;
 

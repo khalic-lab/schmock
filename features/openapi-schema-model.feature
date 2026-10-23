@@ -64,10 +64,10 @@ Feature: OpenAPI schema model fixes
 
   # ── Examples ──────────────────────────────────────────────────────────────
 
-  Scenario: A 3.1 examples array becomes the generation default the way a 3.0 example does
-    Given a 3.1 mock whose status string declares the examples "active" and "idle"
-    When I read the status
-    Then the status is "active"
+  Scenario: A 3.1 examples array does not pin the generated value
+    Given a 3.1 mock whose trip id is a uuid declaring a malformed example
+    When I read the trip id three times
+    Then every trip id is a well-formed uuid and none is the example
 
   # ── CRUD detection ────────────────────────────────────────────────────────
 

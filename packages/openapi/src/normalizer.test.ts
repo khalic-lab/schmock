@@ -895,28 +895,16 @@ describe("normalizeSchema", () => {
       expect(result).not.toHaveProperty("example");
     });
 
-    it("promotes the first of a 3.1 examples array when there is no example", () => {
+    it("leaves a 3.1 examples array out of the default", () => {
       const result = normalizeSchema(
         { type: "string", examples: ["active", "idle"] },
         "response",
       );
-      expect(result.default).toBe("active");
+      expect(result).not.toHaveProperty("default");
       expect(result.examples).toEqual(["active", "idle"]);
-
-      const union = normalizeSchema(
-        { type: ["string", "null"], examples: ["active"] },
-        "response",
-      );
-      expect(union.default).toBe("active");
     });
 
-    it("prefers default, then example, over the examples array", () => {
-      expect(
-        normalizeSchema(
-          { type: "string", default: "set", example: "one", examples: ["x"] },
-          "response",
-        ).default,
-      ).toBe("set");
+    it("still promotes a 3.0 example beside an examples array", () => {
       expect(
         normalizeSchema(
           { type: "string", example: "one", examples: ["x"] },
@@ -925,33 +913,22 @@ describe("normalizeSchema", () => {
       ).toBe("one");
     });
 
-    it("never promotes an examples entry onto a composite node or from an object", () => {
-      expect(
-        normalizeSchema(
-          { type: "array", items: { type: "string" }, examples: [["a"]] },
-          "response",
-        ),
-      ).not.toHaveProperty("default");
-      expect(
-        normalizeSchema({ type: "string", examples: [{ a: 1 }] }, "response"),
-      ).not.toHaveProperty("default");
-      expect(
-        normalizeSchema({ type: "string", examples: [] }, "response"),
-      ).not.toHaveProperty("default");
-    });
-
-    it("generates the first examples entry for a 3.1 spec", async () => {
+    it("keeps generating varied values for a 3.1 spec with examples", async () => {
+      // The Train Travel spec's example uuid has seven hex digits in its first
+      // group; pinning it made every generated id that malformed value.
+      const malformed = "4f4e4e1-c824-4d63-b37a-d8d698862f1d";
       const mock = await mockFor(
         specWith(
           {
-            "/status": {
+            "/trips/{id}": {
               get: {
                 responses: {
                   "200": {
                     description: "ok",
                     content: json({
                       type: "string",
-                      examples: ["active", "idle"],
+                      format: "uuid",
+                      examples: [malformed],
                     }),
                   },
                 },
@@ -963,9 +940,16 @@ describe("normalizeSchema", () => {
         ),
       );
 
+      const ids = new Set<unknown>();
       for (let i = 0; i < 3; i++) {
-        expect((await mock.handle("GET", "/status")).body).toBe("active");
+        const { body } = await mock.handle("GET", "/trips/1");
+        expect(body).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+        );
+        ids.add(body);
       }
+      expect(ids.has(malformed)).toBe(false);
+      expect(ids.size).toBeGreaterThan(1);
     });
 
     it("preserves existing default when example is present", () => {
