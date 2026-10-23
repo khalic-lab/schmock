@@ -386,6 +386,118 @@ const nullableResponseSpec = {
   },
 };
 
+const itemsWithout404Spec = {
+  openapi: "3.0.3",
+  info: { title: "Items without 404", version: "1.0.0" },
+  paths: {
+    "/items": {
+      get: {
+        responses: {
+          "200": {
+            description: "List",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array",
+                  items: { $ref: "#/components/schemas/Item" },
+                },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        responses: {
+          "201": {
+            description: "Created",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/Item" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/items/{itemId}": {
+      get: {
+        parameters: [
+          {
+            name: "itemId",
+            in: "path",
+            required: true,
+            schema: { type: "integer" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Item",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/Item" },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  components: {
+    schemas: {
+      Item: {
+        type: "object",
+        required: ["itemId", "name"],
+        properties: {
+          itemId: { type: "integer" },
+          name: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+const petsWithoutProducesSpec = {
+  swagger: "2.0",
+  info: { title: "Pets without produces", version: "1.0.0" },
+  paths: {
+    "/pets": {
+      get: {
+        responses: {
+          "200": {
+            description: "List",
+            schema: { type: "array", items: { $ref: "#/definitions/Pet" } },
+          },
+        },
+      },
+      post: {
+        responses: {
+          "201": {
+            description: "Created",
+            schema: { $ref: "#/definitions/Pet" },
+          },
+        },
+      },
+    },
+    "/pets/{petId}": {
+      get: {
+        parameters: [
+          { name: "petId", in: "path", required: true, type: "integer" },
+        ],
+        responses: {
+          "200": { description: "Pet", schema: { $ref: "#/definitions/Pet" } },
+        },
+      },
+    },
+  },
+  definitions: {
+    Pet: {
+      type: "object",
+      required: ["petId", "name"],
+      properties: { petId: { type: "integer" }, name: { type: "string" } },
+    },
+  },
+};
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -799,6 +911,114 @@ describeFeature(feature, ({ Scenario }) => {
         if (!isRecord(response.body)) return;
         expect(response.body.a).toBeNull();
       });
+    },
+  );
+  Scenario(
+    "An undeclared status is reported as a structured response validation error",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a mock validating responses for an item read that declares no 404",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: itemsWithout404Spec,
+              validateResponses: true,
+            }),
+          );
+        },
+      );
+
+      When("I read an item that does not exist", async () => {
+        response = await mock.handle("GET", "/items/42");
+      });
+
+      Then("the response status is 500", () => {
+        expect(response.status).toBe(500);
+      });
+
+      And(
+        "the response validation error code is {string}",
+        (_, code: string) => {
+          expect(isRecord(response.body)).toBe(true);
+          if (!isRecord(response.body)) return;
+          expect(response.body.code).toBe(code);
+        },
+      );
+
+      And(
+        "the response validation error reports status {int}",
+        (_, status: number) => {
+          expect(response.body).toMatchObject({
+            status,
+            details: [
+              {
+                path: "/",
+                message: `status ${status} is not declared by the operation`,
+                keyword: "status",
+              },
+            ],
+          });
+        },
+      );
+
+      And("the response validation error carries no media type", () => {
+        expect(isRecord(response.body)).toBe(true);
+        if (!isRecord(response.body)) return;
+        expect(Object.keys(response.body)).not.toContain("mediaType");
+      });
+    },
+  );
+
+  Scenario(
+    "A Swagger 2.0 response without produces keeps its validation details",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a Swagger 2.0 mock validating responses with a seeded pet missing its name",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: petsWithoutProducesSpec,
+              validateResponses: true,
+              seed: { pets: [{ petId: 1 }] },
+            }),
+          );
+        },
+      );
+
+      When("I read the seeded pet", async () => {
+        response = await mock.handle("GET", "/pets/1");
+      });
+
+      Then("the response status is 500", () => {
+        expect(response.status).toBe(500);
+      });
+
+      And(
+        "the response validation error code is {string}",
+        (_, code: string) => {
+          expect(isRecord(response.body)).toBe(true);
+          if (!isRecord(response.body)) return;
+          expect(response.body.code).toBe(code);
+        },
+      );
+
+      And(
+        "the response validation error reports the missing property {string}",
+        (_, property: string) => {
+          expect(response.body).toMatchObject({
+            status: 200,
+            details: [
+              {
+                path: "/",
+                message: `must have required property '${property}'`,
+                keyword: "required",
+              },
+            ],
+          });
+        },
+      );
     },
   );
 });

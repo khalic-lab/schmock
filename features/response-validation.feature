@@ -73,3 +73,18 @@ Feature: OpenAPI Response Validation
     When I request the seeded nullable response
     Then the response status is 200
     And the nullable response field is null
+
+  Scenario: An undeclared status is reported as a structured response validation error
+    Given a mock validating responses for an item read that declares no 404
+    When I read an item that does not exist
+    Then the response status is 500
+    And the response validation error code is "RESPONSE_VALIDATION_ERROR"
+    And the response validation error reports status 404
+    And the response validation error carries no media type
+
+  Scenario: A Swagger 2.0 response without produces keeps its validation details
+    Given a Swagger 2.0 mock validating responses with a seeded pet missing its name
+    When I read the seeded pet
+    Then the response status is 500
+    And the response validation error code is "RESPONSE_VALIDATION_ERROR"
+    And the response validation error reports the missing property "name"

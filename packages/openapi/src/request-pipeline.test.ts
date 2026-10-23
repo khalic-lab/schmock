@@ -494,3 +494,191 @@ describe("request media type selection", () => {
     expect(created.status).toBe(201);
   });
 });
+
+/** An OpenAPI 3 items resource whose read declares no 404. */
+const itemsWithout404Spec = {
+  openapi: "3.0.3",
+  info: { title: "Items", version: "1.0.0" },
+  paths: {
+    "/items": {
+      get: {
+        responses: {
+          "200": {
+            description: "List",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array",
+                  items: { $ref: "#/components/schemas/Item" },
+                },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        responses: {
+          "201": {
+            description: "Created",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/Item" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/items/{itemId}": {
+      get: {
+        parameters: [
+          {
+            name: "itemId",
+            in: "path",
+            required: true,
+            schema: { type: "integer" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Item",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/Item" },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  components: {
+    schemas: {
+      Item: {
+        type: "object",
+        required: ["itemId", "name"],
+        properties: {
+          itemId: { type: "integer" },
+          name: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+/** A Swagger 2.0 pets resource with no `produces`, so no response media type. */
+const petsWithoutProducesSpec = {
+  swagger: "2.0",
+  info: { title: "Pets", version: "1.0.0" },
+  paths: {
+    "/pets": {
+      get: {
+        responses: {
+          "200": {
+            description: "List",
+            schema: { type: "array", items: { $ref: "#/definitions/Pet" } },
+          },
+        },
+      },
+      post: {
+        responses: {
+          "201": {
+            description: "Created",
+            schema: { $ref: "#/definitions/Pet" },
+          },
+        },
+      },
+    },
+    "/pets/{petId}": {
+      get: {
+        parameters: [
+          { name: "petId", in: "path", required: true, type: "integer" },
+        ],
+        responses: {
+          "200": { description: "Pet", schema: { $ref: "#/definitions/Pet" } },
+        },
+      },
+    },
+  },
+  definitions: {
+    Pet: {
+      type: "object",
+      required: ["petId", "name"],
+      properties: { petId: { type: "integer" }, name: { type: "string" } },
+    },
+  },
+};
+
+describe("response validation errors", () => {
+  it("reports an undeclared status as RESPONSE_VALIDATION_ERROR with no mediaType key", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({ spec: itemsWithout404Spec, validateResponses: true }),
+    );
+
+    const response = await mock.handle("GET", "/items/42");
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: "Response validation failed",
+      code: "RESPONSE_VALIDATION_ERROR",
+      status: 404,
+      details: [
+        {
+          path: "/",
+          message: "status 404 is not declared by the operation",
+          keyword: "status",
+        },
+      ],
+    });
+    expect(Object.keys(response.body as object)).not.toContain("mediaType");
+  });
+
+  it("reports a Swagger 2.0 body violation with its details when no media type is declared", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: petsWithoutProducesSpec,
+        validateResponses: true,
+        seed: { pets: [{ petId: 1 }] },
+      }),
+    );
+
+    const response = await mock.handle("GET", "/pets/1");
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: "Response validation failed",
+      code: "RESPONSE_VALIDATION_ERROR",
+      status: 200,
+      details: [
+        {
+          path: "/",
+          message: "must have required property 'name'",
+          keyword: "required",
+        },
+      ],
+    });
+  });
+
+  it("keeps the mediaType key when a media type was selected", () => {
+    const context = makeContext(
+      { "openapi:responses": profileResponses() },
+      {},
+    );
+
+    const result = validateResponse(
+      context,
+      [200, { profile: "a" }, { "content-type": "application/json;profile=b" }],
+      createBodyValidatorContext(),
+    );
+
+    expect(result?.response).toEqual([
+      500,
+      expect.objectContaining({
+        code: "RESPONSE_VALIDATION_ERROR",
+        mediaType: "application/json;profile=b",
+      }),
+    ]);
+  });
+});

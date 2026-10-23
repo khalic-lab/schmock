@@ -659,7 +659,11 @@ function responseValidationError(
         error: "Response validation failed",
         code: "RESPONSE_VALIDATION_ERROR",
         status,
-        mediaType,
+        // Omitted rather than undefined: core refuses a body holding an
+        // undefined value and would answer INVALID_RESPONSE in place of this
+        // error. An undeclared status, and every Swagger 2.0 response without
+        // `produces`, has no media type.
+        ...(mediaType === undefined ? {} : { mediaType }),
         details,
       },
     ],
