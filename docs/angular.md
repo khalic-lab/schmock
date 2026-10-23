@@ -207,9 +207,15 @@ Without it they load `@schmock/openapi` through a specifier computed at
 runtime, which is for Node and test runners only. A bundler leaves that import
 in place, so in a bundled browser app (`ng build`, Karma or another browser
 test runner) they reject with `SchmockError` code `OPENAPI_PEER_UNAVAILABLE`
-even when the package is installed. Under a Node test runner (Vitest, Jest),
-where the import resolves from `node_modules`, they work, and a spec file path
-is read from disk:
+even when the package is installed. Under a Node test runner they work, and
+a spec file path is read from disk, but only when the runner loads the Node
+build of `@schmock/openapi`, as Vitest's default `node` environment does. A
+runner that resolves the `browser` export condition loads the browser build,
+where a file path throws `OPENAPI_NODE_ONLY`: Jest's jsdom environment sets
+that condition by default, and a DOM environment that bundles or transforms
+the adapter can pick it too. There, pass the spec imported as JSON and the
+`{ openapi }` argument, as [the testing guide](./testing.md#openapi-driven-angular-tests)
+shows. Under Vitest's `node` environment:
 
 ```typescript
 import { provideSchmockInterceptorFromSpec } from '@schmock/angular'

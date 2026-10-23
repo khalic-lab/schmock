@@ -260,37 +260,49 @@ Two things differ from the other adapters:
 
 ### OpenAPI-driven Angular tests
 
-What works depends on where the tests run.
-
-Under a Node test runner (Vitest, Jest, jsdom or happy-dom included),
-`provideSchmockInterceptorFromSpec` builds the mock for you, and a spec file
-path is read from disk. A relative `fetch('/assets/api.json')` does not work
-there: Node has no page origin to resolve it against.
+What works depends on which build of `@schmock/openapi` the test runner
+loads. One recipe works under every runner: pass the spec as an object,
+imported as JSON, and hand `provideSchmockInterceptorFromSpec` your own
+`openapi` import as its third argument (see
+[the Angular guide](./angular.md#the-fromspec-helpers)):
 
 ```typescript
+import { openapi } from '@schmock/openapi'
 import { provideSchmockInterceptorFromSpec } from '@schmock/angular'
+import spec from '../src/assets/api.json'
 
 beforeEach(async () => {
   TestBed.configureTestingModule({
     providers: [
       provideHttpClient(withInterceptorsFromDi()),
       await provideSchmockInterceptorFromSpec(
-        { spec: './src/assets/api.json', seed: { users: { count: 5 } } },
+        { spec, seed: { users: { count: 5 } } },
         { baseUrl: '/api' },
+        { openapi },
       ),
     ],
   })
 })
 ```
 
-Under Karma or another browser runner the tests are a bundled browser app. The
-`FromSpec` helpers reject there with `OPENAPI_PEER_UNAVAILABLE` unless you
-hand them your own `openapi` import as the third argument (see
-[the Angular guide](./angular.md#the-fromspec-helpers)), and a file path
-throws `OPENAPI_NODE_ONLY` (see
-[Running in a browser](./openapi.md#running-in-a-browser)). Pass the spec
-fetched or imported as JSON, and either hand the helper `{ openapi }` or pipe
-the plugin into a mock yourself:
+A spec file path (`spec: './src/assets/api.json'`) is read from disk only
+when the runner loads the Node build of `@schmock/openapi`, as Vitest's
+default `node` environment does. A runner that resolves packages with the
+`browser` export condition loads the browser build instead, and there a file
+path throws `OPENAPI_NODE_ONLY` (see
+[Running in a browser](./openapi.md#running-in-a-browser)). Jest's jsdom
+environment sets that condition by default
+(`testEnvironmentOptions.customExportConditions`), and a DOM environment that
+bundles or transforms the adapter, as the Angular CLI's unit-test builder
+does, can pick it too. Without the third argument the helpers load
+`@schmock/openapi` through a runtime import of their own, which resolves under
+a Node runner but rejects with `OPENAPI_PEER_UNAVAILABLE` in a bundled one. A
+relative `fetch('/assets/api.json')` does not work under Node either: there
+is no page origin to resolve it against.
+
+Under Karma or another browser runner the tests are a bundled browser app.
+Use the same recipe, with the spec fetched or imported as JSON, or pipe the
+plugin into a mock yourself:
 
 ```typescript
 import { schmock } from '@schmock/core'
