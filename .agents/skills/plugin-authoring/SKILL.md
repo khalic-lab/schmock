@@ -16,6 +16,8 @@ Treat these live files as authoritative before implementing a plugin:
 - Return a factory-created `Plugin` object with a unique `name`.
 - Read the plugin version from its package JSON rather than hard-coding it.
 - Use `install(instance)` only for one-time setup performed when `.pipe()` registers the plugin.
+- `install` and `uninstall` return `PluginHookResult`: any value but a thenable, ignored. An expression-bodied arrow that registers a route type-checks; an `async` hook is a compile error, and `pipe()` rejects a Promise-returning `install` with `PLUGIN_ASYNC_INSTALL_UNSUPPORTED`.
+- `onExchange(exchange)` returns `unknown`: it observes what a `mock.intercept()` caller finally received, its value is ignored and a promise is not awaited.
 - Implement `process(context, response?: unknown)` and always return a valid `{ context, response? }` result, synchronously or asynchronously.
 - Treat `PluginContext.state` as per-request state shared across plugins. Treat optional `routeState` as route/global state supplied by the core builder.
 - Preserve an existing response unless the plugin intentionally transforms it. A generator-style plugin may create a response when the incoming value is `undefined` or `null`.

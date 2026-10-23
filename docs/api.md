@@ -535,10 +535,16 @@ interface PluginResult {
 registers are committed atomically only after the hook returns successfully;
 the callable must not be retained. Promise-returning installs are rejected.
 
-`install()` and `uninstall()` return `void | undefined` rather than `void`, so
-an `async` hook is a compile error for both. Every synchronous hook still
-satisfies the type, annotated or not. An async `uninstall()` used to compile
-and was ignored at runtime.
+`install()` and `uninstall()` return `PluginHookResult`: any value that is not
+a thenable, and the value is ignored. An expression-bodied arrow such as
+`install: (mock) => mock('GET /health', { ok: true })` type-checks, as does
+every synchronous hook whether or not it is annotated `: void`. An `async`
+hook is a compile error for both, and an `install()` that returns a promise is
+also rejected at runtime with `PLUGIN_ASYNC_INSTALL_UNSUPPORTED`. An async
+`uninstall()` used to compile and was ignored at runtime.
+
+`onExchange` returns `unknown` instead: core ignores the value and does not
+await a promise, so an expression-bodied or `async` observer type-checks.
 
 A `process` hook that returns something other than a `PluginResult`, or a
 `beforeRequest` hook that returns something other than a `PluginResult` or
@@ -1203,8 +1209,11 @@ Each of these is planned for removal in the next major version.
 
 ### Named types
 
-These types are exported by name from `@schmock/core`. All but the last row are
-also on the ambient `Schmock` namespace.
+These types are exported by name from `@schmock/core`. The two Node-ingress
+rows (`ServeNodeRequestOptions` through `HttpIngressErrorCode`, and
+`NodeRequestLike`/`NodeResponseLike`) are root-entry exports only: import them
+from `@schmock/core`. Every other row, `PluginHookResult` included, is also on
+the ambient `Schmock` namespace.
 
 | Type | Describes |
 |------|-----------|
