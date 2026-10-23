@@ -229,6 +229,25 @@ reject with `OPENAPI_PEER_UNAVAILABLE` and the import failure in
 `context.cause`. Webpack-based builders may print a harmless
 `Critical dependency: the request of a dependency is an expression` warning.
 
+### Cookie API keys
+
+The interceptor never sees the browser's cookie jar: the browser attaches its
+cookies to the request on the wire, and the interceptor answers before
+anything reaches the wire. So with `security: true`, an operation secured only
+by a cookie API key answers 401 even when the browser holds the cookie. A
+`Cookie` header set on the `HttpRequest` itself is a different matter: the
+interceptor, and so the mock, does see it, although the browser would drop it
+before a real server could. Add the cookie in `beforeRequest`; only its
+presence is checked (see
+[Security Validation](./openapi.md#security-validation)):
+
+```typescript
+provideSchmockInterceptor(mock, {
+  baseUrl: '/api',
+  beforeRequest: () => ({ headers: { cookie: 'session_key=present' } }),
+})
+```
+
 ## Chrome DevTools
 
 `@schmock/devtools` reports the requests a mock answers through

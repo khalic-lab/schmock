@@ -159,6 +159,15 @@ body the transport cannot serialize (a `BigInt`, a circular object, an
 `{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }`, the same fallback
 the core-marked exception path uses.
 
+### OpenAPI cookie API keys
+
+The mock never sees the browser's `Cookie` header: page code cannot set it,
+and the provider answers before the browser attaches its cookie jar. So with
+`@schmock/openapi`'s `security: true`, an operation secured only by a cookie
+API key answers 401 even when the browser holds the cookie. Add the cookie in
+`beforeRequest`, as [Security Validation](./openapi.md#security-validation)
+shows; only its presence is checked.
+
 ## `useSchmock` Hook
 
 Access the mock instance from any component inside the provider:
