@@ -2393,4 +2393,71 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       });
     },
   );
+
+  Scenario(
+    "A page that stops its relay while a worker update installs stays stopped",
+    ({ Given, When, Then, And }) => {
+      let releaseInstall = () => {};
+      let replacing: Promise<void> = Promise.resolve();
+
+      Given(
+        'a page whose mock answers "GET /api/users" with users and whose relay has started',
+        () => givenRelayingPage(usersRoute),
+      );
+
+      When("a new worker version starts installing and waits", async () => {
+        const target = currentHarness();
+        const old = target.worker;
+        const installing = new Promise<void>((resolve) => {
+          releaseInstall = resolve;
+        });
+        // The new version reads the stored page list when its script runs,
+        // then waits in install while the old version still serves the page.
+        replacing = target.replaceWorker((scope) => {
+          scope.addEventListener("install", (event) => {
+            event.waitUntil(installing);
+          });
+          installRelayWorker(scope);
+        });
+        replacing.catch(() => undefined);
+        await vi.waitFor(() => expect(target.worker).not.toBe(old), {
+          timeout: SETTLE_MS,
+        });
+        await delay(30);
+      });
+
+      And("the page stops the relay", async () => {
+        await withTimeout(currentRelay().stop(), "stop()");
+      });
+
+      And(
+        "the new worker version finishes installing and takes control",
+        async () => {
+          releaseInstall();
+          await withTimeout(replacing, "replaceWorker()");
+          await currentHarness().flush();
+        },
+      );
+
+      Then(
+        `the page's XHR for "/api/users" reaches the network without the mock`,
+        async () => {
+          const target = currentPage();
+          const framesBefore = target.relayedFrames.length;
+          const received = await withTimeout(
+            target.xhr("/api/users"),
+            "XHR /api/users",
+          );
+          await expectNetworkBody(received);
+          expect(target.browserLog.at(-1)).toEqual({
+            method: "GET",
+            url: USERS_URL,
+            servedBy: "network",
+          });
+          expect(target.relayedFrames).toHaveLength(framesBefore);
+          expect(currentMock().callCount()).toBe(0);
+        },
+      );
+    },
+  );
 });

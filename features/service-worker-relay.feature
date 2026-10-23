@@ -397,3 +397,10 @@ Feature: Service worker relay
     And the fetch was answered in the page with status 200 without the browser seeing it
     And the XHR was answered by the network although the Schmock worker controls the page
     And the mock answered 1 request
+
+  Scenario: A page that stops its relay while a worker update installs stays stopped
+    Given a page whose mock answers "GET /api/users" with users and whose relay has started
+    When a new worker version starts installing and waits
+    And the page stops the relay
+    And the new worker version finishes installing and takes control
+    Then the page's XHR for "/api/users" reaches the network without the mock

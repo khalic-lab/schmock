@@ -617,6 +617,98 @@ describe("restarts", () => {
   });
 });
 
+describe("updates", () => {
+  it("W20 keeps a goodbye the old version handled while the new one installed", async () => {
+    await relayWorker();
+    const page = h.openPage();
+    await page.respondToRelaysWith({ tab: "A" });
+    let releaseInstall = () => {};
+    const installing = new Promise<void>((resolve) => {
+      releaseInstall = resolve;
+    });
+
+    // The new version reads the stored list when its script runs, then
+    // waits in install while the old version still serves the page.
+    const old = h.worker;
+    const replacing = h.replaceWorker((scope) => {
+      scope.addEventListener("install", (event) => {
+        event.waitUntil(installing);
+      });
+      installRelayWorker(scope);
+    });
+    await vi.waitFor(() => expect(h.worker).not.toBe(old), { timeout: 2000 });
+    await delay();
+    const bye = send(page, { type: "schmock:goodbye" });
+    expect(await bye.first()).toEqual({ type: "schmock:released" });
+    releaseInstall();
+    await replacing;
+    await h.flush();
+
+    expect(await stored()).not.toContain(page.id);
+    const frames = page.relayedFrames.length;
+    const response = await page.xhr("/api/users");
+    expect(await response.text()).toBe("real network");
+    expect(page.relayedFrames).toHaveLength(frames);
+  });
+
+  it("W23 keeps that goodbye when another page says hello to the new version before it prunes", async () => {
+    await relayWorker();
+    const a = h.openPage();
+    await a.respondToRelaysWith({ tab: "A" });
+    expect(await hello(a).first()).toEqual(READY);
+    const b = h.openPage();
+    await b.respondToRelaysWith({ tab: "B" });
+    expect(await hello(b).first()).toEqual(READY);
+    let releaseInstall = () => {};
+    const installing = new Promise<void>((resolve) => {
+      releaseInstall = resolve;
+    });
+    let releaseClaim = () => {};
+    const claiming = new Promise<void>((resolve) => {
+      releaseClaim = resolve;
+    });
+
+    // Activation hands both pages to the new version before its activate
+    // event, and its claim() is slow, so B's hello reaches the new version
+    // before activate retains.
+    const old = h.worker;
+    const oldController = controllerOf(b);
+    const replacing = h.replaceWorker((scope) => {
+      scope.addEventListener("install", (event) => {
+        event.waitUntil(installing);
+      });
+      installRelayWorker({
+        ...scope,
+        clients: {
+          ...scope.clients,
+          claim: async () => {
+            await claiming;
+            await scope.clients.claim();
+          },
+        },
+      });
+    });
+    await vi.waitFor(() => expect(h.worker).not.toBe(old), { timeout: 2000 });
+    await delay();
+    const bye = send(a, { type: "schmock:goodbye" });
+    expect(await bye.first()).toEqual({ type: "schmock:released" });
+    releaseInstall();
+    await vi.waitFor(() => expect(controllerOf(b)).not.toBe(oldController), {
+      timeout: 2000,
+    });
+    expect(await hello(b).first()).toEqual(READY);
+    releaseClaim();
+    await replacing;
+    await h.flush();
+
+    expect(await stored()).toEqual([b.id]);
+    const frames = a.relayedFrames.length;
+    const response = await a.xhr("/api/users");
+    expect(await response.text()).toBe("real network");
+    expect(a.relayedFrames).toHaveLength(frames);
+  });
+});
+
 describe("cleared cache storage", () => {
   it("W19 writes the list under its name again once app code deleted the cache", async () => {
     await relayWorker();

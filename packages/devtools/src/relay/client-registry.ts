@@ -55,6 +55,7 @@ export class ClientRegistry {
     });
   }
 
+  /** Keep only `liveIds`, durably. */
   retain(liveIds: Iterable<string>): Promise<void> {
     const live = new Set(liveIds);
     return this.enqueue(() => {
@@ -65,7 +66,9 @@ export class ClientRegistry {
   }
 
   private async load(): Promise<void> {
-    for (const id of (await this.readStored()) ?? []) this.ids.add(id);
+    const cache = await this.open();
+    if (cache === undefined) return;
+    for (const id of (await this.readStored(cache)) ?? []) this.ids.add(id);
   }
 
   /**
@@ -83,24 +86,40 @@ export class ClientRegistry {
     }
   }
 
-  /** The stored ids, [] when none are stored; undefined once Cache Storage failed. */
-  private async readStored(): Promise<string[] | undefined> {
-    const cache = await this.open();
-    if (cache === undefined) return undefined;
+  /**
+   * The stored ids; undefined when none are stored (app code deleted the
+   * cache) or the read failed, which also makes the registry memory-only.
+   */
+  private async readStored(cache: CacheLike): Promise<string[] | undefined> {
     try {
       const stored = await cache.match(this.key);
-      return stored === undefined ? [] : parseIds(await stored.text());
+      return stored === undefined ? undefined : parseIds(await stored.text());
     } catch {
       this.persistent = false;
       return undefined;
     }
   }
 
+  /**
+   * Run `mutate` against the stored list, then store the result. The stored
+   * list, not this instance's memory, is the starting point whenever it
+   * exists: a new worker version loads the list when its script runs, and the
+   * version still active may change it (a goodbye) before the new one handles
+   * its first message or activates. Memory is the starting point only when
+   * the list is gone (app code deleted the cache), so it is written back
+   * whole, or when Cache Storage failed.
+   */
   private enqueue(mutate: () => void): Promise<void> {
     const run = async (): Promise<void> => {
-      mutate();
       const cache = await this.open();
-      if (cache === undefined) return;
+      const stored =
+        cache === undefined ? undefined : await this.readStored(cache);
+      if (stored !== undefined) {
+        this.ids.clear();
+        for (const id of stored) this.ids.add(id);
+      }
+      mutate();
+      if (cache === undefined || !this.persistent) return;
       try {
         await cache.put(
           this.key,

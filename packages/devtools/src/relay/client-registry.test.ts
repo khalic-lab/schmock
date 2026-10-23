@@ -162,6 +162,67 @@ describe("ClientRegistry writes", () => {
     expect(next.has("c")).toBe(false);
   });
 
+  it("R16 retain starts from the stored list, not the snapshot taken at load", async () => {
+    const fake = createFakeStorage('["a","b"]');
+    const stale = new ClientRegistry(fake.storage, cacheName, key);
+    await stale.ready;
+    const active = new ClientRegistry(fake.storage, cacheName, key);
+    await active.delete("a");
+
+    await stale.retain(["a", "b"]);
+
+    expect(fake.stored()).toEqual(["b"]);
+    expect(stale.has("a")).toBe(false);
+    expect(stale.has("b")).toBe(true);
+  });
+
+  it("R17 retain prunes memory as it is when the stored list cannot be read", async () => {
+    const fake = createFakeStorage('["a","b"]');
+    const registry = new ClientRegistry(fake.storage, cacheName, key);
+    await registry.ready;
+    fake.rejectMatch = true;
+
+    await registry.retain(["a"]);
+
+    expect(registry.has("a")).toBe(true);
+    expect(registry.has("b")).toBe(false);
+    expect(fake.puts).toHaveLength(0);
+  });
+
+  it("R18 add and delete start from the stored list, not the snapshot taken at load", async () => {
+    const fake = createFakeStorage('["a","b","c"]');
+    const stale = new ClientRegistry(fake.storage, cacheName, key);
+    await stale.ready;
+    const active = new ClientRegistry(fake.storage, cacheName, key);
+    await active.delete("a");
+    await active.delete("c");
+
+    await stale.add("b");
+    expect(fake.stored()).toEqual(["b"]);
+    await stale.delete("x");
+    expect(fake.stored()).toEqual(["b"]);
+    await stale.retain(["a", "b", "c"]);
+
+    expect(fake.stored()).toEqual(["b"]);
+    expect(stale.has("a")).toBe(false);
+    expect(stale.has("c")).toBe(false);
+    expect(stale.has("b")).toBe(true);
+  });
+
+  it("R19 retain keeps the in-memory list, pruned, once app code deleted the cache", async () => {
+    const fake = createFakeStorage();
+    const registry = new ClientRegistry(fake.storage, cacheName, key);
+    await registry.add("a");
+    await registry.add("b");
+    fake.data.delete(cacheName);
+
+    await registry.retain(["a"]);
+
+    expect(fake.stored()).toEqual(["a"]);
+    expect(registry.has("a")).toBe(true);
+    expect(registry.has("b")).toBe(false);
+  });
+
   it("R8 an operation issued before ready is applied after the load", async () => {
     const fake = createFakeStorage('["a"]');
     const registry = new ClientRegistry(fake.storage, cacheName, key);
