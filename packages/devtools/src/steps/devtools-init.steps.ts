@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -224,6 +225,44 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
       And("the error output names the missing packaged worker", () => {
         expect(stderr.join("")).toContain(source);
+      });
+    },
+  );
+
+  Scenario(
+    "init refuses to write through a symbolic link",
+    ({ Given, When, Then, And }) => {
+      const outsideContent = "IMPORTANT USER DATA";
+      let outsideFile = "";
+
+      Given(
+        'a project whose "public/schmock-sw.js" is a symbolic link to a file outside the project',
+        () => {
+          setup();
+          outsideFile = join(
+            makeTempDir("schmock-init-outside-"),
+            "victim.txt",
+          );
+          writeFileSync(outsideFile, outsideContent);
+          mkdirSync(join(projectDir, "public"));
+          symlinkSync(outsideFile, join(projectDir, "public", "schmock-sw.js"));
+        },
+      );
+
+      When('I run "schmock-devtools init public"', () => {
+        run("schmock-devtools init public");
+      });
+
+      Then("the command exits with code 1", () => {
+        expect(exitCode).toBe(1);
+      });
+
+      And('the error output contains "is a symbolic link"', () => {
+        expect(stderr.join("")).toContain("is a symbolic link");
+      });
+
+      And("the file outside the project is unchanged", () => {
+        expect(readFileSync(outsideFile, "utf8")).toBe(outsideContent);
       });
     },
   );

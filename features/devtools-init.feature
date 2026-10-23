@@ -44,3 +44,10 @@ Feature: Service worker init command
     When I run "schmock-devtools init public"
     Then the command exits with code 1
     And the error output names the missing packaged worker
+
+  Scenario: init refuses to write through a symbolic link
+    Given a project whose "public/schmock-sw.js" is a symbolic link to a file outside the project
+    When I run "schmock-devtools init public"
+    Then the command exits with code 1
+    And the error output contains "is a symbolic link"
+    And the file outside the project is unchanged

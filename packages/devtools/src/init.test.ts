@@ -1,10 +1,12 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -154,6 +156,38 @@ describe("runInit", () => {
         ),
     ).toBe(true);
     expect(err.join("").endsWith("\n")).toBe(true);
+    expect(out).toEqual([]);
+  });
+
+  it("refuses a symbolic link at the target and leaves the file it points to alone (I11)", () => {
+    const outside = mkdtempSync(join(tmpdir(), "schmock-init-outside-"));
+    extraDirs.push(outside);
+    const victim = join(outside, "victim.txt");
+    writeFileSync(victim, "IMPORTANT USER DATA");
+    mkdirSync(join(cwd, "public"));
+    const link = join(cwd, "public", "schmock-sw.js");
+    symlinkSync(victim, link);
+
+    const code = runInit(["init", "public"], io());
+
+    expect(code).toBe(1);
+    expect(readFileSync(victim, "utf8")).toBe("IMPORTANT USER DATA");
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(err.join("")).toBe(
+      `Will not copy schmock-sw.js to ${join("public", "schmock-sw.js")}: it is a symbolic link, and copying through it would overwrite the file it points to. Remove the link and run init again.\n`,
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("refuses a dangling symbolic link instead of creating its target (I12)", () => {
+    const outside = mkdtempSync(join(tmpdir(), "schmock-init-outside-"));
+    extraDirs.push(outside);
+    const target = join(outside, "new.txt");
+    mkdirSync(join(cwd, "public"));
+    symlinkSync(target, join(cwd, "public", "schmock-sw.js"));
+
+    expect(runInit(["init", "public"], io())).toBe(1);
+    expect(existsSync(target)).toBe(false);
     expect(out).toEqual([]);
   });
 

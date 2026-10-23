@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 const USAGE = "Usage: schmock-devtools init <publicDir>\n";
@@ -47,6 +47,14 @@ export function runInit(
 
   try {
     mkdirSync(targetDir, { recursive: true });
+    // copyFileSync follows a link, so a link planted at the target would
+    // overwrite whatever file it points to, outside the project included.
+    if (lstatSync(targetFile, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      io.stderr(
+        `Will not copy schmock-sw.js to ${rel}: it is a symbolic link, and copying through it would overwrite the file it points to. Remove the link and run init again.\n`,
+      );
+      return 1;
+    }
     copyFileSync(io.source, targetFile);
   } catch (error) {
     io.stderr(

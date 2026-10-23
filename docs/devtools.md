@@ -113,7 +113,10 @@ npx @schmock/devtools init public
 
 The command creates the directory if it is missing, replaces an older copy,
 and prints the next step. Run it again after each upgrade of
-`@schmock/devtools` so the script matches the page library.
+`@schmock/devtools` so the script matches the page library. If
+`<publicDir>/schmock-sw.js` is a symbolic link, the command exits 1 and
+writes nothing, because copying through the link would overwrite the file it
+points to. Remove the link and run it again.
 
 Name the scoped package. The package installs a `schmock-devtools` command,
 but no npm package has that name: when the command is not installed yet,
