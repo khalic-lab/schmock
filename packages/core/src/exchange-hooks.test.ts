@@ -287,6 +287,8 @@ describe("runExchangeHooks", () => {
       "request",
       "startTime",
     ]);
+    expect(s.startTime).toBe(3);
+    expect(s.endTime).toBe(4);
   });
 
   it("gives an aborted exchange exactly its keys", () => {
@@ -302,12 +304,15 @@ describe("runExchangeHooks", () => {
       exchange: input,
       logger: { log: vi.fn() },
     });
-    expect(Object.keys(seen[0].args[0]).sort()).toEqual([
+    const s = seen[0].args[0];
+    expect(Object.keys(s).sort()).toEqual([
       "endTime",
       "outcome",
       "request",
       "startTime",
     ]);
+    expect(s.startTime).toBe(3);
+    expect(s.endTime).toBe(4);
   });
 
   it("copies outcome, startTime and endTime", () => {

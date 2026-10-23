@@ -7,6 +7,10 @@ import { createFetchInterceptor, createFetchLease } from "./interceptor.js";
 
 const USERS = [{ id: 1, name: "Ada" }];
 
+/** Whether this runtime's Request keeps a lowercase method as the spec says. */
+const FETCH_KEEPS_METHOD_CASE =
+  new Request("http://localhost/", { method: "patch" }).method === "patch";
+
 function admit(mock: Schmock.CallableMockInstance): Schmock.RequestAdmission {
   const admission = acquireRequestAdmission(mock);
   if (admission === undefined)
@@ -266,6 +270,23 @@ describe("createFetchLease exchange observation", () => {
       expect(exchange.request.method).toBe("PROPFIND");
     });
 
+    // Fetch upper-cases only DELETE, GET, HEAD, OPTIONS, POST and PUT; a
+    // lowercase "patch" or "propfind" reaches the transport as written.
+    // Bun's Request upper-cases every method, so this needs a spec-compliant
+    // Fetch such as Node's.
+    it.skipIf(!FETCH_KEEPS_METHOD_CASE).each(["patch", "propfind"])(
+      "reports the lowercase method %s exactly as the client sent it",
+      async (method) => {
+        const mock = schmock();
+        mock("PATCH /api/users", USERS);
+        const { observer, opener } = recorder();
+        lease(mock, { passthrough: false }, opener);
+        await fetch("http://localhost/api/users", { method });
+        expect(observer).toHaveBeenCalledTimes(1);
+        expect(lastExchange(observer).request.method).toBe(method);
+      },
+    );
+
     it("reports a malformed JSON 400 with the raw request text", async () => {
       const mock = schmock();
       mock("POST /api/users", ({ body }: { body: unknown }) => body);
@@ -438,6 +459,39 @@ describe("createFetchLease exchange observation", () => {
       expect(exchange.outcome).toBe("failed");
       expect(exchange.error).toBe(formatterError);
     });
+
+    it("takes startTime before the lease runs and endTime after it failed", async () => {
+      const mock = schmock();
+      let inRoute = -1;
+      mock("GET /api/users", async () => {
+        // Real time must pass, so an endTime copied from startTime shows.
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inRoute = performance.now();
+        return USERS;
+      });
+      const { observer, opener } = recorder();
+      lease(
+        mock,
+        {
+          beforeResponse: () => {
+            throw new Error("hook failed");
+          },
+        },
+        opener,
+      );
+      const before = performance.now();
+      await expect(fetch("http://localhost/api/users")).rejects.toThrow(
+        "hook failed",
+      );
+      const after = performance.now();
+      expect(observer).toHaveBeenCalledTimes(1);
+      const exchange = lastExchange(observer);
+      expect(exchange.outcome).toBe("failed");
+      expect(before).toBeLessThanOrEqual(exchange.startTime);
+      expect(exchange.startTime).toBeLessThan(inRoute);
+      expect(inRoute).toBeLessThanOrEqual(exchange.endTime);
+      expect(exchange.endTime).toBeLessThanOrEqual(after);
+    });
   });
 
   describe("D. aborted", () => {
@@ -475,6 +529,39 @@ describe("createFetchLease exchange observation", () => {
       g.release();
       await tick();
       expect(observer).toHaveBeenCalledTimes(1);
+    });
+
+    it("takes startTime before the lease runs and endTime once the abort settled", async () => {
+      const g = gate();
+      const mock = schmock();
+      let inRoute = -1;
+      mock("GET /api/users", async () => {
+        // Real time must pass, so an endTime copied from startTime shows.
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inRoute = performance.now();
+        g.started();
+        await g.released;
+        return USERS;
+      });
+      const { observer, opener } = recorder();
+      lease(mock, undefined, opener);
+      const controller = new AbortController();
+      const before = performance.now();
+      const pending = fetch("http://localhost/api/users", {
+        signal: controller.signal,
+      });
+      await g.hasStarted;
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      const after = performance.now();
+      g.release();
+      expect(observer).toHaveBeenCalledTimes(1);
+      const exchange = lastExchange(observer);
+      expect(exchange.outcome).toBe("aborted");
+      expect(before).toBeLessThanOrEqual(exchange.startTime);
+      expect(exchange.startTime).toBeLessThan(inRoute);
+      expect(inRoute).toBeLessThanOrEqual(exchange.endTime);
+      expect(exchange.endTime).toBeLessThanOrEqual(after);
     });
 
     it("does not report aborted for a newer passthrough mock with no route", async () => {
