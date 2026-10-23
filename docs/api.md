@@ -1436,6 +1436,7 @@ register them the same way:
 - `format: 'byte'` strings are valid padded base64, so they pass `ajv-formats`
   under `validateResponses`. With `minLength`/`maxLength` they are whole
   four-character blocks inside the bounds, when the bounds hold one.
+- `format: 'duration'` strings are ISO 8601 durations that pass `ajv-formats`.
 - `patternProperties` generate at least one key matching a pattern, and enough
   keys to reach `minProperties` without passing `maxProperties`.
 - A lone `minimum`/`exclusiveMinimum` of 1000 or more, or a lone

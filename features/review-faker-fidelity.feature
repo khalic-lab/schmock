@@ -106,3 +106,13 @@ Feature: Faker output honours every keyword of its schema
       | byte-max-length-10  |
       | byte-min-length-80  |
       | byte-length-5-to-30 |
+
+  # Review 2026-10-23 faker-15: json-schema-faker's duration generator wrote "PT0D"
+  Scenario Outline: A duration string is a valid ISO 8601 duration
+    Given the fidelity schema "<case>"
+    When I generate it with 300 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case              |
+      | duration-property |

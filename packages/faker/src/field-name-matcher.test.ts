@@ -9,6 +9,14 @@ import {
 import { generateFromSchema } from "./index";
 import { generateWithJsf } from "./jsf-config";
 
+/** ajv-formats' `byte` format: padded base64. */
+const BASE64 =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+/** ajv-formats' `duration` format. */
+const ISO_DURATION =
+  /^P(?!$)((\d+Y)?(\d+M)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+S)?)?|(\d+W)?)$/;
+
 describe("tokenizeFieldName", () => {
   it("splits camelCase", () => {
     expect(tokenizeFieldName("userFirstName")).toEqual([
@@ -454,20 +462,31 @@ describe("GENERATABLE_FORMATS matches what json-schema-faker generates", () => {
       }
 
       // A random-alphanumeric fallback is [A-Za-z0-9]* and never empty-plus-
-      // structured: every real format generator emits either a separator
-      // (-:/.@) or, for `duration`, a leading "P". `byte` is base64, which
-      // has no separator; the fallback's length is rarely a multiple of four,
-      // so padded base64 on every seed is what tells them apart.
+      // structured: every real format generator emits a separator (-:/.@).
+      // `byte` is base64 and `duration` is ISO 8601, neither with a
+      // separator; the fallback matches neither, so their own validators
+      // tell them apart.
       for (const value of values) {
         expect(value).not.toBe("");
         expect(value).toMatch(
           format === "byte"
-            ? /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
-            : /[-:/.@]|^P/,
+            ? BASE64
+            : format === "duration"
+              ? ISO_DURATION
+              : /[-:/.@]/,
         );
       }
     },
   );
+
+  // faker-15: json-schema-faker's own duration generator emits "PT0D" and
+  // "P1YT" about 7% of the time.
+  it("generates a valid ISO 8601 duration on every seed", async () => {
+    const schema: JSONSchema7 = { type: "string", format: "duration" };
+    for (let seed = 1; seed <= 300; seed += 1) {
+      expect(await generateWithJsf(schema, seed)).toMatch(ISO_DURATION);
+    }
+  });
 
   it("defers to no format json-schema-faker cannot generate", async () => {
     // uri-template and regex are standard Draft 7 formats absent from

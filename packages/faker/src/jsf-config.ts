@@ -100,12 +100,48 @@ function boundByteLength(normalized: JsfObjectSchema): void {
   delete normalized.format;
 }
 
+/** ISO 8601 duration units, each with the largest value generated for it. */
+const DURATION_DATE_UNITS = [
+  ["Y", 10],
+  ["M", 11],
+  ["D", 30],
+] as const;
+const DURATION_TIME_UNITS = [
+  ["H", 23],
+  ["M", 59],
+  ["S", 59],
+] as const;
+
+function durationPart(
+  units: typeof DURATION_DATE_UNITS | typeof DURATION_TIME_UNITS,
+  random: Random,
+): string {
+  return units
+    .filter(() => random.bool())
+    .map(([unit, most]) => `${random.int(1, most)}${unit}`)
+    .join("");
+}
+
+/**
+ * json-schema-faker writes the `T` of a duration whether or not a time unit
+ * follows, and pads an empty one with "0D" after it, so about 7% of its
+ * durations ("P1YT", "PT0D") fail ajv-formats. Write `T` only before a time
+ * unit, and fall back to a day count when no unit was picked.
+ */
+function generateDuration(random: Random): string {
+  const date = durationPart(DURATION_DATE_UNITS, random);
+  const time = durationPart(DURATION_TIME_UNITS, random);
+  if (date === "" && time === "") return `P${random.int(1, 30)}D`;
+  return `P${date}${time === "" ? "" : `T${time}`}`;
+}
+
 /**
  * Formats Schmock generates itself, passed per call so json-schema-faker's
  * module-global registry is never touched.
  */
 const SCHMOCK_FORMATS: Readonly<Record<string, (random: Random) => string>> = {
   byte: generateBase64,
+  duration: generateDuration,
 };
 
 /**

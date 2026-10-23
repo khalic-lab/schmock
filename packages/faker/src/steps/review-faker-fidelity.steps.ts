@@ -60,6 +60,10 @@ function petKind(kind: string): JSONSchema7 {
 const BASE64 =
   /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
+/** ajv-formats' `duration` format. */
+const ISO_DURATION =
+  /^P(?!$)((\d+Y)?(\d+M)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+S)?)?|(\d+W)?)$/;
+
 function expectBase64Within(value: unknown, min: number, max: number): void {
   const encoded = text(value);
   expect(encoded).toMatch(BASE64);
@@ -371,6 +375,14 @@ const CASES: Record<string, FidelityCase> = {
     schema: { type: "string", format: "byte", minLength: 5, maxLength: 30 },
     fits: (value) => expectBase64Within(value, 5, 30),
   },
+  "duration-property": {
+    schema: {
+      type: "object",
+      properties: { ttl: { type: "string", format: "duration" } },
+      required: ["ttl"],
+    },
+    fits: (value) => expect(text(record(value).ttl)).toMatch(ISO_DURATION),
+  },
   "inclusive-maximum-tighter-than-exclusive": {
     schema: { type: "number", minimum: 0, maximum: 5, exclusiveMaximum: 100 },
     fits: (value) => {
@@ -396,6 +408,7 @@ const OUTLINES = [
   "A property declared by several merged schemas honours every declaration",
   "Composition beside allOf is generated with it",
   "A byte string with length bounds is valid padded base64 within them",
+  "A duration string is a valid ISO 8601 duration",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {
