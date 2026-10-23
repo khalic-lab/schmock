@@ -932,14 +932,34 @@ function normalizeSchemaNodeForJsf(
   if (normalized.properties === undefined && describesObject(normalized)) {
     normalized.properties = {};
   }
-  // On an untyped node JSF would read an object `example` as a property to
-  // generate. It never uses `example` itself (Schmock does not set
-  // `useExamplesValue`), so the copy goes without it.
+  // On an untyped node JSF would read an object `example` or `definitions`
+  // as a property to generate, ahead of the array, number or string its
+  // other keywords imply. It never uses `example` itself (Schmock does not
+  // set `useExamplesValue`), so the copy goes without it.
   if (normalized.type === undefined && normalized.properties === undefined) {
     delete normalized.example;
+    hideDefinitions(normalized);
   }
 
   return normalized;
+}
+
+/**
+ * Keep `definitions` on a JSF copy but out of every key json-schema-faker
+ * enumerates. JSF reads it only when it walks a `#/definitions/...` pointer,
+ * which looks the key up by name and so still finds it; inferring
+ * properties, merging `$ref` siblings and merging `allOf` all enumerate
+ * keys, so they no longer see it.
+ */
+function hideDefinitions(normalized: JsfObjectSchema): void {
+  const { definitions } = normalized;
+  if (definitions === undefined) return;
+  Object.defineProperty(normalized, "definitions", {
+    value: definitions,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
 }
 
 /**

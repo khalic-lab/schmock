@@ -245,6 +245,37 @@ const CASES: Record<string, FidelityCase> = {
     },
     fits: expectNoSchemaKeys,
   },
+  "untyped-bounds-with-defs": {
+    schema: {
+      type: "object",
+      properties: {
+        rating: {
+          minimum: 1,
+          maximum: 5,
+          definitions: { Item: { type: "integer" } },
+        },
+      },
+      required: ["rating"],
+    },
+    fits: (value) => {
+      const rating = numeric(record(value).rating);
+      expect(rating).toBeGreaterThanOrEqual(1);
+      expect(rating).toBeLessThanOrEqual(5);
+    },
+  },
+  "untyped-items-with-defs": {
+    schema: {
+      items: { $ref: "#/definitions/Item" },
+      minItems: 1,
+      maxItems: 3,
+      definitions: { Item: { type: "integer" } },
+    },
+    fits: (value) => {
+      const items = list(value);
+      expect(items.length).toBeGreaterThanOrEqual(1);
+      for (const item of items) expect(Number.isInteger(item)).toBe(true);
+    },
+  },
   "multiple-of-lone-maximum": {
     schema: { type: "integer", multipleOf: 5, maximum: -5000 },
     fits: (value) => {

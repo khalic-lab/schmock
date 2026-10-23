@@ -39,10 +39,12 @@ Feature: Faker output honours every keyword of its schema
     Then every generated value fits "<case>"
 
     Examples:
-      | case                       |
-      | map-with-definitions       |
-      | closed-object-with-example |
-      | map-with-dependencies      |
+      | case                         |
+      | map-with-definitions         |
+      | closed-object-with-example   |
+      | map-with-dependencies        |
+      | untyped-bounds-with-defs     |
+      | untyped-items-with-defs      |
 
   # Review 2026-10-23 faker-8: one finite bound per side reaches json-schema-faker
   Scenario Outline: Numeric bounds hold beside multipleOf and a second bound on the same side

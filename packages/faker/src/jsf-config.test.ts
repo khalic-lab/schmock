@@ -449,6 +449,56 @@ describe("object nodes without properties (faker-6)", () => {
       }
     }
   });
+
+  describe("an untyped node without properties that holds definitions", () => {
+    const definitions = { Item: { type: "integer" } } satisfies Record<
+      string,
+      JSONSchema7
+    >;
+
+    it("never generates the definitions as a property", async () => {
+      for (const value of await generateSeeds({ definitions })) {
+        if (typeof value === "object" && value !== null) {
+          expect(Object.hasOwn(value, "definitions")).toBe(false);
+        }
+      }
+    });
+
+    it("generates the type its other keywords imply", async () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: {
+          rating: { minimum: 1, maximum: 5, definitions },
+          code: { minLength: 2, maxLength: 4, definitions },
+        },
+        required: ["rating", "code"],
+      };
+      for (const value of await generateSeeds(schema)) {
+        const { rating, code } = objectOf(value);
+        expect(typeof rating).toBe("number");
+        expect(rating).toBeGreaterThanOrEqual(1);
+        expect(rating).toBeLessThanOrEqual(5);
+        expect(typeof code).toBe("string");
+        expect(String(code).length).toBeGreaterThanOrEqual(2);
+        expect(String(code).length).toBeLessThanOrEqual(4);
+      }
+    });
+
+    it("still resolves a JSON Pointer into those definitions", async () => {
+      const schema: JSONSchema7 = {
+        items: { $ref: "#/definitions/Item" },
+        minItems: 1,
+        maxItems: 3,
+        definitions,
+      };
+      for (const value of await generateSeeds(schema)) {
+        expect(Array.isArray(value)).toBe(true);
+        if (!Array.isArray(value)) continue;
+        expect(value.length).toBeGreaterThanOrEqual(1);
+        for (const item of value) expect(Number.isInteger(item)).toBe(true);
+      }
+    });
+  });
 });
 
 describe("not bodies json-schema-faker misses (faker-2)", () => {
