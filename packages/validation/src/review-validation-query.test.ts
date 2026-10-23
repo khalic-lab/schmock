@@ -390,6 +390,35 @@ describe("validationPlugin header names behind $ref corners", () => {
     });
   });
 
+  it("follows a plain-name $ref to a draft-07 $id anchor", async () => {
+    await expectKeyedBySchemaSpelling({
+      headers: {
+        $ref: "#auth",
+        definitions: { Auth: { $id: "#auth", ...apiKeyHeaders } },
+      },
+    });
+  });
+
+  it("follows an anchor $ref under the header schema's root $id", async () => {
+    await expectKeyedBySchemaSpelling({
+      headers: {
+        $id: "https://example.test/anchored.json",
+        allOf: [{ $ref: "#auth" }],
+        definitions: { Auth: { $id: "#auth", ...apiKeyHeaders } },
+      },
+    });
+  });
+
+  it("follows an anchor $ref into another slot's resource", async () => {
+    await expectKeyedBySchemaSpelling({
+      body: {
+        $id: "https://example.test/shared-anchor.json",
+        definitions: { Auth: { $id: "#auth", ...apiKeyHeaders } },
+      },
+      headers: { $ref: "https://example.test/shared-anchor.json#auth" },
+    });
+  });
+
   it("skips a $ref whose target is a boolean schema", async () => {
     await expectKeyedBySchemaSpelling({
       headers: {

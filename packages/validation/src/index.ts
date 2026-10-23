@@ -517,6 +517,16 @@ interface HeaderSchemaGraph {
   resolver: SchemaUriResolver;
 }
 
+/** A plain-name fragment (`auth`) rather than a JSON pointer (`/definitions/Auth`). */
+function isPlainNameFragment(fragment: string): boolean {
+  if (fragment === "") return false;
+  try {
+    return !decodeURIComponent(fragment).startsWith("/");
+  } catch {
+    return false;
+  }
+}
+
 function resolveRef(
   graph: HeaderSchemaGraph,
   baseId: string,
@@ -526,6 +536,12 @@ function resolveRef(
   const hashIndex = resolved.indexOf("#");
   const uri = hashIndex < 0 ? resolved : resolved.slice(0, hashIndex);
   const fragment = hashIndex < 0 ? "" : resolved.slice(hashIndex + 1);
+  if (isPlainNameFragment(fragment)) {
+    // A draft-07 `$id: "#auth"` anchor, which the inventory registered under
+    // its full resolved ID, as Ajv does.
+    const anchor = graph.resources.get(resolved);
+    return anchor ? { schema: anchor, baseId: uri } : undefined;
+  }
   const resource =
     uri === "" && typeof graph.root.$id !== "string"
       ? graph.root

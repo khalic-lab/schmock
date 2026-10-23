@@ -771,4 +771,47 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       });
     },
   );
+
+  // ── Header names behind a $id anchor (review 2026-10-23) ─────────────────
+
+  ScenarioOutline(
+    "A header declared behind a draft-07 $id anchor is matched case-insensitively",
+    ({ Given, When, Then }, variables) => {
+      Given(
+        "a header schema that requires {string} of at least 8 characters behind the anchor {string}",
+        (_, header: string, anchor: string) => {
+          mock = schmock();
+          mock("GET /secure", { ok: true }).pipe(
+            validationPlugin({
+              request: {
+                headers: {
+                  $ref: anchor,
+                  definitions: {
+                    Auth: {
+                      $id: anchor,
+                      type: "object",
+                      properties: {
+                        [header]: { type: "string", minLength: 8 },
+                      },
+                      required: [header],
+                    },
+                  },
+                },
+              },
+            }),
+          );
+        },
+      );
+
+      When("I send header {string} with value {string}", async () => {
+        response = await mock.handle("GET", "/secure", {
+          headers: { "x-api-key": variables.value },
+        });
+      });
+
+      Then("the header response status should be <status>", () => {
+        expect(response.status).toBe(Number(variables.status));
+      });
+    },
+  );
 });

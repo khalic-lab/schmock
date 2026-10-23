@@ -1609,7 +1609,9 @@ Header schemas may spell names in any case (`'X-Api-Key'`). Incoming header
 names are matched case-insensitively against every name declared in
 `properties`, `required` and `dependencies` by the header schema itself, by its
 `allOf`/`anyOf`/`oneOf`/`if`/`then`/`else`/`not` and schema-form `dependencies`
-subschemas, and by the `$ref` targets those reach. Names inside property
+subschemas, and by the `$ref` targets those reach, whether the `$ref` is a
+JSON pointer (`'#/definitions/Auth'`) or a draft-07 `$id` anchor (`'#auth'`).
+Names inside property
 schemas, and in `definitions`/`$defs` that no `$ref` reaches, are ignored. Two
 names that differ only by case (`'X-Api-Key'` and `'x-api-key'`, or a property
 `'x-api-key'` with `required: ['X-Api-Key']`) throw `SchmockError`

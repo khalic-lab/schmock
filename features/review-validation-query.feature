@@ -141,3 +141,15 @@ Feature: Validation plugin review fixes
       | users         | status |
       | [{"id": 1}]   | 200    |
       | [{"id": "1"}] | 500    |
+
+  # ── Header names behind a $id anchor (review 2026-10-23) ─────────────────
+
+  Scenario Outline: A header declared behind a draft-07 $id anchor is matched case-insensitively
+    Given a header schema that requires "X-Api-Key" of at least 8 characters behind the anchor "#auth"
+    When I send header "x-api-key" with value "<value>"
+    Then the header response status should be <status>
+
+    Examples:
+      | value      | status |
+      | abcdefghij | 200    |
+      | short      | 400    |
