@@ -53,3 +53,20 @@ Feature: Faker creation-time checks
     Given a string schema whose helpers.fake template calls string.alpha with 5 and then person.firstName
     When I create a faker plugin for it
     Then the plugin generates 5 letters, a dash and a name
+
+  # Review 2026-10-23 faker-18: json-schema-faker resolves neither anchors nor $dynamicRef
+  Scenario Outline: A reference json-schema-faker cannot follow is rejected at construction
+    Given an object whose property "n" reaches a uuid definition through "<reference>"
+    When I create a faker plugin for it
+    Then plugin creation fails with a schema validation error at "<path>"
+
+    Examples:
+      | reference          | path                       |
+      | anchor-ref         | $.properties.n.$ref        |
+      | dynamic-anchor-ref | $.properties.n.$ref        |
+      | dynamic-ref        | $.properties.n.$dynamicRef |
+
+  Scenario: A JSON Pointer to the same definition still generates
+    Given an object whose property "n" reaches a uuid definition through "pointer"
+    When I create a faker plugin for it
+    Then the plugin generates a uuid for "n"

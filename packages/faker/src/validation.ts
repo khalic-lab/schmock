@@ -72,10 +72,24 @@ const LEAF: Estimate = { height: 0, nodes: 1, chars: 0 };
 
 type SchemaEdge = SchemaChild;
 
-type LocalRefResolver = (
-  schema: JSONSchema7,
-  reference: string,
-) => JSONSchema7Definition | undefined;
+interface LocalRefResolver {
+  /** The schema a reference names, from the scope of the schema holding it. */
+  resolve(
+    schema: JSONSchema7,
+    reference: string,
+  ): JSONSchema7Definition | undefined;
+  /**
+   * Whether a reference names an `$anchor` or `$dynamicAnchor`, which
+   * json-schema-faker never registers and so cannot resolve.
+   */
+  namesAnchor(schema: JSONSchema7, reference: string): boolean;
+}
+
+/** A reference json-schema-faker cannot follow, found on a generating path. */
+interface UnsupportedReference {
+  path: string;
+  issue: string;
+}
 
 interface WalkState {
   /** Distinct schema nodes visited. */
@@ -83,7 +97,8 @@ interface WalkState {
   circular: boolean;
   edges: Map<JSONSchema7, SchemaEdge[]>;
   postOrder: JSONSchema7[];
-  resolveRef: LocalRefResolver;
+  refs: LocalRefResolver;
+  unsupportedReference?: UnsupportedReference;
   arraySize?: Violation;
   objectSize?: Violation;
   stringLength?: Violation;
@@ -102,7 +117,9 @@ interface WalkState {
  * every output site. Validation therefore stays O(nodes + edges).
  *
  * References outside the indexed schema and unresolvable references are left
- * for json-schema-faker to report.
+ * for json-schema-faker to report. A generating `$dynamicRef`, or a `$ref` to
+ * an anchor, is rejected: json-schema-faker resolves neither, although the
+ * index here does.
  *
  * @param schema - JSON Schema to validate
  * @param path - Path label used in error messages
@@ -126,7 +143,7 @@ export function validateSchema(
     circular: false,
     edges: new Map(),
     postOrder: [],
-    resolveRef: createLocalRefResolver(schema),
+    refs: createLocalRefResolver(schema),
   };
 
   inspectSchemaGraph(schema, path, state);
@@ -139,6 +156,14 @@ export function validateSchema(
   }
 
   chargeGeneratingSchemas(schema, path, state);
+
+  if (state.unsupportedReference) {
+    throw new SchemaValidationError(
+      state.unsupportedReference.path,
+      state.unsupportedReference.issue,
+      'Reference the schema with a JSON Pointer such as "#/$defs/Name"',
+    );
+  }
 
   const normalizedCount = normalizeExplicitCount(explicitCount);
   const estimates = estimateSchemas(schema, state, normalizedCount);
@@ -251,11 +276,7 @@ function inspectSchemaGraph(
 
     validateNode(frame.schema, frame.path, frame.typedChain);
 
-    const edges = collectSchemaEdges(
-      frame.schema,
-      frame.path,
-      state.resolveRef,
-    );
+    const edges = collectSchemaEdges(frame.schema, frame.path, state.refs);
     state.edges.set(frame.schema, edges);
     active.add(frame.schema);
     stack.push({ ...frame, exiting: true });
@@ -341,6 +362,7 @@ function chargeGeneratingSchemas(
     // the plain charge a `$ref` to the same schema would still need.
     if (frame.caps === NO_CAPS) charged.add(frame.schema);
 
+    recordUnsupportedReference(frame.schema, frame.path, state);
     recordDeclaredArrayLimit(frame.schema, frame.path, state, frame.caps);
     recordObjectLimit(frame.schema, frame.path, state, frame.caps);
     recordStringLimit(frame.schema, frame.path, state, frame.caps);
@@ -362,16 +384,45 @@ function chargeGeneratingSchemas(
   }
 }
 
+/**
+ * Record the first reference on a generating path that json-schema-faker
+ * cannot follow, although the index here resolves it. It has no
+ * `$dynamicRef` support and generates an arbitrary value in its place, and it
+ * registers no anchors, so a `$ref` to one fails every request.
+ */
+function recordUnsupportedReference(
+  schema: JSONSchema7,
+  path: string,
+  state: WalkState,
+): void {
+  if (state.unsupportedReference) return;
+  if (Reflect.get(schema, "$dynamicRef") !== undefined) {
+    state.unsupportedReference = {
+      path: `${path}.$dynamicRef`,
+      issue:
+        "$dynamicRef is not supported: json-schema-faker ignores it and generates an arbitrary value",
+    };
+  } else if (
+    typeof schema.$ref === "string" &&
+    state.refs.namesAnchor(schema, schema.$ref)
+  ) {
+    state.unsupportedReference = {
+      path: `${path}.$ref`,
+      issue: `"${schema.$ref}" names an anchor, which json-schema-faker cannot resolve`,
+    };
+  }
+}
+
 function collectSchemaEdges(
   schema: JSONSchema7,
   path: string,
-  resolveRef: LocalRefResolver,
+  refs: LocalRefResolver,
 ): SchemaEdge[] {
   const edges = collectContainedSchemaEdges(schema, path);
   for (const keyword of ["$ref", "$dynamicRef"] as const) {
     const reference = Reflect.get(schema, keyword);
     if (typeof reference !== "string") continue;
-    const resolved = resolveRef(schema, reference);
+    const resolved = refs.resolve(schema, reference);
     if (isJSONSchema7(resolved)) {
       edges.unshift({
         schema: resolved,
@@ -403,6 +454,8 @@ interface SchemaScope {
 
 interface ReferenceIndex {
   resources: Map<string, JSONSchema7Definition>;
+  /** The identifiers `$anchor` and `$dynamicAnchor` registered. */
+  anchors: Set<string>;
   scopes: Map<JSONSchema7, SchemaScope>;
   rootScope: SchemaScope;
 }
@@ -419,28 +472,38 @@ function createLocalRefResolver(root: JSONSchema7): LocalRefResolver {
     JSONSchema7,
     Map<string, JSONSchema7Definition | null>
   >();
+  const scopeOf = (schema: JSONSchema7): SchemaScope =>
+    index.scopes.get(schema) ?? index.rootScope;
 
-  return (
-    schema: JSONSchema7,
-    reference: string,
-  ): JSONSchema7Definition | undefined => {
-    let schemaCache = cache.get(schema);
-    if (!schemaCache) {
-      schemaCache = new Map();
-      cache.set(schema, schemaCache);
-    }
-    const cached = schemaCache.get(reference);
-    if (cached !== undefined) return cached === null ? undefined : cached;
+  return {
+    resolve(schema, reference) {
+      let schemaCache = cache.get(schema);
+      if (!schemaCache) {
+        schemaCache = new Map();
+        cache.set(schema, schemaCache);
+      }
+      const cached = schemaCache.get(reference);
+      if (cached !== undefined) return cached === null ? undefined : cached;
 
-    const scope = index.scopes.get(schema) ?? index.rootScope;
-    const resolved = resolveIndexedReference(reference, scope, index.resources);
-    schemaCache.set(reference, resolved ?? null);
-    return resolved;
+      const resolved = resolveIndexedReference(
+        reference,
+        scopeOf(schema),
+        index.resources,
+      );
+      schemaCache.set(reference, resolved ?? null);
+      return resolved;
+    },
+    namesAnchor(schema, reference) {
+      if (reference === "#" || reference.startsWith("#/")) return false;
+      const identifier = resolveUri(reference, scopeOf(schema).baseUri);
+      return identifier !== undefined && index.anchors.has(identifier);
+    },
   };
 }
 
 function createReferenceIndex(root: JSONSchema7): ReferenceIndex {
   const resources = new Map<string, JSONSchema7Definition>();
+  const anchors = new Set<string>();
   const scopes = new Map<JSONSchema7, SchemaScope>();
   const rootScope: SchemaScope = {
     baseUri: INTERNAL_ROOT_ID,
@@ -458,7 +521,7 @@ function createReferenceIndex(root: JSONSchema7): ReferenceIndex {
     const scope = indexSchemaIdentifiers(
       frame.schema,
       frame.inheritedScope,
-      resources,
+      { resources, anchors },
       frame.path,
     );
     scopes.set(frame.schema, scope);
@@ -473,6 +536,7 @@ function createReferenceIndex(root: JSONSchema7): ReferenceIndex {
 
   return {
     resources,
+    anchors,
     scopes,
     rootScope: scopes.get(root) ?? rootScope,
   };
@@ -481,7 +545,7 @@ function createReferenceIndex(root: JSONSchema7): ReferenceIndex {
 function indexSchemaIdentifiers(
   schema: JSONSchema7,
   inheritedScope: SchemaScope,
-  resources: Map<string, JSONSchema7Definition>,
+  { resources, anchors }: Pick<ReferenceIndex, "resources" | "anchors">,
   path: string,
 ): SchemaScope {
   let scope = inheritedScope;
@@ -502,12 +566,9 @@ function indexSchemaIdentifiers(
   for (const keyword of ["$anchor", "$dynamicAnchor"] as const) {
     const anchor = Reflect.get(schema, keyword);
     if (typeof anchor === "string" && anchor.length > 0) {
-      registerIdentifier(
-        resources,
-        `${withoutUriFragment(scope.baseUri)}#${anchor}`,
-        schema,
-        `${path}.${keyword}`,
-      );
+      const identifier = `${withoutUriFragment(scope.baseUri)}#${anchor}`;
+      registerIdentifier(resources, identifier, schema, `${path}.${keyword}`);
+      anchors.add(identifier);
     }
   }
   return scope;
@@ -671,7 +732,7 @@ function estimateSchema(
       ? schema.$ref
       : Reflect.get(schema, "$dynamicRef");
   if (typeof reference === "string") {
-    return estimateDefinition(state.resolveRef(schema, reference), estimates);
+    return estimateDefinition(state.refs.resolve(schema, reference), estimates);
   }
 
   let height = 0;

@@ -59,6 +59,41 @@ function stringOfLength(source: string, length: number): JSONSchema7 {
   }
 }
 
+/** An object whose `property` reaches a uuid definition through `kind`. */
+function referenceSchema(property: string, kind: string): JSONSchema7 {
+  const uuid: JSONSchema7 = { type: "string", format: "uuid" };
+  const reachedThrough = (
+    reference: JSONSchema7,
+    definition: JSONSchema7,
+  ): JSONSchema7 => ({
+    type: "object",
+    properties: { [property]: reference },
+    required: [property],
+    $defs: { S: definition },
+  });
+  switch (kind) {
+    case "anchor-ref":
+      return reachedThrough(
+        { $ref: "#sid" },
+        withKeywords({ ...uuid }, { $anchor: "sid" }),
+      );
+    case "dynamic-anchor-ref":
+      return reachedThrough(
+        { $ref: "#sid" },
+        withKeywords({ ...uuid }, { $dynamicAnchor: "sid" }),
+      );
+    case "dynamic-ref":
+      return reachedThrough(
+        withKeywords({}, { $dynamicRef: "#sid" }),
+        withKeywords({ ...uuid }, { $dynamicAnchor: "sid" }),
+      );
+    case "pointer":
+      return reachedThrough({ $ref: "#/$defs/S" }, uuid);
+    default:
+      throw new Error(`Unknown reference kind: ${kind}`);
+  }
+}
+
 function expectResourceFailure(
   error: unknown,
   resource: string,
@@ -241,6 +276,53 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
           expect(String(response)).toMatch(
             new RegExp(`^[A-Za-z]{${length}}-\\S+`),
           );
+        },
+      );
+    },
+  );
+
+  ScenarioOutline(
+    "A reference json-schema-faker cannot follow is rejected at construction",
+    ({ Given, When, Then }, variables) => {
+      Given(
+        "an object whose property {string} reaches a uuid definition through {string}",
+        (_, property: string) => {
+          schema = referenceSchema(property, variables.reference);
+        },
+      );
+      When("I create a faker plugin for it", createPlugin);
+      Then(
+        "plugin creation fails with a schema validation error at {string}",
+        () => {
+          expect(creationError).toBeInstanceOf(SchemaValidationError);
+          expect(creationError).toMatchObject({
+            context: { schemaPath: variables.path },
+          });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A JSON Pointer to the same definition still generates",
+    ({ Given, When, Then }) => {
+      Given(
+        "an object whose property {string} reaches a uuid definition through {string}",
+        (_, property: string, kind: string) => {
+          schema = referenceSchema(property, kind);
+        },
+      );
+      When("I create a faker plugin for it", createPlugin);
+      Then(
+        "the plugin generates a uuid for {string}",
+        async (_, property: string) => {
+          expect(creationError).toBeUndefined();
+          const response = await generate();
+          expect(response).toMatchObject({
+            [property]: expect.stringMatching(
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+            ),
+          });
         },
       );
     },

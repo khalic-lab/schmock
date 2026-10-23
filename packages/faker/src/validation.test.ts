@@ -482,4 +482,101 @@ describe("validateSchema", () => {
       });
     });
   });
+
+  describe("references json-schema-faker cannot follow", () => {
+    const uuid: JSONSchema7 = { type: "string", format: "uuid" };
+
+    it.each([
+      [
+        "an $anchor",
+        { type: "object", properties: { n: { $ref: "#sid" } } },
+        { S: withKeywords({ ...uuid }, { $anchor: "sid" }) },
+      ],
+      [
+        "a $dynamicAnchor",
+        { type: "object", properties: { n: { $ref: "#sid" } } },
+        { S: withKeywords({ ...uuid }, { $dynamicAnchor: "sid" }) },
+      ],
+      [
+        "an anchor named by an absolute URI",
+        {
+          $id: "https://example.test/root.json",
+          type: "object",
+          properties: { n: { $ref: "https://example.test/root.json#sid" } },
+        },
+        { S: withKeywords({ ...uuid }, { $anchor: "sid" }) },
+      ],
+    ] satisfies Array<[string, JSONSchema7, Record<string, JSONSchema7>]>)(
+      "rejects a $ref to %s at creation",
+      (_, schema, defs) => {
+        const error = captureFailure(() =>
+          fakerPlugin({ schema: { ...schema, $defs: defs } }),
+        );
+
+        expectSchemaError(error, "$.properties.n.$ref");
+        expect(String(error)).toContain("anchor");
+      },
+    );
+
+    it("rejects a $dynamicRef at creation", () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: {
+          n: withKeywords({}, { $dynamicRef: "#sid" }),
+        },
+        $defs: { S: withKeywords({ ...uuid }, { $dynamicAnchor: "sid" }) },
+      };
+
+      expectSchemaError(
+        captureFailure(() => fakerPlugin({ schema })),
+        "$.properties.n.$dynamicRef",
+      );
+    });
+
+    it("still reports a dynamic-reference cycle as circular", () => {
+      const schema = withKeywords(
+        {
+          $id: "https://example.test/node.json",
+          type: "object",
+          properties: { child: withKeywords({}, { $dynamicRef: "#node" }) },
+        },
+        { $dynamicAnchor: "node" },
+      );
+
+      const error = captureFailure(() => fakerPlugin({ schema }));
+
+      expect(error).toBeInstanceOf(SchemaValidationError);
+      expect(String(error)).toMatch(/circular/i);
+    });
+
+    it("leaves an anchor reference inside not alone, since nothing is generated from it", () => {
+      const schema: JSONSchema7 = {
+        type: "string",
+        maxLength: 5,
+        not: { $ref: "#sid" },
+        $defs: { S: withKeywords({ ...uuid }, { $anchor: "sid" }) },
+      };
+
+      expect(() => fakerPlugin({ schema })).not.toThrow();
+    });
+
+    it.each([
+      ["a JSON Pointer", "#/$defs/S", { S: uuid }],
+      ["an embedded $id", "s.json", { S: { $id: "s.json", ...uuid } }],
+    ] satisfies Array<[string, string, Record<string, JSONSchema7>]>)(
+      "generates through %s",
+      async (_, $ref, defs) => {
+        const generated = await generateOnce({
+          type: "object",
+          properties: { n: { $ref } },
+          required: ["n"],
+          $defs: defs,
+        });
+
+        expect(generated).toMatchObject({
+          n: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        });
+      },
+    );
+  });
 });

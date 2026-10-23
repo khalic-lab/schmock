@@ -1479,6 +1479,13 @@ register them the same way:
   `$.definitions.0.faker`.
 - `unevaluatedProperties` and `unevaluatedItems` are stripped before
   generation. They are neither validated nor generated.
+- A `$dynamicRef`, or a `$ref` that names an `$anchor` or `$dynamicAnchor`, is
+  rejected with `SCHEMA_VALIDATION_ERROR` at its own path, because
+  json-schema-faker resolves neither. Inside `not`, an `if` with no `then`, or
+  an unreferenced definition, both stay accepted. `@schmock/openapi` generates
+  through `generateFromSchema` on each request, so an OpenAPI 3.1 response
+  schema with a `$dynamicRef` fails every request with this error instead of
+  returning an arbitrary value.
 
 ### Generation limits
 
