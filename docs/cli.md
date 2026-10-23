@@ -350,13 +350,20 @@ In the admin projection the values of `authorization`, `proxy-authorization`,
 `cookie`, `set-cookie`, `x-api-key`, `x-auth-token` and `x-schmock-admin-token`
 read `"[redacted]"`. These seven are core's `SENSITIVE_HEADER_NAMES`, the set
 its debug log masks. A request `set-cookie` header reaches the server as an
-array and is not recorded at all. In addition, any header or query parameter whose name,
-compared case-insensitively, is exactly `key`, `token`, `apikey`, `api_key`,
-`api-key`, `secret` or `password`, or ends in one of those after a `-` or `_`
-(for example `X-Pet-Key`, `access_token`, `client_secret`), is masked the same
-way. This covers the usual spellings of spec-declared apiKey schemes, but a name
-outside that pattern (such as `X-Pet-Credential`) is shown as sent. The core
-`mock.history()` API is untouched and still returns raw values.
+array and is not recorded at all. In addition, any header or query parameter
+whose name, compared case-insensitively, is exactly `key`, `token`, `apikey`,
+`api_key`, `api-key`, `secret` or `password`, or ends in one of those after a
+`-` or `_` (for example `X-Pet-Key`, `access_token`, `client_secret`), is masked
+the same way. This covers the usual spellings of spec-declared apiKey schemes,
+but a name outside that pattern (such as `X-Pet-Credential`) is shown as sent.
+The core `mock.history()` API is untouched and still returns raw values.
+
+That name rule is core's own, `isCredentialName` from `@schmock/core/adapter`.
+Core's debug log masks credential-shaped query parameters by the same rule, so
+`--debug` output and the admin history agree on which parameters they hide. The
+debug log still masks headers by `SENSITIVE_HEADER_NAMES` only, so a custom
+header such as `X-Pet-Key` is masked in the admin history but not in debug
+output.
 
 A binary body (an `ArrayBuffer`, which is what the server hands the mock for
 `application/octet-stream` and any other unrecognised content type, or a typed

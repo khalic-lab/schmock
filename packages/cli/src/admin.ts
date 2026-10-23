@@ -1,6 +1,7 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type * as Schmock from "@schmock/core";
 import { SchmockError, SENSITIVE_HEADER_NAMES } from "@schmock/core";
+import { isCredentialName } from "@schmock/core/adapter";
 import type { HeaderSource } from "./cors.js";
 import { singleHeader } from "./cors.js";
 import type { CliOptions } from "./types.js";
@@ -13,33 +14,28 @@ const ADMIN_PATH_PREFIX = "/schmock-admin/";
  */
 export const DEFAULT_ADMIN_HISTORY_LIMIT = 500;
 const REDACTED = "[redacted]";
-/**
- * A header or query parameter named like a credential: exactly `key`, `token`,
- * `apikey`, `api_key`, `api-key`, `secret` or `password`, or any name ending in
- * one of those after a `-` or `_` (`X-Pet-Key`, `access_token`,
- * `client_secret`). The openapi plugin does not expose the apiKey scheme names
- * a spec declares, so this catches the conventional spellings of them; a name
- * outside the pattern (`X-Pet-Credential`) is not masked.
- */
-const CREDENTIAL_NAME = /(?:^|[-_])(?:api[-_]?key|key|token|secret|password)$/;
 
 /**
  * Header names whose values the admin history projection masks: core's
  * credential header set (the one its debug log masks) plus anything named like
- * a credential. Core's `redactHeaders` is not used because it masks only that
- * set, and only in a string record.
+ * a credential by core's `isCredentialName` rule (`X-Pet-Key`,
+ * `access_token`, `client_secret`). The openapi plugin does not expose the
+ * apiKey scheme names a spec declares, so that rule catches the conventional
+ * spellings of them; a name outside it (`X-Pet-Credential`) is not masked.
+ * Core's `redactHeaders` is not used because it masks only the header set,
+ * and only in a string record.
  *
  * Redaction is deliberately confined to this projection: `mock.history()` is
  * public core API and library users legitimately assert on the raw values.
  */
 function isSensitiveHeader(name: string): boolean {
-  const lower = name.toLowerCase();
-  return SENSITIVE_HEADER_NAMES.has(lower) || CREDENTIAL_NAME.test(lower);
+  return (
+    SENSITIVE_HEADER_NAMES.has(name.toLowerCase()) || isCredentialName(name)
+  );
 }
 
-function isSensitiveQueryKey(name: string): boolean {
-  return CREDENTIAL_NAME.test(name.toLowerCase());
-}
+/** The rule core's debug log masks query parameters by, so the two agree. */
+const isSensitiveQueryKey = isCredentialName;
 
 /**
  * Whether a request targets the admin surface. Kept as one predicate because
