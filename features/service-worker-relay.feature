@@ -64,7 +64,8 @@ Feature: Service worker relay
     And the mock answered 1 request
 
   Scenario: Aborting a relayed XHR cancels it in the mock when the worker sees the abort
-    Given a page whose mock answers "GET /api/slow" after it is released and whose relay has started
+    Given a browser that delivers a page's aborts to the service worker
+    And a page whose mock answers "GET /api/slow" after it is released and whose relay has started
     And the mock records its request:end statuses
     When the page sends an XHR for "/api/slow" and aborts it while the route runs
     Then the mock ended the request with status 499
@@ -409,3 +410,11 @@ Feature: Service worker relay
     Given a page whose mock answers "GET /api/users" with users and whose relay has started
     When the page sends a beacon to "/api/events"
     Then the network received the beacon without the page seeing it
+
+  Scenario: Documented hazard - an abort the worker never sees leaves the route to finish
+    Given a page whose mock answers "GET /api/slow" after it is released and whose relay has started
+    And the mock records its request:end statuses
+    When the page sends an XHR for "/api/slow" and aborts it while the route runs
+    And the route is released
+    Then the XHR rejected with an AbortError
+    And the mock ended the request with status 200

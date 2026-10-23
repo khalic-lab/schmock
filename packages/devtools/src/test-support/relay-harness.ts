@@ -413,8 +413,16 @@ class Lifetime {
 
 export function createRelayHarness(settings?: {
   origin?: string;
+  /**
+   * Whether a page's abort reaches the worker on FetchEvent.request.signal,
+   * as the spec's Handle Fetch says. Default false: Chrome, Firefox and
+   * WebKit never delivered it (docs/devtools.md, observed), so the worker's
+   * request signal never aborts while the page's fetch still rejects.
+   */
+  forwardAborts?: boolean;
 }): RelayHarness {
   const origin = new URL(settings?.origin ?? DEFAULT_ORIGIN).origin;
+  const forwardAborts = settings?.forwardAborts ?? false;
   const network = vi.fn(
     async (_request: Request) =>
       new Response("real network", {
@@ -1138,11 +1146,21 @@ export function createRelayHarness(settings?: {
     return response;
   }
 
+  /** `signal` is the caller's: once it aborted, a late response is not logged. */
   async function routeBrowserRequest(
     page: PageRecord,
     request: Request,
+    signal: AbortSignal,
     dispatched: () => void,
   ): Promise<Response> {
+    const log = (servedBy: LogEntry["servedBy"]) => {
+      if (signal.aborted) return;
+      page.browserLog.push({
+        method: request.method,
+        url: request.url,
+        servedBy,
+      });
+    };
     await tick();
     const navigation = request.mode === "navigate";
     let version: WorkerVersion | null = null;
@@ -1160,19 +1178,11 @@ export function createRelayHarness(settings?: {
     dispatched();
     if (responded !== undefined) {
       const response = await serveFromWorker(responded);
-      page.browserLog.push({
-        method: request.method,
-        url: request.url,
-        servedBy: "worker",
-      });
+      log("worker");
       return response;
     }
     const response = await network(request);
-    page.browserLog.push({
-      method: request.method,
-      url: request.url,
-      servedBy: "network",
-    });
+    log("network");
     return response;
   }
 
@@ -1197,9 +1207,28 @@ export function createRelayHarness(settings?: {
       }),
     );
     return raceAbort(
-      routeBrowserRequest(page, request, markDispatched),
+      routeBrowserRequest(
+        page,
+        forwardAborts ? request : withoutAbort(request),
+        signal,
+        markDispatched,
+      ),
       signal,
     );
+  }
+
+  /** The request with a signal that never aborts; it takes over the body. */
+  function withoutAbort(request: Request): Request {
+    const detached = new Request(request, {
+      signal: new AbortController().signal,
+    });
+    for (const key of ["mode", "destination"] as const) {
+      Object.defineProperty(detached, key, {
+        value: request[key],
+        enumerable: true,
+      });
+    }
+    return detached;
   }
 
   async function helloFromStubTab(

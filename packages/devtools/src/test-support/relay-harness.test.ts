@@ -662,8 +662,10 @@ describe("fetch events", () => {
     expect(page.browserLog).toEqual([]);
   });
 
-  it("rejects an aborted request with an AbortError at once and aborts the worker's request signal", async () => {
-    const h = setUp();
+  /** Abort a held request after the worker got it; what the worker's signal saw. */
+  async function abortHeldRequest(
+    h: RelayHarness,
+  ): Promise<{ error: unknown; workerSaw: string[] }> {
     const workerSaw: string[] = [];
     let respond = (_response: Response) => {};
     h.installWorker(
@@ -684,18 +686,84 @@ describe("fetch events", () => {
     const page = h.openPage();
     const controller = new AbortController();
 
-    const pending = page.xhr("/slow", { signal: controller.signal });
+    const pending = page.xhr("/slow", {
+      method: "POST",
+      body: "payload",
+      signal: controller.signal,
+    });
     await h.flush();
     controller.abort();
     const error = await rejectionOf(pending);
     respond(new Response("too late"));
+    await h.flush();
 
-    expect(error).toMatchObject({ name: "AbortError" });
-    expect(workerSaw).toEqual(["abort"]);
     const preAborted = await rejectionOf(
       page.xhr("/never", { signal: AbortSignal.abort() }),
     );
     expect(preAborted).toMatchObject({ name: "AbortError" });
+    expect(page.browserLog).toEqual([]);
+    return { error, workerSaw };
+  }
+
+  it("rejects an aborted request with an AbortError at once, and never aborts the worker's request signal, as observed browsers do", async () => {
+    const { error, workerSaw } = await abortHeldRequest(setUp());
+
+    expect(error).toMatchObject({ name: "AbortError" });
+    expect(workerSaw).toEqual([]);
+  });
+
+  it("aborts the worker's request signal too with forwardAborts, as the spec's Handle Fetch does", async () => {
+    harness = createRelayHarness({ forwardAborts: true });
+    const { error, workerSaw } = await abortHeldRequest(harness);
+
+    expect(error).toMatchObject({ name: "AbortError" });
+    expect(workerSaw).toEqual(["abort"]);
+  });
+
+  it("hands the worker the request's method, URL, mode, destination, keepalive and unread body either way", async () => {
+    const seen: unknown[] = [];
+    for (const forwardAborts of [false, true]) {
+      const h = createRelayHarness({ forwardAborts });
+      h.installWorker(
+        claimingWorker((scope) => {
+          scope.addEventListener("fetch", (event) => {
+            const { request } = event;
+            event.respondWith(
+              request.text().then((body) => {
+                seen.push({
+                  method: request.method,
+                  url: request.url,
+                  mode: request.mode,
+                  destination: request.destination,
+                  keepalive: request.keepalive,
+                  body,
+                });
+                return new Response("ok");
+              }),
+            );
+          });
+        }),
+      );
+      await h.activateWorker();
+      const page = h.openPage();
+      await page.networkFetch("/api/beacon", {
+        method: "POST",
+        body: "event",
+        keepalive: true,
+        signal: new AbortController().signal,
+      });
+      h.dispose();
+    }
+
+    const expected = {
+      method: "POST",
+      url: "http://localhost/api/beacon",
+      mode: "cors",
+      destination: "",
+      keepalive: true,
+      body: "event",
+    };
+    expect(seen).toEqual([expected, expected]);
   });
 });
 

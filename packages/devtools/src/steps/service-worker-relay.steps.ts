@@ -303,6 +303,8 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let releaseCaches = () => {};
   let releaseHellos = () => {};
   let routeStarted: Promise<void> = Promise.resolve();
+  /** Whether the next harness delivers a page's aborts to the worker (the spec) or not (observed browsers). */
+  let forwardAborts = false;
 
   AfterEachScenario(async () => {
     releaseRoute();
@@ -343,6 +345,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     releaseCaches = () => {};
     releaseHellos = () => {};
     routeStarted = Promise.resolve();
+    forwardAborts = false;
   });
 
   function currentHarness(): RelayHarness {
@@ -381,7 +384,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     scriptURL?: string,
   ): RelayHarness {
     spies = spyOnConsole();
-    harness = createRelayHarness();
+    harness = createRelayHarness({ forwardAborts });
     harness.installWorker(worker, scriptURL);
     return harness;
   }
@@ -855,6 +858,14 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     "Aborting a relayed XHR cancels it in the mock when the worker sees the abort",
     ({ Given, When, Then, And }) => {
       Given(
+        "a browser that delivers a page's aborts to the service worker",
+        () => {
+          // The spec's Handle Fetch; Chrome, Firefox and WebKit did not.
+          forwardAborts = true;
+        },
+      );
+
+      And(
         'a page whose mock answers "GET /api/slow" after it is released and whose relay has started',
         () => givenRelayingPage(givenWaitingRoute),
       );
@@ -2495,6 +2506,49 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
           expect(currentMock().callCount()).toBe(0);
         },
       );
+    },
+  );
+
+  Scenario(
+    "Documented hazard - an abort the worker never sees leaves the route to finish",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a page whose mock answers "GET /api/slow" after it is released and whose relay has started',
+        () => givenRelayingPage(givenWaitingRoute),
+      );
+
+      And("the mock records its request:end statuses", () => {
+        currentMock().on("request:end", (event) => {
+          endStatuses.push(event.status);
+        });
+      });
+
+      When(
+        'the page sends an XHR for "/api/slow" and aborts it while the route runs',
+        async () => {
+          const controller = new AbortController();
+          const pending = currentPage().xhr("/api/slow", {
+            signal: controller.signal,
+          });
+          await startedOrSettled(pending);
+          controller.abort();
+          requestError = await rejectionOf(pending);
+        },
+      );
+
+      And("the route is released", () => {
+        releaseRoute();
+      });
+
+      Then("the XHR rejected with an AbortError", () => {
+        expect(requestError).toMatchObject({ name: "AbortError" });
+      });
+
+      And("the mock ended the request with status 200", async () => {
+        await vi.waitFor(() => expect(endStatuses).toEqual([200]), {
+          timeout: SETTLE_MS,
+        });
+      });
     },
   );
 });

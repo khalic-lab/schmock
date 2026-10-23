@@ -530,7 +530,9 @@ describe("fetch", () => {
     expect(index).toBe(3);
   });
 
-  it("W13 forwards an abort to the page on the request port", async () => {
+  it("W13 forwards an abort to the page on the request port when the browser delivers it", async () => {
+    h.dispose();
+    h = createRelayHarness({ forwardAborts: true });
     await relayWorker();
     const page = await registered();
     const frames = answerFrames(page, undefined);
@@ -550,6 +552,34 @@ describe("fetch", () => {
       { timeout: 2000 },
     );
     port.close();
+  });
+
+  it("W22 sends no abort when the browser keeps it from the worker, and drops the late answer", async () => {
+    await relayWorker();
+    const page = await registered();
+    const frames = answerFrames(page, undefined);
+    const portMessages: unknown[] = [];
+    const controller = new AbortController();
+    const pending = page.xhr("/api/slow", { signal: controller.signal });
+    await vi.waitFor(() => expect(frames).toHaveLength(1), { timeout: 2000 });
+    const port = frames[0].port;
+    if (!port) throw new Error("no port");
+    port.onmessage = (event) => portMessages.push(event.data);
+
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await h.flush();
+    await delay();
+    expect(portMessages).toEqual([]);
+
+    // The mock finishes the route; nobody is waiting for its answer.
+    port.postMessage({
+      type: "schmock:response",
+      response: { status: 200, statusText: "OK", headers: [], body: null },
+    });
+    port.close();
+    await h.flush();
+    expect(page.browserLog).toEqual([]);
   });
 
   it("W21 leaves a relaying page's keepalive request to the network", async () => {
