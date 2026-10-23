@@ -21,7 +21,7 @@ import {
   findSuccessResponse,
   type ResponseStatusKey,
 } from "./response-status.js";
-import { isRecord, normalizeMediaType } from "./utils.js";
+import { hasType, isRecord, normalizeMediaType } from "./utils.js";
 
 // Every request header is read through core's case-insensitive `getHeader`:
 // core does not normalize header case at `mock.handle`, so a direct-API caller
@@ -55,8 +55,10 @@ function isBinaryPayload(body: unknown): boolean {
   );
 }
 
+// `hasType`, not `type === "string"`: the normalizer turns 3.0 `nullable: true`
+// into `type: ["string", "null"]`, which 3.1 also writes directly.
 function isBinaryStringSchema(schema: JSONSchema7): boolean {
-  return schema.type === "string" && schema.format === "binary";
+  return hasType(schema, "string") && schema.format === "binary";
 }
 
 function isRouteRequestBodyRequired(route: Schmock.RouteConfig): boolean {
