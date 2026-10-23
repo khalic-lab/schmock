@@ -304,3 +304,40 @@ describe("a repeat signal after the grace window", () => {
     }
   });
 });
+
+// ── Review 2026-10-23, cli-1: a supplied admin token stays off stderr ─────
+
+describe("the admin token in the startup banner", () => {
+  it("does not print a token passed with --admin-token", async () => {
+    const cli = await startRun([
+      "--spec",
+      PETSTORE_SPEC,
+      "--port",
+      "0",
+      "--admin",
+      "--admin-token",
+      "s3cretFromVault",
+    ]);
+    cli.signal();
+    await cli.finished;
+
+    expect(cli.stderr()).not.toContain("s3cretFromVault");
+    expect(cli.stderr()).toContain("Admin token: (from --admin-token)\n");
+  });
+
+  it("still prints a token it minted itself", async () => {
+    const cli = await startRun([
+      "--spec",
+      PETSTORE_SPEC,
+      "--port",
+      "0",
+      "--admin",
+    ]);
+    cli.signal();
+    await cli.finished;
+
+    expect(cli.stderr()).toMatch(
+      /Admin token: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\n/,
+    );
+  });
+});

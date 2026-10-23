@@ -294,6 +294,15 @@ schmock api.yaml --admin --admin-token dev-token
 curl -H 'Authorization: Bearer dev-token' localhost:3000/schmock-admin/state
 ```
 
+A token you supply is not printed. You already have it, and it may come from a
+secret store whose values should not reach the process's logs, so the banner
+only says where it came from:
+
+```
+Admin: enabled (/schmock-admin/*)
+Admin token: (from --admin-token)
+```
+
 `x-schmock-admin-token: <token>` is accepted as an alternative to the
 `Authorization` header. A missing or wrong token returns `401` with code
 `UNAUTHORIZED` and a `WWW-Authenticate: Bearer` challenge. With `--admin` off
@@ -308,7 +317,8 @@ it. The admin endpoints ignore any request body.
 
 The token survives a `--watch` reload, so a live admin client keeps working
 across spec saves. A token passed as `--admin-token` is visible in `ps` output
-on a shared host; prefer the generated one there.
+on a shared host; prefer the generated one there. The generated one is printed
+to stderr, so whoever can read the server's logs can read it too.
 
 ### Browser access and CORS
 

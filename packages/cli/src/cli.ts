@@ -40,7 +40,15 @@ export async function run(args: string[]): Promise<void> {
   }
   if (options.admin) {
     process.stderr.write("Admin: enabled (/schmock-admin/*)\n");
-    process.stderr.write(`Admin token: ${options.adminToken}\n`);
+    // Only a minted token is printed, because nobody else can know it. One
+    // passed with --admin-token is already the caller's, often injected from
+    // a secret store, and echoing it would copy the credential into whatever
+    // collects this process's stderr.
+    process.stderr.write(
+      parsed.adminToken === undefined
+        ? `Admin token: ${options.adminToken}\n`
+        : "Admin token: (from --admin-token)\n",
+    );
     if (!isLoopbackHost(cliServer.hostname)) {
       process.stderr.write(
         `WARNING: the admin API is enabled and bound to ${cliServer.hostname}, which is reachable from other hosts.\n` +

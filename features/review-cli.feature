@@ -76,3 +76,8 @@ Feature: CLI review fixes
     When the CLI is run on the petstore spec with the extra arguments "--seed="
     Then the run is refused with code "INVALID_CONFIG" for the flag "--seed"
     And no server is announced
+
+  Scenario: The startup banner does not echo an admin token passed on the command line
+    When the CLI is run on the petstore spec with the extra arguments "--admin --admin-token s3cretFromVault"
+    Then the startup output does not contain "s3cretFromVault"
+    And the startup output contains "Admin token: (from --admin-token)"

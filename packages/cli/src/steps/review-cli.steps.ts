@@ -621,4 +621,26 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       });
     },
   );
+
+  function thenOutputContains(_: unknown, text: string): void {
+    expect(stderr).toContain(text);
+  }
+
+  function thenOutputOmits(_: unknown, text: string): void {
+    expect(stderr).not.toContain(text);
+  }
+
+  // cli-1: a token injected from a secret store used to be copied into the
+  // process's stderr log on every start.
+  Scenario(
+    "The startup banner does not echo an admin token passed on the command line",
+    ({ When, Then, And }) => {
+      When(
+        "the CLI is run on the petstore spec with the extra arguments {string}",
+        whenRunWithArguments,
+      );
+      Then("the startup output does not contain {string}", thenOutputOmits);
+      And("the startup output contains {string}", thenOutputContains);
+    },
+  );
 });
