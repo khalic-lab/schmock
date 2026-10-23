@@ -21,10 +21,30 @@ import type {
  *
  * Only the service-worker objects are faked. MessageChannel, Request,
  * Response and AbortController are Node's real implementations. The fakes
- * follow the Service Worker spec (registration lifecycle, longest-prefix
- * matching, claim eligibility, activation handing over controlled pages, the
- * client message queue), so code that is green against them is not green by
- * accident. relay-harness.test.ts pins every one of these behaviours.
+ * model the Service Worker spec's registration lifecycle (Register's
+ * short-circuit, soft update on navigation), longest-prefix matching, claim
+ * eligibility, activation handing over controlled pages and the client
+ * message queue, and relay-harness.test.ts pins each of these. Code green
+ * against them is green against this model, which departs from the spec or
+ * from real browsers where listed below. What only a real browser showed is
+ * recorded as "observed" in docs/devtools.md; docs/testing.md (Repository
+ * Quality Gates) describes how the relay is tested.
+ *
+ * Known departures:
+ * - Aborts: by default a page's abort never reaches FetchEvent.request.signal,
+ *   as in Chrome, Firefox and WebKit; createRelayHarness({ forwardAborts:
+ *   true }) follows the spec's Handle Fetch instead.
+ * - The back/forward cache: a frozen page holds its events until show().
+ *   Chrome evicts it instead when a worker messages, claims or hands it over;
+ *   eviction is not modelled.
+ * - Responses: the page gets the worker's Response object as is (url "", type
+ *   "default"), a 3xx is not followed, and no browser default header (accept)
+ *   is added. Forbidden request headers (cookie, host) reach the worker,
+ *   because Node's Request keeps them.
+ * - Lifetime: the browser never stops a worker by itself, and a FetchEvent has
+ *   no timeout; restartWorker() stops and restarts the worker on demand.
+ * - No HTTP cache: updateViaCache only decides whether register() updates, and
+ *   no Service-Worker-Allowed header widens the maximum scope.
  *
  * A listener that throws is reported as an uncaught error, so the test fails;
  * a browser would log it and go on.
