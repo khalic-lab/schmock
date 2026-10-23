@@ -1,5 +1,5 @@
 import type * as Schmock from "@schmock/core";
-import { getHeader, getResponseParts, isBinaryBody } from "@schmock/core";
+import { getHeader, getResponseParts } from "@schmock/core";
 import { generateFromSchema } from "@schmock/faker";
 import type { ValidateFunction } from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -16,6 +16,12 @@ import type {
   SecurityScheme,
 } from "./parser.js";
 import { parsePreferHeader } from "./prefer.js";
+import {
+  isBinaryPayload,
+  NORMALIZED_BODY_STATE_KEY,
+  normalizeRequestBody,
+  toValidationInstance,
+} from "./request-body.js";
 import {
   findResponseEntry,
   findSuccessResponse,
@@ -47,12 +53,6 @@ function getRouteRequestBody(
 ): JSONSchema7 | undefined {
   const value = route["openapi:requestBody"];
   return isRecord(value) ? value : undefined;
-}
-
-function isBinaryPayload(body: unknown): boolean {
-  return (
-    isBinaryBody(body) || (typeof Blob === "function" && body instanceof Blob)
-  );
 }
 
 // `hasType`, not `type === "string"`: the normalizer turns 3.0 `nullable: true`
@@ -345,8 +345,8 @@ export function validateRequestBody(
 
   let requestBodySchema = getRouteRequestBody(context.route);
   const content = getRouteRequestContent(context.route);
+  const rawContentType = getHeader(context.headers, "content-type");
   if (content && content.size > 0) {
-    const rawContentType = getHeader(context.headers, "content-type");
     // No declared type from the client is not a violation — fall back to the
     // JSON-ish default contract rather than rejecting.
     if (rawContentType) {
@@ -360,6 +360,16 @@ export function validateRequestBody(
       requestBodySchema = content.get(selected);
     }
   }
+
+  // Form bodies are validated as the record the schema describes rather than
+  // the FormData or string record core decoded, and that record is kept for
+  // the CRUD generators to read through readRequestBody().
+  const body = normalizeRequestBody(
+    context.body,
+    rawContentType,
+    requestBodySchema,
+  );
+  context.state.set(NORMALIZED_BODY_STATE_KEY, body);
 
   if (!requestBodySchema) {
     return undefined;
@@ -393,7 +403,10 @@ export function validateRequestBody(
       ]);
     }
   }
-  if (!validate(context.body)) {
+  // A form body is checked with its file parts read as strings (see
+  // `toValidationInstance`); any other body is checked exactly as received.
+  const instance = body === context.body ? body : toValidationInstance(body);
+  if (!validate(instance)) {
     const errors =
       validate.errors?.map((e) => ({
         path: e.instancePath || "/",

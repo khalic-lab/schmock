@@ -15,3 +15,32 @@ Feature: OpenAPI request bodies as the transports deliver them
     Given a validating upload mock whose octet-stream body is a nullable binary string
     When I post three bytes as "application/octet-stream" through the fetch interceptor
     Then the upload response status is 201
+
+  # ── Form bodies are read through their schema ────────────────────────────
+
+  Scenario: A multipart upload with a text field and a file is accepted
+    Given a validating upload mock whose multipart body requires a name and a binary file
+    When I post a multipart form with name "Rex" and a file through the fetch interceptor
+    Then the upload response status is 201
+
+  Scenario: A multipart field that breaks its schema is rejected when nothing is required
+    Given a validating upload mock whose multipart body has an optional integer count
+    When I post a multipart form with count "not-a-number" through the fetch interceptor
+    Then the upload response status is 400
+    And the upload validation error points at "/count"
+
+  Scenario: Typed urlencoded fields are read as the types their schema declares
+    Given a validating upload mock whose urlencoded body has integer, boolean and number fields
+    When I post the urlencoded form "qty=3&active=true&price=9.5" through the fetch interceptor
+    Then the upload response status is 201
+
+  Scenario: An urlencoded integer field must be written in plain decimal notation
+    Given a validating upload mock whose urlencoded body has integer, boolean and number fields
+    When I post the urlencoded form "qty=1e3" through the fetch interceptor
+    Then the upload response status is 400
+    And the upload validation error points at "/qty"
+
+  Scenario: Bracketed urlencoded keys nest under the object property they name
+    Given a validating upload mock whose urlencoded body declares only a metadata object
+    When I post the urlencoded form "metadata[order]=42" through the fetch interceptor
+    Then the upload response status is 201
