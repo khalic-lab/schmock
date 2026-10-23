@@ -388,7 +388,10 @@ through core's `serveNodeRequest`), `server.ts` (`createCliServer` and
 shutdown) and `watch.ts` (spec reloads). `cli.ts` holds `run()` and re-exports
 the public surface. In `packages/openapi/src`, `load-document.ts` reads and
 dereferences a spec, `operation-extract.ts` reads one operation's contract out
-of it, and `parser.ts` walks the paths. In `packages/faker/src`,
+of it, and `parser.ts` walks the paths. `list-envelope.ts` reads what an object
+contract declares and which array a list envelope carries,
+`response-headers.ts` generates declared response header values, and
+`crud-ids.ts` finds a CRUD resource's stored rows by id and mints new ids. In `packages/faker/src`,
 `validation.ts` holds the schema walk, the generation limits and the size
 estimate, `ref-index.ts` the local `$ref` index, `faker-allocation.ts` the
 rules for the `faker` keyword, `regex-bounds.ts` the length bounds of a
