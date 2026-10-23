@@ -381,7 +381,11 @@ through core's `serveNodeRequest`), `server.ts` (`createCliServer` and
 shutdown) and `watch.ts` (spec reloads). `cli.ts` holds `run()` and re-exports
 the public surface. In `packages/openapi/src`, `load-document.ts` reads and
 dereferences a spec, `operation-extract.ts` reads one operation's contract out
-of it, and `parser.ts` walks the paths.
+of it, and `parser.ts` walks the paths. In `packages/faker/src`,
+`validation.ts` holds the schema walk, the generation limits and the size
+estimate, `ref-index.ts` the local `$ref` index, `faker-allocation.ts` the
+rules for the `faker` keyword, `regex-bounds.ts` the length bounds of a
+`pattern`, and `saturating.ts` `capped`, which keeps estimates finite.
 
 ## Patterns
 
@@ -412,11 +416,13 @@ declared once, in `packages/core/schmock.d.ts`:
 interface Plugin {
   name: string;
   version?: string;
-  install?(instance: CallableMockInstance): void | undefined;
-  uninstall?(instance: CallableMockInstance): void | undefined;
+  install?(instance: CallableMockInstance): PluginHookResult;
+  uninstall?(instance: CallableMockInstance): PluginHookResult;
   beforeRequest?(context: PluginContext): PluginResult | void | Promise<PluginResult | void>;
   process(context: PluginContext, response?: unknown): PluginResult | Promise<PluginResult>;
   onError?(error: Error, context: PluginContext): Error | ResponseResult | void | Promise<Error | ResponseResult | void>;
+  onExchange?(exchange: Exchange): unknown;
+  afterResponse?(context: PluginContext, response: Readonly<Response>): unknown;
 }
 ```
 
