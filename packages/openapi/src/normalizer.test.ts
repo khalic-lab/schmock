@@ -860,6 +860,79 @@ describe("normalizeSchema", () => {
       expect(result).not.toHaveProperty("example");
     });
 
+    it("promotes the first of a 3.1 examples array when there is no example", () => {
+      const result = normalizeSchema(
+        { type: "string", examples: ["active", "idle"] },
+        "response",
+      );
+      expect(result.default).toBe("active");
+      expect(result.examples).toEqual(["active", "idle"]);
+
+      const union = normalizeSchema(
+        { type: ["string", "null"], examples: ["active"] },
+        "response",
+      );
+      expect(union.default).toBe("active");
+    });
+
+    it("prefers default, then example, over the examples array", () => {
+      expect(
+        normalizeSchema(
+          { type: "string", default: "set", example: "one", examples: ["x"] },
+          "response",
+        ).default,
+      ).toBe("set");
+      expect(
+        normalizeSchema(
+          { type: "string", example: "one", examples: ["x"] },
+          "response",
+        ).default,
+      ).toBe("one");
+    });
+
+    it("never promotes an examples entry onto a composite node or from an object", () => {
+      expect(
+        normalizeSchema(
+          { type: "array", items: { type: "string" }, examples: [["a"]] },
+          "response",
+        ),
+      ).not.toHaveProperty("default");
+      expect(
+        normalizeSchema({ type: "string", examples: [{ a: 1 }] }, "response"),
+      ).not.toHaveProperty("default");
+      expect(
+        normalizeSchema({ type: "string", examples: [] }, "response"),
+      ).not.toHaveProperty("default");
+    });
+
+    it("generates the first examples entry for a 3.1 spec", async () => {
+      const mock = await mockFor(
+        specWith(
+          {
+            "/status": {
+              get: {
+                responses: {
+                  "200": {
+                    description: "ok",
+                    content: json({
+                      type: "string",
+                      examples: ["active", "idle"],
+                    }),
+                  },
+                },
+              },
+            },
+          },
+          {},
+          "3.1.0",
+        ),
+      );
+
+      for (let i = 0; i < 3; i++) {
+        expect((await mock.handle("GET", "/status")).body).toBe("active");
+      }
+    });
+
     it("preserves existing default when example is present", () => {
       const result = normalizeSchema(
         { type: "string", example: "hello", default: "world" },

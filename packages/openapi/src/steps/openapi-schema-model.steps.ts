@@ -391,4 +391,44 @@ describeFeature(feature, ({ Scenario }) => {
       });
     },
   );
+
+  Scenario(
+    "A 3.1 examples array becomes the generation default the way a 3.0 example does",
+    ({ Given, When, Then }) => {
+      Given(
+        'a 3.1 mock whose status string declares the examples "active" and "idle"',
+        async () => {
+          await build({
+            spec: specWith(
+              {
+                "/status": {
+                  get: {
+                    responses: {
+                      "200": {
+                        description: "OK",
+                        content: json({
+                          type: "string",
+                          examples: ["active", "idle"],
+                        }),
+                      },
+                    },
+                  },
+                },
+              },
+              {},
+              "3.1.0",
+            ),
+          });
+        },
+      );
+
+      When("I read the status", async () => {
+        response = await mock.handle("GET", "/status");
+      });
+
+      Then('the status is "active"', () => {
+        expect(response.body).toBe("active");
+      });
+    },
+  );
 });

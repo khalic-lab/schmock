@@ -61,3 +61,10 @@ Feature: OpenAPI schema model fixes
     Given a request-validating mock whose pet owner is a nullable object composed with allOf
     When I post a pet whose owner is null
     Then the pet response has status 204
+
+  # ── Examples ──────────────────────────────────────────────────────────────
+
+  Scenario: A 3.1 examples array becomes the generation default the way a 3.0 example does
+    Given a 3.1 mock whose status string declares the examples "active" and "idle"
+    When I read the status
+    Then the status is "active"
