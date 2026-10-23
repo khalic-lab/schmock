@@ -119,9 +119,51 @@ function isNullAlternative(schema: JSONSchema7): boolean {
   );
 }
 
-/** Whether a null instance satisfies `schema` — only type/const/enum refuse. */
+/**
+ * Whether a null instance satisfies `schema` — only type/const/enum and a
+ * `not` refuse. A marked node's own type, const and enum describe its
+ * non-null shape (the enhancer stripped null from them), but its `not` is a
+ * conjunct beside a type union and is checked first. A null alternative's
+ * keywords may come from the non-null branch, so its `not` is not checked.
+ */
 function admitsNull(schema: JSONSchema7): boolean {
+  if (isNullAlternative(schema)) return true;
+  if (notRejectsNull(schema)) return false;
   if (isNullableMarked(schema)) return true;
+  return valueKeywordsAdmitNull(schema);
+}
+
+/** Keywords whose verdict on a null instance this walk does not evaluate. */
+const OPAQUE_FOR_NULL = [
+  "$ref",
+  "$dynamicRef",
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "not",
+  "if",
+] as const;
+
+/**
+ * Whether `schema.not` rejects null, which it does when null satisfies the
+ * body. Every keyword but type/const/enum ignores a null instance, so a body
+ * of other assertions (`{required: [...]}`, `{minLength: 1}`) accepts null
+ * too. A body whose verdict hangs on a `$ref` or composition is assumed to
+ * accept null: skipping the roll is safe, rolling an invalid null is not.
+ */
+function notRejectsNull(schema: JSONSchema7): boolean {
+  const body = schema.not;
+  if (body === undefined) return false;
+  if (typeof body === "boolean") return body;
+  if (!isJSONSchema7(body)) return false;
+  if (OPAQUE_FOR_NULL.some((key) => Reflect.get(body, key) !== undefined)) {
+    return true;
+  }
+  return valueKeywordsAdmitNull(body);
+}
+
+/** Whether `schema`'s type, const and enum all accept null. */
+function valueKeywordsAdmitNull(schema: JSONSchema7): boolean {
   if (schema.const !== undefined && schema.const !== null) return false;
   if (Array.isArray(schema.enum) && !schema.enum.includes(null)) return false;
   if (schema.type === undefined) return true;

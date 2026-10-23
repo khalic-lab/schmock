@@ -344,3 +344,52 @@ describe("applyNullableRolls — uniqueItems (faker-9)", () => {
     expect(arrays.some((array) => nullCount(array) > 1)).toBe(true);
   });
 });
+
+describe("applyNullableRolls — a not that rejects null (faker-2)", () => {
+  /** Items generated from `items` over a few seeds, 50 per array. */
+  async function itemsFrom(items: JSONSchema7): Promise<unknown[]> {
+    const values: unknown[] = [];
+    for (let seed = 1; seed <= 6; seed += 1) {
+      const value = await generateFromSchema({
+        schema: { type: "array", items, minItems: 50, maxItems: 50 },
+        seed,
+      });
+      if (!Array.isArray(value)) throw new Error("Expected an array");
+      values.push(...value);
+    }
+    return values;
+  }
+
+  it.each([
+    [
+      "a not.type union with null",
+      {
+        type: ["string", "integer", "null"],
+        not: { type: ["string", "null"] },
+      },
+    ],
+    ["a not.const null", { type: ["integer", "null"], not: { const: null } }],
+    [
+      "a not.enum holding null",
+      { type: ["integer", "null"], not: { enum: [null, 7] } },
+    ],
+    [
+      "a not whose body ignores null",
+      { type: ["integer", "null"], not: { minLength: 1 } },
+    ],
+  ] satisfies [string, JSONSchema7][])(
+    "never rolls null beside %s",
+    async (_, items) => {
+      expect(await itemsFrom(items)).not.toContain(null);
+    },
+  );
+
+  it("still rolls null when the not body rejects null", async () => {
+    const values = await itemsFrom({
+      type: ["string", "integer", "null"],
+      not: { type: "string" },
+    });
+    expect(values).toContain(null);
+    expect(values.every((value) => typeof value !== "string")).toBe(true);
+  });
+});
