@@ -476,9 +476,23 @@ Transport framing headers are adapter-owned and removed from ordinary
 responses; HEAD may retain an explicit representation `Content-Length`, and
 304 representation metadata is preserved.
 
-A string returned in a bare status tuple such as `[200, "hello"]` is emitted as
-raw, untyped text. Add an explicit JSON content type when the string should be
-JSON encoded.
+A string body is always sent verbatim, whatever its content type: it is taken
+to be the wire text already, and is never JSON-encoded. A string returned in a
+bare status tuple such as `[200, "hello"]` goes out as raw, untyped text, and a
+string under `application/json` must already be JSON. To send a JSON string,
+return its JSON text, `JSON.stringify(value)`, and label it `application/json`
+if the route does not already.
+
+A non-string body whose `toJSON()` yields a string, such as a `Date` or a money
+or ID class, is kept as that JSON text, quotes included, so it goes out as a
+valid JSON string literal. `handle()` reports it the same way:
+`new Date(0)` comes back as the body `'"1970-01-01T00:00:00.000Z"'`.
+An in-process consumer that reads `handle().body` as a value gets that JSON
+text, quotes included, as it would any pre-serialized string body. To see the
+value a JSON-parsing client sees, `JSON.parse` a string body labelled
+`application/json`. The Angular adapter's `json` response type does not do
+this: it passes a string body through as is, so a `Date` route reaches the
+app as the quoted string.
 
 Advanced adapter authors can import `normalizeResponse()` and
 `serializeResponseBody()` from `@schmock/core` to apply this same contract.
