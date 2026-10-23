@@ -247,22 +247,49 @@ Two things differ from the other adapters:
 
 ### OpenAPI-driven Angular tests
 
-Pass the spec as an object. Under the browser build a file path throws
-`OPENAPI_NODE_ONLY` (see [Running in a browser](./openapi.md#running-in-a-browser)),
-so fetch the spec or import it as JSON:
+What works depends on where the tests run.
+
+Under a Node test runner (Vitest, Jest, jsdom or happy-dom included),
+`provideSchmockInterceptorFromSpec` builds the mock for you, and a spec file
+path is read from disk. A relative `fetch('/assets/api.json')` does not work
+there: Node has no page origin to resolve it against.
 
 ```typescript
 import { provideSchmockInterceptorFromSpec } from '@schmock/angular'
 
 beforeEach(async () => {
-  const spec: object = await fetch('/assets/api.json').then((res) => res.json())
   TestBed.configureTestingModule({
     providers: [
       provideHttpClient(withInterceptorsFromDi()),
       await provideSchmockInterceptorFromSpec(
-        { spec, seed: { users: { count: 5 } } },
+        { spec: './src/assets/api.json', seed: { users: { count: 5 } } },
         { baseUrl: '/api' },
       ),
+    ],
+  })
+})
+```
+
+Under Karma or another browser runner the tests are a bundled browser app. The
+`FromSpec` helpers reject there with `OPENAPI_PEER_UNAVAILABLE` (see
+[the Angular guide](./angular.md#the-fromspec-helpers-node-and-test-runners-only)),
+and a file path throws `OPENAPI_NODE_ONLY` (see
+[Running in a browser](./openapi.md#running-in-a-browser)). Pipe the plugin
+into a mock yourself, with the spec fetched or imported as JSON:
+
+```typescript
+import { schmock } from '@schmock/core'
+import { openapi } from '@schmock/openapi'
+import { provideSchmockInterceptor } from '@schmock/angular'
+
+beforeEach(async () => {
+  const spec: object = await fetch('/assets/api.json').then((res) => res.json())
+  const mock = schmock({ state: {} })
+  mock.pipe(await openapi({ spec, seed: { users: { count: 5 } } }))
+  TestBed.configureTestingModule({
+    providers: [
+      provideHttpClient(withInterceptorsFromDi()),
+      provideSchmockInterceptor(mock, { baseUrl: '/api' }),
     ],
   })
 })

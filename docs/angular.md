@@ -137,24 +137,67 @@ for it.
 
 ## OpenAPI-Driven Interceptor
 
-Skip manual route definitions — load everything from a spec. In the browser,
-pass the spec as an object: a file path or URL throws `OPENAPI_NODE_ONLY` (see
+Skip manual route definitions — load everything from a spec. In an app, pipe
+the OpenAPI plugin into a mock before bootstrapping, and provide the
+interceptor for that mock:
+
+```typescript
+// main.ts
+import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http'
+import { bootstrapApplication } from '@angular/platform-browser'
+import { schmock } from '@schmock/core'
+import { openapi } from '@schmock/openapi'
+import { provideSchmockInterceptor } from '@schmock/angular'
+import { AppComponent } from './app/app.component'
+
+const mock = schmock({ state: {} })
+
+fetch('/assets/api.json')
+  .then((res) => res.json())
+  .then((spec: object) => openapi({ spec, seed: { users: { count: 10 } } }))
+  .then((plugin) => {
+    mock.pipe(plugin)
+    return bootstrapApplication(AppComponent, {
+      providers: [
+        provideHttpClient(withInterceptorsFromDi()),
+        provideSchmockInterceptor(mock, { baseUrl: '/api' }),
+      ],
+    })
+  })
+  .catch((err) => console.error(err))
+```
+
+Your bundler resolves the `@schmock/openapi` import like any other, and picks
+its browser build through the `browser` export condition. Pass the spec as an
+object, fetched or imported as JSON: in the browser a file path or URL throws
+`OPENAPI_NODE_ONLY` (see
 [Running in a browser](./openapi.md#running-in-a-browser)).
+
+### The `FromSpec` helpers: Node and test runners only
+
+`provideSchmockInterceptorFromSpec` and `createSchmockInterceptorFromSpec`
+build that mock for you, but they load `@schmock/openapi` through a specifier
+computed at runtime. A bundler leaves that import in place, so in a bundled
+browser app (`ng build`, Karma or another browser test runner) they reject with
+`SchmockError` code `OPENAPI_PEER_UNAVAILABLE` even when the package is
+installed. Use the recipe above there. Under a Node test runner (Vitest, Jest),
+where the import resolves from `node_modules`, they work, and a spec file path
+is read from disk:
 
 ```typescript
 import { provideSchmockInterceptorFromSpec } from '@schmock/angular'
 
-const spec: object = await fetch('/assets/api.json').then((res) => res.json())
-
-export const appConfig = {
-  providers: [
-    provideHttpClient(withInterceptorsFromDi()),
-    await provideSchmockInterceptorFromSpec(
-      { spec, seed: { users: { count: 10 } } },
-      { baseUrl: '/api' },
-    ),
-  ],
-}
+beforeEach(async () => {
+  TestBed.configureTestingModule({
+    providers: [
+      provideHttpClient(withInterceptorsFromDi()),
+      await provideSchmockInterceptorFromSpec(
+        { spec: './src/assets/api.json', seed: { users: { count: 10 } } },
+        { baseUrl: '/api' },
+      ),
+    ],
+  })
+})
 ```
 
 Or with `createSchmockInterceptorFromSpec` for class-based setup:
@@ -163,7 +206,7 @@ Or with `createSchmockInterceptorFromSpec` for class-based setup:
 import { createSchmockInterceptorFromSpec } from '@schmock/angular'
 
 const InterceptorClass = await createSchmockInterceptorFromSpec(
-  { spec: await fetch('/assets/api.json').then((res) => res.json()) },
+  { spec: './src/assets/api.json' },
   { baseUrl: '/api' },
 )
 
@@ -175,12 +218,11 @@ providers: [
 ]
 ```
 
-The spec helpers load `@schmock/openapi` through a specifier computed at
-runtime, so an app that does not install it still bundles cleanly with
-`ng build` and esbuild. When the peer is missing, or does not export an
-`openapi()` factory, they reject with `SchmockError` code
-`OPENAPI_PEER_UNAVAILABLE` and the import failure in `context.cause`.
-Webpack-based builders may print a harmless
+The computed specifier is also why an app that does not install
+`@schmock/openapi` still bundles cleanly with `ng build` and esbuild. When the
+peer cannot be loaded, or does not export an `openapi()` factory, the helpers
+reject with `OPENAPI_PEER_UNAVAILABLE` and the import failure in
+`context.cause`. Webpack-based builders may print a harmless
 `Critical dependency: the request of a dependency is an expression` warning.
 
 ## Chrome DevTools
