@@ -974,7 +974,10 @@ declare namespace Schmock {
     listWrapProperty?: string;
     /** Override: force flat array for list (ignores any wrapper in the spec) */
     listFlat?: boolean;
-    /** Override: JSON Schema for error responses (404, etc.) */
+    /**
+     * Override: JSON Schema for the body of the 404 a CRUD read, update or
+     * delete answers for a missing item, the only error CRUD generates.
+     */
     errorSchema?: JSONSchema7;
   }
 

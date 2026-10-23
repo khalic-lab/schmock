@@ -331,26 +331,32 @@ describe("CRUD error schemas", () => {
     return route.meta;
   }
 
-  it("uses a `default` error response for the CRUD error statuses", () => {
+  it("uses a `default` error response for the missing-item 404 only", () => {
     const meta = itemRead([
       [200, pet],
       ["default", problem],
     ]);
-    for (const status of [400, 404, 409]) {
-      expect(meta.errorSchemas?.get(status)).toBe(problem);
-    }
+    // CRUD answers no 400 or 409 of its own, so none is resolved for them.
+    expect([...(meta.errorSchemas?.keys() ?? [])]).toEqual([404]);
+    expect(meta.errorSchemas?.get(404)).toBe(problem);
   });
 
   it("prefers the exact status, then the range, then `default`", () => {
-    const meta = itemRead([
-      [200, pet],
-      [404, other],
-      ["4XX", problem],
-      ["default", pet],
-    ]);
-    expect(meta.errorSchemas?.get(404)).toBe(other);
-    expect(meta.errorSchemas?.get(400)).toBe(problem);
-    expect(meta.errorSchemas?.get(409)).toBe(problem);
+    expect(
+      itemRead([
+        [200, pet],
+        [404, other],
+        ["4XX", problem],
+        ["default", pet],
+      ]).errorSchemas?.get(404),
+    ).toBe(other);
+    expect(
+      itemRead([
+        [200, pet],
+        ["4XX", problem],
+        ["default", pet],
+      ]).errorSchemas?.get(404),
+    ).toBe(problem);
   });
 
   it("never answers a CRUD error with the `default` entry that is the success contract", () => {

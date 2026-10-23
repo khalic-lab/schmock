@@ -18,10 +18,10 @@ import {
 export type CrudOperation = "list" | "create" | "read" | "update" | "delete";
 
 /**
- * The error statuses CRUD handlers produce themselves; the same three an
- * `errorSchema` resource override covers.
+ * The one error status a CRUD handler answers on its own: the 404 of a
+ * missing item, whose body an `errorSchema` resource override replaces.
  */
-const CRUD_ERROR_STATUSES = [400, 404, 409] as const;
+const MISSING_ITEM_STATUS = 404;
 
 /** How new identifier values are minted for a resource. */
 export type IdKind = "integer" | "string" | "uuid";
@@ -555,15 +555,14 @@ function buildOperationMeta(
       errorSchemas.set(code, resp.schema);
     }
   }
-  // The statuses a CRUD handler answers on its own resolve the way response
-  // validation resolves them (exact, range, then `default`), so a spec that
+  // The 404 a CRUD handler answers on its own resolves the way response
+  // validation resolves it (exact, range, then `default`), so a spec that
   // declares its errors only under `default` or `4XX` gets its own body back.
   // A `default` entry that is the success contract is not an error schema.
-  for (const status of CRUD_ERROR_STATUSES) {
-    if (errorSchemas.has(status)) continue;
-    const entry = findResponseEntry(p.responses, status);
+  if (!errorSchemas.has(MISSING_ITEM_STATUS)) {
+    const entry = findResponseEntry(p.responses, MISSING_ITEM_STATUS);
     if (entry?.schema && entry !== successResponse?.[1]) {
-      errorSchemas.set(status, entry.schema);
+      errorSchemas.set(MISSING_ITEM_STATUS, entry.schema);
     }
   }
   if (errorSchemas.size > 0) {
