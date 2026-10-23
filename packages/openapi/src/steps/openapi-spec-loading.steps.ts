@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { SchmockError, schmock } from "@schmock/core";
-import { expect } from "vitest";
+import { expect, type MockInstance, vi } from "vitest";
 import { openapi } from "../plugin";
 
 const feature = await loadFeature(
@@ -64,6 +64,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
   AfterEachScenario(() => {
     Reflect.deleteProperty(Object.prototype, MARKER);
+    vi.restoreAllMocks();
   });
 
   const createExpectingFailure = async (): Promise<void> => {
@@ -224,6 +225,34 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       And("the pet's discriminator names one of the components", () => {
         const pet = responses.node.body as Record<string, unknown>;
         expect(["Cat", "Dog"]).toContain(pet.petType);
+      });
+    },
+  );
+
+  Scenario(
+    "A spec URL is not fetched under the default reference policy",
+    ({ Given, When, Then, And }) => {
+      let fetchSpy: MockInstance<typeof fetch>;
+
+      Given("fetch records every request instead of sending it", () => {
+        // ref-parser's built-in http resolver, which used to read the spec
+        // URL under this policy, goes through global `fetch`.
+        fetchSpy = vi
+          .spyOn(globalThis, "fetch")
+          .mockRejectedValue(new Error("no network in this scenario"));
+      });
+
+      When(
+        "I create an openapi plugin from the spec URL {string} expecting a failure",
+        async (_, url: string) => {
+          failure = await failureOf(openapi({ spec: url }));
+        },
+      );
+
+      Then("creating the plugin fails with code {string}", expectFailureCode);
+
+      And("nothing was fetched", () => {
+        expect(fetchSpy).not.toHaveBeenCalled();
       });
     },
   );

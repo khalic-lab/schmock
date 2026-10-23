@@ -25,3 +25,9 @@ Feature: OpenAPI spec loading
     When I request "/pets" from a mock made by the Node build and by the browser build
     Then both builds answer with the same pet
     And the pet's discriminator names one of the components
+
+  Scenario: A spec URL is not fetched under the default reference policy
+    Given fetch records every request instead of sending it
+    When I create an openapi plugin from the spec URL "https://specs.example.test/openapi.json" expecting a failure
+    Then creating the plugin fails with code "OPENAPI_EXTERNAL_REF_BLOCKED"
+    And nothing was fetched

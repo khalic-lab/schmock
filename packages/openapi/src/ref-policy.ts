@@ -496,6 +496,10 @@ export function buildRefParserOptions(
 ): RefParserOptions {
   const resolved = resolveRefPolicy(policy);
 
+  // Neither branch installs an http resolver of ours, so ref-parser's built-in
+  // one is what would read an http(s) spec URL. `loadDocument` refuses such a
+  // URL under these policies before `parse` runs; the root is only ever read
+  // through `readHttpRef` below.
   if (!resolved.external) {
     return { resolve: { external: false } };
   }

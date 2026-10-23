@@ -5,6 +5,7 @@ import {
   buildRefParserOptions,
   checkRef,
   collectUnresolvedRefs,
+  isHttpUrl,
   type RefFetch,
   type RefParserOptions,
   type RefPolicy,
@@ -119,10 +120,26 @@ export async function loadDocument(
   let raw: OpenAPI.Document;
   let baseUrl: string | undefined;
   if (typeof source === "string") {
+    // A spec URL is read by the same resolver as an http `$ref`, so it is held
+    // to the same policy. Without this, the default policy, which installs no
+    // http resolver of ours, left the read to ref-parser's built-in one:
+    // redirects followed unchecked, a 60 s timeout, no size limit. Ruled on
+    // as ref-parser reads it: `//host/x`, `http:host/x` and `http:/host/x`
+    // are http reads too, and spelled that way they would skip the check.
+    const location = httpReadLocation(source, undefined);
+    if (isHttpUrl(location)) {
+      const verdict = checkRef(location, policy);
+      if (!verdict.allowed)
+        throw specUrlBlocked(location, verdict.reason, policy);
+    }
     // Read the root document only — `parse` resolves nothing, which is what
     // lets the policy rule on its refs before any of them are followed.
-    raw = await resolver.parse(source, refOptions);
-    baseUrl = source;
+    try {
+      raw = await resolver.parse(location, refOptions);
+    } catch (error) {
+      throw enrichResolverError(error, refDiagnostics);
+    }
+    baseUrl = location;
   } else if (isOpenApiDocument(source)) {
     raw = structuredClone(source);
   } else {
@@ -665,6 +682,23 @@ export function enrichResolverError(
 
   error.message = `${error.message}: ${detail}`;
   return error;
+}
+
+function specUrlBlocked(
+  url: string,
+  reason: string,
+  policy: ReturnType<typeof resolveRefPolicy>,
+): SchmockError {
+  const remedy =
+    policy.external && policy.allowHttp
+      ? "Fetch the spec yourself and pass the parsed document as spec instead."
+      : "Fetch the spec yourself and pass the parsed document as spec, or, under Node only, " +
+        "let it be read like an http $ref with refs: { external: true, allowHttp: true }.";
+  return new SchmockError(
+    `OpenAPI spec URL ${url} was not read: ${reason}. ${remedy}`,
+    "OPENAPI_EXTERNAL_REF_BLOCKED",
+    { refs: [url], spec: url },
+  );
 }
 
 function externalRefBlocked(

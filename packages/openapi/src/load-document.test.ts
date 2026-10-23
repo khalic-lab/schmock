@@ -2,9 +2,18 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SchmockError } from "@schmock/core";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { loadDocument } from "./load-document";
 import { openapi } from "./plugin";
+import type { RefFetch } from "./ref-policy";
 
 /**
  * `loadDocument` end to end: what reaches the resolvers, what they are kept
@@ -132,6 +141,146 @@ function specWithResponseSchema(
 }
 
 describe("loadDocument", () => {
+  describe("a spec given as an http(s) URL", () => {
+    const SPEC_URL = "https://specs.example.test/openapi.json";
+
+    /** ref-parser's built-in http resolver reads through global `fetch`. */
+    function stubGlobalFetch() {
+      return vi
+        .spyOn(globalThis, "fetch")
+        .mockRejectedValue(new Error("global fetch must not be reached"));
+    }
+
+    function stubTransport(body: string): ReturnType<typeof vi.fn<RefFetch>> {
+      return vi.fn<RefFetch>(async () => new Response(body, { status: 200 }));
+    }
+
+    const SPEC_BODY = JSON.stringify(
+      specWithResponseSchema({ type: "string" }),
+    );
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    for (const [label, refs] of [
+      ["the default policy", undefined],
+      ["external refs alone", { external: true }],
+    ] as const) {
+      it(`is refused under ${label} before any request`, async () => {
+        const globalFetch = stubGlobalFetch();
+        const fetchRef = stubTransport(SPEC_BODY);
+
+        const error = await failureOf(
+          loadDocument(SPEC_URL, { refs, fetchRef }),
+        );
+
+        expect(codeOf(error)).toBe("OPENAPI_EXTERNAL_REF_BLOCKED");
+        expect((error as Error).message).toContain("allowHttp: true");
+        expect(globalFetch).not.toHaveBeenCalled();
+        expect(fetchRef).not.toHaveBeenCalled();
+      });
+    }
+
+    // ref-parser resolves the spec path against the working directory, which
+    // reads each of these over http as surely as `https://...`.
+    for (const spelling of [
+      "//specs.example.test/openapi.json",
+      "\\\\specs.example.test\\openapi.json",
+      "http:specs.example.test/openapi.json",
+      "http:/specs.example.test/openapi.json",
+      "HTTP:specs.example.test/openapi.json",
+    ]) {
+      for (const [label, refs] of [
+        ["the default policy", undefined],
+        ["external refs alone", { external: true }],
+      ] as const) {
+        it(`refuses ${spelling} under ${label} before any request`, async () => {
+          const globalFetch = stubGlobalFetch();
+          const fetchRef = stubTransport(SPEC_BODY);
+
+          const error = await failureOf(
+            loadDocument(spelling, { refs, fetchRef }),
+          );
+
+          expect(codeOf(error)).toBe("OPENAPI_EXTERNAL_REF_BLOCKED");
+          expect((error as Error).message).toContain("specs.example.test");
+          expect(globalFetch).not.toHaveBeenCalled();
+          expect(fetchRef).not.toHaveBeenCalled();
+        });
+      }
+    }
+
+    it("reads //host/x through the guarded transport once http refs are enabled", async () => {
+      const globalFetch = stubGlobalFetch();
+      const fetchRef = stubTransport(SPEC_BODY);
+
+      await loadDocument("//specs.example.test/openapi.json", {
+        refs: { external: true, allowHttp: true },
+        fetchRef,
+      });
+
+      expect(fetchRef).toHaveBeenCalledTimes(1);
+      expect(fetchRef.mock.calls[0][0]).toBe(SPEC_URL);
+      expect(globalFetch).not.toHaveBeenCalled();
+    });
+
+    it("is read through the guarded transport once http refs are enabled", async () => {
+      const globalFetch = stubGlobalFetch();
+      const fetchRef = stubTransport(SPEC_BODY);
+
+      const api = await loadDocument(SPEC_URL, {
+        refs: { external: true, allowHttp: true },
+        fetchRef,
+      });
+
+      expect(Object.keys(api.paths ?? {})).toEqual(["/x"]);
+      expect(fetchRef).toHaveBeenCalledTimes(1);
+      expect(fetchRef.mock.calls[0][0]).toBe(SPEC_URL);
+      expect(globalFetch).not.toHaveBeenCalled();
+    });
+
+    for (const [label, refs, reason] of [
+      [
+        "a host outside allowedHosts",
+        { external: true, allowHttp: true, allowedHosts: ["other.test"] },
+        "is not allowed",
+      ],
+      [
+        "a loopback host",
+        { external: true, allowHttp: true },
+        "loopback, link-local or private",
+      ],
+    ] as const) {
+      it(`refuses ${label} before any request`, async () => {
+        const fetchRef = stubTransport(SPEC_BODY);
+        const url =
+          label === "a loopback host"
+            ? "http://127.0.0.1:8080/openapi.json"
+            : SPEC_URL;
+
+        const error = await failureOf(loadDocument(url, { refs, fetchRef }));
+
+        expect(codeOf(error)).toBe("OPENAPI_EXTERNAL_REF_BLOCKED");
+        expect((error as Error).message).toContain(reason);
+        expect(fetchRef).not.toHaveBeenCalled();
+      });
+    }
+
+    it("is held to maxBytes, and the error names the limit", async () => {
+      const fetchRef = stubTransport(SPEC_BODY);
+
+      const error = await failureOf(
+        loadDocument(SPEC_URL, {
+          refs: { external: true, allowHttp: true, maxBytes: 16 },
+          fetchRef,
+        }),
+      );
+
+      expect((error as Error).message).toContain("above the 16 byte limit");
+    });
+  });
+
   describe("$refs to nothing", () => {
     let dir: string;
 

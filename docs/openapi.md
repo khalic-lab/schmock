@@ -165,6 +165,16 @@ http fails with `OPENAPI_EXTERNAL_REF_BLOCKED`: `a local file may only be
 referenced from a local document, never from one fetched over http`. Relative
 and `../` refs between local files are unaffected.
 
+A **spec given as an `http(s)` URL** is read like an http ref, under the same
+policy: it needs `refs: { external: true, allowHttp: true }`, must pass
+`allowedHosts` and the address block, and is held to `timeoutMs`, `redirects`
+and `maxBytes` (raise `maxBytes` for a spec over 1 MB). That holds however the
+URL is spelled: `//host/x`, `\\host\x`, `http:/host/x` and `http:host/x` are
+read as `http(s)://host/x`. Under any other policy, or for a refused host,
+loading fails with `OPENAPI_EXTERNAL_REF_BLOCKED` before any request is sent.
+To load a spec from `localhost` or another refused address, fetch it yourself
+and pass the parsed document as `spec`.
+
 Relative refs resolve against **the spec file's own directory**. A spec passed
 as an inline object has no directory to resolve against, so a relative external
 `$ref` inside one still resolves against the process working directory — pass a
@@ -221,10 +231,15 @@ rather than degrading quietly:
 
 | Not available in a browser | Instead |
 |---|---|
-| `spec` as a file path or URL | Import or `fetch` the spec and pass the parsed object |
+| `spec` as a file path | Import or `fetch` the spec and pass the parsed object |
 | `strict: true` | Validate the spec in your build or test step |
 | `refs: { external: true }` | Bundle a spec whose `$ref`s all point inside itself |
 | `seed` as a file path | Pass an inline array, or `{ count: n }` |
+
+A `spec` given as a URL fails before that, under the default policy, with
+`OPENAPI_EXTERNAL_REF_BLOCKED`, as it does under Node. Enabling http refs does
+not help in a browser, where it only leads to `OPENAPI_NODE_ONLY`: `fetch` the
+spec and pass the parsed object.
 
 The reason is `@apidevtools/swagger-parser`, which does the file reading,
 external `$ref` resolution and meta-schema validation. It is CommonJS and calls
