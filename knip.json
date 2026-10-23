@@ -37,8 +37,7 @@
     "packages/angular": {
       "ignoreDependencies": [
         "@angular/platform-browser",
-        "@angular/platform-browser-dynamic",
-        "@schmock/openapi"
+        "@angular/platform-browser-dynamic"
       ]
     },
     "packages/schmock": {

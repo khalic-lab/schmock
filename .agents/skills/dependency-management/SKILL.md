@@ -42,7 +42,7 @@ dependency ranges from `packages/*/package.json`; stop if versions differ.
 | `react` | Peers on `core`, React `^18 || ^19`, and Testing Library `^16` |
 | `vue` | Peers on `core` and Vue `^3.5.0` |
 | `openapi` | Swagger Parser, `faker`, and AJV; peer on `core` |
-| `angular` | Peers on `core`, `openapi`, Angular `>=15 <23`, and RxJS `^7.8.2` |
+| `angular` | Peers on `core`, `openapi`, Angular `>=15 <23`, and RxJS `^6.5.3 || ^7.4.0` (mirrors `@angular/common` 15, the oldest supported Angular; do not raise) |
 | `cli` | Runtime dependencies on `core` and `openapi` |
 | `schmock` | Meta-package depending on `core`, `faker`, `validation`, `query`, `openapi`, and `cli` |
 
