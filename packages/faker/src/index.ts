@@ -22,6 +22,7 @@ import {
   resolveGenerationSeed,
   snapshotGraphs,
 } from "./jsf-config.js";
+import { inlineUnfollowedReferences } from "./jsf-references.js";
 import { assertOutputWithinLimits } from "./output-limits.js";
 import { applyOverrides, determineArrayCount } from "./overrides.js";
 import { applyNullableRolls, resolveLocalRef } from "./post-process.js";
@@ -53,9 +54,17 @@ interface PreparedSchema {
   enhanced: JSONSchema7;
 }
 
-/** Pair a schema that already passed `validateSchema` with its enhancement. */
+/**
+ * Pair a schema that already passed `validateSchema` with its enhancement,
+ * made from a copy whose references json-schema-faker cannot follow are
+ * inlined (only that pass needs the schema as validated, with each
+ * identifier on one node).
+ */
 function enhancePrepared(schema: JSONSchema7): PreparedSchema {
-  return { schema, enhanced: enhanceSchemaWithSmartMapping(schema) };
+  return {
+    schema,
+    enhanced: enhanceSchemaWithSmartMapping(inlineUnfollowedReferences(schema)),
+  };
 }
 
 function prepareSchema(schema: JSONSchema7, count?: number): PreparedSchema {

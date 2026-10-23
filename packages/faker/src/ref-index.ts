@@ -14,11 +14,6 @@ export interface LocalRefResolver {
     schema: JSONSchema7,
     reference: string,
   ): JSONSchema7Definition | undefined;
-  /**
-   * Whether a reference names an `$anchor` or `$dynamicAnchor`, which
-   * json-schema-faker never registers and so cannot resolve.
-   */
-  namesAnchor(schema: JSONSchema7, reference: string): boolean;
 }
 
 const INTERNAL_ROOT_ID = "schmock://local/root.json";
@@ -30,8 +25,6 @@ interface SchemaScope {
 
 interface ReferenceIndex {
   resources: Map<string, JSONSchema7Definition>;
-  /** The identifiers `$anchor` and `$dynamicAnchor` registered. */
-  anchors: Set<string>;
   scopes: Map<JSONSchema7, SchemaScope>;
   rootScope: SchemaScope;
 }
@@ -73,17 +66,11 @@ export function createLocalRefResolver(root: JSONSchema7): LocalRefResolver {
       schemaCache.set(reference, resolved ?? null);
       return resolved;
     },
-    namesAnchor(schema, reference) {
-      if (reference === "#" || reference.startsWith("#/")) return false;
-      const identifier = resolveUri(reference, scopeOf(schema).baseUri);
-      return identifier !== undefined && index.anchors.has(identifier);
-    },
   };
 }
 
 function createReferenceIndex(root: JSONSchema7): ReferenceIndex {
   const resources = new Map<string, JSONSchema7Definition>();
-  const anchors = new Set<string>();
   const scopes = new Map<JSONSchema7, SchemaScope>();
   const rootScope: SchemaScope = {
     baseUri: INTERNAL_ROOT_ID,
@@ -101,7 +88,7 @@ function createReferenceIndex(root: JSONSchema7): ReferenceIndex {
     const scope = indexSchemaIdentifiers(
       frame.schema,
       frame.inheritedScope,
-      { resources, anchors },
+      resources,
       frame.path,
     );
     scopes.set(frame.schema, scope);
@@ -116,7 +103,6 @@ function createReferenceIndex(root: JSONSchema7): ReferenceIndex {
 
   return {
     resources,
-    anchors,
     scopes,
     rootScope: scopes.get(root) ?? rootScope,
   };
@@ -125,7 +111,7 @@ function createReferenceIndex(root: JSONSchema7): ReferenceIndex {
 function indexSchemaIdentifiers(
   schema: JSONSchema7,
   inheritedScope: SchemaScope,
-  { resources, anchors }: Pick<ReferenceIndex, "resources" | "anchors">,
+  resources: ReferenceIndex["resources"],
   path: string,
 ): SchemaScope {
   let scope = inheritedScope;
@@ -148,7 +134,6 @@ function indexSchemaIdentifiers(
     if (typeof anchor === "string" && anchor.length > 0) {
       const identifier = `${withoutUriFragment(scope.baseUri)}#${anchor}`;
       registerIdentifier(resources, identifier, schema, `${path}.${keyword}`);
-      anchors.add(identifier);
     }
   }
   return scope;

@@ -64,31 +64,52 @@ function referenceSchema(property: string, kind: string): JSONSchema7 {
   const uuid: JSONSchema7 = { type: "string", format: "uuid" };
   const reachedThrough = (
     reference: JSONSchema7,
-    definition: JSONSchema7,
+    definitions: Pick<JSONSchema7, "$defs" | "definitions" | "$id">,
   ): JSONSchema7 => ({
     type: "object",
     properties: { [property]: reference },
     required: [property],
-    $defs: { S: definition },
+    ...definitions,
   });
   switch (kind) {
     case "anchor-ref":
       return reachedThrough(
         { $ref: "#sid" },
-        withKeywords({ ...uuid }, { $anchor: "sid" }),
+        { $defs: { S: withKeywords({ ...uuid }, { $anchor: "sid" }) } },
       );
     case "dynamic-anchor-ref":
       return reachedThrough(
         { $ref: "#sid" },
-        withKeywords({ ...uuid }, { $dynamicAnchor: "sid" }),
+        { $defs: { S: withKeywords({ ...uuid }, { $dynamicAnchor: "sid" }) } },
       );
     case "dynamic-ref":
+      return reachedThrough(withKeywords({}, { $dynamicRef: "#sid" }), {
+        $defs: { S: withKeywords({ ...uuid }, { $dynamicAnchor: "sid" }) },
+      });
+    case "unanchored-dynamic-ref":
+      return reachedThrough(withKeywords({}, { $dynamicRef: "#sid" }), {
+        $defs: { S: uuid },
+      });
+    case "plain-name-id":
       return reachedThrough(
-        withKeywords({}, { $dynamicRef: "#sid" }),
-        withKeywords({ ...uuid }, { $dynamicAnchor: "sid" }),
+        { $ref: "#sid" },
+        { definitions: { S: { $id: "#sid", ...uuid } } },
+      );
+    case "embedded-id":
+      return reachedThrough(
+        { $ref: "s.json" },
+        { definitions: { S: { $id: "s.json", ...uuid } } },
+      );
+    case "uri-against-root-id":
+      return reachedThrough(
+        { $ref: "https://example.test/s.json" },
+        {
+          $id: "https://example.test/root.json",
+          $defs: { S: { $id: "s.json", ...uuid } },
+        },
       );
     case "pointer":
-      return reachedThrough({ $ref: "#/$defs/S" }, uuid);
+      return reachedThrough({ $ref: "#/$defs/S" }, { $defs: { S: uuid } });
     default:
       throw new Error(`Unknown reference kind: ${kind}`);
   }
@@ -304,8 +325,18 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
     },
   );
 
+  async function expectUuidFor(property: string): Promise<void> {
+    expect(creationError).toBeUndefined();
+    const response = await generate();
+    expect(response).toMatchObject({
+      [property]: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      ),
+    });
+  }
+
   ScenarioOutline(
-    "A reference json-schema-faker cannot follow is rejected at construction",
+    "A reference json-schema-faker cannot follow itself generates its target",
     ({ Given, When, Then }, variables) => {
       Given(
         "an object whose property {string} reaches a uuid definition through {string}",
@@ -315,12 +346,9 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       );
       When("I create a faker plugin for it", createPlugin);
       Then(
-        "plugin creation fails with a schema validation error at {string}",
-        () => {
-          expect(creationError).toBeInstanceOf(SchemaValidationError);
-          expect(creationError).toMatchObject({
-            context: { schemaPath: variables.path },
-          });
+        "the plugin generates a uuid for {string}",
+        async (_, property: string) => {
+          await expectUuidFor(property);
         },
       );
     },
@@ -339,12 +367,28 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
       Then(
         "the plugin generates a uuid for {string}",
         async (_, property: string) => {
-          expect(creationError).toBeUndefined();
-          const response = await generate();
-          expect(response).toMatchObject({
-            [property]: expect.stringMatching(
-              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-            ),
+          await expectUuidFor(property);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A $dynamicRef that resolves to nothing is rejected at construction",
+    ({ Given, When, Then }) => {
+      Given(
+        "an object whose property {string} reaches a uuid definition through {string}",
+        (_, property: string, kind: string) => {
+          schema = referenceSchema(property, kind);
+        },
+      );
+      When("I create a faker plugin for it", createPlugin);
+      Then(
+        "plugin creation fails with a schema validation error at {string}",
+        (_, path: string) => {
+          expect(creationError).toBeInstanceOf(SchemaValidationError);
+          expect(creationError).toMatchObject({
+            context: { schemaPath: path },
           });
         },
       );

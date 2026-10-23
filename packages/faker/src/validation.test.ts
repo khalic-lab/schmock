@@ -546,54 +546,138 @@ describe("validateSchema", () => {
     });
   });
 
-  describe("references json-schema-faker cannot follow", () => {
+  describe("references json-schema-faker cannot follow itself", () => {
     const uuid: JSONSchema7 = { type: "string", format: "uuid" };
+    const UUID =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+    /** An object whose required `n` reaches a uuid schema through `n`. */
+    function uuidThrough(
+      n: JSONSchema7,
+      definitions: Record<string, JSONSchema7>,
+      root: JSONSchema7 = {},
+    ): JSONSchema7 {
+      return {
+        ...root,
+        type: "object",
+        properties: { n },
+        required: ["n"],
+        ...definitions,
+      };
+    }
 
     it.each([
       [
-        "an $anchor",
-        { type: "object", properties: { n: { $ref: "#sid" } } },
-        { S: withKeywords({ ...uuid }, { $anchor: "sid" }) },
+        "a $ref to an $anchor",
+        uuidThrough(
+          { $ref: "#sid" },
+          { $defs: { S: withKeywords({ ...uuid }, { $anchor: "sid" }) } },
+        ),
       ],
       [
-        "a $dynamicAnchor",
-        { type: "object", properties: { n: { $ref: "#sid" } } },
-        { S: withKeywords({ ...uuid }, { $dynamicAnchor: "sid" }) },
+        "a $ref to a $dynamicAnchor",
+        uuidThrough(
+          { $ref: "#sid" },
+          {
+            $defs: { S: withKeywords({ ...uuid }, { $dynamicAnchor: "sid" }) },
+          },
+        ),
       ],
       [
-        "an anchor named by an absolute URI",
-        {
-          $id: "https://example.test/root.json",
-          type: "object",
-          properties: { n: { $ref: "https://example.test/root.json#sid" } },
-        },
-        { S: withKeywords({ ...uuid }, { $anchor: "sid" }) },
+        "a $ref to an anchor named by an absolute URI",
+        uuidThrough(
+          { $ref: "https://example.test/root.json#sid" },
+          { $defs: { S: withKeywords({ ...uuid }, { $anchor: "sid" }) } },
+          { $id: "https://example.test/root.json" },
+        ),
       ],
-    ] satisfies Array<[string, JSONSchema7, Record<string, JSONSchema7>]>)(
-      "rejects a $ref to %s at creation",
-      (_, schema, defs) => {
-        const error = captureFailure(() =>
-          fakerPlugin({ schema: { ...schema, $defs: defs } }),
-        );
+      [
+        "a $dynamicRef",
+        uuidThrough(withKeywords({}, { $dynamicRef: "#sid" }), {
+          $defs: { S: withKeywords({ ...uuid }, { $dynamicAnchor: "sid" }) },
+        }),
+      ],
+      [
+        "a draft-07 plain-name $id under definitions",
+        uuidThrough(
+          { $ref: "#sid" },
+          { definitions: { S: { $id: "#sid", ...uuid } } },
+        ),
+      ],
+      [
+        "an embedded $id under definitions",
+        uuidThrough(
+          { $ref: "s.json" },
+          { definitions: { S: { $id: "s.json", ...uuid } } },
+        ),
+      ],
+      [
+        "a URI resolved against the root $id",
+        uuidThrough(
+          { $ref: "https://example.test/s.json" },
+          { $defs: { S: { $id: "s.json", ...uuid } } },
+          { $id: "https://example.test/root.json" },
+        ),
+      ],
+      [
+        "a JSON Pointer",
+        uuidThrough({ $ref: "#/$defs/S" }, { $defs: { S: uuid } }),
+      ],
+      [
+        "an embedded $id under $defs",
+        uuidThrough(
+          { $ref: "s.json" },
+          { $defs: { S: { $id: "s.json", ...uuid } } },
+        ),
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "generates through %s",
+      async (_, schema) => {
+        const generated = await generateOnce(schema);
 
-        expectSchemaError(error, "$.properties.n.$ref");
-        expect(String(error)).toContain("anchor");
+        expect(generated).toMatchObject({ n: expect.stringMatching(UUID) });
       },
     );
 
-    it("rejects a $dynamicRef at creation", () => {
-      const schema: JSONSchema7 = {
-        type: "object",
-        properties: {
-          n: withKeywords({}, { $dynamicRef: "#sid" }),
+    it("sizes a root array reached through an anchor with count", async () => {
+      const plugin = fakerPlugin({
+        schema: {
+          $ref: "#list",
+          $defs: {
+            List: withKeywords(
+              { type: "array", items: { type: "integer" } },
+              { $anchor: "list" },
+            ),
+          },
         },
-        $defs: { S: withKeywords({ ...uuid }, { $dynamicAnchor: "sid" }) },
-      };
+        count: 7,
+        seed: 5,
+      });
+
+      const { response } = await plugin.process(context());
+
+      expect(response).toHaveLength(7);
+    });
+
+    it("rejects a $dynamicRef that resolves to nothing at creation", () => {
+      const schema = uuidThrough(withKeywords({}, { $dynamicRef: "#sid" }), {
+        $defs: { S: uuid },
+      });
 
       expectSchemaError(
         captureFailure(() => fakerPlugin({ schema })),
         "$.properties.n.$dynamicRef",
       );
+    });
+
+    it("leaves an unresolvable $dynamicRef in an unreferenced definition alone", () => {
+      const schema: JSONSchema7 = {
+        type: "string",
+        maxLength: 5,
+        $defs: { Unused: withKeywords({}, { $dynamicRef: "#nowhere" }) },
+      };
+
+      expect(() => fakerPlugin({ schema })).not.toThrow();
     });
 
     it("still reports a dynamic-reference cycle as circular", () => {
@@ -611,36 +695,6 @@ describe("validateSchema", () => {
       expect(error).toBeInstanceOf(SchemaValidationError);
       expect(String(error)).toMatch(/circular/i);
     });
-
-    it("leaves an anchor reference inside not alone, since nothing is generated from it", () => {
-      const schema: JSONSchema7 = {
-        type: "string",
-        maxLength: 5,
-        not: { $ref: "#sid" },
-        $defs: { S: withKeywords({ ...uuid }, { $anchor: "sid" }) },
-      };
-
-      expect(() => fakerPlugin({ schema })).not.toThrow();
-    });
-
-    it.each([
-      ["a JSON Pointer", "#/$defs/S", { S: uuid }],
-      ["an embedded $id", "s.json", { S: { $id: "s.json", ...uuid } }],
-    ] satisfies Array<[string, string, Record<string, JSONSchema7>]>)(
-      "generates through %s",
-      async (_, $ref, defs) => {
-        const generated = await generateOnce({
-          type: "object",
-          properties: { n: { $ref } },
-          required: ["n"],
-          $defs: defs,
-        });
-
-        expect(generated).toMatchObject({
-          n: expect.stringMatching(/^[0-9a-f-]{36}$/),
-        });
-      },
-    );
   });
 
   describe("count on a root array reached through a wrapper", () => {

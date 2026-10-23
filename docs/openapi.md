@@ -203,6 +203,12 @@ not in the browser build.
   `example`, `default`, `readOnly`, …) override the target.
 - **OpenAPI 3.0 and Swagger 2.0 let siblings override the target**, whatever
   the document order.
+- **An anchor reference is left for generation:** a `$ref` to an `$anchor`,
+  or a `$dynamicRef`, in an OpenAPI 3.1 response schema generates the schema
+  the anchor marks when that schema sits inside the same response schema,
+  while one whose anchor sits elsewhere, such as on another component, fails
+  each request, with `SCHEMA_GENERATION_ERROR` for the `$ref` and
+  `SCHEMA_VALIDATION_ERROR` for the `$dynamicRef`.
 - **A ring of `$ref`s** that never reaches a value (`A` → `B` → `A`) fails with
   `OPENAPI_INVALID_REF` on both the Node and browser builds. A `$ref` pointing
   at its own location is allowed.

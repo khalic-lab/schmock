@@ -76,8 +76,8 @@ const LEAF: Estimate = { height: 0, nodes: 1, chars: 0 };
 
 type SchemaEdge = SchemaChild;
 
-/** A reference json-schema-faker cannot follow, found on a generating path. */
-interface UnsupportedReference {
+/** A `$dynamicRef` that resolves to nothing, found on a generating path. */
+interface UnresolvedReference {
   path: string;
   issue: string;
 }
@@ -89,7 +89,7 @@ interface WalkState {
   edges: Map<JSONSchema7, SchemaEdge[]>;
   postOrder: JSONSchema7[];
   refs: LocalRefResolver;
-  unsupportedReference?: UnsupportedReference;
+  unresolvedReference?: UnresolvedReference;
   arraySize?: Violation;
   objectSize?: Violation;
   stringLength?: Violation;
@@ -108,9 +108,11 @@ interface WalkState {
  * every output site. Validation therefore stays O(nodes + edges).
  *
  * References outside the indexed schema and unresolvable references are left
- * for json-schema-faker to report. A generating `$dynamicRef`, or a `$ref` to
- * an anchor, is rejected: json-schema-faker resolves neither, although the
- * index here does.
+ * for json-schema-faker to report. Generation inlines the anchors,
+ * `$dynamicRef`s and `$id`s the index resolves (jsf-references.ts), since
+ * json-schema-faker follows none of them itself. A generating `$dynamicRef`
+ * the index cannot resolve is rejected: json-schema-faker would generate an
+ * arbitrary value in its place.
  *
  * @param schema - JSON Schema to validate
  * @param path - Path label used in error messages
@@ -148,11 +150,11 @@ export function validateSchema(
 
   chargeGeneratingSchemas(schema, path, state);
 
-  if (state.unsupportedReference) {
+  if (state.unresolvedReference) {
     throw new SchemaValidationError(
-      state.unsupportedReference.path,
-      state.unsupportedReference.issue,
-      'Reference the schema with a JSON Pointer such as "#/$defs/Name"',
+      state.unresolvedReference.path,
+      state.unresolvedReference.issue,
+      'Give the target schema a matching "$dynamicAnchor", or reference it with a JSON Pointer such as "#/$defs/Name"',
     );
   }
 
@@ -353,7 +355,7 @@ function chargeGeneratingSchemas(
     // the plain charge a `$ref` to the same schema would still need.
     if (frame.caps === NO_CAPS) charged.add(frame.schema);
 
-    recordUnsupportedReference(frame.schema, frame.path, state);
+    recordUnresolvedDynamicReference(frame.schema, frame.path, state);
     recordDeclaredArrayLimit(frame.schema, frame.path, state, frame.caps);
     recordObjectLimit(frame.schema, frame.path, state, frame.caps);
     recordStringLimit(frame.schema, frame.path, state, frame.caps);
@@ -376,32 +378,30 @@ function chargeGeneratingSchemas(
 }
 
 /**
- * Record the first reference on a generating path that json-schema-faker
- * cannot follow, although the index here resolves it. It has no
- * `$dynamicRef` support and generates an arbitrary value in its place, and it
- * registers no anchors, so a `$ref` to one fails every request.
+ * Record the first `$dynamicRef` on a generating path that the index cannot
+ * resolve. Generation inlines one it resolves, but json-schema-faker ignores
+ * the keyword itself and would generate an arbitrary value in its place. An
+ * unresolvable `$ref` is left for json-schema-faker to report instead: it
+ * fails the request rather than generate something else.
  */
-function recordUnsupportedReference(
+function recordUnresolvedDynamicReference(
   schema: JSONSchema7,
   path: string,
   state: WalkState,
 ): void {
-  if (state.unsupportedReference) return;
-  if (Reflect.get(schema, "$dynamicRef") !== undefined) {
-    state.unsupportedReference = {
-      path: `${path}.$dynamicRef`,
-      issue:
-        "$dynamicRef is not supported: json-schema-faker ignores it and generates an arbitrary value",
-    };
-  } else if (
-    typeof schema.$ref === "string" &&
-    state.refs.namesAnchor(schema, schema.$ref)
+  if (state.unresolvedReference) return;
+  const reference: unknown = Reflect.get(schema, "$dynamicRef");
+  if (reference === undefined) return;
+  if (
+    typeof reference === "string" &&
+    state.refs.resolve(schema, reference) !== undefined
   ) {
-    state.unsupportedReference = {
-      path: `${path}.$ref`,
-      issue: `"${schema.$ref}" names an anchor, which json-schema-faker cannot resolve`,
-    };
+    return;
   }
+  state.unresolvedReference = {
+    path: `${path}.$dynamicRef`,
+    issue: `$dynamicRef ${JSON.stringify(reference)} resolves to no schema in this document`,
+  };
 }
 
 function collectSchemaEdges(
