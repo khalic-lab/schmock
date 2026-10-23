@@ -35,17 +35,29 @@ export interface RootArrayRules {
   throughNullUnions?: boolean;
 }
 
-/** The other branch of a two-branch null union, if `schema` is one. */
-function nullUnionBranch(schema: JSONSchema7): JSONSchema7 | undefined {
+/** A two-branch `anyOf`/`oneOf` whose other branch is a bare `{type: "null"}`. */
+export interface NullUnion {
+  keyword: "anyOf" | "oneOf";
+  /** The branch that is not the bare null one. */
+  branch: JSONSchema7;
+}
+
+/** The two-branch null union on `schema`, if it holds one. */
+export function nullUnion(schema: JSONSchema7): NullUnion | undefined {
   for (const keyword of ["anyOf", "oneOf"] as const) {
     const branches = schema[keyword];
     if (!Array.isArray(branches) || branches.length !== 2) continue;
     const other = branches.find((branch) => !isBareNull(branch));
     if (other !== undefined && branches.some(isBareNull)) {
-      return isJSONSchema7(other) ? other : undefined;
+      return isJSONSchema7(other) ? { keyword, branch: other } : undefined;
     }
   }
   return undefined;
+}
+
+/** The other branch of a two-branch null union, if `schema` is one. */
+function nullUnionBranch(schema: JSONSchema7): JSONSchema7 | undefined {
+  return nullUnion(schema)?.branch;
 }
 
 function isBareNull(branch: unknown): boolean {

@@ -904,17 +904,181 @@ describe("validateSchema", () => {
       },
     );
 
-    it("rejects a not beside a reference generation inlines", () => {
+    const oneToThreeButTwo: JSONSchema7 = {
+      type: "integer",
+      minimum: 1,
+      maximum: 3,
+      not: { const: 2 },
+    };
+
+    it.each([
+      [
+        "an allOf entry",
+        {
+          type: "integer",
+          minimum: 1,
+          maximum: 3,
+          allOf: [{ not: { const: 2 } }],
+        },
+        "$.allOf[0].not",
+      ],
+      [
+        "an allOf entry with a lone not.type",
+        { type: ["string", "integer"], allOf: [{ not: { type: "string" } }] },
+        "$.allOf[0].not",
+      ],
+      [
+        "an anyOf branch",
+        { anyOf: [oneToThreeButTwo, { type: "string" }] },
+        "$.anyOf[0].not",
+      ],
+      [
+        "a oneOf branch",
+        { oneOf: [{ type: "string" }, oneToThreeButTwo] },
+        "$.oneOf[1].not",
+      ],
+      [
+        "a then",
+        {
+          type: "integer",
+          minimum: 1,
+          maximum: 3,
+          if: { minimum: 1 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { not: { const: 2 } },
+        },
+        "$.then.not",
+      ],
+      [
+        "an else",
+        {
+          type: "integer",
+          minimum: 1,
+          maximum: 3,
+          if: { minimum: 5 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: {},
+          else: { not: { const: 2 } },
+        },
+        "$.else.not",
+      ],
+      [
+        "a definition an allOf entry references",
+        { allOf: [{ $ref: "#/$defs/T" }], $defs: { T: oneToThreeButTwo } },
+        "$.allOf[0].not",
+      ],
+      [
+        "a definition a property and an allOf entry both reference",
+        {
+          type: "object",
+          properties: {
+            a: { $ref: "#/$defs/T" },
+            b: { allOf: [{ $ref: "#/$defs/T" }] },
+          },
+          $defs: { T: oneToThreeButTwo },
+        },
+        "$.properties.b.allOf[0].not",
+      ],
+      [
+        "the non-null branch of a null union inside an allOf entry",
+        { allOf: [{ anyOf: [oneToThreeButTwo, { type: "null" }] }] },
+        "$.allOf[0].anyOf[0].not",
+      ],
+    ] satisfies Array<[string, JSONSchema7, string]>)(
+      "rejects a not json-schema-faker drops by merging %s into its parent",
+      (_, schema, notPath) => {
+        expectSchemaError(
+          captureFailure(() => fakerPlugin({ schema })),
+          notPath,
+        );
+      },
+    );
+
+    it.each([
+      [
+        "the non-null branch of an anyOf null union",
+        { anyOf: [oneToThreeButTwo, { type: "null" }] },
+      ],
+      [
+        "the non-null branch of a oneOf null union",
+        { oneOf: [{ type: "null" }, oneToThreeButTwo] },
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "generates around a not on %s, which generation unwraps",
+      async (_, schema) => {
+        for (let seed = 1; seed <= 30; seed += 1) {
+          const { response } = await fakerPlugin({ schema, seed }).process(
+            context(),
+          );
+          expect(response).not.toBe(2);
+        }
+      },
+    );
+
+    it("accepts a not on an allOf entry whose own bound rules its body out", () => {
       const schema: JSONSchema7 = {
-        type: "object",
-        properties: { n: { $ref: "#sid", not: { const: "x" } } },
-        $defs: { S: withKeywords({ type: "string" }, { $anchor: "sid" }) },
+        type: "string",
+        allOf: [{ type: "string", maxLength: 5, not: { minLength: 10 } }],
       };
 
-      expectSchemaError(
-        captureFailure(() => fakerPlugin({ schema })),
-        "$.properties.n.not",
+      expect(() => fakerPlugin({ schema })).not.toThrow();
+    });
+
+    it("accepts a not whose body references a schema the node's type rules out", () => {
+      const schema: JSONSchema7 = {
+        type: "integer",
+        not: { $ref: "#/$defs/S" },
+        $defs: { S: { type: "string" } },
+      };
+
+      expect(() => fakerPlugin({ schema })).not.toThrow();
+    });
+
+    it("generates around a not.const its body references", async () => {
+      const schema: JSONSchema7 = {
+        type: "integer",
+        minimum: 1,
+        maximum: 3,
+        not: { $ref: "#/$defs/Two" },
+        $defs: { Two: { const: 2 } },
+      };
+
+      for (let seed = 1; seed <= 30; seed += 1) {
+        const { response } = await fakerPlugin({ schema, seed }).process(
+          context(),
+        );
+        expect(response).not.toBe(2);
+      }
+    });
+
+    it("says why a not.type integer beside type number is rejected", () => {
+      const error = captureFailure(() =>
+        fakerPlugin({ schema: { type: "number", not: { type: "integer" } } }),
       );
+
+      expectSchemaError(error, "$.not");
+      expect(String(error)).toContain("integral number");
+    });
+
+    it("generates around a not beside a reference generation inlines", async () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: { n: { $ref: "#sid", not: { const: 2 } } },
+        required: ["n"],
+        $defs: {
+          S: withKeywords(
+            { type: "integer", minimum: 1, maximum: 3 },
+            { $anchor: "sid" },
+          ),
+        },
+      };
+
+      for (let seed = 1; seed <= 30; seed += 1) {
+        const { response } = await fakerPlugin({ schema, seed }).process(
+          context(),
+        );
+        expect(response).not.toEqual({ n: 2 });
+      }
     });
 
     it.each([

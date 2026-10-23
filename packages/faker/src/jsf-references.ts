@@ -26,7 +26,7 @@ const TARGET_ONLY_KEYWORDS = [
 ];
 
 /** A `$ref` json-schema-faker resolves itself: `#` or a `#/...` pointer. */
-export function isRootPointer(reference: string): boolean {
+function isRootPointer(reference: string): boolean {
   return reference === "#" || reference.startsWith("#/");
 }
 

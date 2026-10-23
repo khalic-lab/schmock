@@ -106,6 +106,9 @@ Feature: Faker creation-time checks
       | not-required-all-required | $.not                 |
       | not-type-own-type         | $.not                 |
       | not-beside-faker          | $.properties.name.not |
+      | not-in-all-of-entry       | $.allOf[0].not        |
+      | not-in-any-of-branch      | $.anyOf[0].not        |
+      | not-in-then               | $.then.not            |
 
   Scenario Outline: A not that generation honours is accepted at construction
     Given the not schema "<case>"
@@ -113,10 +116,11 @@ Feature: Faker creation-time checks
     Then plugin creation succeeds
 
     Examples:
-      | case                    |
-      | not-const               |
-      | not-type-in-union       |
-      | not-required-optional   |
-      | not-ruled-out-by-bounds |
-      | not-forbidden-property  |
-      | not-beside-pointer-ref  |
+      | case                     |
+      | not-const                |
+      | not-type-in-union        |
+      | not-required-optional    |
+      | not-ruled-out-by-bounds  |
+      | not-forbidden-property   |
+      | not-beside-pointer-ref   |
+      | not-in-null-union-branch |

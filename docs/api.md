@@ -1508,16 +1508,23 @@ register them the same way:
 - Any other `not` is rejected with `SCHEMA_VALIDATION_ERROR` at `<path>.not`
   when the plugin is created, because json-schema-faker would generate values
   it rejects. So is one of the forms above beside `allOf`, `anyOf`, `oneOf`,
-  `if`, an explicit `faker` or a reference generation inlines (json-schema-faker
-  generates from those and never reaches the `not`), a `not.type` or
-  `not.required` beside a `const`, `enum` or `default` (returned as it is), a
-  `not.type` that rejects every type the node generates, and
-  `not: { type: 'number' }` on an untyped node. A `not` beside a JSON Pointer
-  `$ref` is read with the target's keywords merged in. Whatever its body, a
-  `not` is accepted when the node's own `type`, or its own length, item-count,
-  property-count or numeric bound, already rules out every value the body
-  accepts, as in `{ type: 'string', maxLength: 20, not: { minLength: 100 } }`.
-  A `not` inside a `not`, an `if` with no `then` or an unreferenced definition
+  `if` or an explicit `faker` (json-schema-faker generates from those and
+  never reaches the `not`), a `not.type` or `not.required` beside a `const`,
+  `enum` or `default` (returned as it is), a `not.type` that rejects every
+  type the node generates, `not: { type: 'integer' }` beside
+  `type: 'number'` (an integral number is an integer), and
+  `not: { type: 'number' }` on an untyped node. So is any `not` on a schema
+  json-schema-faker merges into its parent, which drops it: an `allOf` entry,
+  an `anyOf` or `oneOf` branch, an `if`, `then` or `else`, or a definition one
+  of those references. The non-null branch of a two-branch `anyOf`/`oneOf`
+  null union is the exception, since generation unwraps the union into it.
+- A `not` beside a `$ref` is judged, and generated, with the target's
+  keywords merged in, and a `$ref` inside a `not` body with the body's.
+  Whatever its body, a `not` is accepted when the node's own `type`, or its
+  own length, item-count, property-count or numeric bound, already rules out
+  every value the body accepts, as in
+  `{ type: 'string', maxLength: 20, not: { minLength: 100 } }`. A `not`
+  inside a `not`, an `if` with no `then` or an unreferenced definition
   generates nothing and is not checked. A two-branch `anyOf`/`oneOf` null
   union beside `not` counts as composition here, although generation unwraps
   it.

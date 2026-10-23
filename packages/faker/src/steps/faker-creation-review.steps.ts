@@ -165,6 +165,36 @@ function notSchema(name: string): JSONSchema7 {
           ),
         },
       };
+    case "not-in-all-of-entry":
+      return {
+        type: "integer",
+        minimum: 1,
+        maximum: 3,
+        allOf: [{ not: { const: 2 } }],
+      };
+    case "not-in-any-of-branch":
+      return {
+        anyOf: [
+          { type: "integer", minimum: 1, maximum: 3, not: { const: 2 } },
+          { type: "string" },
+        ],
+      };
+    case "not-in-then":
+      return {
+        type: "integer",
+        minimum: 1,
+        maximum: 3,
+        if: { minimum: 1 },
+        // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+        then: { not: { const: 2 } },
+      };
+    case "not-in-null-union-branch":
+      return {
+        anyOf: [
+          { type: "integer", minimum: 1, maximum: 3, not: { const: 2 } },
+          { type: "null" },
+        ],
+      };
     case "not-const":
       return { type: "boolean", not: { const: true } };
     case "not-type-in-union":
