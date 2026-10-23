@@ -99,7 +99,10 @@ reachable as `bun run publish -- <args>`.
 
 For an explicitly requested single-package repair publish, replace `all` with
 the workspace name. A single-package publish never pushes or creates a GitHub
-release, but still requires the exact confirmation token.
+release, but still requires the exact confirmation token. It refuses to publish
+unless npm already serves every `@schmock/*` dependency and peer of that
+package (optional peers included) at the same version, so repair in the
+dependency order above, or rerun `all`, which skips what is already on npm.
 
 ## Script guarantees
 

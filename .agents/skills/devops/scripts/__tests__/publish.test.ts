@@ -43,21 +43,31 @@ let fixtureRoot = "";
 let binDir = "";
 let commandLog = "";
 
-function writeManifest(pkg: string, version = "2.2.3"): void {
+type DependencyFields = Record<string, Record<string, string>>;
+
+function writeManifest(
+  pkg: string,
+  version = "2.2.3",
+  dependencies: DependencyFields = {},
+): void {
   const dir = join(fixtureRoot, "packages", pkg);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, "package.json"),
-    `${JSON.stringify({ name: `@schmock/${pkg}`, version }, null, 2)}\n`,
+    `${JSON.stringify({ name: `@schmock/${pkg}`, version, ...dependencies }, null, 2)}\n`,
   );
 }
 
-function writeLockfile(version = "2.2.3"): void {
+/** `dependencies` holds each workspace's dependency fields, as its manifest does. */
+function writeLockfile(
+  version = "2.2.3",
+  dependencies: Record<string, DependencyFields> = {},
+): void {
   const workspaces: Record<string, unknown> = { "": { name: "schmock" } };
   const packages: Record<string, unknown> = {};
   for (const pkg of PACKAGES) {
     const name = `@schmock/${pkg}`;
-    workspaces[`packages/${pkg}`] = { name, version };
+    workspaces[`packages/${pkg}`] = { name, version, ...dependencies[pkg] };
     packages[name] = [`${name}@workspace:packages/${pkg}`];
   }
   writeFileSync(
@@ -126,7 +136,9 @@ case "$1" in
     fi
     case ",\${SCHMOCK_TEST_PUBLISHED:-}," in
       *",$pkg,"*)
-        if [ "\${SCHMOCK_TEST_INTEGRITY_MISMATCH:-}" = "$pkg" ]; then
+        if [ "$3" = "version" ]; then
+          printf '"%s"\\n' "\${spec##*@}"
+        elif [ "\${SCHMOCK_TEST_INTEGRITY_MISMATCH:-}" = "$pkg" ]; then
           printf '%s\\n' '"sha512-remote"'
         else
           printf '%s\\n' '"sha512-match"'
@@ -430,6 +442,74 @@ describe("publish.sh", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("different package contents");
     expect(commands()).not.toContain("npm publish ");
+  });
+
+  describe("single-package publish of a package with @schmock dependencies", () => {
+    // bump.ts sets every internal range to ^VERSION, as here.
+    const openapi = {
+      dependencies: { "@schmock/faker": "^2.2.3" },
+      peerDependencies: { "@schmock/core": "^2.2.3" },
+    };
+    const confirm = `openapi@v2.2.3:${HEAD_SHA}`;
+
+    beforeEach(() => {
+      writeManifest("openapi", "2.2.3", openapi);
+      writeLockfile("2.2.3", { openapi });
+    });
+
+    it("refuses while npm lacks a dependency or peer at the version", () => {
+      const result = run(["openapi", "--execute", "--confirm", confirm], {
+        SCHMOCK_TEST_PUBLISHED: "core",
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain(
+        "@schmock/openapi@2.2.3 requires @schmock/faker@2.2.3",
+      );
+      expect(result.stderr).not.toContain("@schmock/core@2.2.3");
+      expect(commands()).toContain(
+        "npm view @schmock/faker@2.2.3 version --json",
+      );
+      expect(commands()).not.toContain("npm publish ");
+    });
+
+    it("stops when a dependency's registry query fails", () => {
+      const result = run(["openapi", "--execute", "--confirm", confirm], {
+        SCHMOCK_TEST_PUBLISHED: "core,faker",
+        SCHMOCK_TEST_QUERY_FAILURE: "faker",
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain(
+        "could not determine npm status for @schmock/faker@2.2.3",
+      );
+      expect(commands()).not.toContain("npm publish ");
+    });
+
+    it("publishes once npm has every dependency and peer", () => {
+      const result = run(["openapi", "--execute", "--confirm", confirm], {
+        SCHMOCK_TEST_PUBLISHED: "core,faker",
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(commands()).toContain(
+        "npm view @schmock/core@2.2.3 version --json",
+      );
+      expect(commands()).toContain(
+        "npm view @schmock/faker@2.2.3 version --json",
+      );
+      expect(commands().match(/^npm publish /gm)).toEqual(["npm publish "]);
+      expect(commands()).toContain("npm publish ./packages/openapi");
+    });
+
+    it("lists the dependency checks in its dry run", () => {
+      const result = run(["openapi", "--dry-run"]);
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout).toContain(
+        "npm view @schmock/faker@2.2.3 version --json",
+      );
+      expect(result.stdout).toContain(
+        "npm view @schmock/core@2.2.3 version --json",
+      );
+      expect(commands()).not.toContain("npm ");
+    });
   });
 
   it("rejects an existing release tag that targets another commit", () => {

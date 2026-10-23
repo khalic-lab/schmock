@@ -99,6 +99,24 @@ read_manifest_field() {
   ' "$manifest" "$field"
 }
 
+# The other @schmock/* packages a workspace depends on or peers with, one short
+# name per line. Optional peers count too: versions move in lockstep, so a peer
+# range on this version needs this version on npm.
+internal_dependencies() {
+  node -e '
+    const manifest = require(process.argv[1]);
+    const names = new Set();
+    for (const field of ["dependencies", "peerDependencies", "optionalDependencies"]) {
+      for (const name of Object.keys(manifest[field] ?? {})) {
+        if (name.startsWith("@schmock/") && name !== manifest.name) {
+          names.add(name.slice("@schmock/".length));
+        }
+      }
+    }
+    for (const name of names) process.stdout.write(`${name}\n`);
+  ' "./packages/$1/package.json"
+}
+
 VERSION=""
 HEAD_SHA=""
 
@@ -226,8 +244,16 @@ print_dry_run() {
     echo "  git push origin main"
     echo "  gh release create v${VERSION} --repo ${GITHUB_REPOSITORY} --target ${HEAD_SHA} --title v${VERSION} ...  # only if absent"
   else
+    local dependencies dependency
+    dependencies=$(internal_dependencies "$TARGET")
     echo "Would inspect every package before publishing any package:"
     echo "  npm view @schmock/${TARGET}@${VERSION} dist.integrity --json --registry ${NPM_REGISTRY}"
+    if [ -n "$dependencies" ]; then
+      echo "Would refuse to publish unless npm has every @schmock/* dependency and peer at ${VERSION}:"
+      for dependency in $dependencies; do
+        echo "  npm view @schmock/${dependency}@${VERSION} version --json --registry ${NPM_REGISTRY}"
+      done
+    fi
     echo "Would publish packages reported as absent:"
     echo "  npm publish ./packages/${TARGET} --access public --registry ${NPM_REGISTRY}  # only if unpublished"
     echo "Single-package mode would not push or create a GitHub release."
@@ -304,6 +330,51 @@ plan_package() {
 
   echo "plan    @schmock/${pkg}@${VERSION} (not yet on npm)"
   PUBLISH_QUEUE+=("$pkg")
+}
+
+# `all` publishes in dependency order, so each package's @schmock/* ranges are
+# satisfied by the time it is published. A single-package publish has no such
+# order: bump.ts sets every internal range to ^VERSION, so publishing a package
+# whose dependencies are not yet on npm at VERSION releases one that cannot be
+# installed. Refuse unless npm already serves every one of them.
+require_published_dependencies() {
+  local pkg="$1"
+  local dependencies dependency output missing=""
+
+  if ! dependencies=$(internal_dependencies "$pkg"); then
+    echo "ERROR: could not read the @schmock/* dependencies of @schmock/${pkg}" >&2
+    return 2
+  fi
+
+  for dependency in $dependencies; do
+    if output=$(npm view "@schmock/${dependency}@${VERSION}" version --json --registry "$NPM_REGISTRY" 2>&1); then
+      if ! node -e '
+        const [output, version] = process.argv.slice(1);
+        if (JSON.parse(output) !== version) process.exit(2);
+      ' "$output" "$VERSION" 2>/dev/null; then
+        echo "ERROR: npm did not report @schmock/${dependency}@${VERSION} as published" >&2
+        echo "$output" >&2
+        return 2
+      fi
+      echo "ready   @schmock/${dependency}@${VERSION} (required by @schmock/${pkg})"
+      continue
+    fi
+
+    if [[ "$output" == *"E404"* ]] || [[ "$output" == *"404 Not Found"* ]]; then
+      missing="${missing} @schmock/${dependency}@${VERSION}"
+      continue
+    fi
+
+    echo "ERROR: could not determine npm status for @schmock/${dependency}@${VERSION}" >&2
+    echo "$output" >&2
+    return 2
+  done
+
+  if [ -n "$missing" ]; then
+    echo "ERROR: @schmock/${pkg}@${VERSION} requires${missing}, which npm does not have." >&2
+    echo "Publishing it alone would release a package that cannot be installed. Publish those first, or run 'all', which skips packages already on npm." >&2
+    return 1
+  fi
 }
 
 publish_package() {
@@ -449,6 +520,9 @@ if [ "$TARGET" = "all" ]; then
   done
 else
   plan_package "$TARGET"
+  if [ "${#PUBLISH_QUEUE[@]}" -gt 0 ]; then
+    require_published_dependencies "$TARGET"
+  fi
 fi
 
 echo "Plan complete: publish ${#PUBLISH_QUEUE[@]}, skip ${SKIPPED_COUNT}."
