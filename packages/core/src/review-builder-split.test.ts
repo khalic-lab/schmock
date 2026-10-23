@@ -313,6 +313,79 @@ describe("RouteTable", () => {
     // The first of the two static spellings is the one registered.
     expect(snapshot.staticRoutes.get("GET /users")?.generator).toBe(3);
   });
+
+  it("checks a new route for duplicates without scanning every route", () => {
+    const table = new RouteTable();
+    const count = 400;
+    // A scan compares the new pattern with every earlier route's, reading
+    // `source` about count² / 2 times over the whole registration.
+    const sourceReads = vi.spyOn(RegExp.prototype, "source", "get");
+    try {
+      for (let index = 0; index < count; index += 1) {
+        table.define({
+          route: `GET /resources${index}/:id`,
+          generator: index,
+          config: {},
+          logger,
+        });
+      }
+      expect(sourceReads.mock.calls.length).toBeLessThan(count * 4);
+    } finally {
+      sourceReads.mockRestore();
+    }
+    expect(table.list()).toHaveLength(count);
+  });
+
+  it("warns about the earlier of two routes a new one duplicates", () => {
+    const warnings: string[] = [];
+    const recording = new DebugLogger(false);
+    vi.spyOn(recording, "log").mockImplementation((category, message) => {
+      if (category === "warning") warnings.push(message);
+    });
+    const table = new RouteTable();
+    // Same pattern as the new route, different path key.
+    table.define({ route: "GET /:a//", generator: 1, config: {}, logger });
+    // Same path key as the new route, different pattern.
+    table.define({ route: "GET /:b", generator: 2, config: {}, logger });
+
+    table.define({
+      route: "GET /:b//",
+      generator: 3,
+      config: {},
+      logger: recording,
+    });
+
+    expect(warnings).toEqual([
+      "Duplicate route: GET /:b// matches the same requests as GET /:a/ — first registration wins",
+    ]);
+    expect(table.list().map((route) => route.path)).toEqual(["/:a/", "/:b"]);
+  });
+
+  it("lets a route rolled back with its checkpoint be defined again", () => {
+    const table = new RouteTable();
+    const checkpoint = table.checkpoint();
+    table.define({ route: "GET /a/:id", generator: 1, config: {}, logger });
+    table.define({ route: "GET /b", generator: 1, config: {}, logger });
+    table.rollback(checkpoint);
+
+    table.define({ route: "GET /a/:other", generator: 2, config: {}, logger });
+    table.define({ route: "GET /b/", generator: 2, config: {}, logger });
+
+    expect(table.list().map((route) => route.path)).toEqual([
+      "/a/:other",
+      "/b",
+    ]);
+  });
+
+  it("lets a cleared route be defined again", () => {
+    const table = new RouteTable();
+    table.define({ route: "GET /a/:id", generator: 1, config: {}, logger });
+    table.clear();
+
+    table.define({ route: "GET /a/:id", generator: 2, config: {}, logger });
+
+    expect(table.list().map((route) => route.path)).toEqual(["/a/:id"]);
+  });
 });
 
 // ---------------------------------------------------------------------------

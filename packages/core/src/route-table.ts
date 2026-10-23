@@ -13,9 +13,26 @@ export interface RouteTableSnapshot {
   readonly staticRoutes: Map<string, CompiledCallableRoute>;
 }
 
+/**
+ * The registered routes keyed the two ways a new route can duplicate one: by
+ * method and normalized path, and by method and compiled pattern (routes that
+ * differ only in parameter names). Each key names exactly one route, since a
+ * duplicate is never registered. Only `define()` reads it, so no admission
+ * ever holds it.
+ */
+interface DuplicateIndex {
+  readonly byPath: Map<string, CompiledCallableRoute>;
+  readonly byPattern: Map<string, CompiledCallableRoute>;
+}
+
 /** The table as it stood before a `pipe()` install, for its rollback. */
 interface RouteTableCheckpoint extends RouteTableSnapshot {
   readonly shared: boolean;
+  readonly duplicates: DuplicateIndex;
+}
+
+function emptyDuplicateIndex(): DuplicateIndex {
+  return { byPath: new Map(), byPattern: new Map() };
 }
 
 function defaultContentType(generator: Schmock.Generator): string {
@@ -92,6 +109,7 @@ function serializationProblem(error: unknown): string {
 export class RouteTable {
   #routes: CompiledCallableRoute[] = [];
   #staticRoutes = new Map<string, CompiledCallableRoute>();
+  #duplicates = emptyDuplicateIndex();
   /** True once an admission holds the containers by reference. */
   #shared = false;
 
@@ -138,17 +156,19 @@ export class RouteTable {
     // Routes that differ only in parameter names (`/users/:id` and
     // `/users/:userId`) compile to the same pattern and match the same
     // requests, so the later one would be unreachable: it is a duplicate too.
-    const normalizedParsedPath = normalizePath(parsed.path);
-    const existing = this.#routes.find(
-      (r) =>
-        r.method === parsed.method &&
-        (normalizePath(r.path) === normalizedParsedPath ||
-          r.pattern.source === parsed.pattern.source),
+    // Keyed lookups, not a scan of every route: comparing with each earlier
+    // route made registering a large spec quadratic.
+    const pathKey = `${parsed.method} ${normalizePath(parsed.path)}`;
+    const patternKey = `${parsed.method} ${parsed.pattern.source}`;
+    const samePath = this.#duplicates.byPath.get(pathKey);
+    const existing = this.#earlierRoute(
+      samePath,
+      this.#duplicates.byPattern.get(patternKey),
     );
     if (existing) {
       logger.log(
         "warning",
-        normalizePath(existing.path) === normalizedParsedPath
+        existing === samePath
           ? `Duplicate route: ${route} — first registration wins`
           : `Duplicate route: ${route} matches the same requests as ${existing.method} ${existing.path} — first registration wins`,
       );
@@ -167,11 +187,12 @@ export class RouteTable {
 
     this.#writable();
     this.#routes.push(compiledRoute);
+    this.#duplicates.byPath.set(pathKey, compiledRoute);
+    this.#duplicates.byPattern.set(patternKey, compiledRoute);
 
     // Store static routes (no params) in Map for O(1) lookup
     if (parsed.params.length === 0) {
-      const key = `${parsed.method} ${normalizePath(parsed.path)}`;
-      this.#staticRoutes.set(key, compiledRoute);
+      this.#staticRoutes.set(pathKey, compiledRoute);
     }
 
     logger.log("route", `Route defined: ${route}`, {
@@ -198,9 +219,14 @@ export class RouteTable {
       routes: this.#routes,
       staticRoutes: this.#staticRoutes,
       shared: this.#shared,
+      duplicates: this.#duplicates,
     };
     this.#routes = checkpoint.routes.slice();
     this.#staticRoutes = new Map(checkpoint.staticRoutes);
+    this.#duplicates = {
+      byPath: new Map(checkpoint.duplicates.byPath),
+      byPattern: new Map(checkpoint.duplicates.byPattern),
+    };
     this.#shared = false;
     return checkpoint;
   }
@@ -208,6 +234,7 @@ export class RouteTable {
   rollback(checkpoint: RouteTableCheckpoint): void {
     this.#routes = checkpoint.routes;
     this.#staticRoutes = checkpoint.staticRoutes;
+    this.#duplicates = checkpoint.duplicates;
     this.#shared = checkpoint.shared;
   }
 
@@ -218,7 +245,25 @@ export class RouteTable {
   clear(): void {
     this.#routes = [];
     this.#staticRoutes = new Map();
+    this.#duplicates = emptyDuplicateIndex();
     this.#shared = false;
+  }
+
+  /**
+   * The one of two duplicate candidates registered first, as a scan in
+   * registration order would have found it. Both exist only when the new
+   * route shares its path key with one route and its pattern with another.
+   */
+  #earlierRoute(
+    first: CompiledCallableRoute | undefined,
+    second: CompiledCallableRoute | undefined,
+  ): CompiledCallableRoute | undefined {
+    if (first === undefined || second === undefined || first === second) {
+      return first ?? second;
+    }
+    return this.#routes.indexOf(first) < this.#routes.indexOf(second)
+      ? first
+      : second;
   }
 
   /**
