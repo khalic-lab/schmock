@@ -84,12 +84,39 @@ function emptyResponseBody(
 }
 
 /**
+ * A 'json' body as HttpClient would parse it, for the one string core
+ * produces itself. Core sends a body whose `toJSON()` yields a string (a
+ * `Date`, a money class) as its JSON text, quotes included, so every
+ * byte-writing transport sends valid JSON; HttpClient parses that text back
+ * into the string. So a string under a JSON content type that is a JSON
+ * string literal is decoded. Every other string stays as the route wrote it.
+ */
+function decodeJsonStringLiteral(
+  body: unknown,
+  headers: Record<string, string>,
+): unknown {
+  if (typeof body !== "string" || !body.startsWith('"')) return body;
+  if (requestBodyKindOf(getHeader(headers, "content-type")) !== "json") {
+    return body;
+  }
+  try {
+    const parsed: unknown = JSON.parse(body);
+    return typeof parsed === "string" ? parsed : body;
+  } catch {
+    return body;
+  }
+}
+
+/**
  * Shape the emitted body to the request's `responseType`. Angular's own
  * HttpXhrBackend promises a `string` for 'text', an `ArrayBuffer` for
  * 'arraybuffer' and a `Blob` for 'blob'; handing back a plain object breaks
  * that contract. 'json' is typed `any`/`T`, so a string body legitimately
  * satisfies it and is deliberately left untouched — parsing here would turn
- * a route returning `'true'` into the boolean `true`.
+ * a route returning `'true'` into the boolean `true`. The one exception is a
+ * JSON string literal under a JSON content type (see
+ * {@link decodeJsonStringLiteral}), which is what a route returning a `Date`
+ * produces.
  */
 function applyResponseType(
   body: unknown,
@@ -97,7 +124,7 @@ function applyResponseType(
   headers: Record<string, string>,
   responseType: AngularResponseType,
 ): unknown {
-  if (responseType === "json") return body;
+  if (responseType === "json") return decodeJsonStringLiteral(body, headers);
   // The bodyless cases (HEAD, 204, 205, 304, or an explicitly null body).
   // `null` must not fall through to the serializer, which would encode it as
   // the literal string "null" for a body that never reaches the wire.

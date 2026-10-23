@@ -826,6 +826,38 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   );
 
   Scenario(
+    "A route returning a Date gives Angular code its ISO string",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "I create an Angular mock whose route returns the epoch as a Date",
+        () => {
+          resetState();
+          mock("GET /api/epoch", () => new Date(0));
+        },
+      );
+
+      When(
+        "I make an Angular request to {string}",
+        async (_, request: string) => {
+          const [method, path] = request.split(" ");
+          await makeRequest(method, path);
+        },
+      );
+
+      Then("the response should be an HttpResponse", () => {
+        expect(response).toBeInstanceOf(HttpResponse);
+      });
+
+      And(
+        "the response body should be the string {string}",
+        (_, expected: string) => {
+          expect(response?.body).toBe(expected);
+        },
+      );
+    },
+  );
+
+  Scenario(
     "Emitted responses report the URL with params",
     ({ Given, When, Then, And }) => {
       Given(

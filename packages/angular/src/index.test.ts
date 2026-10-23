@@ -14,7 +14,8 @@ import {
 } from "@angular/common/http";
 import type * as Schmock from "@schmock/core";
 import type { CallableMockInstance } from "@schmock/core";
-import { of } from "rxjs";
+import { schmock } from "@schmock/core";
+import { lastValueFrom, of } from "rxjs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSchmockInterceptor, provideSchmockInterceptor } from "./index";
 
@@ -1193,6 +1194,75 @@ describe("Angular Adapter", () => {
       );
 
       expect(response?.body).toBe("true");
+    });
+
+    it("leaves JSON-labelled strings that are not string literals untouched", async () => {
+      for (const body of ["true", '{"a":1}', '"unterminated', "plain"]) {
+        const { response } = await interceptOnce(
+          {
+            status: 200,
+            body,
+            headers: { "content-type": "application/json" },
+          },
+          "json",
+        );
+        expect(response?.body).toBe(body);
+      }
+    });
+
+    it("decodes a JSON string literal under a JSON content type", async () => {
+      const { response } = await interceptOnce(
+        {
+          status: 200,
+          body: '"quoted"',
+          headers: { "content-type": "application/problem+json" },
+        },
+        "json",
+      );
+
+      expect(response?.body).toBe("quoted");
+    });
+
+    it("keeps the quotes of a string literal outside a JSON content type", async () => {
+      const { response } = await interceptOnce(
+        {
+          status: 200,
+          body: '"quoted"',
+          headers: { "content-type": "text/plain" },
+        },
+        "json",
+      );
+
+      expect(response?.body).toBe('"quoted"');
+    });
+
+    it("gives Angular code the ISO string of a route returning a Date", async () => {
+      const mock = schmock();
+      mock("GET /api/test", () => new Date(0));
+      const InterceptorClass = createSchmockInterceptor(mock);
+
+      const event = await lastValueFrom(
+        new InterceptorClass().intercept(new HttpRequest("GET", "/api/test"), {
+          handle: vi.fn(),
+        }),
+      );
+
+      expect(event instanceof HttpResponse && event.body).toBe(
+        "1970-01-01T00:00:00.000Z",
+      );
+    });
+
+    it("decodes a JSON string literal on the error channel too", async () => {
+      const { error } = await interceptOnce(
+        {
+          status: 409,
+          body: '"conflict"',
+          headers: { "content-type": "application/json" },
+        },
+        "json",
+      );
+
+      expect(error?.error).toBe("conflict");
     });
 
     it("keeps a 204 body null under responseType text", async () => {

@@ -380,7 +380,13 @@ describe('UserService', () => {
   `Content-Type: application/x-www-form-urlencoded` to receive its fields
 - Bodies are shaped to the request's `responseType`: `text` yields a string,
   `arraybuffer` an `ArrayBuffer`, `blob` a `Blob`. `json` passes the value
-  through untouched — a route returning a pre-serialized string stays a string
+  through untouched — a route returning a pre-serialized string stays a string,
+  so `'true'` and `'{"a":1}'` arrive as strings. The one exception is a string
+  under a JSON content type (`application/json` or `+json`) that is a JSON
+  string literal, quotes included: it is decoded, as `HttpClient` decodes it
+  from a real backend. That is what a route returning a `Date` (or any value
+  whose `toJSON()` yields a string) produces, since core sends it as JSON text,
+  so such a route gives Angular code the ISO string
 - A body that never reaches the wire — `[200, null]`, a HEAD request, or a 205
   or 304 — emits the *empty* value of that type: `''`, an empty `ArrayBuffer`,
   an empty `Blob` labelled from the response's content type (`json` emits

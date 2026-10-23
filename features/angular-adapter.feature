@@ -172,6 +172,14 @@ Feature: Angular Adapter
     Then the response should be an HttpResponse
     And the response body should be the string '{"users":[]}'
 
+  # Core sends a Date as its JSON text, quotes included; HttpClient parses that
+  # back into the string, so the adapter decodes a JSON string literal.
+  Scenario: A route returning a Date gives Angular code its ISO string
+    Given I create an Angular mock whose route returns the epoch as a Date
+    When I make an Angular request to "GET /api/epoch"
+    Then the response should be an HttpResponse
+    And the response body should be the string "1970-01-01T00:00:00.000Z"
+
   Scenario: Emitted responses report the URL with params
     Given I create an Angular mock returning an object for "GET /api/users"
     When I make an Angular request to "GET /api/users" with query params
