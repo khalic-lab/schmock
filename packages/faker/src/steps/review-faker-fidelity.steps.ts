@@ -442,6 +442,22 @@ const CASES: Record<string, FidelityCase> = {
       expect(nulls.length).toBeLessThanOrEqual(1);
     },
   },
+  "type-union-with-all-of-ref": {
+    schema: {
+      type: "object",
+      properties: {
+        foo: withKeys(
+          { type: ["object", "null"], allOf: [{ $ref: "#/$defs/Foo" }] },
+          { schmockNullable: true },
+        ),
+      },
+      required: ["foo"],
+      $defs: {
+        Foo: { type: "object", properties: { a: { type: "string" } } },
+      },
+    },
+    fits: (value) => expect(record(record(value).foo)).toBeDefined(),
+  },
   "inclusive-maximum-tighter-than-exclusive": {
     schema: { type: "number", minimum: 0, maximum: 5, exclusiveMaximum: 100 },
     fits: (value) => {
@@ -471,6 +487,7 @@ const OUTLINES = [
   "An explicit faker date is the UTC calendar date on every machine",
   "A decimal multipleOf yields exact multiples without float noise",
   "A uniqueItems array never receives two rolled nulls",
+  "A nullable type union rolls no null its own composition rejects",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {

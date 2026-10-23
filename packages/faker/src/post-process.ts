@@ -37,8 +37,10 @@ interface WalkContext {
 
 /**
  * A schema that applies to the value being walked. `vetoes` is false for
- * schemas reached through a nullable-marked node's own `$ref`/composition:
- * those describe the non-null alternative, so they cannot rule null out.
+ * schemas reached through the `$ref`/composition of a node whose null came
+ * from an unwrapped `anyOf`/`oneOf` union: those describe the non-null
+ * alternative, so they cannot rule null out. Beside a `type: [T, "null"]`
+ * they are conjuncts, and a null they reject is not rolled.
  */
 interface Applicable {
   schema: JSONSchema7;
@@ -104,6 +106,14 @@ function isNullableMarked(schema: JSONSchema7): boolean {
   return Reflect.get(schema, "schmockNullable") === true;
 }
 
+/** Null is the other branch of a union the enhancer unwrapped into `schema`. */
+function isNullAlternative(schema: JSONSchema7): boolean {
+  return (
+    isNullableMarked(schema) &&
+    Reflect.get(schema, "schmockNullAlternative") === true
+  );
+}
+
 /** Whether a null instance satisfies `schema` — only type/const/enum refuse. */
 function admitsNull(schema: JSONSchema7): boolean {
   if (isNullableMarked(schema)) return true;
@@ -140,7 +150,7 @@ function collectApplicable(
   if (seen.has(schema)) return;
   seen.add(schema);
   found.push({ schema, vetoes: !underNullable });
-  const nested = underNullable || isNullableMarked(schema);
+  const nested = underNullable || isNullAlternative(schema);
   const descend = (next: JSONSchema7) =>
     collectApplicable({ ...collection, schema: next }, nested);
 

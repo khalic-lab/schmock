@@ -1400,7 +1400,9 @@ inside `allOf`/`anyOf`/`oneOf` branches, `$ref` targets and
 `additionalProperties` values. The null roll also applies through `$ref`,
 `allOf`, `additionalProperties`/`patternProperties`, and the single
 `anyOf`/`oneOf` branch a value matches. A `uniqueItems` array gets at most one
-null.
+null. Beside `type: [T, 'null']`, the node's own `$ref` and composition must
+accept null too, so `{ type: ['object', 'null'], allOf: [{ $ref: … }] }` rolls
+no null when the referenced schema is an object.
 
 `faker`, `schmockNullable` and `schmockTrueProbability` are Schmock's own
 keywords and are not part of `JSONSchema7`. `fakerPlugin` and

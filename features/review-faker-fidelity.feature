@@ -149,3 +149,13 @@ Feature: Faker output honours every keyword of its schema
       | case                     |
       | unique-nullable-integers |
       | unique-nullable-any-of   |
+
+  # Review 2026-10-23 faker-10: allOf beside type [T, "null"] is a conjunct, not the alternative
+  Scenario Outline: A nullable type union rolls no null its own composition rejects
+    Given the fidelity schema "<case>"
+    When I generate it with 200 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                       |
+      | type-union-with-all-of-ref |

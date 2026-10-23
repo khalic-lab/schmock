@@ -14,6 +14,12 @@ interface FakerSchema extends JSONSchema7 {
   faker?: string | Record<string, unknown>;
   schmockNullable?: boolean;
   schmockTrueProbability?: number;
+  /**
+   * Set on the enhanced copy only, by `unwrapNullUnion`: null came from an
+   * `anyOf`/`oneOf` branch, so the node's own `$ref` and composition describe
+   * the non-null alternative and cannot rule null out (see post-process.ts).
+   */
+  schmockNullAlternative?: boolean;
 }
 
 function needsStringFallback(schema: FakerSchema): boolean {
@@ -69,7 +75,12 @@ function unwrapNullUnion(
     ) {
       return undefined;
     }
-    return { ...rest, ...wrapper, schmockNullable: true };
+    return {
+      ...rest,
+      ...wrapper,
+      schmockNullable: true,
+      schmockNullAlternative: true,
+    };
   }
   return undefined;
 }

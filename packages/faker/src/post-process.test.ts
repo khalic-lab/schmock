@@ -218,6 +218,75 @@ describe("applyNullableRolls — patternProperties keys", () => {
   });
 });
 
+describe("applyNullableRolls — a type union's own composition (faker-10)", () => {
+  const FOO: JSONSchema7 = {
+    type: "object",
+    properties: { a: { type: "string" } },
+  };
+
+  /** `foo` values generated with `foo` described by `node`, over 200 seeds. */
+  async function fooValues(node: JSONSchema7): Promise<unknown[]> {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: { foo: node },
+      required: ["foo"],
+      $defs: { Foo: FOO },
+    };
+    const values: unknown[] = [];
+    for (let seed = 1; seed <= 200; seed += 1) {
+      const value = await generateFromSchema({ schema, seed });
+      values.push(Reflect.get(Object(value), "foo"));
+    }
+    return values;
+  }
+
+  const marked = (node: JSONSchema7): JSONSchema7 => {
+    const copy = { ...node };
+    Reflect.set(copy, "schmockNullable", true);
+    return copy;
+  };
+
+  it.each([
+    [
+      "marked, allOf $ref",
+      marked({ type: ["object", "null"], allOf: [{ $ref: "#/$defs/Foo" }] }),
+    ],
+    [
+      "native, allOf $ref",
+      { type: ["object", "null"], allOf: [{ $ref: "#/$defs/Foo" }] },
+    ],
+    [
+      "marked, inline allOf",
+      marked({ type: ["object", "null"], allOf: [FOO] }),
+    ],
+    [
+      "marked, $ref beside type",
+      marked({ type: ["object", "null"], $ref: "#/$defs/Foo" }),
+    ],
+  ] satisfies [string, JSONSchema7][])(
+    "never rolls a null its own composition rejects (%s)",
+    async (_, node) => {
+      for (const foo of await fooValues(node)) expect(foo).not.toBeNull();
+    },
+  );
+
+  it("still rolls null through a union's non-null alternative", async () => {
+    const values = await fooValues(
+      marked({
+        anyOf: [{ type: "null" }, { allOf: [{ $ref: "#/$defs/Foo" }] }],
+      }),
+    );
+    expect(values).toContain(null);
+  });
+
+  it("still rolls null when the type union's composition admits it", async () => {
+    const values = await fooValues(
+      marked({ type: ["object", "null"], allOf: [{ minProperties: 0 }] }),
+    );
+    expect(values).toContain(null);
+  });
+});
+
 describe("applyNullableRolls — uniqueItems (faker-9)", () => {
   /** Arrays generated from `schema` over `seeds` seeds. */
   async function arraysFrom(
