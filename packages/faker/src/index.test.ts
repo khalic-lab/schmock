@@ -1323,6 +1323,29 @@ describe("count reaches a root array behind $ref, allOf or a null union (faker-1
     }
   });
 
+  it.each([
+    [
+      "a $ref",
+      {
+        anyOf: [{ type: "null" }, { $ref: "#/$defs/List" }],
+        $defs: { List: LIST },
+      },
+    ],
+    ["an allOf", { anyOf: [{ type: "null" }, { allOf: [LIST] }] }],
+  ] satisfies [string, JSONSchema7][])(
+    "still rolls a nullable root to null through %s",
+    async (_, schema) => {
+      const values: unknown[] = [];
+      for (let seed = 1; seed <= 200; seed += 1) {
+        values.push(await generateFromSchema({ schema, count: 5, seed }));
+      }
+      expect(values).toContain(null);
+      for (const value of values) {
+        if (value !== null) expect(value).toHaveLength(5);
+      }
+    },
+  );
+
   it("rejects a count past the array limit through a $ref", async () => {
     await expect(
       generateFromSchema({

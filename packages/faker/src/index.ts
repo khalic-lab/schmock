@@ -153,6 +153,9 @@ export async function generateFromSchema(
   );
 }
 
+/** The enhancer's null-roll markers, which a resized root must keep. */
+const NULLABLE_MARKERS = ["schmockNullable", "schmockNullAlternative"];
+
 /** Keys that leave a single-entry `allOf` root standing for its entry alone. */
 const ALLOF_WRAPPER_KEYS = new Set([
   "allOf",
@@ -167,6 +170,7 @@ const ALLOF_WRAPPER_KEYS = new Set([
   "readOnly",
   "writeOnly",
   "examples",
+  ...NULLABLE_MARKERS,
 ]);
 
 /** An array json-schema-faker generates with items it can size. */
@@ -208,7 +212,8 @@ function findRootArray(root: JSONSchema7): JSONSchema7 | undefined {
  * `root` with `array` fixed at `itemCount` items. A root reached through a
  * `$ref` or `allOf` is replaced by that array, keeping the root's
  * definitions so every reference inside still resolves (the array's own
- * `$defs` shadow the root's, as they do while JSF walks it).
+ * `$defs` shadow the root's, as they do while JSF walks it), and the root's
+ * null-roll markers, so a nullable root still rolls null.
  */
 function sizeRootArray(
   root: JSONSchema7,
@@ -225,6 +230,9 @@ function sizeRootArray(
     sized.$defs = { ...root.$defs, ...array.$defs };
   }
   if (root.definitions !== undefined) sized.definitions = root.definitions;
+  for (const marker of NULLABLE_MARKERS) {
+    if (Reflect.get(root, marker) === true) Reflect.set(sized, marker, true);
+  }
   return sized;
 }
 
