@@ -31,3 +31,22 @@ Feature: Query plugin review fixes
     Given a sortable route with items "a" and "b"
     When I request the sortable route with order "DESC"
     Then the sorted names should be "b" then "a"
+
+  # ── Sorting defaults (review 2026-10-23) ─────────────────────────────────
+
+  Scenario Outline: A sort or order value the plugin cannot use falls back to the configured defaults
+    Given a route sorted by "n" descending by default with items "b", "a" and "c"
+    When I request the default-sorted route with sort "<sort>" and order "<order>"
+    Then the default-sorted names should be "c", "b" and "a"
+
+    Examples:
+      | sort   | order      |
+      | n      | sideways   |
+      | n      | descending |
+      | secret | desc       |
+      | secret | sideways   |
+
+  Scenario: An empty sort and order fall back to the configured defaults
+    Given a route sorted by "n" descending by default with items "b", "a" and "c"
+    When I request the default-sorted route with sort "" and order ""
+    Then the default-sorted names should be "c", "b" and "a"

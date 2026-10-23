@@ -119,6 +119,62 @@ describe("queryPlugin order and limit handling", () => {
     expect(result.response).toEqual([{ n: "c" }, { n: "b" }, { n: "a" }]);
   });
 
+  describe("sorting defaults", () => {
+    const descending = [{ n: "c" }, { n: "b" }, { n: "a" }];
+    const plugin = queryPlugin({
+      sorting: { allowed: ["n"], default: "n", defaultOrder: "desc" },
+    });
+
+    it.each([
+      ["an empty order", { order: "" }],
+      ["an unrecognised order", { order: "sideways" }],
+      ["a spelled-out order", { order: "descending" }],
+      ["an empty sort field", { sort: "" }],
+      ["a sort field outside the allowed list", { sort: "secret" }],
+      ["an empty sort and order", { sort: "", order: "" }],
+    ])("falls back to the configured defaults for %s", async (_, query) => {
+      const result = await plugin.process(context({ query }), items);
+      expect(result.response).toEqual(descending);
+    });
+
+    it("lets a recognised order override the default order", async () => {
+      const result = await plugin.process(
+        context({ query: { order: "ASC" } }),
+        items,
+      );
+      expect(result.response).toEqual([{ n: "a" }, { n: "b" }, { n: "c" }]);
+    });
+
+    it("keeps the default order for an allowed sort field", async () => {
+      const result = await plugin.process(
+        context({ query: { sort: "n", order: "" } }),
+        items,
+      );
+      expect(result.response).toEqual(descending);
+    });
+
+    it("leaves the list unsorted for a disallowed field without a default", async () => {
+      const unsorted = queryPlugin({ sorting: { allowed: ["n"] } });
+      const result = await unsorted.process(
+        context({ query: { sort: "secret", order: "desc" } }),
+        items,
+      );
+      expect(result.response).toEqual(items);
+    });
+
+    it("pages the default order when the order value is empty", async () => {
+      const paged = queryPlugin({
+        pagination: { defaultLimit: 2 },
+        sorting: { allowed: ["n"], default: "n", defaultOrder: "desc" },
+      });
+      const result = await paged.process(
+        context({ query: { page: "2", order: "" } }),
+        items,
+      );
+      expect(result.response).toMatchObject({ data: [{ n: "a" }] });
+    });
+  });
+
   it("clamps a default limit above maxLimit to maxLimit", async () => {
     const plugin = queryPlugin({
       pagination: { defaultLimit: 5, maxLimit: 2 },

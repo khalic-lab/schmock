@@ -20,9 +20,9 @@ export interface PaginationOptions {
 export interface SortingOptions {
   /** Fields allowed for sorting */
   allowed: string[];
-  /** Default sort field */
+  /** Sort field used when the request names none, or none in `allowed` */
   default?: string;
-  /** Default sort order (default: "asc") */
+  /** Sort order used when the request's order is absent or unrecognised (default: "asc") */
   defaultOrder?: "asc" | "desc";
   /** Query parameter name for sort field (default: "sort") */
   sortParam?: string;
@@ -403,6 +403,13 @@ function compareSortKeys(
   return order === "desc" ? -comparison : comparison;
 }
 
+/** Clients send ORDER=DESC as often as desc; the comparison ignores case. */
+function parseSortOrder(raw: unknown): "asc" | "desc" | undefined {
+  if (typeof raw !== "string") return undefined;
+  const order = raw.toLowerCase();
+  return order === "asc" || order === "desc" ? order : undefined;
+}
+
 function applySorting(
   items: unknown[],
   query: Record<string, string>,
@@ -410,18 +417,19 @@ function applySorting(
 ): unknown[] {
   const sortParam = options.sortParam ?? "sort";
   const orderParam = options.orderParam ?? "order";
-  const sortField = ownValue(query, sortParam) ?? options.default;
-  const rawOrder = ownValue(query, orderParam) ?? options.defaultOrder ?? "asc";
-  // Clients send ORDER=DESC as often as desc; the comparison ignores case.
+  // An empty, unknown or disallowed value is treated as absent, so the
+  // configured defaults hold for every request that does not pick a valid one.
+  const requestedField = ownValue(query, sortParam);
+  const sortField =
+    requestedField !== undefined && options.allowed.includes(requestedField)
+      ? requestedField
+      : options.default;
   const sortOrder =
-    typeof rawOrder === "string" && rawOrder.toLowerCase() === "desc"
-      ? "desc"
-      : "asc";
+    parseSortOrder(ownValue(query, orderParam)) ??
+    options.defaultOrder ??
+    "asc";
 
-  if (!sortField) return items;
-
-  // Only sort by allowed fields
-  if (!options.allowed.includes(sortField)) return items;
+  if (sortField === undefined) return items;
 
   return items
     .map((item) => ({

@@ -28,7 +28,7 @@ function rejectingGuard(response: unknown): Schmock.Plugin {
 
 const ERROR_ITEMS = [{ msg: "a" }, { msg: "b" }];
 
-describeFeature(feature, ({ Scenario }) => {
+describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
   let creationError: unknown;
@@ -172,6 +172,84 @@ describeFeature(feature, ({ Scenario }) => {
         "the sorted names should be {string} then {string}",
         (_, first: string, second: string) => {
           expect(response.body).toEqual([{ n: first }, { n: second }]);
+        },
+      );
+    },
+  );
+
+  // ── Sorting defaults (review 2026-10-23) ─────────────────────────────────
+
+  function defaultSortedRoute(field: string, names: string[]): void {
+    mock = schmock();
+    mock(
+      "GET /names",
+      names.map((name) => ({ [field]: name })),
+    ).pipe(
+      queryPlugin({
+        sorting: { allowed: [field], default: field, defaultOrder: "desc" },
+      }),
+    );
+  }
+
+  ScenarioOutline(
+    "A sort or order value the plugin cannot use falls back to the configured defaults",
+    ({ Given, When, Then }, variables) => {
+      Given(
+        "a route sorted by {string} descending by default with items {string}, {string} and {string}",
+        (_, field: string, first: string, second: string, third: string) => {
+          defaultSortedRoute(field, [first, second, third]);
+        },
+      );
+
+      When(
+        "I request the default-sorted route with sort {string} and order {string}",
+        async () => {
+          response = await mock.handle("GET", "/names", {
+            query: { sort: variables.sort, order: variables.order },
+          });
+        },
+      );
+
+      Then(
+        "the default-sorted names should be {string}, {string} and {string}",
+        (_, first: string, second: string, third: string) => {
+          expect(response.body).toEqual([
+            { n: first },
+            { n: second },
+            { n: third },
+          ]);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "An empty sort and order fall back to the configured defaults",
+    ({ Given, When, Then }) => {
+      Given(
+        "a route sorted by {string} descending by default with items {string}, {string} and {string}",
+        (_, field: string, first: string, second: string, third: string) => {
+          defaultSortedRoute(field, [first, second, third]);
+        },
+      );
+
+      When(
+        "I request the default-sorted route with sort {string} and order {string}",
+        async (_, sort: string, order: string) => {
+          response = await mock.handle("GET", "/names", {
+            query: { sort, order },
+          });
+        },
+      );
+
+      Then(
+        "the default-sorted names should be {string}, {string} and {string}",
+        (_, first: string, second: string, third: string) => {
+          expect(response.body).toEqual([
+            { n: first },
+            { n: second },
+            { n: third },
+          ]);
         },
       );
     },

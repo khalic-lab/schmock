@@ -38,6 +38,8 @@ const response = await mock.handle("GET", "/users", {
 - `sorting.default` must be one of `sorting.allowed`, and `sorting.defaultOrder`
   must be `"asc"` or `"desc"`. Both are checked when the plugin is created.
 - The order parameter is case-insensitive: `order=DESC` sorts descending.
+  An empty or unknown order falls back to `sorting.defaultOrder`, and an empty
+  sort field or one outside `sorting.allowed` falls back to `sorting.default`.
 - Pipe `queryPlugin` after the plugin that produces the body (faker, openapi).
   Give faker a `seed` so every request pages through the same data.
 

@@ -1764,7 +1764,11 @@ Query parameters:
 `page` and `limit` must be exact positive integers (`"2"`); anything else —
 padded, signed, fractional, exponent notation or partially numeric — falls
 back to the default rather than being coerced. The `order` value is matched
-case-insensitively: `order=DESC` and `order=Desc` sort descending.
+case-insensitively: `order=DESC` and `order=Desc` sort descending. Sorting
+falls back the same way: an `order` other than `asc` or `desc` in any case,
+empty included, uses `sorting.defaultOrder`, and a `sort` field that is empty
+or not in `sorting.allowed` uses `sorting.default`. Without a `default`, such a
+request leaves the list in its original order.
 
 Filters must use a prefixed form. The plain `?field=value` form is not
 honoured, so a filterable field named `page` can never collide with the
