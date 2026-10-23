@@ -11,7 +11,102 @@ function swagger2(paths: Record<string, unknown>) {
   };
 }
 
+const jsonOnly = {
+  "application/json": {
+    schema: { type: "object", properties: { profile: { type: "string" } } },
+  },
+};
+
+const twoProfiles = {
+  "application/json;profile=a": {
+    schema: {
+      type: "object",
+      required: ["profile"],
+      properties: { profile: { type: "string", const: "a" } },
+    },
+  },
+  "application/json;profile=b": {
+    schema: {
+      type: "object",
+      required: ["profile"],
+      properties: { profile: { type: "string", const: "b" } },
+    },
+  },
+};
+
+function oas3WithResponseHeaders(
+  headers: Record<string, unknown>,
+  content: Record<string, unknown>,
+) {
+  return {
+    openapi: "3.0.3",
+    info: { title: "headers", version: "1.0.0" },
+    paths: {
+      "/report": {
+        get: {
+          responses: {
+            "200": {
+              description: "OK",
+              headers,
+              content,
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
 describe("operation extraction", () => {
+  describe("a declared Content-Type response header", () => {
+    it.each([
+      ["Content-Type", { type: "string" }],
+      ["content-type", { type: "string" }],
+      ["Content-Type", { type: "string", minLength: 4 }],
+      ["Content-Type", { type: "string", format: "uuid" }],
+    ])("is ignored when %s has no fixed value (%j)", async (name, schema) => {
+      const spec = oas3WithResponseHeaders(
+        {
+          [name]: { schema },
+          "X-Request-Id": { schema: { type: "string", default: "r-1" } },
+        },
+        jsonOnly,
+      );
+      const mock = schmock();
+      mock.pipe(await openapi({ spec, validateResponses: true }));
+
+      const response = await mock.handle("GET", "/report");
+
+      expect(response.status).toBe(200);
+      expect(response.headers["content-type"]).toBe("application/json");
+      expect(response.headers["X-Request-Id"]).toBe("r-1");
+      expect((await parseSpec(spec)).warnings).toContain(
+        `GET /report: response "200": header "${name}" has no fixed value, ignored (the media type comes from content negotiation)`,
+      );
+    });
+
+    it.each([
+      ["an enum", { type: "string", enum: ["application/json;profile=b"] }],
+      ["an example", { type: "string", example: "application/json;profile=b" }],
+      ["a default", { type: "string", default: "application/json;profile=b" }],
+    ])("still selects the media type it pins with %s", async (_, schema) => {
+      const spec = oas3WithResponseHeaders(
+        { "Content-Type": { schema } },
+        twoProfiles,
+      );
+      const mock = schmock();
+      mock.pipe(await openapi({ spec, validateResponses: true }));
+
+      const response = await mock.handle("GET", "/report");
+
+      expect(response.status).toBe(200);
+      expect(response.headers["Content-Type"]).toBe(
+        "application/json;profile=b",
+      );
+      expect(response.body).toEqual({ profile: "b" });
+    });
+  });
+
   describe("Swagger 2.0 inline schema keywords", () => {
     const headerSpec = swagger2({
       "/items": {

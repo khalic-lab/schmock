@@ -431,7 +431,11 @@ export function extractResponses(
       }
     }
 
-    const headers = extractResponseHeaders(response, ctx);
+    const headers = extractResponseHeaders(
+      response,
+      ctx,
+      `${label}: response "${statusCode}"`,
+    );
     result.set(code, {
       schema,
       description,
@@ -486,9 +490,11 @@ function extractExamples(
   return result.size > 0 ? result : undefined;
 }
 
+/** `where` names the response in a warning: `GET /pets: response "200"`. */
 function extractResponseHeaders(
   response: Record<string, unknown>,
   ctx: ParseContext,
+  where: string,
 ): Record<string, Schmock.ResponseHeaderDef> | undefined {
   const rawHeaders = isRecord(response.headers) ? response.headers : undefined;
   if (!rawHeaders) return undefined;
@@ -516,11 +522,48 @@ function extractResponseHeaders(
       }
     }
 
+    // OpenAPI 3 says a declared Content-Type header SHALL be ignored. A fixed
+    // value is still honoured, since it is how a spec picks one of several
+    // parameterized media types (see "Response Validation" in the docs), but
+    // anything else would emit "", a placeholder string or a random value as
+    // the response's media type, next to the negotiated one.
+    if (
+      name.toLowerCase() === "content-type" &&
+      !fixedHeaderValue(headerSchema)
+    ) {
+      ctx.warnings.push(
+        `${where}: header "${name}" has no fixed value, ignored (the media type comes from content negotiation)`,
+      );
+      continue;
+    }
+
     headers[name] = { schema: headerSchema, description: desc };
     hasHeaders = true;
   }
 
   return hasHeaders ? headers : undefined;
+}
+
+function isHeaderScalar(value: unknown): value is string | number | boolean {
+  return (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
+}
+
+/**
+ * The value header generation is pinned to, read the way the generator reads
+ * it: the first scalar `enum` member, else a scalar `default` (which is also
+ * where the normalizer puts a scalar `example`). Empty when there is none.
+ */
+function fixedHeaderValue(schema: JSONSchema7 | undefined): string {
+  if (!schema) return "";
+  const fromEnum = Array.isArray(schema.enum)
+    ? schema.enum.find(isHeaderScalar)
+    : undefined;
+  if (fromEnum !== undefined) return String(fromEnum);
+  return isHeaderScalar(schema.default) ? String(schema.default) : "";
 }
 
 /**

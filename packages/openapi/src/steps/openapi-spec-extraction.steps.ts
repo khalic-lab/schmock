@@ -43,6 +43,31 @@ const constrainedHeaderSpec = {
   },
 };
 
+const freeContentTypeHeaderSpec = {
+  openapi: "3.0.3",
+  info: { title: "reports", version: "1.0.0" },
+  paths: {
+    "/report": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            headers: { "Content-Type": { schema: { type: "string" } } },
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { title: { type: "string" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -98,6 +123,34 @@ describeFeature(feature, ({ Scenario }) => {
       And("the token header is {string} at its minimum length", (_, value) => {
         expect(response.headers["X-Token"]).toBe(value);
       });
+    },
+  );
+
+  Scenario(
+    "A Content-Type response header with no fixed value is ignored",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a mock whose report response declares a Content-Type header of any string",
+        async () => {
+          mock = schmock();
+          mock.pipe(await openapi({ spec: freeContentTypeHeaderSpec }));
+        },
+      );
+
+      When("I fetch the report", async () => {
+        response = await mock.handle("GET", "/report");
+      });
+
+      Then("the report response status is 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And(
+        "the report response content type is the negotiated {string}",
+        (_, type) => {
+          expect(response.headers["content-type"]).toBe(type);
+        },
+      );
     },
   );
 });

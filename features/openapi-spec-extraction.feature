@@ -20,3 +20,9 @@ Feature: Reading an operation's contract out of a spec
     Then the rate limit header uses its default "100"
     And the page size header uses its minimum "10"
     And the token header is "xxxxxxxx" at its minimum length
+
+  Scenario: A Content-Type response header with no fixed value is ignored
+    Given a mock whose report response declares a Content-Type header of any string
+    When I fetch the report
+    Then the report response status is 200
+    And the report response content type is the negotiated "application/json"
