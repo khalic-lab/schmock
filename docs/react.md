@@ -14,7 +14,11 @@ import { SchmockProvider } from '@schmock/react'
 
 const mock = schmock()
 mock('GET /api/users', [{ id: 1, name: 'Alice' }])
-mock('POST /api/users', ({ body }) => [201, { id: 2, ...body }])
+mock('POST /api/users', ({ body }) => {
+  // The request body is typed `unknown`, so narrow it before spreading.
+  const input = typeof body === 'object' && body !== null ? body : {}
+  return [201, { id: 2, ...input }]
+})
 
 function App() {
   return (
@@ -331,13 +335,20 @@ Response helpers are available from `@schmock/core`:
 ```typescript
 import { notFound, badRequest, created, noContent } from '@schmock/core'
 
+// State and request bodies are typed `unknown`, so narrow them before use.
+type User = { id: number; name: string }
+const isUsers = (value: unknown): value is User[] => Array.isArray(value)
+
 mock('GET /api/users/:id', ({ params, state }) => {
-  const user = state.users.find(u => u.id === Number(params.id))
+  const users = isUsers(state.users) ? state.users : []
+  const user = users.find((u) => u.id === Number(params.id))
   return user || notFound('User not found')
 })
 
 mock('POST /api/users', ({ body }) => {
-  if (!body?.name) return badRequest('name is required')
+  if (typeof body !== 'object' || body === null || !('name' in body)) {
+    return badRequest('name is required')
+  }
   return created({ id: 3, ...body })
 })
 

@@ -17,7 +17,11 @@ const app = express()
 const mock = schmock()
 
 mock('GET /users', [{ id: 1, name: 'Alice' }])
-mock('POST /users', ({ body }) => [201, { id: 2, ...body }])
+mock('POST /users', ({ body }) => {
+  // The request body is typed `unknown`, so narrow it before spreading.
+  const input = typeof body === 'object' && body !== null ? body : {}
+  return [201, { id: 2, ...input }]
+})
 
 app.use(express.json())
 app.use('/api', toExpress(mock))
@@ -129,16 +133,21 @@ body if the response is still open.
 Custom internal-error response format:
 
 ```typescript
+import { SchmockError } from '@schmock/core'
+
 toExpress(mock, {
   errorFormatter: (error) => ({
-    error: { message: error.message, code: error.code ?? null },
+    error: {
+      message: error.message,
+      code: error instanceof SchmockError ? error.code : null,
+    },
   }),
 })
 ```
 
 An `undefined`-valued property in the formatted body is rejected, not dropped:
 the whole body falls back to `{ error: 'Internal Server Error', code:
-'INTERNAL_ERROR' }`. A plain `Error` has no `code`, hence the `?? null`.
+'INTERNAL_ERROR' }`. A plain `Error` has no `code`, hence the `null`.
 
 The formatter receives core-marked internal exceptions and errors thrown by
 adapter hooks or request handling before the Express response is committed. It

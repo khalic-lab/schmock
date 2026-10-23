@@ -10,6 +10,10 @@ Schmock's callable API makes it ideal for testing — no HTTP server needed, no 
 import { schmock } from '@schmock/core'
 import { describe, it, expect, beforeEach } from 'vitest'
 
+// State and request bodies are typed `unknown`, so narrow them before use.
+type User = { id: number; name?: string; email?: string }
+const isUsers = (value: unknown): value is User[] => Array.isArray(value)
+
 describe('UserService', () => {
   let mock: Schmock.CallableMockInstance
 
@@ -18,12 +22,15 @@ describe('UserService', () => {
 
     mock('GET /users', ({ state }) => state.users)
     mock('POST /users', ({ body, state }) => {
-      const user = { id: state.users.length + 1, ...body }
+      if (!isUsers(state.users)) return [500, { error: 'Invalid state' }]
+      const input = typeof body === 'object' && body !== null ? body : {}
+      const user = { id: state.users.length + 1, ...input }
       state.users.push(user)
       return [201, user]
     })
     mock('GET /users/:id', ({ params, state }) => {
-      const user = state.users.find(u => u.id === Number(params.id))
+      const users = isUsers(state.users) ? state.users : []
+      const user = users.find((u) => u.id === Number(params.id))
       return user || [404, { error: 'Not found' }]
     })
   })
@@ -33,10 +40,10 @@ describe('UserService', () => {
       body: { name: 'Alice', email: 'alice@example.com' },
     })
     expect(created.status).toBe(201)
-    expect(created.body.id).toBe(1)
+    expect(created.body).toMatchObject({ id: 1 })
 
     const fetched = await mock.handle('GET', '/users/1')
-    expect(fetched.body.name).toBe('Alice')
+    expect(fetched.body).toMatchObject({ name: 'Alice' })
   })
 
   it('returns 404 for missing user', async () => {
@@ -89,7 +96,7 @@ it('rejects invalid request bodies', async () => {
     body: { name: '' },
   })
   expect(res.status).toBe(400)
-  expect(res.body.code).toBe('REQUEST_VALIDATION_ERROR')
+  expect(res.body).toMatchObject({ code: 'REQUEST_VALIDATION_ERROR' })
 })
 
 it('accepts valid request bodies', async () => {
@@ -122,8 +129,7 @@ describe('Petstore API', () => {
   it('lists pets', async () => {
     const res = await mock.handle('GET', '/pets')
     expect(res.status).toBe(200)
-    expect(res.body).toBeInstanceOf(Array)
-    expect(res.body[0]).toHaveProperty('petId')
+    expect(res.body).toEqual([expect.objectContaining({ petId: 1 })])
   })
 
   it('creates a pet', async () => {
@@ -131,7 +137,7 @@ describe('Petstore API', () => {
       body: { name: 'Buddy', tag: 'dog' },
     })
     expect(res.status).toBe(201)
-    expect(res.body.name).toBe('Buddy')
+    expect(res.body).toMatchObject({ name: 'Buddy' })
   })
 
   it('deletes a pet', async () => {
@@ -146,7 +152,7 @@ describe('Petstore API', () => {
 })
 ```
 
-The seed row and the `toHaveProperty('petId')` assertion assume this
+The seed row and the `petId` assertion assume this
 petstore's `Pet` schema declares `petId`. The plugin stores and returns a
 resource's [id property](./openapi.md#identifiers): the path parameter's name
 only when the item schema declares it, otherwise `id`. For a `Pet` that declares
@@ -172,7 +178,11 @@ describe('Express integration', () => {
   beforeEach(() => {
     const mock = schmock()
     mock('GET /users', [{ id: 1, name: 'Alice' }])
-    mock('POST /users', ({ body }) => [201, { id: 2, ...body }])
+    mock('POST /users', ({ body }) => {
+      // The request body is typed `unknown`, so narrow it before spreading.
+      const input = typeof body === 'object' && body !== null ? body : {}
+      return [201, { id: 2, ...input }]
+    })
 
     app = express()
     app.use(express.json())
@@ -306,7 +316,9 @@ describe('error handling', () => {
     mock('GET /flaky', () => [500, { error: 'Internal server error' }])
     mock('GET /timeout', () => [504, { error: 'Gateway timeout' }])
     mock('POST /validate', ({ body }) => {
-      if (!body?.name) return [400, { error: 'name is required' }]
+      const hasName =
+        typeof body === 'object' && body !== null && 'name' in body && !!body.name
+      if (!hasName) return [400, { error: 'name is required' }]
       return [201, body]
     })
   })
@@ -319,7 +331,7 @@ describe('error handling', () => {
   it('handles missing routes', async () => {
     const res = await mock.handle('GET', '/nonexistent')
     expect(res.status).toBe(404)
-    expect(res.body.code).toBe('ROUTE_NOT_FOUND')
+    expect(res.body).toMatchObject({ code: 'ROUTE_NOT_FOUND' })
   })
 })
 ```
@@ -328,6 +340,17 @@ describe('error handling', () => {
 
 ```typescript
 import { queryPlugin } from '@schmock/query'
+
+type User = { id: number; name: string; role: string }
+type UserPage = { data: User[]; pagination: { page: number; total: number } }
+
+// A response body is typed `unknown`; narrow it once, in one place.
+function pageOf(body: unknown): UserPage {
+  if (typeof body !== 'object' || body === null || !('data' in body)) {
+    throw new Error('expected a paginated body')
+  }
+  return body as UserPage
+}
 
 describe('paginated list', () => {
   let mock: Schmock.CallableMockInstance
@@ -353,23 +376,24 @@ describe('paginated list', () => {
     const res = await mock.handle('GET', '/users', {
       query: { page: '2', limit: '10' },
     })
-    expect(res.body.data).toHaveLength(10)
-    expect(res.body.pagination.page).toBe(2)
-    expect(res.body.pagination.total).toBe(25)
+    const page = pageOf(res.body)
+    expect(page.data).toHaveLength(10)
+    expect(page.pagination.page).toBe(2)
+    expect(page.pagination.total).toBe(25)
   })
 
   it('filters by role', async () => {
     const res = await mock.handle('GET', '/users', {
       query: { 'filter[role]': 'admin' },
     })
-    expect(res.body.data.every(u => u.role === 'admin')).toBe(true)
+    expect(pageOf(res.body).data.every((u) => u.role === 'admin')).toBe(true)
   })
 
   it('sorts by name descending', async () => {
     const res = await mock.handle('GET', '/users', {
       query: { sort: 'name', order: 'desc' },
     })
-    const names = res.body.data.map(u => u.name)
+    const names = pageOf(res.body).data.map((u) => u.name)
     expect(names).toEqual([...names].sort().reverse())
   })
 })

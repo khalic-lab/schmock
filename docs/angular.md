@@ -15,7 +15,11 @@ import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http'
 
 const mock = schmock()
 mock('GET /users', [{ id: 1, name: 'Alice' }])
-mock('POST /users', ({ body }) => [201, { id: 2, ...body }])
+mock('POST /users', ({ body }) => {
+  // The request body is typed `unknown`, so narrow it before spreading.
+  const input = typeof body === 'object' && body !== null ? body : {}
+  return [201, { id: 2, ...input }]
+})
 
 export const appConfig = {
   providers: [
@@ -305,13 +309,20 @@ Utility functions for building responses:
 ```typescript
 import { notFound, badRequest, unauthorized, forbidden, serverError, created, noContent, paginate } from '@schmock/angular'
 
-mock('GET /users/:id', ({ params }) => {
-  const user = users.find(u => u.id === Number(params.id))
+// State and request bodies are typed `unknown`, so narrow them before use.
+type User = { id: number; name: string }
+const isUsers = (value: unknown): value is User[] => Array.isArray(value)
+
+mock('GET /users/:id', ({ params, state }) => {
+  const users = isUsers(state.users) ? state.users : []
+  const user = users.find((u) => u.id === Number(params.id))
   return user || notFound('User not found')
 })
 
 mock('POST /users', ({ body }) => {
-  if (!body?.name) return badRequest('name is required')
+  if (typeof body !== 'object' || body === null || !('name' in body)) {
+    return badRequest('name is required')
+  }
   return created({ id: 3, ...body })
 })
 
@@ -457,7 +468,8 @@ A HEAD request gets no body, and `Date` values arrive as ISO strings. The
 route's other headers. Output that cannot be serialized, such as an embedded
 `Error` or an `undefined`-valued property, falls back to
 `{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }`; `undefined` is
-rejected, not dropped, so write `code: error.code ?? null` or spread the
+rejected, not dropped, so write
+`code: error instanceof SchmockError ? error.code : null` or spread the
 property conditionally. The out-of-band path, a throwing hook, is formatted the
 same way. There a thrown value that is not an `Error` reaches the formatter
 wrapped in one, with the value as its `cause`. Without a formatter, or when it
