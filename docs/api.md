@@ -1930,7 +1930,7 @@ async function openapi(options: OpenApiOptions): Promise<Plugin>
 
 ```typescript
 interface OpenApiOptions {
-  spec: string | object              // file path or inline spec
+  spec: string | object              // file path, http(s) URL or inline spec
   seed?: SeedConfig                  // seed data per resource
   validateRequests?: boolean         // validate request bodies (default: false)
   validateResponses?: boolean        // validate responses (default: false)
@@ -1976,6 +1976,14 @@ interface ResourceOverride {
 }
 ```
 
+A `spec` given as an `http(s)` URL is read like an http `$ref`, so it needs
+`refs: { external: true, allowHttp: true }` and is held to `allowedHosts`, the
+address block and the size and time limits. Under the default policy, loading
+fails with `OPENAPI_EXTERNAL_REF_BLOCKED` before anything is fetched. To load a
+spec from `localhost` or another refused address, fetch it yourself and pass
+the parsed object as `spec`. See
+[External `$ref`s are opt-in](./openapi.md#external-refs-are-opt-in).
+
 An empty or omitted `allowedHosts` means any host, still minus loopback,
 link-local, private and reserved addresses. That block applies to every
 address a host resolves to, including hosts you list. `maxBytes` is enforced
@@ -2003,11 +2011,13 @@ object (`OPENAPI_INVALID_SPEC`, context `{ spec: undefined }`):
 | `OPENAPI_UNKNOWN_SEED_RESOURCE` | a `seed` key names no detected CRUD resource | `{ key, resources }` |
 | `OPENAPI_UNKNOWN_RESOURCE_OVERRIDE` | a `resources` key names no detected CRUD resource | `{ key, resources }` |
 | `OPENAPI_INVALID_OPTION` | `seed` is not an object, or an entry is not an array, a file path or `{ count }` | `{ option: 'seed', resource? }` |
-| `OPENAPI_INVALID_OPTION` | while loading: a seed file that is not valid JSON or not a JSON array, a `{ count }` that is not a non-negative integer, or a `{ count }` for a resource with no schema | `{ option: 'seed', resource, file? }` |
+| `OPENAPI_INVALID_OPTION` | while loading: a seed file that is not valid JSON or not a JSON array, a `{ count }` that is not a non-negative integer, or a `{ count }` for a resource with no schema | `{ option: 'seed', resource, file?, reason? }` |
+| `OPENAPI_INVALID_OPTION` | while loading: a seed path that is not a regular file (a directory, a FIFO or a device) | `{ option: 'seed', file }` |
 
 The loading failures are thrown after the key and shape checks. `file` is set
-for the two seed-file cases. They were plain `Error`s before; the messages are
-unchanged.
+for the seed-file cases. For a file that is not valid JSON, `reason` holds the
+parser's own message, and the error message ends with `: <reason>`, so it says
+where the file breaks. They were plain `Error`s before.
 
 `@schmock/openapi` exports these types by name, each an alias of the
 `@schmock/core` ambient type: `OpenApiOptions`, `OpenApiRefPolicy`,
