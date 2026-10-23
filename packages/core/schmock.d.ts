@@ -1299,7 +1299,8 @@ declare namespace Schmock {
      * How long {@link CliServer.close} waits for in-flight requests before
      * the remaining sockets are destroyed (default 5000 ms). A half-sent
      * request never completes on its own, so without a bound the close would
-     * hang.
+     * hang. An integer from 0 to 2147483647 ms; anything else, `Infinity`
+     * included, makes `createCliServer` throw `INVALID_CONFIG`.
      */
     shutdownGraceMs?: number;
   }

@@ -2365,14 +2365,14 @@ interface CliOptions {
   debug?: boolean            // default: false
   fakerSeed?: number
   errors?: boolean           // enable request validation
-  watch?: boolean            // watch spec for changes (honored here, not only by the binary)
+  watch?: boolean            // watch spec for changes (honored here, not only by the binary; not a spec URL)
   admin?: boolean            // enable admin API
   adminToken?: string        // bearer token for /schmock-admin/* (generated when omitted)
   adminHistoryLimit?: number // requests retained for the admin history (default: 500)
   strict?: boolean           // validate the spec at startup (--strict)
   refsExternal?: boolean     // resolve $refs outside the spec (--refs-external)
   refsAllowHttp?: string[]   // hosts an http $ref may target (--refs-allow-http)
-  shutdownGraceMs?: number   // close() waits this long for in-flight requests (default: 5000)
+  shutdownGraceMs?: number   // close() waits this long for in-flight requests (default: 5000; integer 0 to 2147483647)
 }
 
 interface CliServer {
@@ -2392,9 +2392,17 @@ is the CLI's own type, with the exact `node:http` `Server`.
 rejects instead of starting: an empty host binds every interface rather than
 the documented `127.0.0.1` default.
 
+`shutdownGraceMs` must be an integer number of milliseconds from `0` to
+`2147483647`. Anything else, `Infinity` included, is refused before the spec is
+read: a timer fires after 1 ms for such a value, so it used to cut every
+in-flight request off at once.
+
 Configuration errors are `SchmockError` with code `INVALID_CONFIG`. A blank
-`hostname` carries context `{ option: 'hostname', value }`, and an unusable
-`adminToken` carries `{ option: 'adminToken' }`, without the credential.
+`hostname` carries context `{ option: 'hostname', value }`, a blank `seed`
+`{ option: 'seed', value }`, an out-of-range `shutdownGraceMs`
+`{ option: 'shutdownGraceMs', value }`, `watch` with an http(s) spec URL
+`{ option: 'watch', spec }`, and an unusable `adminToken`
+`{ option: 'adminToken' }`, without the credential.
 
 `watch: true` starts the spec watcher here, not only under the `--watch` flag,
 and the promise rejects if the watcher cannot be created — nothing is left
@@ -2415,9 +2423,10 @@ Parse CLI arguments.
 function parseCliArgs(args: string[]): CliOptions & { help: boolean }
 ```
 
-A flag value the CLI refuses, a second positional argument, and
-`--admin-token` without `--admin` throw `SchmockError` with code
-`INVALID_CONFIG` and context `{ flag, value }`. `--admin-token` errors carry
+A flag value the CLI refuses (a blank spec path included, whether passed
+as `--spec` or by position, which reports `flag: '--spec'`), a second
+positional argument, and `--admin-token` without `--admin` throw
+`SchmockError` with code `INVALID_CONFIG` and context `{ flag, value }`. `--admin-token` errors carry
 `{ flag }` only, and the extra-positional error carries `{ flag: '<spec>' }`.
 An unknown flag throws Node's own `parseArgs` error.
 
