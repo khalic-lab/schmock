@@ -170,7 +170,8 @@ operating system's error (`ELOOP: …`, `EACCES: …`).
 
 A manifest key must name a CRUD resource the spec declares. An unknown key makes
 the server fail at startup with `OPENAPI_UNKNOWN_SEED_RESOURCE`, and the message
-lists the detected resources.
+lists the detected resources. A key named `__proto__` is no exception; earlier
+versions dropped it in silence.
 
 The manifest itself is capped at 1 MiB (`MAX_SEED_MANIFEST_BYTES`), each
 referenced seed file at 5 MiB, and each resource at 10 000 items; a breach

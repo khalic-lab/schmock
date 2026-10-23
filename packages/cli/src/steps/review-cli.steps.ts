@@ -4,9 +4,10 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
+import { SchmockError } from "@schmock/core";
 import type { MockInstance } from "vitest";
 import { expect, vi } from "vitest";
-import type { CliServer } from "../cli";
+import type { CliOptions, CliServer } from "../cli";
 import { createCliServer, run } from "../cli";
 
 const feature = await loadFeature("../../features/review-cli.feature");
@@ -85,6 +86,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let stderrSpy: MockInstance | undefined;
   let stalled: Socket | undefined;
   let historyBody: unknown;
+  let startError: unknown;
 
   AfterEachScenario(async () => {
     stalled?.destroy();
@@ -95,6 +97,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     stderrSpy = undefined;
     stderr = "";
     historyBody = undefined;
+    startError = undefined;
     if (tempDir) rmSync(tempDir, { recursive: true, force: true });
     tempDir = undefined;
   });
@@ -515,4 +518,49 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       expect(() => new URL(printed ?? "")).not.toThrow();
     });
   });
+
+  // ── Review 2026-10-23 ───────────────────────────────────────────────────
+
+  /** Start a server, keeping a startup failure for a later Then. */
+  async function attemptStart(options: CliOptions): Promise<void> {
+    try {
+      server = await createCliServer({ shutdownGraceMs: 100, ...options });
+    } catch (error) {
+      startError = error;
+    }
+  }
+
+  function thenRefusedWithCode(_: unknown, code: string): void {
+    expect(server).toBeUndefined();
+    expect(startError).toBeInstanceOf(SchmockError);
+    expect(startError).toMatchObject({ code });
+  }
+
+  // cli-5: a `__proto__` manifest key used to vanish through the prototype
+  // setter instead of reaching openapi's unknown-resource check.
+  Scenario(
+    "A seed manifest key named __proto__ is refused as an unknown resource",
+    ({ Given, When, Then }) => {
+      Given(
+        "a seed manifest that seeds pets under the key {string}",
+        (_, key: string) => {
+          seedPath = join(makeTempDir(), "seed.json");
+          // Written by hand: JSON.stringify of an object literal would have
+          // run the same prototype setter and dropped the key.
+          writeFileSync(
+            seedPath,
+            `{${JSON.stringify(key)}: ${JSON.stringify(pets("Ghost"))}}`,
+          );
+        },
+      );
+      When(
+        "a CLI server is created for the petstore spec with that seed manifest",
+        () => attemptStart({ spec: PETSTORE_SPEC, port: 0, seed: seedPath }),
+      );
+      Then(
+        "the server refuses to start with code {string}",
+        thenRefusedWithCode,
+      );
+    },
+  );
 });

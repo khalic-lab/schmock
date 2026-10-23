@@ -194,14 +194,14 @@ export function loadSeedFile(seedPath: string): Schmock.SeedConfig {
     );
   }
 
-  const result: Schmock.SeedConfig = {};
+  const entries: Array<[string, Schmock.SeedSource]> = [];
   for (const [key, value] of Object.entries(parsed)) {
     if (Array.isArray(value)) {
-      result[key] = value;
+      entries.push([key, value]);
     } else if (typeof value === "string") {
-      result[key] = resolveSeedEntryPath(value, key, baseDir);
+      entries.push([key, resolveSeedEntryPath(value, key, baseDir)]);
     } else if (isCountSource(value)) {
-      result[key] = value;
+      entries.push([key, value]);
     } else {
       throw invalidSeed(
         `Seed entry "${key}" must be an array, a file path, or { "count": <number> }`,
@@ -209,5 +209,9 @@ export function loadSeedFile(seedPath: string): Schmock.SeedConfig {
       );
     }
   }
-  return result;
+  // `fromEntries` defines own properties, so a `__proto__` key stays an
+  // ordinary key and reaches openapi's unknown-resource check. Assigning it
+  // (`result[key] = value`) ran the prototype setter instead: the entry
+  // vanished and the result's prototype was replaced, with no error.
+  return Object.fromEntries(entries);
 }

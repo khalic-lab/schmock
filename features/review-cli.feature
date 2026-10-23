@@ -64,3 +64,10 @@ Feature: CLI review fixes
   Scenario: The startup banner brackets an IPv6 host
     Given the CLI is run bound to "::1"
     Then the startup banner prints a bracketed IPv6 URL
+
+  # Review 2026-10-23
+
+  Scenario: A seed manifest key named __proto__ is refused as an unknown resource
+    Given a seed manifest that seeds pets under the key "__proto__"
+    When a CLI server is created for the petstore spec with that seed manifest
+    Then the server refuses to start with code "OPENAPI_UNKNOWN_SEED_RESOURCE"

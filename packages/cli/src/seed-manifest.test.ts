@@ -8,11 +8,17 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { ResourceLimitError, SchmockError } from "@schmock/core";
 import { MAX_SEED_MANIFEST_BYTES } from "@schmock/openapi";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadSeedFile } from "./seed-manifest";
+import { createCliServer } from "./server";
+
+const PETSTORE_SPEC = resolve(
+  __dirname,
+  "../../openapi/src/__fixtures__/petstore-openapi3.json",
+);
 
 /**
  * When set, `node:fs` reports this size for every stat, standing in for a
@@ -209,6 +215,40 @@ describe("loadSeedFile", () => {
     expect(loadSeedFile(manifestPath)).toEqual({
       pets: [{ id: 1 }],
       owners: { count: 3 },
+    });
+  });
+
+  describe("a __proto__ key", () => {
+    function protoManifest(): string {
+      const dir = makeDir();
+      const manifestPath = join(dir, "seed.json");
+      // JSON.parse keeps "__proto__" as an own key; the manifest must too.
+      writeFileSync(
+        manifestPath,
+        '{"pets": [{"id": 1}], "__proto__": [{"id": 2}]}',
+      );
+      return manifestPath;
+    }
+
+    it("keeps it as an own key with an ordinary prototype", () => {
+      const config = loadSeedFile(protoManifest());
+
+      expect(Object.hasOwn(config, "__proto__")).toBe(true);
+      expect(Object.keys(config)).toEqual(["pets", "__proto__"]);
+      expect(Object.getPrototypeOf(config)).toBe(Object.prototype);
+    });
+
+    it("makes the server refuse it as an unknown resource", async () => {
+      await expect(
+        createCliServer({
+          spec: PETSTORE_SPEC,
+          port: 0,
+          seed: protoManifest(),
+        }),
+      ).rejects.toMatchObject({
+        code: "OPENAPI_UNKNOWN_SEED_RESOURCE",
+        message: expect.stringContaining('"__proto__"'),
+      });
     });
   });
 
