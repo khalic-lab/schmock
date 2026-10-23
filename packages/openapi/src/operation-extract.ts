@@ -644,6 +644,7 @@ const SECURITY_SCHEME_TYPES = new Set([
   "http",
   "oauth2",
   "openIdConnect",
+  "mutualTLS",
 ]);
 const API_KEY_LOCATIONS = new Set(["header", "query", "cookie"]);
 
@@ -667,7 +668,9 @@ function toSecurityScheme(
           ? "http"
           : type === "oauth2"
             ? "oauth2"
-            : "openIdConnect",
+            : type === "mutualTLS"
+              ? "mutualTLS"
+              : "openIdConnect",
   };
 
   if (type === "apiKey") {

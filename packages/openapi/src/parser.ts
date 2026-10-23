@@ -28,7 +28,7 @@ import { isRecord } from "./utils.js";
 export { enrichResolverError } from "./load-document.js";
 
 export interface SecurityScheme {
-  type: "apiKey" | "http" | "oauth2" | "openIdConnect";
+  type: "apiKey" | "http" | "oauth2" | "openIdConnect" | "mutualTLS";
   /** For apiKey: header, query, or cookie */
   in?: "header" | "query" | "cookie";
   /** For apiKey: the header/query/cookie name */

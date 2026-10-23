@@ -76,3 +76,13 @@ Feature: Security Validation
     Given an external guard before an OpenAPI plugin
     When I request the guarded OpenAPI route preferring status 200
     Then the guarded OpenAPI response status is 403
+
+  # Design Decision: a mutualTLS requirement always holds
+  # - The client certificate travels in the TLS handshake, which handle(),
+  #   fetch interception and a plain-http listen() never see
+  # - Treating it as missing would answer 401 to every request
+
+  Scenario: A mutualTLS requirement counts as satisfied
+    Given a mock with an OpenAPI 3.1 spec requiring a mutualTLS client certificate
+    When I request without an Authorization header
+    Then the response status is 200

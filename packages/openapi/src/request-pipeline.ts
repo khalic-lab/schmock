@@ -204,6 +204,11 @@ function checkSchemePresence(
     return /^bearer\s+\S+/i.test(auth);
   }
 
+  // The client certificate is presented in the TLS handshake, which a mock
+  // never sees (handle(), fetch interception and a plain-http listen() alike),
+  // so there is nothing to check and a requirement on it always holds.
+  if (scheme.type === "mutualTLS") return true;
+
   return false;
 }
 

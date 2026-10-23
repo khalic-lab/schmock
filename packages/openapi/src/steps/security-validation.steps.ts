@@ -156,6 +156,22 @@ const protectedCrudSpec = {
   },
 };
 
+const mutualTlsSpec = {
+  openapi: "3.1.0",
+  info: { title: "Test", version: "1.0.0" },
+  components: {
+    securitySchemes: {
+      clientCert: { type: "mutualTLS" },
+    },
+  },
+  security: [{ clientCert: [] }],
+  paths: {
+    "/items": {
+      get: { responses: { "200": { description: "OK" } } },
+    },
+  },
+};
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -432,6 +448,27 @@ describeFeature(feature, ({ Scenario }) => {
       Then("the guarded OpenAPI response status is 403", () => {
         expect(response.status).toBe(403);
         expect(response.body).toEqual({ code: "FORBIDDEN" });
+      });
+    },
+  );
+
+  Scenario(
+    "A mutualTLS requirement counts as satisfied",
+    ({ Given, When, Then }) => {
+      Given(
+        "a mock with an OpenAPI 3.1 spec requiring a mutualTLS client certificate",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(await openapi({ spec: mutualTlsSpec, security: true }));
+        },
+      );
+
+      When("I request without an Authorization header", async () => {
+        response = await mock.handle("GET", "/items", { headers: {} });
+      });
+
+      Then("the response status is 200", () => {
+        expect(response.status).toBe(200);
       });
     },
   );

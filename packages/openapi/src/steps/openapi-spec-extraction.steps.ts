@@ -106,10 +106,10 @@ const pinnedHeaderSpec = {
   },
 };
 
-const mutualTlsSpec = {
+const unknownSchemeSpec = {
   openapi: "3.1.0",
   info: { title: "secured", version: "1.0.0" },
-  components: { securitySchemes: { clientCert: { type: "mutualTLS" } } },
+  components: { securitySchemes: { clientCert: { type: "magicLink" } } },
   security: [{ clientCert: [] }],
   paths: {
     "/ping": { get: { responses: { "200": { description: "OK" } } } },
@@ -207,12 +207,12 @@ describeFeature(feature, ({ Scenario }) => {
     "A security scheme the mock cannot simulate is reported, not dropped silently",
     ({ Given, When, Then }) => {
       Given(
-        "an OpenAPI 3.1 spec whose operations require a mutualTLS scheme",
+        "an OpenAPI 3.1 spec whose operations require a scheme of an unknown type",
         () => {},
       );
 
       When("I parse the secured spec", async () => {
-        parsed = await parseSpec(mutualTlsSpec);
+        parsed = await parseSpec(unknownSchemeSpec);
       });
 
       Then(

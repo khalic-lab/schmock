@@ -28,9 +28,9 @@ Feature: Reading an operation's contract out of a spec
     And the report response content type is the negotiated "application/json"
 
   Scenario: A security scheme the mock cannot simulate is reported, not dropped silently
-    Given an OpenAPI 3.1 spec whose operations require a mutualTLS scheme
+    Given an OpenAPI 3.1 spec whose operations require a scheme of an unknown type
     When I parse the secured spec
-    Then the parse warnings say the "clientCert" scheme of type "mutualTLS" is skipped
+    Then the parse warnings say the "clientCert" scheme of type "magicLink" is skipped
 
   Scenario: A response header pinned by const is sent with that value
     Given a mock whose report response pins its version and profile headers with const

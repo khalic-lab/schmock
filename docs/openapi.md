@@ -742,11 +742,14 @@ const authenticated = await mock.handle('GET', '/protected-resource', {
 ```
 
 Supported schemes: Bearer, Basic, API Key (header, query, or cookie), OAuth2,
-and OpenID Connect. Security simulation verifies that credentials are present;
-it does not authenticate their value. An operation-level `security: []`
-explicitly overrides global security and makes that operation public. A scheme
-of any other type (OpenAPI 3.1 `mutualTLS`, for one) is skipped with a parse
-warning, and a requirement that names it is never satisfied.
+OpenID Connect, and OpenAPI 3.1 `mutualTLS`. Security simulation verifies that
+credentials are present; it does not authenticate their value. A `mutualTLS`
+requirement always counts as satisfied: the client certificate travels in the
+TLS handshake, which the mock never sees. Another scheme listed in the same
+requirement is still checked. An operation-level `security: []` explicitly
+overrides global security and makes that operation public. A scheme of any
+other type is skipped with a parse warning, and a requirement that names it is
+never satisfied.
 
 A cookie API key is read from the request's `Cookie` header, and in a browser
 that header never reaches the mock. Page code cannot set it, and the fetch

@@ -60,7 +60,6 @@ function oas3WithResponseHeaders(
 describe("operation extraction", () => {
   describe("security schemes the mock cannot simulate", () => {
     it.each([
-      ["mutualTLS", { type: "mutualTLS" }],
       ["an unknown type", { type: "magicLink" }],
       ["no type", { description: "untyped" }],
     ])("reports a %s scheme it skips", async (_, scheme) => {
@@ -84,6 +83,67 @@ describe("operation extraction", () => {
       expect(spec.warnings).toEqual([
         `security scheme "clientCert": unsupported type "${"type" in scheme ? scheme.type : "(none)"}", skipped; a requirement naming it is never satisfied`,
       ]);
+    });
+  });
+
+  describe("an OpenAPI 3.1 mutualTLS security scheme", () => {
+    function mutualTlsSpec(security: Record<string, string[]>[]) {
+      return {
+        openapi: "3.1.0",
+        info: { title: "secured", version: "1.0.0" },
+        components: {
+          securitySchemes: {
+            clientCert: { type: "mutualTLS" },
+            bearer: { type: "http", scheme: "bearer" },
+          },
+        },
+        security,
+        paths: {
+          "/ping": { get: { responses: { "200": { description: "OK" } } } },
+        },
+      };
+    }
+
+    it("is kept without a parse warning", async () => {
+      const spec = await parseSpec(mutualTlsSpec([{ clientCert: [] }]));
+
+      expect(spec.securitySchemes?.get("clientCert")).toEqual({
+        type: "mutualTLS",
+      });
+      expect(spec.warnings).toEqual([]);
+    });
+
+    it("counts as satisfied, since a mock never sees the TLS handshake", async () => {
+      const mock = schmock();
+      mock.pipe(
+        await openapi({
+          spec: mutualTlsSpec([{ clientCert: [] }]),
+          security: true,
+        }),
+      );
+
+      const response = await mock.handle("GET", "/ping");
+
+      expect(response.status).toBe(200);
+    });
+
+    it("still requires the schemes it is combined with", async () => {
+      const mock = schmock();
+      mock.pipe(
+        await openapi({
+          spec: mutualTlsSpec([{ clientCert: [], bearer: [] }]),
+          security: true,
+        }),
+      );
+
+      const anonymous = await mock.handle("GET", "/ping");
+      const authorized = await mock.handle("GET", "/ping", {
+        headers: { authorization: "Bearer token" },
+      });
+
+      expect(anonymous.status).toBe(401);
+      expect(anonymous.headers["www-authenticate"]).toBe("Bearer");
+      expect(authorized.status).toBe(200);
     });
   });
 
