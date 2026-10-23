@@ -211,3 +211,10 @@ Feature: DevTools reporter plugin
       ]
       """
     Then each creation throws a SchmockError with code "DEVTOOLS_CONFIG_INVALID", the case's option name, the value it received and the case's message
+
+  Scenario: Credential header values are logged redacted
+    Given a mock with route "GET /api/me" that sets a session cookie, and the devtools plugin
+    And the mock intercepts fetch
+    When the app fetches "http://localhost/api/me" with the header "authorization" set to "Bearer SUPER-SECRET"
+    Then the group logs the request header "authorization" as "[redacted]"
+    And the group logs the response header "set-cookie" as "[redacted]"

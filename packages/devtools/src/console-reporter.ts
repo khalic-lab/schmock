@@ -1,4 +1,5 @@
 import type * as Schmock from "@schmock/core";
+import { redactHeaders } from "@schmock/core";
 import type { ExchangeSummary, ExchangeTone } from "./types.js";
 
 type ConsoleSink = Pick<
@@ -24,6 +25,10 @@ export const TONE_STYLES: Readonly<Record<ExchangeTone, string>> =
  * `<name> → <outcome> (<duration>)`. The label, URL and error text reach the
  * console as `%s` arguments, never inside the format string, so a `%c`, `%s`
  * or `%d` in them prints literally instead of consuming arguments.
+ *
+ * Credential headers (core's `SENSITIVE_HEADER_NAMES`) are logged as
+ * "[redacted]", as core's debug log does, so the group still shows they were
+ * sent.
  */
 export function logExchange(
   exchange: Schmock.Exchange,
@@ -43,7 +48,7 @@ export function logExchange(
     sink.log("Request", {
       method,
       url,
-      headers,
+      headers: redactHeaders(headers),
       ...(body !== undefined ? { body } : {}),
     });
     if (exchange.outcome === "answered") {
@@ -54,7 +59,7 @@ export function logExchange(
       } = exchange.response;
       sink.log("Response", {
         status,
-        headers: responseHeaders,
+        headers: redactHeaders(responseHeaders),
         ...(responseBody !== undefined ? { body: responseBody } : {}),
       });
     } else if (exchange.outcome === "failed") {

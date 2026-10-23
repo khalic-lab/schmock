@@ -191,6 +191,44 @@ describe("logExchange", () => {
     expect(resWith.body).toBeNull();
   });
 
+  it("logs credential header values as [redacted] and keeps their names", () => {
+    const { calls, sink } = fakeSink();
+    const sentHeaders = {
+      authorization: "Bearer SUPER-SECRET",
+      cookie: "sid=abc",
+      "x-api-key": "k-123",
+      accept: "application/json",
+    };
+    const receivedHeaders = {
+      "set-cookie": "sid=SESSION-SECRET; HttpOnly",
+      "content-type": "application/json",
+    };
+    const exchange = {
+      ...answered(),
+      request: { ...request(), headers: sentHeaders },
+      response: { status: 200, headers: receivedHeaders },
+    };
+
+    logExchange(exchange, successSummary, "Schmock", sink);
+
+    expect(calls[1][2]).toMatchObject({
+      headers: {
+        authorization: "[redacted]",
+        cookie: "[redacted]",
+        "x-api-key": "[redacted]",
+        accept: "application/json",
+      },
+    });
+    expect(calls[2][2]).toMatchObject({
+      headers: {
+        "set-cookie": "[redacted]",
+        "content-type": "application/json",
+      },
+    });
+    expect(sentHeaders.authorization).toBe("Bearer SUPER-SECRET");
+    expect(receivedHeaders["set-cookie"]).toBe("sid=SESSION-SECRET; HttpOnly");
+  });
+
   it("ends the group and rethrows when a log call throws", () => {
     const { calls, sink } = fakeSink();
     const logError = new Error("log broke");

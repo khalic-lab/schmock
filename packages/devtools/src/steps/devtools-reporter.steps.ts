@@ -1185,4 +1185,60 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       );
     },
   );
+
+  Scenario(
+    "Credential header values are logged redacted",
+    ({ Given, When, Then, And }) => {
+      /** The headers record of the group's first `label` log, asserted to sit inside the group. */
+      function loggedHeaders(label: string): unknown {
+        const [, logged] = callInsideGroup(
+          spies.log,
+          ([first]) => first === label,
+        );
+        return isRecord(logged) ? logged.headers : undefined;
+      }
+
+      Given(
+        'a mock with route "GET /api/me" that sets a session cookie, and the devtools plugin',
+        () => {
+          setup();
+          mock("GET /api/me", [
+            200,
+            { id: 1 },
+            { "set-cookie": "sid=SESSION-SECRET; HttpOnly" },
+          ]);
+          mock.pipe(devtoolsPlugin());
+        },
+      );
+
+      And("the mock intercepts fetch", () => intercept(mock));
+
+      When(
+        'the app fetches "http://localhost/api/me" with the header "authorization" set to "Bearer SUPER-SECRET"',
+        async () => {
+          fetchResponse = await fetch("http://localhost/api/me", {
+            headers: { authorization: "Bearer SUPER-SECRET" },
+          });
+        },
+      );
+
+      Then(
+        'the group logs the request header "authorization" as "[redacted]"',
+        () => {
+          expect(loggedHeaders("Request")).toMatchObject({
+            authorization: "[redacted]",
+          });
+        },
+      );
+
+      And(
+        'the group logs the response header "set-cookie" as "[redacted]"',
+        () => {
+          expect(loggedHeaders("Response")).toMatchObject({
+            "set-cookie": "[redacted]",
+          });
+        },
+      );
+    },
+  );
 });

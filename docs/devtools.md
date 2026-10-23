@@ -56,6 +56,13 @@ error the fetch rejected with (logged through `console.error`), or
 display as their values before serialization, such as parsed JSON, instead of
 bytes.
 
+Credential headers display as `"[redacted]"`, with their names kept so the
+group still shows they were sent: `authorization`, `proxy-authorization`,
+`cookie`, `set-cookie`, `x-api-key`, `x-auth-token` and
+`x-schmock-admin-token`, the set core's debug log masks
+(`SENSITIVE_HEADER_NAMES`). Bodies are logged as they are, so a password in a
+request body still shows.
+
 ### Performance panel
 
 Each request also appears as a `performance.measure()` entry on a custom track
