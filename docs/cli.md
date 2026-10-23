@@ -136,6 +136,20 @@ Fetched refs use a 5s timeout, refuse redirects and are capped at 1 MB. The cap
 is enforced while the body streams, after decompression. Those limits are not
 flags — use the plugin's `refs` option programmatically to change them.
 
+A spec given as an `http(s)` URL is read like an http `$ref`, under the same
+policy, so it needs both flags:
+
+```sh
+schmock https://api.example.com/openapi.json --refs-external --refs-allow-http api.example.com
+```
+
+Without them, or for a host the list leaves out, startup fails with
+`OPENAPI_EXTERNAL_REF_BLOCKED` before any request is sent. The 5s timeout, the
+redirect refusal and the 1 MB cap apply to the spec body itself, and no flag
+raises them, so download a larger spec and pass the file. The same goes for a
+spec URL on loopback or a private address (`http://localhost:8080/openapi.json`),
+which is always refused.
+
 `--strict` rejects a spec that fails OpenAPI schema validation instead of
 skipping the parts that do not parse. It is off by default because it is both
 stricter and noticeably slower on large specs.
