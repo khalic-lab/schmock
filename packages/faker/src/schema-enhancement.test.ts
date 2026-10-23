@@ -448,6 +448,24 @@ describe("composition declares the value (faker-1)", () => {
     }
   });
 
+  it("keeps a not body exactly as written (faker-2)", () => {
+    const rejected: JSONSchema7 = { type: ["string", "null"] };
+    const named: JSONSchema7 = { type: "string" };
+    const enhanced = enhanceSchemaWithSmartMapping({
+      type: "object",
+      properties: {
+        a: { type: ["string", "integer", "null"], not: rejected },
+        email: { type: "object", not: { properties: { email: named } } },
+      },
+    });
+    const props = enhanced.properties as Record<string, JSONSchema7>;
+    expect(props.a.not).toEqual({ type: ["string", "null"] });
+    expect(props.email.not).toEqual({ properties: { email: named } });
+    expect(fakerOf(Reflect.get(Object(props.email.not), "properties"))).toBe(
+      undefined,
+    );
+  });
+
   it("generates a composed root string from its branches", async () => {
     const schema: JSONSchema7 = {
       type: "string",

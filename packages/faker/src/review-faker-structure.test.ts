@@ -114,10 +114,13 @@ describe("review R14: one keyword table for the three walkers", () => {
         const enhanced = enhanceSchemaWithSmartMapping(
           holding(keyword, { type: "string" }),
         );
-        expect(childOf(enhanced, keyword)).toEqual({
-          type: "string",
-          faker: "lorem.word",
-        });
+        // `not` only tests the value, so its body keeps the schema as
+        // written (faker-2).
+        expect(childOf(enhanced, keyword)).toEqual(
+          keyword === "not"
+            ? { type: "string" }
+            : { type: "string", faker: "lorem.word" },
+        );
       });
     },
   );

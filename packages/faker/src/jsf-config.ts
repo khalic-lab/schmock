@@ -454,6 +454,7 @@ function normalizeSchemaNodeForJsf(
     }
   }
 
+  encodeNot(schema, normalized);
   if (normalized.properties === undefined && describesObject(normalized)) {
     normalized.properties = {};
   }
@@ -465,6 +466,79 @@ function normalizeSchemaNodeForJsf(
   }
 
   return normalized;
+}
+
+/**
+ * json-schema-faker honours `not` only as a plain `not.type`, met by picking
+ * some other type (and falling back to the first declared one when that pick
+ * is not in the node's type union), and as a retried `not.const`/`not.enum`.
+ * Encode two more shapes into the JSF copy and drop the `not` they replace:
+ * a `not.type` against a type union narrows the union, and a `not.required`
+ * leaves one optional listed property out. Any other `not` stays as it is.
+ */
+function encodeNot(schema: JSONSchema7, normalized: JsfObjectSchema): void {
+  const { not } = schema;
+  if (!isJSONSchema7(not)) return;
+  const keys = Object.keys(not);
+  if (keys.length !== 1) return;
+  const encoded =
+    keys[0] === "type"
+      ? narrowTypeUnion(normalized, not.type)
+      : keys[0] === "required" && omitOneNotRequired(schema, normalized, not);
+  if (encoded) delete normalized.not;
+}
+
+/** Remove the types `excluded` rejects from a type union; false if none. */
+function narrowTypeUnion(
+  normalized: JsfObjectSchema,
+  excluded: JSONSchema7["type"],
+): boolean {
+  const { type } = normalized;
+  if (!Array.isArray(type)) return false;
+  const rejected: unknown[] = Array.isArray(excluded) ? excluded : [excluded];
+  // Every integer is also a number, so `not: {type: "number"}` rejects both.
+  const allowed = type.filter(
+    (member) =>
+      !rejected.includes(member) &&
+      !(member === "integer" && rejected.includes("number")),
+  );
+  if (allowed.length === 0 || allowed.length === type.length) return false;
+  normalized.type = allowed.length === 1 ? allowed[0] : allowed;
+  return true;
+}
+
+/** Keywords json-schema-faker merges a node's own properties with. */
+const MERGING_KEYWORDS = ["allOf", "anyOf", "oneOf", "if"] as const;
+
+/**
+ * Leave the first optional property `not.required` lists out of the copy. A
+ * `false` schema is one json-schema-faker skips, even under
+ * `alwaysFakeOptionals`. A merge would bring the property back, so a node
+ * with `allOf`/`anyOf`/`oneOf`/`if` is left alone, as is one whose listed
+ * properties are all required or undeclared.
+ */
+function omitOneNotRequired(
+  schema: JSONSchema7,
+  normalized: JsfObjectSchema,
+  not: JSONSchema7,
+): boolean {
+  const { properties } = normalized;
+  const merges = MERGING_KEYWORDS.some((key) => schema[key] !== undefined);
+  if (merges || !isJSONSchema7(properties)) return false;
+  const required = new Set(schema.required ?? []);
+  const omitted = (not.required ?? []).find(
+    (name) => !required.has(name) && Object.hasOwn(properties, name),
+  );
+  if (omitted === undefined) return false;
+  const kept: Record<string, JsonSchema> = { ...properties };
+  Object.defineProperty(kept, omitted, {
+    value: false,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+  normalized.properties = kept;
+  return true;
 }
 
 /** Keywords that make an untyped node an object for json-schema-faker. */

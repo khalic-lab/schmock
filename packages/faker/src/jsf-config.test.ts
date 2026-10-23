@@ -446,3 +446,82 @@ describe("object nodes without properties (faker-6)", () => {
     }
   });
 });
+
+describe("not bodies json-schema-faker misses (faker-2)", () => {
+  it("narrows a type union by not.type and drops the not", () => {
+    expect(
+      normalizeSchemaForJsf({
+        type: ["string", "integer"],
+        not: { type: "string" },
+      }),
+    ).toEqual({ type: "integer" });
+    expect(
+      normalizeSchemaForJsf({
+        type: ["number", "string", "boolean"],
+        not: { type: ["number"] },
+      }),
+    ).toEqual({ type: ["string", "boolean"] });
+    // Every integer is a number, so not.type number rejects integers too.
+    expect(
+      normalizeSchemaForJsf({
+        type: ["integer", "string"],
+        not: { type: "number" },
+      }),
+    ).toEqual({ type: "string" });
+  });
+
+  it("leaves a not.type it cannot narrow by to json-schema-faker", () => {
+    for (const schema of [
+      { type: "string", not: { type: "integer" } },
+      { type: ["string", "integer"], not: { type: "boolean" } },
+      { type: ["string", "integer"], not: { type: "string", const: "a" } },
+    ] satisfies JSONSchema7[]) {
+      expect(normalizeSchemaForJsf(schema).not).toBeDefined();
+    }
+  });
+
+  it("leaves one optional not.required property out of the copy", () => {
+    const normalized = normalizeSchemaForJsf({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      required: ["a"],
+      not: { required: ["a", "b"] },
+    });
+    expect(normalized.not).toBeUndefined();
+    expect(normalized.properties).toEqual({ a: { type: "string" }, b: false });
+  });
+
+  it("leaves not.required alone when every listed property is required", () => {
+    const normalized = normalizeSchemaForJsf({
+      type: "object",
+      properties: { a: { type: "string" } },
+      required: ["a"],
+      not: { required: ["a"] },
+    });
+    expect(normalized.not).toMatchObject({ required: ["a"] });
+    expect(normalized.properties).toEqual({ a: { type: "string" } });
+  });
+
+  it("generates values the not rejects never", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: {
+        pair: {
+          type: "object",
+          properties: { a: { type: "string" }, b: { type: "string" } },
+          not: { required: ["a", "b"] },
+        },
+        id: { type: ["string", "integer"], not: { type: "string" } },
+        nickname: { type: "string", not: { const: "" } },
+      },
+      required: ["pair", "id", "nickname"],
+    };
+    for (const value of await generateSeeds(schema)) {
+      const generated = objectOf(value);
+      const pair = objectOf(generated.pair);
+      expect(Object.hasOwn(pair, "a") && Object.hasOwn(pair, "b")).toBe(false);
+      expect(Number.isInteger(generated.id)).toBe(true);
+      expect(generated.nickname).not.toBe("");
+    }
+  });
+});

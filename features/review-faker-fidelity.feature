@@ -56,3 +56,15 @@ Feature: Faker output honours every keyword of its schema
       | multiple-of-wide-step-lone-maximum       |
       | inclusive-minimum-tighter-than-exclusive |
       | inclusive-maximum-tighter-than-exclusive |
+
+  # Review 2026-10-23 faker-2: not.type, not.required and not.const are generated around
+  Scenario Outline: A not keyword rejects the values it names
+    Given the fidelity schema "<case>"
+    When I generate it with 40 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                   |
+      | not-required-pair      |
+      | not-type-in-union      |
+      | not-const-empty-string |

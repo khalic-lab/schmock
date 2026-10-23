@@ -1438,6 +1438,9 @@ register them the same way:
   `maximum`/`exclusiveMaximum` of -1000 or less, generates in range, with or
   without `multipleOf`. When one side has both an inclusive and an exclusive
   bound, the tighter one applies.
+- Generation avoids what `not` rejects when it is a `not.type` (a type union
+  is narrowed), a `not.const` or `not.enum`, or a `not.required` (one optional
+  listed property is left out).
 - Union `type` arrays are checked member by member, and
   `type: ['array', 'null']` needs `items` like `type: 'array'`.
 - The json-schema-faker `chance` keyword is not supported. It is rejected with

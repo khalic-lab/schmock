@@ -226,6 +226,29 @@ const CASES: Record<string, FidelityCase> = {
       expect(numeric(value)).toBeLessThanOrEqual(20);
     },
   },
+  "not-required-pair": {
+    schema: {
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      not: { required: ["a", "b"] },
+    },
+    fits: (value) => {
+      const pair = record(value);
+      expect(Object.hasOwn(pair, "a") && Object.hasOwn(pair, "b")).toBe(false);
+    },
+  },
+  "not-type-in-union": {
+    schema: { type: ["string", "integer"], not: { type: "string" } },
+    fits: (value) => expect(Number.isInteger(value)).toBe(true),
+  },
+  "not-const-empty-string": {
+    schema: {
+      type: "object",
+      properties: { nickname: { type: "string", not: { const: "" } } },
+      required: ["nickname"],
+    },
+    fits: (value) => expect(text(record(value).nickname)).not.toBe(""),
+  },
   "inclusive-maximum-tighter-than-exclusive": {
     schema: { type: "number", minimum: 0, maximum: 5, exclusiveMaximum: 100 },
     fits: (value) => {
@@ -247,6 +270,7 @@ const OUTLINES = [
   "An untyped node keeps the shape and bounds its keywords declare",
   "An object without properties never echoes schema keywords into the body",
   "Numeric bounds hold beside multipleOf and a second bound on the same side",
+  "A not keyword rejects the values it names",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {

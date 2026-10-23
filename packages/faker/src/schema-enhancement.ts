@@ -231,13 +231,19 @@ function enhanceSchema(
   return enhanced;
 }
 
+/**
+ * Enhance every child schema except a `not` body. `not` only tests the value
+ * and never generates, so it keeps its schema as written: a `faker` there
+ * means nothing, and collapsing a nullable union there would change what it
+ * rejects.
+ */
 function enhanceChildren(
   enhanced: FakerSchema,
   state: EnhancementState,
   context: EnhancementContext,
 ): void {
   const children = mapSchemaChildren(enhanced, (child, slot) =>
-    isJSONSchema7(child)
+    isJSONSchema7(child) && slot.keyword !== "not"
       ? enhanceSchema(child, state, childContext({ context, child, slot }))
       : child,
   );
