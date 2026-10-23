@@ -1132,7 +1132,9 @@ promise is awaited before `handle()` resolves and before the next callback is
 dispatched. A dispatcher that should not hold the response can start its
 delivery and return without awaiting it. When the request is aborted while a
 dispatcher is pending, `handle()` rejects with the abort as usual and the
-callbacks after that one are not dispatched. The dispatcher is not handed the
+callbacks after that one are not dispatched. The CRUD write was committed
+before the first dispatch, so it stays stored: unlike an abort during the
+`delay`, an abort at this point does not roll it back. The dispatcher is not handed the
 request's abort signal.
 
 Callbacks report something that happened, so a response whose final status is
