@@ -174,7 +174,7 @@ function wrapPlugin(key: string): Schmock.Plugin {
 ### Install hook — Register routes programmatically
 
 ```typescript
-function autoRoutesPlugin(routes: Record<string, Function>): Schmock.Plugin {
+function autoRoutesPlugin(routes: Record<string, Schmock.Generator>): Schmock.Plugin {
   return {
     name: 'auto-routes',
     install(instance) {

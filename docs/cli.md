@@ -538,7 +538,7 @@ const state = await fetch(`http://127.0.0.1:${server.port}/schmock-admin/state`,
 Useful for integration tests:
 
 ```typescript
-import { describe, it, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { createCliServer } from '@schmock/cli'
 
 let server: Awaited<ReturnType<typeof createCliServer>>
