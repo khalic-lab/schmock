@@ -83,6 +83,11 @@ interface DetectionResult {
   resources: CrudResource[];
   /** Paths that didn't match any CRUD pattern */
   nonCrudPaths: ParsedPath[];
+  /**
+   * Groupings that are probably not what the spec meant, one line each, in
+   * the style of `ParsedSpec.warnings`. Never fatal.
+   */
+  warnings: string[];
 }
 
 /**
@@ -124,7 +129,49 @@ export function detectCrudResources(paths: ParsedPath[]): DetectionResult {
     nonCrudPaths.push(...leftovers);
   }
 
-  return { resources, nonCrudPaths };
+  return {
+    resources,
+    nonCrudPaths,
+    warnings: splitCollectionWarnings([...groups.keys()], resources),
+  };
+}
+
+/**
+ * Collection paths that differ only in their parent parameter names, such as
+ * `/fees/{id}/refunds` beside `/fees/{fee}/refunds/{id}`.
+ *
+ * They group, and keep their state, apart: the collection key and the scope of
+ * its rows are both built from the parameter names. Merging them would need
+ * every route to map its own names onto the collection's, so the split is
+ * reported instead of left silent.
+ */
+function splitCollectionWarnings(
+  basePaths: string[],
+  resources: CrudResource[],
+): string[] {
+  const byShape = new Map<string, string[]>();
+  for (const basePath of basePaths) {
+    const shape = basePath
+      .split("/")
+      .map((segment) => (segment.startsWith(":") ? ":" : segment))
+      .join("/");
+    byShape.set(shape, [...(byShape.get(shape) ?? []), basePath]);
+  }
+
+  const crudBasePaths = new Set(resources.map((r) => r.basePath));
+  const warnings: string[] = [];
+  for (const split of byShape.values()) {
+    if (split.length < 2 || !split.some((path) => crudBasePaths.has(path))) {
+      continue;
+    }
+    const named = `${split.slice(0, -1).join(", ")} and ${split.at(-1)}`;
+    warnings.push(
+      `CRUD paths ${named} name their parent parameters differently, so they ` +
+        "are served as separate resources that never share rows; give the " +
+        "parameters the same names to make them one",
+    );
+  }
+  return warnings;
 }
 
 /**

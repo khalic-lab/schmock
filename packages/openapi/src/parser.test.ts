@@ -530,6 +530,38 @@ describe("parseSpec", () => {
     });
   });
 
+  describe("CRUD collection splits", () => {
+    it("reports collections that differ only in parent parameter names", async () => {
+      const ok = { responses: { "200": { description: "OK" } } };
+      const spec = await parseSpec({
+        openapi: "3.0.3",
+        info: { title: "Split", version: "1.0.0" },
+        paths: {
+          "/fees/{id}/refunds": { get: ok, post: ok },
+          "/fees/{fee}/refunds/{id}": { get: ok },
+        },
+      });
+
+      expect(spec.warnings).toHaveLength(1);
+      expect(spec.warnings[0]).toContain("/fees/:id/refunds");
+      expect(spec.warnings[0]).toContain("/fees/:fee/refunds");
+    });
+
+    it("says nothing when the parent parameters share their names", async () => {
+      const ok = { responses: { "200": { description: "OK" } } };
+      const spec = await parseSpec({
+        openapi: "3.0.3",
+        info: { title: "Joined", version: "1.0.0" },
+        paths: {
+          "/fees/{fee}/refunds": { get: ok, post: ok },
+          "/fees/{fee}/refunds/{id}": { get: ok },
+        },
+      });
+
+      expect(spec.warnings).toEqual([]);
+    });
+  });
+
   describe("request content maps", () => {
     it("keeps one schema per declared media type", async () => {
       const spec = await parseSpec({

@@ -248,6 +248,39 @@ describe("detectCrudResources", () => {
     ]);
   });
 
+  it("warns when a collection's item path names its parent parameter differently", () => {
+    const paths: ParsedPath[] = [
+      makePath("GET", "/fees/:id/refunds"),
+      makePath("POST", "/fees/:id/refunds"),
+      makePath("GET", "/fees/:fee/refunds/:id"),
+    ];
+
+    const result = detectCrudResources(paths);
+
+    expect(result.resources.map((r) => r.basePath)).toEqual([
+      "/fees/:id/refunds",
+      "/fees/:fee/refunds",
+    ]);
+    expect(result.warnings).toEqual([
+      "CRUD paths /fees/:id/refunds and /fees/:fee/refunds name their parent " +
+        "parameters differently, so they are served as separate resources " +
+        "that never share rows; give the parameters the same names to make " +
+        "them one",
+    ]);
+  });
+
+  it("does not warn about nested resources whose parameters agree", () => {
+    const paths: ParsedPath[] = [
+      makePath("GET", "/owners/:ownerId/pets"),
+      makePath("POST", "/owners/:ownerId/pets"),
+      makePath("GET", "/owners/:ownerId/pets/:petId"),
+      makePath("GET", "/owners/:ownerId"),
+      makePath("GET", "/vets/:vetId/pets"),
+    ];
+
+    expect(detectCrudResources(paths).warnings).toEqual([]);
+  });
+
   it("an item path with a mismatched id param is returned as non-CRUD", () => {
     const paths: ParsedPath[] = [
       makePath("GET", "/pets"),

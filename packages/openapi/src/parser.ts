@@ -1,6 +1,7 @@
 import type * as Schmock from "@schmock/core";
 import { toHttpMethod } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
+import { detectCrudResources } from "./crud-detector.js";
 import { type LoadDocumentOptions, loadDocument } from "./load-document.js";
 import {
   createSchemaNormalizer,
@@ -265,6 +266,12 @@ export async function parseSpec(
       });
     }
   }
+
+  // Collections the CRUD detector keeps apart although the spec most likely
+  // meant one resource. The plugin runs detection again after `schemas`
+  // overrides, which never change how paths group; reporting the split here
+  // puts it beside everything else `debug: true` prints.
+  warnings.push(...detectCrudResources(paths).warnings);
 
   return { title, version, paths, securitySchemes, globalSecurity, warnings };
 }
