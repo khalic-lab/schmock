@@ -993,7 +993,7 @@ Headers always come from the same response entry the status does. An operation
 declaring only `404` therefore answers 404 *with the 404 entry's headers* (see
 [Operations with no 2xx response](#operations-with-no-2xx-response)). Only an
 operation that declares no responses at all falls back to a bare `200 {}` with
-no headers. CRUD error responses (404 / 400 / 409) deliberately do not emit
+no headers. The CRUD `404` for a missing item deliberately does not emit
 declared response headers.
 
 ## Operations with no 2xx response
@@ -1294,7 +1294,7 @@ On CRUD routes the callback fires exactly where a body is generated:
 |------|-------|
 | Create response contract | yes |
 | List wrapper skeleton | yes |
-| CRUD error bodies (404/400/409) | yes |
+| CRUD `404` body for a missing item | yes |
 | Read / update / delete envelope around the stored row | yes |
 | Delete confirmation object (see [Created bodies](#created-bodies-satisfy-the-declared-contract)) | yes |
 | Read / update / delete success bodies that are the row itself | **no** |
@@ -1328,7 +1328,7 @@ mock.pipe(await openapi({
   resources: {
     users: {
       listWrapProperty: 'data',      // list response wraps items in { data: [...] }
-      errorSchema: {                  // custom error response format
+      errorSchema: {                  // body of the CRUD 404 for a missing item
         type: 'object',
         properties: {
           message: { type: 'string' },
@@ -1343,11 +1343,18 @@ mock.pipe(await openapi({
 }))
 ```
 
-Without an `errorSchema`, a CRUD `404` (and `400` or `409`) body is generated
-from the operation's own error response, picked the way response validation
-picks it: the exact status, then its range (`4XX`), then `default`, unless that
-`default` is the operation's success response. Only when none applies is the
-body the built-in `{ error, code }`.
+The only error body CRUD generates itself is the `404` a read, update or
+delete answers for a missing item, and `errorSchema` replaces the schema of
+that body. A create never answers `409`: a duplicate gets a new id. A request
+validation `400` keeps its fixed `{ error, code, details }` body, and a
+`Prefer: code=` status is generated from the spec's own schema for that status,
+so `errorSchema` changes neither.
+
+Without an `errorSchema`, the `404` body is generated from the operation's own
+error response, picked the way response validation picks it: the exact status,
+then its range (`4XX`), then `default`, unless that `default` is the
+operation's success response. Only when none applies is the body the built-in
+`{ error: 'Not found', code: 'NOT_FOUND' }`.
 
 `listWrapProperty` and `listFlat` describe one list shape, so they also discard
 the operation's per-media-type response contracts: an overridden list answers

@@ -3,10 +3,13 @@
 import { SchemaGenerationError, schmock } from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
+import { detectCrudResources } from "./crud-detector.js";
+import { applyOverrides } from "./crud-registration.js";
 import {
   asSchemaGenerationError,
   collectSchemaProperties,
 } from "./generators.js";
+import { parseSpec } from "./parser.js";
 import { openapi } from "./plugin.js";
 
 const json = (schema: Record<string, unknown>) => ({
@@ -1318,5 +1321,94 @@ describe("settling a request once its response is final (#39)", () => {
     expect(a.body).toEqual({ id: 1, name: "rex", tag: "new" });
     expect(b.body).toEqual({ id: 1, name: "rex", age: 9 });
     expect(stored(mock)).toEqual([{ id: 1, name: "rex", tag: "new", age: 9 }]);
+  });
+});
+
+describe("the errorSchema resource override", () => {
+  const user = {
+    type: "object",
+    required: ["id", "name"],
+    properties: { id: { type: "integer" }, name: { type: "string" } },
+  };
+  const errorSchema: JSONSchema7 = {
+    type: "object",
+    required: ["message"],
+    properties: { message: { type: "string", const: "OVERRIDE" } },
+  };
+  const usersSpec = spec({
+    "/users": {
+      get: {
+        responses: {
+          "200": {
+            description: "list",
+            content: json({ type: "array", items: user }),
+          },
+        },
+      },
+      post: {
+        requestBody: { required: true, content: json(user) },
+        responses: { "201": { description: "c", content: json(user) } },
+      },
+    },
+    "/users/{id}": {
+      get: {
+        responses: { "200": { description: "u", content: json(user) } },
+      },
+      put: {
+        requestBody: { required: true, content: json(user) },
+        responses: { "200": { description: "u", content: json(user) } },
+      },
+      delete: { responses: { "204": { description: "gone" } } },
+    },
+  });
+
+  it("covers only the 404 CRUD generates for a missing item", async () => {
+    const parsed = await parseSpec(usersSpec);
+    const [resource] = detectCrudResources(parsed.paths).resources;
+
+    applyOverrides(resource, { errorSchema });
+
+    const itemRoutes = resource.routes.filter(
+      (route) =>
+        route.op === "read" || route.op === "update" || route.op === "delete",
+    );
+    expect(itemRoutes).toHaveLength(3);
+    for (const route of itemRoutes) {
+      expect([...(route.meta.errorSchemas?.keys() ?? [])]).toEqual([404]);
+      expect(route.meta.errorSchemas?.get(404)).toBe(errorSchema);
+    }
+  });
+
+  it("shapes the 404 bodies and leaves request-validation 400s alone", async () => {
+    const mock = await mockOf(usersSpec, {
+      validateRequests: true,
+      resources: { users: { errorSchema } },
+    });
+
+    for (const [method, body] of [
+      ["GET", undefined],
+      ["PUT", { id: 999, name: "Ghost" }],
+      ["DELETE", undefined],
+    ] as const) {
+      const missing = await mock.handle(method, "/users/999", { body });
+      expect(missing.status).toBe(404);
+      expect(missing.body).toEqual({ message: "OVERRIDE" });
+    }
+
+    const invalid = await mock.handle("POST", "/users", {
+      body: { id: 1, name: 5 },
+    });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body).toMatchObject({ code: "VALIDATION_ERROR" });
+
+    const first = await mock.handle("POST", "/users", {
+      body: { id: 1, name: "A" },
+    });
+    const duplicate = await mock.handle("POST", "/users", {
+      body: { id: 1, name: "B" },
+    });
+    expect(first.status).toBe(201);
+    expect(duplicate.status).toBe(201);
+    expect(duplicate.body).toMatchObject({ id: 2, name: "B" });
   });
 });

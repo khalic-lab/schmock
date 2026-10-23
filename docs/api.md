@@ -1972,7 +1972,7 @@ interface OnSchemaContext {
 interface ResourceOverride {
   listWrapProperty?: string       // property holding items (e.g. "data")
   listFlat?: boolean              // force flat array response
-  errorSchema?: JSONSchema7       // custom error response format
+  errorSchema?: JSONSchema7       // body of the CRUD 404 for a missing item
 }
 ```
 

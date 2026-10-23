@@ -314,10 +314,12 @@ export function applyOverrides(
   }
 
   if (override.errorSchema) {
-    const errorSchemaMap = new Map<number, JSONSchema7>();
-    errorSchemaMap.set(404, override.errorSchema);
-    errorSchemaMap.set(400, override.errorSchema);
-    errorSchemaMap.set(409, override.errorSchema);
+    // 404 for a missing item is the only error body CRUD generates. A request
+    // validation 400 has its own fixed body, and `Prefer: code=` reads the
+    // spec's schema for the status it forces.
+    const errorSchemaMap = new Map<number, JSONSchema7>([
+      [404, override.errorSchema],
+    ]);
 
     for (const route of resource.routes) {
       if (

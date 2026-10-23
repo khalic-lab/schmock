@@ -1586,7 +1586,7 @@ export function createReadGenerator(
     const item = findById(collection, resource.idProperty, idValue);
 
     if (!item) {
-      return await generateErrorResponse(404, meta, hooks, ctx);
+      return await generateNotFoundResponse(meta, hooks, ctx);
     }
 
     return buildResponse({
@@ -1640,7 +1640,7 @@ export function createUpdateGenerator(
     const index = findIndexById(collection, resource.idProperty, idValue);
 
     if (index === -1) {
-      return await generateErrorResponse(404, meta, hooks, ctx);
+      return await generateNotFoundResponse(meta, hooks, ctx);
     }
 
     const responseSchema = metaSchema(meta, ctx.headers, headers);
@@ -1712,7 +1712,7 @@ export function createDeleteGenerator(
     const index = findIndexById(collection, resource.idProperty, idValue);
 
     if (index === -1) {
-      return await generateErrorResponse(404, meta, hooks, ctx);
+      return await generateNotFoundResponse(meta, hooks, ctx);
     }
 
     const deleted = collection[index];
@@ -1879,19 +1879,21 @@ function countNodes(value: unknown, budget: number): number {
 }
 
 /**
- * Generate an error response using the spec's error schema if available,
- * or fall back to the default { error, code } format.
+ * The 404 a read, update or delete answers for a missing item, from the
+ * spec's (or the `errorSchema` override's) 404 schema when there is one, else
+ * the default { error, code } body. It is the only error body CRUD generates:
+ * request-validation 400s and `Prefer: code=` statuses are built elsewhere.
  *
  * Read/update/delete also reach `onSchema` here: their success bodies are
  * replayed from state, and only an envelope or a delete confirmation around
  * the row is generated.
  */
-async function generateErrorResponse(
-  status: number,
+async function generateNotFoundResponse(
   meta: Schmock.CrudOperationMeta | undefined,
   hooks: CrudGenerationHooks | undefined,
   ctx: Schmock.RequestContext,
 ): Promise<Schmock.ResponseResult> {
+  const status = 404;
   const errorSchema = meta?.errorSchemas?.get(status);
   if (errorSchema) {
     const effective = applyOnSchema(errorSchema, hooks, ctx) ?? errorSchema;
@@ -1909,15 +1911,9 @@ async function generateErrorResponse(
     }
   }
 
-  // Default error format
-  const defaults: Record<number, { error: string; code: string }> = {
-    404: { error: "Not found", code: "NOT_FOUND" },
-    400: { error: "Bad request", code: "BAD_REQUEST" },
-    409: { error: "Conflict", code: "CONFLICT" },
-  };
   return buildResponse({
     status,
-    body: defaults[status] ?? { error: "Error", code: "ERROR" },
+    body: { error: "Not found", code: "NOT_FOUND" },
   });
 }
 
