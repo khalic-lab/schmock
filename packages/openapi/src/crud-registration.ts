@@ -247,6 +247,7 @@ export function applyOverrides(
     for (const route of resource.routes) {
       if (route.op !== "list") continue;
       const listMeta = route.meta;
+      const declared = listMeta.responseSchema;
       // The per-media-type map wins over `responseSchema` at request time, so a
       // list override that only rewrote `responseSchema` would be invisible on
       // every OAS3 spec (they all declare `content`). Drop the map first.
@@ -254,6 +255,16 @@ export function applyOverrides(
 
       if (override.listFlat) {
         delete listMeta.responseSchema;
+        if (declared && !hasType(declared, "array")) {
+          validateListAs(route.parsed, {
+            type: "array",
+            items:
+              findArrayProperty(declared, listArrayHints(resource))
+                .itemSchema ??
+              resource.schema ??
+              {},
+          });
+        }
       } else if (override.listWrapProperty && listMeta.responseSchema) {
         const arrayInfo = findArrayProperty(
           listMeta.responseSchema,
@@ -294,6 +305,10 @@ export function applyOverrides(
             },
           },
         };
+      }
+
+      if (listMeta.responseSchema && listMeta.responseSchema !== declared) {
+        validateListAs(route.parsed, listMeta.responseSchema);
       }
     }
   }
@@ -360,6 +375,30 @@ function declaredArrayItems(
   const declared = collectSchemaProperties(schema)[property];
   if (!declared || !hasType(declared, "array")) return undefined;
   return findArrayProperty(declared).itemSchema;
+}
+
+/**
+ * Make response validation check the list shape an override serves.
+ *
+ * Validation reads the operation's declared responses, not the CRUD metadata,
+ * so a `listWrapProperty` or `listFlat` that changed the shape answered 500 on
+ * every list under `validateResponses`. The entry the list answers with is
+ * rewritten for every media type, since an overridden list serves one shape
+ * whatever the `Accept`; a shared `2XX` or `default` entry is left alone and an
+ * exact one is added in front of it. The same in-place rewrite the `schemas`
+ * option applies, and as idempotent when the plugin is piped twice.
+ */
+function validateListAs(parsed: ParsedPath, schema: JSONSchema7): void {
+  const status = findSuccessResponse(parsed.responses)?.[0] ?? 200;
+  const entry = parsed.responses.get(status);
+  if (!entry) {
+    parsed.responses.set(status, { schema, description: "" });
+    return;
+  }
+  entry.schema = schema;
+  for (const content of entry.content?.values() ?? []) {
+    content.schema = schema;
+  }
 }
 
 /**

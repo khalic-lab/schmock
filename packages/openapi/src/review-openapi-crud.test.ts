@@ -910,3 +910,97 @@ describe("CRUD review fixes", () => {
     });
   });
 });
+
+describe("resource list overrides under validateResponses", () => {
+  const user = {
+    type: "object",
+    required: ["id", "name"],
+    properties: { id: { type: "integer" }, name: { type: "string" } },
+  };
+  const post = {
+    type: "object",
+    required: ["id", "title"],
+    properties: { id: { type: "integer" }, title: { type: "string" } },
+  };
+  const overrideSpec = spec({
+    "/users": {
+      get: {
+        responses: {
+          "200": {
+            description: "list",
+            content: json({ type: "array", items: user }),
+          },
+        },
+      },
+      post: {
+        responses: { "201": { description: "c", content: json(user) } },
+      },
+    },
+    "/users/{id}": {
+      get: {
+        responses: { "200": { description: "u", content: json(user) } },
+      },
+    },
+    "/posts": {
+      get: {
+        responses: {
+          "200": {
+            description: "list",
+            content: json({
+              type: "object",
+              required: ["items", "total"],
+              properties: {
+                items: { type: "array", items: post },
+                total: { type: "integer" },
+              },
+            }),
+          },
+        },
+      },
+      post: {
+        responses: { "201": { description: "c", content: json(post) } },
+      },
+    },
+    "/posts/{id}": {
+      get: {
+        responses: { "200": { description: "p", content: json(post) } },
+      },
+    },
+  });
+
+  it("validates the shape listWrapProperty and listFlat serve", async () => {
+    const mock = await mockOf(overrideSpec, {
+      validateResponses: true,
+      resources: {
+        users: { listWrapProperty: "data" },
+        posts: { listFlat: true },
+      },
+    });
+    await mock.handle("POST", "/users", { body: { name: "A" } });
+    await mock.handle("POST", "/posts", { body: { title: "P" } });
+
+    const users = await mock.handle("GET", "/users");
+    expect(users.status).toBe(200);
+    expect(users.body).toEqual({ data: [{ id: 1, name: "A" }] });
+
+    const posts = await mock.handle("GET", "/posts");
+    expect(posts.status).toBe(200);
+    expect(posts.body).toEqual([{ id: 1, title: "P" }]);
+  });
+
+  it("still checks the overridden list's items against the item contract", async () => {
+    const mock = schmock({
+      state: { "openapi:collections:/users": [{ id: 1 }] },
+    });
+    mock.pipe(
+      await openapi({
+        spec: overrideSpec,
+        validateResponses: true,
+        resources: { users: { listWrapProperty: "data" } },
+      }),
+    );
+    const users = await mock.handle("GET", "/users");
+    expect(users.status).toBe(500);
+    expect(users.body).toMatchObject({ code: "RESPONSE_VALIDATION_ERROR" });
+  });
+});

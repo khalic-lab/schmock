@@ -337,6 +337,35 @@ const metaEnvelopeSpec = spec({
   },
 });
 
+// ── Resource list overrides ─────────────────────────────────────────────────
+
+const user = {
+  type: "object",
+  required: ["id", "name"],
+  properties: { id: { type: "integer" }, name: { type: "string" } },
+};
+
+const usersSpec = spec({
+  "/users": {
+    get: {
+      responses: {
+        "200": {
+          description: "list",
+          content: json({ type: "array", items: user }),
+        },
+      },
+    },
+    post: {
+      responses: { "201": { description: "created", content: json(user) } },
+    },
+  },
+  "/users/{id}": {
+    get: {
+      responses: { "200": { description: "user", content: json(user) } },
+    },
+  },
+});
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -655,6 +684,41 @@ describeFeature(feature, ({ Scenario }) => {
           });
         },
       );
+    },
+  );
+
+  Scenario(
+    "A list override is validated against the shape it serves",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a validating users mock whose flat list is overridden with listWrapProperty "data"',
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: usersSpec,
+              validateResponses: true,
+              resources: { users: { listWrapProperty: "data" } },
+            }),
+          );
+        },
+      );
+
+      And('a user named "A" has been created', async () => {
+        const created = await mock.handle("POST", "/users", {
+          body: { name: "A" },
+        });
+        expect(created.status).toBe(201);
+      });
+
+      When("I list the users", async () => {
+        response = await mock.handle("GET", "/users");
+      });
+
+      Then('the users list is 200 with the user under "data"', () => {
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ data: [{ id: 1, name: "A" }] });
+      });
     },
   );
 });

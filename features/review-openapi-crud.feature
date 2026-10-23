@@ -70,3 +70,11 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     When I create a pet named "rex"
     Then the hook saw the create contract with properties "data,meta"
     And the created body carries the rewritten meta and the pet under "data"
+
+  # ── Resource list overrides ────────────────────────────────────────────────
+
+  Scenario: A list override is validated against the shape it serves
+    Given a validating users mock whose flat list is overridden with listWrapProperty "data"
+    And a user named "A" has been created
+    When I list the users
+    Then the users list is 200 with the user under "data"

@@ -1310,6 +1310,14 @@ body the built-in `{ error, code }`.
 the operation's per-media-type response contracts: an overridden list answers
 with the overridden shape regardless of the negotiated `Accept`.
 
+With `validateResponses: true`, an overridden list is validated against the
+shape it serves: `{ <listWrapProperty>: [<item>] }`, or `[<item>]` for
+`listFlat`. Each item is still checked against the item schema. The override
+rewrites the list operation's success response in the parsed spec, as a
+`schemas` key does, so `Prefer: dynamic=true` on that list generates the
+overridden shape too. An override that names the wrapper the spec already
+declares, or `listFlat` on a list that is already flat, changes nothing.
+
 `listWrapProperty` takes its item schema from the named property when the spec
 declares it as an array, otherwise from the resource schema (a flat list keeps
 its own items). It does not change the resource schema that seeds and create
