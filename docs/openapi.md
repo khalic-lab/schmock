@@ -1159,7 +1159,10 @@ mock.pipe(await openapi({
 }))
 ```
 
-Without a status code, the schema replaces the first 2xx response. If no 2xx response exists, a 200 entry is created.
+Without a status code, the schema replaces the 2xx response the route answers
+with: the lowest declared 2xx, except that a CRUD create declaring both `200`
+and `201` answers, and so is patched, at `201`. If no 2xx response exists, a
+200 entry is created.
 
 **Every key is validated, and a bad one throws.** The grammar is exactly
 `"METHOD /path"` or `"METHOD /path STATUS"`: an uppercase, supported HTTP

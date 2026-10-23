@@ -1004,3 +1004,57 @@ describe("resource list overrides under validateResponses", () => {
     expect(users.body).toMatchObject({ code: "RESPONSE_VALIDATION_ERROR" });
   });
 });
+
+describe("status-less schema overrides on a POST declaring 200 and 201", () => {
+  const item = {
+    type: "object",
+    properties: { id: { type: "integer" }, old: { type: "string" } },
+  };
+  const patched = {
+    type: "object",
+    required: ["patched"],
+    properties: {
+      id: { type: "integer" },
+      patched: { type: "boolean", const: true },
+    },
+  };
+  const both = {
+    "200": { description: "existing", content: json(item) },
+    "201": { description: "created", content: json(item) },
+  };
+  const upsertSpec = spec({
+    "/upserts": {
+      get: {
+        responses: {
+          "200": {
+            description: "list",
+            content: json({ type: "array", items: item }),
+          },
+        },
+      },
+      post: { responses: both },
+    },
+    "/upserts/{id}": {
+      get: { responses: { "200": { description: "i", content: json(item) } } },
+    },
+    "/login": { post: { responses: both } },
+  });
+
+  it("patches the 201 a CRUD create answers with", async () => {
+    const mock = await mockOf(upsertSpec, {
+      schemas: { "POST /upserts": patched },
+    });
+    const created = await mock.handle("POST", "/upserts");
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ patched: true });
+  });
+
+  it("patches the 200 a non-CRUD POST answers with", async () => {
+    const mock = await mockOf(upsertSpec, {
+      schemas: { "POST /login": patched },
+    });
+    const response = await mock.handle("POST", "/login");
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ patched: true });
+  });
+});

@@ -78,3 +78,10 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     And a user named "A" has been created
     When I list the users
     Then the users list is 200 with the user under "data"
+
+  # ── Status-less schema overrides ───────────────────────────────────────────
+
+  Scenario: A status-less schemas key patches the 201 an upsert-shaped create answers with
+    Given an upserts mock whose create declares 200 and 201, with a "POST /upserts" schemas override
+    When I create an upsert
+    Then the create response is 201 with the overridden body

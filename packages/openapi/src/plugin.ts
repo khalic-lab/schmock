@@ -30,7 +30,10 @@ import {
   validateResponse,
   validateSecurity,
 } from "./request-pipeline.js";
-import { isStatusInRange } from "./response-status.js";
+import {
+  CREATE_SUCCESS_STATUS_ORDER,
+  findSuccessResponse,
+} from "./response-status.js";
 import type { SeedConfig, SeedSource } from "./seed.js";
 import { assertValidSeedConfig, loadSeed } from "./seed.js";
 import { isRecord, normalizeMediaType } from "./utils.js";
@@ -94,7 +97,11 @@ export async function openapi(
   // have to land BEFORE detection and seeding: CRUD metadata and `{ count: n }`
   // seed generation are both derived from those schemas exactly once.
   if (options.schemas) {
-    applySchemaOverrides(allParsedPaths, options.schemas);
+    applySchemaOverrides(
+      allParsedPaths,
+      options.schemas,
+      crudCreates(spec.paths),
+    );
   }
 
   const { resources, nonCrudPaths } = detectCrudResources(spec.paths);
@@ -386,8 +393,9 @@ function invalidOverrideKey(key: string, reason: string): SchmockError {
  * Apply `options.schemas` onto the parsed paths, in place.
  *
  * Keys are `"METHOD /path"` or `"METHOD /path STATUS"`. Without a status the
- * first declared 2xx entry is patched, and an operation declaring no 2xx gains
- * a synthetic 200.
+ * 2xx entry the route answers with is patched (201 before 200 for a CRUD
+ * create in `creates`, the lowest declared 2xx otherwise), and an operation
+ * declaring no 2xx gains a synthetic 200.
  *
  * Every key is validated before ANY mutation, and both a malformed key and a
  * well-formed key naming a route the spec does not declare throw. Silently
@@ -397,6 +405,7 @@ function invalidOverrideKey(key: string, reason: string): SchmockError {
 function applySchemaOverrides(
   paths: Map<string, ParsedPath>,
   schemas: Record<string, JSONSchema7>,
+  creates: ReadonlySet<ParsedPath>,
 ): void {
   const parsed: Array<{
     parsedPath: ParsedPath;
@@ -457,18 +466,35 @@ function applySchemaOverrides(
       continue;
     }
 
-    let patched = false;
-    for (const [code, entry] of parsedPath.responses) {
-      if (isStatusInRange(code, 200, 300)) {
-        replaceResponseSchema(entry, schema);
-        patched = true;
-        break;
-      }
-    }
-    if (!patched) {
+    // The 2xx entry the route answers with: a CRUD create tries 201 before
+    // 200 (an upsert contract declaring both answers a fresh create with 201),
+    // everything else takes the lowest declared 2xx. Patching the first 2xx in
+    // map order changed a create's 200 while it served the untouched 201.
+    const success = findSuccessResponse(
+      parsedPath.responses,
+      creates.has(parsedPath) ? CREATE_SUCCESS_STATUS_ORDER : undefined,
+    );
+    if (success && success[1] !== parsedPath.responses.get("default")) {
+      replaceResponseSchema(success[1], schema);
+    } else {
       parsedPath.responses.set(200, { schema, description: "" });
     }
   }
+}
+
+/**
+ * The operations CRUD detection will serve as a create. Detection groups and
+ * classifies by path and method alone, so running it before the overrides
+ * land gives the same answer as the run after them.
+ */
+function crudCreates(paths: ParsedPath[]): ReadonlySet<ParsedPath> {
+  const creates = new Set<ParsedPath>();
+  for (const resource of detectCrudResources(paths).resources) {
+    for (const route of resource.routes) {
+      if (route.op === "create") creates.add(route.parsed);
+    }
+  }
+  return creates;
 }
 
 /**

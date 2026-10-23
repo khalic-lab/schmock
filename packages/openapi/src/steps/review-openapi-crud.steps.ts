@@ -366,6 +366,37 @@ const usersSpec = spec({
   },
 });
 
+// ── Status-less schema overrides ────────────────────────────────────────────
+
+const upsert = {
+  type: "object",
+  properties: { id: { type: "integer" }, old: { type: "string" } },
+};
+
+const upsertsSpec = spec({
+  "/upserts": {
+    get: {
+      responses: {
+        "200": {
+          description: "list",
+          content: json({ type: "array", items: upsert }),
+        },
+      },
+    },
+    post: {
+      responses: {
+        "200": { description: "existing", content: json(upsert) },
+        "201": { description: "created", content: json(upsert) },
+      },
+    },
+  },
+  "/upserts/{id}": {
+    get: {
+      responses: { "200": { description: "upsert", content: json(upsert) } },
+    },
+  },
+});
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -718,6 +749,42 @@ describeFeature(feature, ({ Scenario }) => {
       Then('the users list is 200 with the user under "data"', () => {
         expect(response.status).toBe(200);
         expect(response.body).toEqual({ data: [{ id: 1, name: "A" }] });
+      });
+    },
+  );
+
+  Scenario(
+    "A status-less schemas key patches the 201 an upsert-shaped create answers with",
+    ({ Given, When, Then }) => {
+      Given(
+        'an upserts mock whose create declares 200 and 201, with a "POST /upserts" schemas override',
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: upsertsSpec,
+              schemas: {
+                "POST /upserts": {
+                  type: "object",
+                  required: ["patched"],
+                  properties: {
+                    id: { type: "integer" },
+                    patched: { type: "boolean", const: true },
+                  },
+                },
+              },
+            }),
+          );
+        },
+      );
+
+      When("I create an upsert", async () => {
+        response = await mock.handle("POST", "/upserts");
+      });
+
+      Then("the create response is 201 with the overridden body", () => {
+        expect(response.status).toBe(201);
+        expect(response.body).toMatchObject({ id: 1, patched: true });
       });
     },
   );
