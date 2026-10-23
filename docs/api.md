@@ -1536,8 +1536,11 @@ These limits are keyed by the method's own `module.method` name, and a faker
 method given by any longer path is rejected with `SCHEMA_VALIDATION_ERROR`:
 every faker module carries a `faker` back-reference, so
 `person.faker.string.alpha` would otherwise reach `string.alpha` unchecked.
-`helpers.fake` placeholders are checked like direct calls, their method path
-included. The expanded `helpers.mustache` output and the explicit upper quantifier in
+Each `helpers.fake` placeholder written in the template, found as faker finds
+it (a `{{` then a lowercase letter, up to the next `}}`), is checked like a
+direct call, its method path included. faker scans the result again after each
+substitution, and a placeholder assembled there from another placeholder's
+output is not checked. The expanded `helpers.mustache` output and the explicit upper quantifier in
 `helpers.fromRegExp` must fit in 65,536 characters, and a schema `pattern`
 whose shortest match is longer than that is rejected at creation.
 

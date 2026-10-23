@@ -341,7 +341,11 @@ describe("validateSchema", () => {
       ],
       [
         "an allOf maxLength that truncates the pattern",
-        { type: "string", pattern: "^[a-z]{60000}$", allOf: [{ maxLength: 10 }] },
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          allOf: [{ maxLength: 10 }],
+        },
       ],
       [
         "an anyOf enum that replaces the pattern",
@@ -370,7 +374,11 @@ describe("validateSchema", () => {
 
     it("still charges a pattern beside an allOf that leaves it in place", () => {
       const schema = rowsOf(
-        { type: "string", pattern: "^[a-z]{60000}$", allOf: [{ minLength: 1 }] },
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          allOf: [{ minLength: 1 }],
+        },
         300,
       );
 
@@ -480,6 +488,43 @@ describe("validateSchema", () => {
         name: expect.any(String),
         code: expect.stringMatching(/^[A-Za-z]{5}-/),
       });
+    });
+  });
+
+  describe("helpers.fake placeholders", () => {
+    function fakeString(...templates: unknown[]): JSONSchema7 {
+      return withKeywords(
+        { type: "string" },
+        { faker: { "helpers.fake": templates } },
+      );
+    }
+
+    it.each([
+      ["literal braces around a placeholder", "{{{string.alpha(5)}}}"],
+      ["a brace pair that opens no method", "{{(5)}}"],
+      ["a capitalised method name", "price {{Total(5)}}"],
+    ])("accepts %s, which faker leaves as literal text", (_, template) => {
+      expect(() => fakerPlugin({ schema: fakeString(template) })).not.toThrow();
+    });
+
+    it("generates literal braces around an evaluated placeholder", async () => {
+      const generated = await generateOnce(fakeString("{{{string.alpha(5)}}}"));
+
+      expect(generated).toMatch(/^\{[A-Za-z]{5}\}$/);
+    });
+
+    it.each([
+      ["a newline before the argument", "{{string.alpha(\n5000000)}}"],
+      [
+        "a {{ that faker drops from the expression",
+        "{{string.alpha({{5000000)}}",
+      ],
+      ["text after the closing parenthesis", "{{string.alpha(5000000).x)}}"],
+    ])("checks a placeholder with %s", (_, template) => {
+      expectResource(
+        captureFailure(() => fakerPlugin({ schema: fakeString(template) })),
+        { resource: "string_length", actual: 5_000_000 },
+      );
     });
   });
 

@@ -238,8 +238,9 @@ function validateFakerAllocationArguments(
       throw new ResourceLimitError(rule.resource, rule.limit, actual);
     }
   }
-  validateTemplateArguments(method, args);
 
+  // Strings are held to the length limit before any template is scanned, so
+  // the scan only ever walks a bounded string.
   const pending = [...args];
   const seen = new Set<object>();
   while (pending.length > 0) {
@@ -261,6 +262,7 @@ function validateFakerAllocationArguments(
     }
     for (const nested of Object.values(value)) pending.push(nested);
   }
+  validateTemplateArguments(method, args);
 }
 
 function maximumCardinality(value: unknown): number {
@@ -335,39 +337,103 @@ function validateTemplateArguments(method: string, args: unknown[]): void {
   }
 }
 
+interface FakePlaceholder {
+  /** Index of the opening `{{`. */
+  start: number;
+  /** Index just past the closing `}}`. */
+  end: number;
+  /** The text faker evaluates. */
+  expression: string;
+}
+
+/**
+ * Find the placeholders faker 10's `helpers.fake` evaluates, the way it finds
+ * them: a `{{` followed by a lowercase letter opens one, the next `}}` closes
+ * it, and the first `{{` inside is dropped. Anything else, such as `{{(5)}}`
+ * or the outer braces of `{{{string.alpha(5)}}}`, stays literal text.
+ */
+function fakePlaceholders(template: string): FakePlaceholder[] {
+  const placeholders: FakePlaceholder[] = [];
+  const opening = /\{\{[a-z]/g;
+  for (;;) {
+    const match = opening.exec(template);
+    if (match === null) break;
+    const close = template.indexOf("}}", match.index);
+    if (close === -1) break;
+    placeholders.push({
+      start: match.index,
+      end: close + 2,
+      expression: template.slice(match.index + 2, close).replace("{{", ""),
+    });
+    opening.lastIndex = close + 2;
+  }
+  return placeholders;
+}
+
+/**
+ * The method a placeholder calls and the arguments faker passes it, or
+ * undefined for a placeholder that calls nothing (faker then invokes the
+ * method with no arguments) or never closes its argument list.
+ */
+function fakeCall(
+  expression: string,
+): { method: string; args: unknown[] } | undefined {
+  const open = expression.indexOf("(");
+  if (open === -1) return undefined;
+  const args = parseFakeArguments(expression.slice(open));
+  if (args === undefined) return undefined;
+  return { method: expression.slice(0, open).trim(), args };
+}
+
+/**
+ * Parse a placeholder's argument list the way faker does: at each `)` in
+ * turn, try the text before it as JSON, then, when it holds no quote, as one
+ * JSON string; failing every `)`, pass everything up to the last one as a
+ * single string.
+ */
+function parseFakeArguments(call: string): unknown[] | undefined {
+  let close = call.indexOf(")", 1);
+  if (close === -1) return undefined;
+  while (close !== -1) {
+    const text = call.slice(1, close);
+    const parsed =
+      parseJsonArray(`[${text}]`) ??
+      (text.includes("'") || text.includes('"')
+        ? undefined
+        : parseJsonArray(`["${text}"]`));
+    if (parsed) return parsed;
+    close = call.indexOf(")", close + 1);
+  }
+  return [call.slice(1, call.lastIndexOf(")"))];
+}
+
+function parseJsonArray(text: string): unknown[] | undefined {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * `helpers.fake` evaluates each `{{module.method(args)}}` placeholder with
  * JSON-parsed arguments, so every placeholder is held to the same method path
- * rule and allocation policy as the method called directly.
+ * rule and allocation policy as the method called directly. Placeholders are
+ * those written in the template; one that a placeholder's output assembles
+ * when faker scans the substituted string again is not seen here.
  */
 function validateFakeTemplates(templates: unknown): void {
   const candidates = Array.isArray(templates) ? templates : [templates];
   for (const template of candidates) {
     if (typeof template !== "string") continue;
-    for (const match of template.matchAll(/\{\{(.+?)\}\}/g)) {
-      const expression = match[1];
-      const open = expression.indexOf("(");
-      const close = expression.lastIndexOf(")");
-      if (open === -1 || close < open) continue;
-      const method = expression.slice(0, open).trim();
-      validateFakerMethod(method);
-      validateFakerAllocationArguments(
-        method,
-        parseFakeArguments(expression.slice(open + 1, close)),
-      );
+    for (const { expression } of fakePlaceholders(template)) {
+      const call = fakeCall(expression);
+      if (!call) continue;
+      validateFakerMethod(call.method);
+      validateFakerAllocationArguments(call.method, call.args);
     }
   }
-}
-
-/** Parse placeholder arguments the way faker does: JSON first, else a string. */
-function parseFakeArguments(text: string): unknown[] {
-  try {
-    const parsed: unknown = JSON.parse(`[${text}]`);
-    if (Array.isArray(parsed)) return parsed;
-  } catch {
-    // faker falls back to passing the raw text as a single string argument.
-  }
-  return [text];
 }
 
 /** `helpers.mustache` repeats each value once per `{{key}}` occurrence. */
