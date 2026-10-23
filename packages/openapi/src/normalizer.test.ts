@@ -352,6 +352,78 @@ describe("normalizeSchema", () => {
       expect(result.properties).toHaveProperty("name");
     });
 
+    it("drops a readOnly name from the required list of another allOf branch in requests", () => {
+      const result = normalizeSchema(
+        {
+          allOf: [
+            {
+              type: "object",
+              properties: {
+                id: { type: "integer", readOnly: true },
+                name: { type: "string" },
+                password: { type: "string", writeOnly: true },
+              },
+              required: ["name"],
+            },
+            { required: ["id", "name"] },
+          ],
+          required: ["id"],
+        },
+        "request",
+      );
+
+      const branches = result.allOf as JSONSchema7[];
+      expect(branches[1].required).toEqual(["name"]);
+      expect(result).not.toHaveProperty("required");
+      expect([...collectAccessModes(result).readOnly]).toEqual(["id"]);
+      expect([...collectAccessModes(result).writeOnly]).toEqual(["password"]);
+    });
+
+    it("drops a writeOnly name from the required list of another allOf branch in responses", () => {
+      const credentials = {
+        type: "object",
+        properties: { password: { type: "string", writeOnly: true } },
+      };
+      const result = normalizeSchema(
+        {
+          allOf: [
+            {
+              allOf: [credentials],
+              properties: { name: { type: "string" } },
+            },
+            { required: ["name", "password"] },
+          ],
+        },
+        "response",
+      );
+
+      const branches = result.allOf as JSONSchema7[];
+      expect(branches[1].required).toEqual(["name"]);
+      expect([...collectAccessModes(result).writeOnly]).toEqual(["password"]);
+    });
+
+    it("keeps a readOnly name required in responses and a writeOnly one in requests", () => {
+      const schema = {
+        allOf: [
+          {
+            type: "object",
+            properties: {
+              id: { type: "integer", readOnly: true },
+              password: { type: "string", writeOnly: true },
+            },
+          },
+          { required: ["id", "password"] },
+        ],
+      };
+
+      const response = normalizeSchema(schema, "response");
+      expect((response.allOf as JSONSchema7[])[1].required).toEqual(["id"]);
+      const request = normalizeSchema(schema, "request");
+      expect((request.allOf as JSONSchema7[])[1].required).toEqual([
+        "password",
+      ]);
+    });
+
     it("keeps writeOnly fields in request schemas", () => {
       const result = normalizeSchema(
         {
@@ -652,6 +724,69 @@ describe("normalizeSchema", () => {
       expect((patched.body as Record<string, unknown>).updatedAt).toBe(
         body.updatedAt,
       );
+    });
+  });
+
+  describe("access modes across allOf branches through the plugin", () => {
+    const account = {
+      allOf: [
+        { $ref: "#/components/schemas/Base" },
+        { required: ["id", "name", "password"] },
+      ],
+    };
+    const accountSchemas = {
+      Base: {
+        type: "object",
+        properties: {
+          id: { type: "integer", readOnly: true },
+          name: { type: "string" },
+          password: { type: "string", writeOnly: true },
+        },
+      },
+    };
+
+    it("accepts a request that omits a readOnly id another branch requires", async () => {
+      const mock = await mockFor(
+        specWith(
+          {
+            "/accounts": {
+              post: {
+                requestBody: { required: true, content: json(account) },
+                responses: { "201": { description: "ok" } },
+              },
+            },
+          },
+          accountSchemas,
+        ),
+        { validateRequests: true },
+      );
+
+      const response = await mock.handle("POST", "/accounts", {
+        body: { name: "Ada", password: "secret" },
+      });
+      expect(response.status).toBe(201);
+    });
+
+    it("never generates a writeOnly key another branch requires", async () => {
+      const mock = await mockFor(
+        specWith(
+          {
+            "/me": {
+              get: {
+                responses: {
+                  "200": { description: "ok", content: json(account) },
+                },
+              },
+            },
+          },
+          accountSchemas,
+        ),
+        { validateResponses: true },
+      );
+
+      const response = await mock.handle("GET", "/me");
+      expect(response.status).toBe(200);
+      expect(response.body).not.toHaveProperty("password");
     });
   });
 

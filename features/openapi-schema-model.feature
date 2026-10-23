@@ -23,3 +23,14 @@ Feature: OpenAPI schema model fixes
     When I create a pet sending createdAt and updatedAt "1999-01-01T00:00:00Z"
     Then the created pet has status 201
     And neither timestamp of the created pet is "1999-01-01T00:00:00Z"
+
+  Scenario: A readOnly name that another allOf branch requires is not required in requests
+    Given a request-validating accounts mock whose second allOf branch requires the readOnly id
+    When I create an account with only a name and a password
+    Then the account response has status 201
+
+  Scenario: A writeOnly name that another allOf branch requires is never generated
+    Given a response-validating profile mock whose second allOf branch requires the writeOnly password
+    When I read the profile
+    Then the profile response has status 200
+    And the profile has no "password" key

@@ -96,6 +96,23 @@ const timestampPetsSpec = specWith(
   },
 );
 
+const account = {
+  allOf: [
+    { $ref: "#/components/schemas/Base" },
+    { required: ["id", "name", "password"] },
+  ],
+};
+const accountSchemas = {
+  Base: {
+    type: "object",
+    properties: {
+      id: { type: "integer", readOnly: true },
+      name: { type: "string" },
+      password: { type: "string", writeOnly: true },
+    },
+  },
+};
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -166,6 +183,79 @@ describeFeature(feature, ({ Scenario }) => {
           expect(body.updatedAt).not.toBe("1999-01-01T00:00:00Z");
         },
       );
+    },
+  );
+
+  Scenario(
+    "A readOnly name that another allOf branch requires is not required in requests",
+    ({ Given, When, Then }) => {
+      Given(
+        "a request-validating accounts mock whose second allOf branch requires the readOnly id",
+        async () => {
+          await build({
+            spec: specWith(
+              {
+                "/accounts": {
+                  post: {
+                    requestBody: { required: true, content: json(account) },
+                    responses: { "201": { description: "Created" } },
+                  },
+                },
+              },
+              accountSchemas,
+            ),
+            validateRequests: true,
+          });
+        },
+      );
+
+      When("I create an account with only a name and a password", async () => {
+        response = await mock.handle("POST", "/accounts", {
+          body: { name: "Ada", password: "secret" },
+        });
+      });
+
+      Then("the account response has status 201", () => {
+        expect(response.status).toBe(201);
+      });
+    },
+  );
+
+  Scenario(
+    "A writeOnly name that another allOf branch requires is never generated",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a response-validating profile mock whose second allOf branch requires the writeOnly password",
+        async () => {
+          await build({
+            spec: specWith(
+              {
+                "/me": {
+                  get: {
+                    responses: {
+                      "200": { description: "OK", content: json(account) },
+                    },
+                  },
+                },
+              },
+              accountSchemas,
+            ),
+            validateResponses: true,
+          });
+        },
+      );
+
+      When("I read the profile", async () => {
+        response = await mock.handle("GET", "/me");
+      });
+
+      Then("the profile response has status 200", () => {
+        expect(response.status).toBe(200);
+      });
+
+      And('the profile has no "password" key', () => {
+        expect(response.body).not.toHaveProperty("password");
+      });
     },
   );
 });

@@ -203,6 +203,46 @@ function pinDiscriminator(
   return pinned;
 }
 
+/**
+ * `schema` with `names` dropped from its `required` list and from those of the
+ * branches {@link collectAccessModes} flattens (`allOf`, and the nullable
+ * `anyOf` wrapper). Unchanged nodes come back as they are; a changed one is a
+ * copy, because normalized nodes are memoized and shared.
+ */
+function withoutRequired(
+  schema: Record<string, unknown>,
+  names: ReadonlySet<string>,
+): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...schema };
+  let changed = false;
+
+  const required = schema.required;
+  if (Array.isArray(required) && required.some((name) => names.has(name))) {
+    const kept = required.filter((name) => !names.has(name));
+    if (kept.length > 0) copy.required = kept;
+    else delete copy.required;
+    changed = true;
+  }
+
+  const keywords =
+    schema.schmockNullable === true ? ["allOf", "anyOf"] : ["allOf"];
+  for (const keyword of keywords) {
+    const branches = schema[keyword];
+    if (!Array.isArray(branches)) continue;
+    const next = branches.map((branch: unknown) =>
+      isRecord(branch) ? withoutRequired(branch, names) : branch,
+    );
+    if (next.some((branch, index) => branch !== branches[index])) {
+      copy[keyword] = next;
+      changed = true;
+    }
+  }
+
+  if (!changed) return schema;
+  inheritAccessModes(copy, schema);
+  return copy;
+}
+
 function normalizeNode(
   input: Record<string, unknown>,
   direction: "request" | "response",
@@ -230,7 +270,7 @@ function normalizeNode(
   // shares one object between every use of a component, and a `$ref` with
   // siblings is a fresh object that still shares its target's `properties`
   // and `required`: a change made in place leaked into every other use.
-  const node: Record<string, unknown> = {};
+  let node: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input)) {
     if (!key.startsWith("x-")) node[key] = value;
   }
@@ -375,6 +415,19 @@ function normalizeNode(
           : branch,
       );
     }
+  }
+
+  // A stripped name stays required wherever another allOf branch, or this
+  // node, lists it. OAS applies a required readOnly property to responses
+  // only and a required writeOnly one to requests only, so prune it there too.
+  if (Array.isArray(node.allOf)) {
+    const branchModes = collectAccessModes(toJsonSchema({ allOf: node.allOf }));
+    const stripped = new Set(
+      direction === "request"
+        ? [...readOnlyNames, ...branchModes.readOnly]
+        : [...writeOnlyNames, ...branchModes.writeOnly],
+    );
+    if (stripped.size > 0) node = withoutRequired(node, stripped);
   }
 
   // Recurse into not
