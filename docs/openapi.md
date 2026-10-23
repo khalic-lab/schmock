@@ -846,6 +846,32 @@ wildcard such as `2XX`, then `default`. Schema-less statuses are still honored;
 for example, an operation declaring only `201` returns 201, and a declared `204`
 has no body.
 
+```typescript
+// → { status: 500, body: {
+//     error: 'Response validation failed', code: 'RESPONSE_VALIDATION_ERROR',
+//     status: 404, details: [{ path: '/', message: 'status 404 is not declared by the operation', keyword: 'status' }],
+//   } }
+```
+
+The body names the `status` that was checked, the `mediaType` whose schema was
+used, and one `details` entry per violation. `mediaType` is omitted when no
+media type applies: for an undeclared status, as above, and for a Swagger 2.0
+operation without `produces`.
+
+Each request and response schema is compiled once, on the first request that
+needs it, and a component the spec reuses is compiled once rather than once per
+place it appears, which keeps large specs such as Stripe's fast to validate. A
+schema that cannot be compiled answers every request with the same
+`response schema could not be compiled` (or `request schema could not be
+compiled`) error without being compiled again.
+
+Request and response validation read schemas the same way. `multipleOf`
+allows for floating-point rounding, so `19.99` satisfies `multipleOf: 0.01`.
+A `pattern` is compiled with the `u` flag when it allows, and without it
+otherwise, as faker does when it generates from the pattern, so
+`^\d{3}\-\d{4}$` validates instead of failing to compile. An unknown `format`
+such as `unix-time` is ignored without a console warning.
+
 ## Response Headers
 
 Response headers declared on the selected response are generated and returned,
