@@ -25,9 +25,16 @@ function UserList() {
   );
 }
 
-function MockConsumer() {
+/** Renders whether useSchmock() returned the expected instance. */
+function MockConsumer({
+  expected,
+}: {
+  expected?: Schmock.CallableMockInstance;
+}) {
   const mock = useSchmock();
-  return <div data-testid="has-mock">{mock ? "yes" : "no"}</div>;
+  return (
+    <div data-testid="has-mock">{mock === expected ? "same" : "different"}</div>
+  );
 }
 
 function LayoutEffectFetcher() {
@@ -236,12 +243,12 @@ describe("useSchmock", () => {
 
     render(
       <SchmockProvider mock={mock}>
-        <MockConsumer />
+        <MockConsumer expected={mock} />
       </SchmockProvider>,
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("has-mock").textContent).toBe("yes");
+      expect(screen.getByTestId("has-mock").textContent).toBe("same");
     });
   });
 
@@ -295,19 +302,20 @@ describe("renderWithSchmock", () => {
   });
 
   it("rerender preserves provider context", async () => {
-    const { rerender } = renderWithSchmock(<MockConsumer />, {
-      routes: [],
+    const mock = schmock();
+    const { rerender } = renderWithSchmock(<MockConsumer expected={mock} />, {
+      mock,
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId("has-mock").textContent).toBe("yes");
+      expect(screen.getByTestId("has-mock").textContent).toBe("same");
     });
 
     // Rerender should still have the provider wrapping
-    rerender(<MockConsumer />);
+    rerender(<MockConsumer expected={mock} />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("has-mock").textContent).toBe("yes");
+      expect(screen.getByTestId("has-mock").textContent).toBe("same");
     });
   });
 });

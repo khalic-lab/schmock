@@ -27,10 +27,19 @@ const UserList = defineComponent({
   },
 });
 
+/** Renders whether useSchmock() returned the expected instance. */
 const MockConsumer = defineComponent({
-  setup() {
+  props: {
+    expected: { type: Function, required: false },
+  },
+  setup(props) {
     const mock = useSchmock();
-    return () => h("div", { "data-testid": "has-mock" }, mock ? "yes" : "no");
+    return () =>
+      h(
+        "div",
+        { "data-testid": "has-mock" },
+        mock === props.expected ? "same" : "different",
+      );
   },
 });
 
@@ -165,10 +174,11 @@ describe("useSchmock", () => {
     const mock = schmock();
 
     const wrapper = mount(MockConsumer, {
+      props: { expected: mock },
       global: { plugins: [[schmockPlugin, { mock }]] },
     });
 
-    expect(wrapper.find("[data-testid='has-mock']").text()).toBe("yes");
+    expect(wrapper.find("[data-testid='has-mock']").text()).toBe("same");
   });
 
   it("throws when used without the plugin", () => {
