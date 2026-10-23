@@ -48,7 +48,7 @@
     "@angular/core": ">=15.0.0 <23.0.0",
     "@schmock/core": "^2.6.0",
     "@schmock/openapi": "^2.6.0",
-    "rxjs": "^7.8.2"
+    "rxjs": "^6.5.3 || ^7.4.0"
   },
   "peerDependenciesMeta": {
     "@schmock/openapi": {
