@@ -90,11 +90,12 @@ Feature: Faker output honours every keyword of its schema
     Then every generated value fits "<case>"
 
     Examples:
-      | case                               |
-      | all-of-with-sibling-one-of         |
-      | all-of-with-sibling-any-of         |
-      | defs-base-with-sibling-one-of-refs |
-      | all-of-with-sibling-if-then        |
+      | case                                    |
+      | all-of-with-sibling-one-of              |
+      | all-of-with-sibling-any-of              |
+      | defs-base-with-sibling-one-of-refs      |
+      | all-of-with-sibling-if-then             |
+      | all-of-entry-one-of-with-sibling-one-of |
 
   # Review 2026-10-23 faker-14: a bounded byte string is generated in whole blocks
   Scenario Outline: A byte string with length bounds is valid padded base64 within them

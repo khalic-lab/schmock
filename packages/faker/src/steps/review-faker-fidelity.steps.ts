@@ -371,6 +371,21 @@ const CASES: Record<string, FidelityCase> = {
     schema: { allOf: [PET_BASE], anyOf: [petKind("cat"), petKind("dog")] },
     fits: expectPet,
   },
+  "all-of-entry-one-of-with-sibling-one-of": {
+    schema: {
+      allOf: [
+        {
+          ...PET_BASE,
+          oneOf: [{ properties: { tag: { const: "t" } }, required: ["tag"] }],
+        },
+      ],
+      oneOf: [petKind("cat"), petKind("dog")],
+    },
+    fits: (value) => {
+      expectPet(value);
+      expect(record(value).tag).toBe("t");
+    },
+  },
   "defs-base-with-sibling-one-of-refs": {
     schema: {
       allOf: [{ $ref: "#/$defs/Base" }],

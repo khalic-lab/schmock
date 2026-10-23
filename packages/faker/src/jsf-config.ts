@@ -511,7 +511,7 @@ export function normalizeSchemaForJsf(
   };
   for (const copy of copies) dropMergedPropertyFakers(copy, resolve, state);
   for (const copy of [...copies, ...state.replaced]) {
-    carryCompositionThroughAllOf(copy);
+    carryCompositionThroughAllOf(copy, resolve);
     // After the merge pass, which may drop this `faker` and must then leave
     // the `format` in place.
     pinFakerDateToUtc(copy);
@@ -697,27 +697,56 @@ function dropMergedPropertyFakers(
   for (const group of groups) dropOverriddenFakers(group, state);
 }
 
+/** Most branch combinations a `oneOf`/`anyOf` is restated with. */
+const MAX_BRANCH_COMBINATIONS = 64;
+
+/**
+ * One branch list whose every branch meets one branch of each list in
+ * `lists`, as `{allOf: [...]}`; undefined when that takes more than
+ * `MAX_BRANCH_COMBINATIONS` branches.
+ */
+function combineBranches(lists: JsonSchema[][]): JsonSchema[] | undefined {
+  if (lists.length === 1) return lists[0];
+  const total = lists.reduce((product, list) => product * list.length, 1);
+  if (total > MAX_BRANCH_COMBINATIONS) return undefined;
+  let combinations: JsonSchema[][] = [[]];
+  for (const list of lists) {
+    combinations = combinations.flatMap((picked) =>
+      list.map((branch) => [...picked, branch]),
+    );
+  }
+  return combinations.map((picked) => ({ allOf: picked }));
+}
+
 /**
  * json-schema-faker merges `allOf` with a base it strips of every other
  * composition keyword, so a sibling `oneOf`/`anyOf` or `if`/`then`/`else` was
  * never generated. Restate them so the `allOf` merge carries them: a sibling
- * `oneOf`/`anyOf` becomes one more `allOf` entry (unless an entry already
- * holds that keyword, which the merge would overwrite), and an `if` with a
- * `then` or `else` takes the `allOf` into each branch. JSF's oneOf path then
+ * `oneOf`/`anyOf` becomes one more `allOf` entry, and an `if` with a `then`
+ * or `else` takes the `allOf` into each branch. JSF's oneOf path then
  * generates the base's required properties and the chosen branch's, as it
- * does for any `oneOf`.
+ * does for any `oneOf`. The merge keeps only the last entry's `oneOf` (or
+ * `anyOf`), so when entries already hold one, the added entry lists every
+ * combination of their branches with the sibling's instead, up to
+ * `MAX_BRANCH_COMBINATIONS`; past that the sibling is left as it is.
  */
-function carryCompositionThroughAllOf(copy: JsfObjectSchema): void {
+function carryCompositionThroughAllOf(
+  copy: JsfObjectSchema,
+  resolve: ResolveMember,
+): void {
   if (!Array.isArray(copy.allOf)) return;
   let entries: JsonSchema[] = copy.allOf;
   for (const keyword of ["oneOf", "anyOf"] as const) {
     const branches = copy[keyword];
-    if (branches === undefined) continue;
-    const held = entries.some(
-      (entry) => isJsfObject(entry) && entry[keyword] !== undefined,
-    );
-    if (held) continue;
-    entries = [...entries, { [keyword]: branches }];
+    if (!Array.isArray(branches)) continue;
+    // JSF resolves an entry's `$ref` before it merges the entry.
+    const held = entries.flatMap((entry) => {
+      const list = resolve(entry)?.[keyword];
+      return Array.isArray(list) ? [list] : [];
+    });
+    const restated = combineBranches([...held, branches]);
+    if (restated === undefined) continue;
+    entries = [...entries, { [keyword]: restated }];
     delete copy[keyword];
   }
   copy.allOf = entries;

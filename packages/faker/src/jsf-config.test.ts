@@ -753,14 +753,54 @@ describe("composition beside allOf (faker-3)", () => {
     expect(objectOf(withAnyOf.allOf?.[1]).anyOf).toHaveLength(1);
   });
 
-  it("leaves a sibling oneOf alone when an allOf entry already has one", () => {
+  it("combines a sibling oneOf with the one an allOf entry holds", () => {
     const normalized = normalizeSchemaForJsf({
-      allOf: [{ ...PET_BASE, oneOf: [kind("cat")] }],
-      oneOf: [kind("dog")],
+      allOf: [{ ...PET_BASE, oneOf: [kind("cat"), kind("dog")] }],
+      oneOf: [kind("old"), kind("young")],
     });
-    expect(normalized.oneOf).toHaveLength(1);
+    expect(normalized.oneOf).toBeUndefined();
+    expect(normalized.allOf).toHaveLength(2);
+    const combined = objectOf(normalized.allOf?.[1]).oneOf;
+    expect(combined).toHaveLength(4);
+    expect(objectOf(combined?.[1]).allOf).toEqual([kind("cat"), kind("young")]);
+  });
+
+  it("leaves a sibling oneOf alone past the combination limit", () => {
+    const many = (prefix: string) =>
+      Array.from({ length: 9 }, (_, index) => kind(`${prefix}${index}`));
+    const normalized = normalizeSchemaForJsf({
+      allOf: [{ ...PET_BASE, oneOf: many("a") }],
+      oneOf: many("b"),
+    });
+    expect(normalized.oneOf).toHaveLength(9);
     expect(normalized.allOf).toHaveLength(1);
   });
+
+  it.each([
+    ["inline", { ...PET_BASE, oneOf: [{ $ref: "#/$defs/Tagged" }] }],
+    ["behind a $ref", { $ref: "#/$defs/TaggedPet" }],
+  ] satisfies [string, JSONSchema7][])(
+    "generates both oneOfs when an allOf entry holds one (%s)",
+    async (_, entry) => {
+      const schema: JSONSchema7 = {
+        allOf: [entry],
+        oneOf: [kind("cat"), kind("dog")],
+        $defs: {
+          Tagged: {
+            properties: { tag: { const: "t" } },
+            required: ["tag"],
+          },
+          TaggedPet: { ...PET_BASE, oneOf: [{ $ref: "#/$defs/Tagged" }] },
+        },
+      };
+      for (const value of await generateSeeds(schema)) {
+        const pet = objectOf(value);
+        expect(Number.isInteger(pet.id)).toBe(true);
+        expect(pet.tag).toBe("t");
+        expect(["cat", "dog"]).toContain(pet.kind);
+      }
+    },
+  );
 
   it("generates a sibling oneOf or anyOf branch with the allOf", async () => {
     for (const keyword of ["oneOf", "anyOf"] as const) {
