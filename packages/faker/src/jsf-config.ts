@@ -799,6 +799,7 @@ function normalizeSchemaNodeForJsf(
       normalized[key] = value;
     }
   }
+  integerizeStep(normalized);
   normalizeNumericBounds(normalized);
   boundByteLength(normalized);
 
@@ -954,6 +955,108 @@ function numericBound(
   );
   if (bounds.length === 0) return undefined;
   return bounds.reduce(pick);
+}
+
+/** A step with more decimal places than this is left as JSF generates it. */
+const MAX_STEP_PLACES = 15;
+
+/** Decimal places in the shortest form of `value` (0.25 → 2, 1e-7 → 7). */
+function decimalPlaces(value: number): number {
+  const [mantissa, exponent] = value.toExponential().split("e");
+  const fraction = mantissa.split(".")[1]?.length ?? 0;
+  return Math.max(0, fraction - Number(exponent));
+}
+
+function greatestCommonDivisor(left: number, right: number): number {
+  return right === 0 ? left : greatestCommonDivisor(right, left % right);
+}
+
+/**
+ * The smallest integer that is a multiple of `step`: its numerator in lowest
+ * terms (0.5 → 1, 1.5 → 3, 0.3 → 3). Undefined for a step that is already an
+ * integer, or too fine to reduce exactly.
+ */
+function smallestIntegerMultiple(step: number): number | undefined {
+  if (!(step > 0) || Number.isInteger(step)) return undefined;
+  const places = decimalPlaces(step);
+  if (places > MAX_STEP_PLACES) return undefined;
+  const denominator = 10 ** places;
+  const numerator = Math.round(step * denominator);
+  return numerator / greatestCommonDivisor(numerator, denominator);
+}
+
+/**
+ * json-schema-faker generates an integer under `multipleOf` as `factor *
+ * multipleOf`, so a fractional step gave `type: integer` values such as 6.5.
+ * The integers that are multiples of the step are the multiples of its
+ * smallest integer multiple, so the JSF copy steps by that instead.
+ */
+function integerizeStep(normalized: JsfObjectSchema): void {
+  if (normalized.type !== "integer") return;
+  const step = normalized.multipleOf;
+  if (typeof step !== "number") return;
+  const integerStep = smallestIntegerMultiple(step);
+  if (integerStep !== undefined) normalized.multipleOf = integerStep;
+}
+
+/** Neighbouring multiples tried on each side when snapping a number. */
+const SNAP_NEIGHBOURS = 10;
+
+function withinNumericBounds(value: number, schema: JsfObjectSchema): boolean {
+  const { minimum, maximum, exclusiveMinimum, exclusiveMaximum } = schema;
+  return !(
+    (typeof minimum === "number" && value < minimum) ||
+    (typeof maximum === "number" && value > maximum) ||
+    (typeof exclusiveMinimum === "number" && value <= exclusiveMinimum) ||
+    (typeof exclusiveMaximum === "number" && value >= exclusiveMaximum)
+  );
+}
+
+/**
+ * json-schema-faker returns `factor * multipleOf`, which for a decimal step
+ * carries floating-point noise (6.300000000000001 for a step of 0.1), and for
+ * a step merged into an integer node is not an integer. Snap such a number to
+ * a multiple written with the step's decimal places (an integer for
+ * `type: integer`), preferring one whose quotient by the step is an exact
+ * integer: that is the test AJV applies without `multipleOfPrecision`, and it
+ * rejects some clean decimals (73.43 for 0.01). The nearest multiples inside
+ * the node's bounds are tried first. A fixed value (`const`, `enum`,
+ * `default`) is never touched. Runs as json-schema-faker's `outputTransform`,
+ * which sees the merged schema of every generated value.
+ */
+function snapToStep(value: unknown, schema: JsonSchema): unknown {
+  if (typeof value !== "number" || !Number.isFinite(value)) return value;
+  if (!isJsfObject(schema)) return value;
+  const step = schema.multipleOf;
+  if (typeof step !== "number" || !(step > 0) || Number.isInteger(step)) {
+    return value;
+  }
+  if (
+    schema.const !== undefined ||
+    schema.enum !== undefined ||
+    schema.default !== undefined
+  ) {
+    return value;
+  }
+  const integer = schema.type === "integer";
+  const unit = integer ? smallestIntegerMultiple(step) : step;
+  if (unit === undefined) return value;
+  const places = integer ? 0 : decimalPlaces(step);
+  if (places > MAX_STEP_PLACES) return value;
+
+  const factor = Math.round(value / unit);
+  let clean: number | undefined;
+  for (let distance = 0; distance <= SNAP_NEIGHBOURS; distance += 1) {
+    const factors =
+      distance === 0 ? [factor] : [factor - distance, factor + distance];
+    for (const candidateFactor of factors) {
+      const candidate = Number((candidateFactor * unit).toFixed(places));
+      if (!withinNumericBounds(candidate, schema)) continue;
+      if (Number.isInteger(candidate / step)) return candidate;
+      clean ??= candidate;
+    }
+  }
+  return clean ?? value;
 }
 
 /**
@@ -1135,6 +1238,7 @@ export async function generateWithJsf(
     // format registry is module-global, so a consumer's own registration
     // would otherwise change Schmock's generation.
     formats: { ...SCHMOCK_FORMATS },
+    outputTransform: snapToStep,
     extensions: { faker: fakerExtension(createFakerInstance(seed, refDate)) },
   };
 

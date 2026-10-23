@@ -126,3 +126,15 @@ Feature: Faker output honours every keyword of its schema
     Examples:
       | case                |
       | explicit-faker-date |
+
+  # Review 2026-10-23 faker-7: json-schema-faker multiplied the step in floating point
+  Scenario Outline: A decimal multipleOf yields exact multiples without float noise
+    Given the fidelity schema "<case>"
+    When I generate it with 300 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                   |
+      | decimal-step-tenths    |
+      | decimal-step-cents     |
+      | integer-with-half-step |

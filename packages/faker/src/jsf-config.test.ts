@@ -858,3 +858,90 @@ describe("an explicit faker under format date (faker-16)", () => {
     }
   });
 });
+
+describe("a decimal multipleOf (faker-7)", () => {
+  async function numbersFrom(schema: JSONSchema7, seeds = 300) {
+    const values = await generateSeeds(schema, seeds);
+    return values.map((value) => {
+      if (typeof value !== "number") throw new Error("Expected a number");
+      return value;
+    });
+  }
+
+  /** Digits after the decimal point in the shortest form of `value`. */
+  function places(value: number): number {
+    return String(value).split(".")[1]?.length ?? 0;
+  }
+
+  it.each([
+    [0.1, 0, 10],
+    [0.01, 0, 1000],
+    [0.05, -50, 50],
+  ])(
+    "snaps multipleOf %d inside [%d, %d] to clean, exact multiples",
+    async (step, minimum, maximum) => {
+      for (const value of await numbersFrom({
+        type: "number",
+        minimum,
+        maximum,
+        multipleOf: step,
+      })) {
+        expect(places(value)).toBeLessThanOrEqual(places(step));
+        // What AJV computes for multipleOf without multipleOfPrecision.
+        expect(Number.isInteger(value / step)).toBe(true);
+        expect(value).toBeGreaterThanOrEqual(minimum);
+        expect(value).toBeLessThanOrEqual(maximum);
+      }
+    },
+  );
+
+  it("snaps an unbounded decimal step too", async () => {
+    for (const value of await numbersFrom({
+      type: "number",
+      multipleOf: 0.01,
+    })) {
+      expect(places(value)).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("leaves a binary-exact step's values as they were", async () => {
+    for (const value of await numbersFrom({
+      type: "number",
+      minimum: 0,
+      maximum: 10,
+      multipleOf: 0.25,
+    })) {
+      expect(Number.isInteger(value * 4)).toBe(true);
+    }
+  });
+
+  it("generates integers for an integer schema with a fractional step", async () => {
+    for (const schema of [
+      { type: "integer", minimum: 0, maximum: 10, multipleOf: 0.5 },
+      { type: "integer", minimum: 0, maximum: 30, multipleOf: 1.5 },
+      { allOf: [{ type: "integer", maximum: 10 }, { multipleOf: 0.5 }] },
+    ] satisfies JSONSchema7[]) {
+      for (const value of await numbersFrom(schema, 40)) {
+        expect(Number.isInteger(value)).toBe(true);
+      }
+    }
+    for (const value of await numbersFrom(
+      { type: "integer", minimum: 0, maximum: 30, multipleOf: 1.5 },
+      40,
+    )) {
+      expect(value % 3).toBe(0);
+    }
+  });
+
+  it("rewrites an integer schema's fractional step to its smallest integer multiple", () => {
+    expect(
+      normalizeSchemaForJsf({ type: "integer", multipleOf: 0.5 }).multipleOf,
+    ).toBe(1);
+    expect(
+      normalizeSchemaForJsf({ type: "integer", multipleOf: 1.5 }).multipleOf,
+    ).toBe(3);
+    expect(
+      normalizeSchemaForJsf({ type: "number", multipleOf: 0.5 }).multipleOf,
+    ).toBe(0.5);
+  });
+});

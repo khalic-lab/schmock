@@ -1439,6 +1439,10 @@ register them the same way:
 - `format: 'duration'` strings are ISO 8601 durations that pass `ajv-formats`.
 - An explicit `faker` under `format: 'date'` yields the UTC calendar date of
   faker's value, so seeded output does not depend on the machine time zone.
+- A decimal `multipleOf` yields numbers written with the step's decimals whose
+  quotient by the step is an exact integer, the test AJV applies, whenever the
+  bounds leave one nearby. `type: 'integer'` with a fractional step yields
+  integers.
 - `patternProperties` generate at least one key matching a pattern, and enough
   keys to reach `minProperties` without passing `maxProperties`.
 - A lone `minimum`/`exclusiveMinimum` of 1000 or more, or a lone

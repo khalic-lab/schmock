@@ -396,6 +396,26 @@ const CASES: Record<string, FidelityCase> = {
       expect(value).toBe(faker.date.past().toISOString().slice(0, 10));
     },
   },
+  "decimal-step-tenths": {
+    schema: { type: "number", minimum: 0, maximum: 10, multipleOf: 0.1 },
+    fits: (value) => {
+      const decimals = String(numeric(value)).split(".")[1] ?? "";
+      expect(decimals.length).toBeLessThanOrEqual(1);
+      expect(Number.isInteger(numeric(value) / 0.1)).toBe(true);
+    },
+  },
+  "decimal-step-cents": {
+    schema: { type: "number", minimum: 0, maximum: 1000, multipleOf: 0.01 },
+    fits: (value) => {
+      const decimals = String(numeric(value)).split(".")[1] ?? "";
+      expect(decimals.length).toBeLessThanOrEqual(2);
+      expect(Number.isInteger(numeric(value) / 0.01)).toBe(true);
+    },
+  },
+  "integer-with-half-step": {
+    schema: { type: "integer", minimum: 0, maximum: 10, multipleOf: 0.5 },
+    fits: (value) => expect(Number.isInteger(value)).toBe(true),
+  },
   "inclusive-maximum-tighter-than-exclusive": {
     schema: { type: "number", minimum: 0, maximum: 5, exclusiveMaximum: 100 },
     fits: (value) => {
@@ -423,6 +443,7 @@ const OUTLINES = [
   "A byte string with length bounds is valid padded base64 within them",
   "A duration string is a valid ISO 8601 duration",
   "An explicit faker date is the UTC calendar date on every machine",
+  "A decimal multipleOf yields exact multiples without float noise",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {
