@@ -1,9 +1,38 @@
+import type * as Schmock from "@schmock/core";
+import { schmock } from "@schmock/core";
 import Ajv2020 from "ajv/dist/2020.js";
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import { findArrayProperty } from "./generators";
-import { normalizeSchema } from "./normalizer";
+import { collectAccessModes, normalizeSchema } from "./normalizer";
+import { openapi } from "./plugin";
 import { hasType } from "./utils";
+
+function json(schema: object) {
+  return { "application/json": { schema } };
+}
+
+function specWith(
+  paths: object,
+  schemas: object = {},
+  version = "3.0.3",
+): Record<string, unknown> {
+  return {
+    openapi: version,
+    info: { title: "Normalizer", version: "1.0.0" },
+    paths,
+    components: { schemas },
+  };
+}
+
+async function mockFor(
+  spec: Record<string, unknown>,
+  options: Omit<Schmock.OpenApiOptions, "spec"> = {},
+): Promise<Schmock.CallableMockInstance> {
+  const mock = schmock({ state: {} });
+  mock.pipe(await openapi({ spec, ...options }));
+  return mock;
+}
 
 /** Compile with the exact AJV the request pipeline uses (request-pipeline.ts). */
 function acceptsNull(schema: JSONSchema7): boolean {
@@ -145,6 +174,124 @@ describe("normalizeSchema", () => {
       const props = result.properties as Record<string, unknown>;
       expect(props.first).toEqual({ type: "string", default: "hi" });
       expect(props.second).toEqual({ type: "string", default: "hi" });
+    });
+
+    it("prunes required and writeOnly keys in both copies of a $ref that carries siblings", () => {
+      // The dereferenced shape of `{ $ref: User, description }` beside a plain
+      // `$ref: User`: a fresh object that shares User's `properties` and
+      // `required` by reference.
+      const user: Record<string, unknown> = {
+        type: "object",
+        required: ["id", "name"],
+        properties: {
+          id: { type: "integer", readOnly: true },
+          name: { type: "string" },
+          password: { type: "string", writeOnly: true },
+        },
+      };
+      const described = {
+        description: "The reviewer",
+        type: user.type,
+        required: user.required,
+        properties: user.properties,
+      };
+
+      for (const [first, second] of [
+        [user, described],
+        [described, user],
+      ]) {
+        const schema = {
+          type: "object",
+          properties: { first, second },
+        };
+        const request = normalizeSchema(schema, "request").properties as Record<
+          string,
+          JSONSchema7
+        >;
+        const response = normalizeSchema(schema, "response")
+          .properties as Record<string, JSONSchema7>;
+
+        for (const name of ["first", "second"]) {
+          expect(request[name].required).toEqual(["name"]);
+          expect(request[name].properties).not.toHaveProperty("id");
+          expect(request[name].properties).toHaveProperty("password");
+          expect(response[name].required).toEqual(["id", "name"]);
+          expect(response[name].properties).toHaveProperty("id");
+          expect(response[name].properties).not.toHaveProperty("password");
+        }
+      }
+      expect(user.required).toEqual(["id", "name"]);
+      expect(Object.keys(user.properties as object)).toEqual([
+        "id",
+        "name",
+        "password",
+      ]);
+    });
+
+    it("records readOnly for every property that references one flagged component", () => {
+      const timestamp = { type: "string", format: "date-time", readOnly: true };
+      const customer = {
+        type: "object",
+        properties: { createdAt: timestamp },
+      };
+      const result = normalizeSchema(
+        {
+          type: "object",
+          properties: {
+            customer,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        },
+        "response",
+      );
+
+      expect([...collectAccessModes(result).readOnly].sort()).toEqual([
+        "createdAt",
+        "updatedAt",
+      ]);
+      const customerOut = (result.properties as Record<string, JSONSchema7>)
+        .customer;
+      expect([...collectAccessModes(customerOut).readOnly]).toEqual([
+        "createdAt",
+      ]);
+      // The flag is recorded, then dropped from the generated schema.
+      const updatedAt = (result.properties as Record<string, JSONSchema7>)
+        .updatedAt;
+      expect(updatedAt).not.toHaveProperty("readOnly");
+    });
+
+    it("pins discriminator branches without changing the shared component", () => {
+      const cat = {
+        type: "object",
+        properties: { petType: { type: "string" }, meow: { type: "boolean" } },
+      };
+      const result = normalizeSchema(
+        {
+          type: "object",
+          properties: {
+            pet: {
+              discriminator: {
+                propertyName: "petType",
+                "x-schmock-discriminator-values": [["cat"]],
+              },
+              oneOf: [cat],
+            },
+            plainCat: cat,
+          },
+        },
+        "response",
+      );
+
+      const props = result.properties as Record<string, JSONSchema7>;
+      const branch = (props.pet.oneOf as JSONSchema7[])[0];
+      expect(branch.required).toEqual(["petType"]);
+      expect(branch.properties?.petType).toEqual({
+        type: "string",
+        enum: ["cat"],
+      });
+      expect(props.plainCat).not.toHaveProperty("required");
+      expect(props.plainCat.properties?.petType).toEqual({ type: "string" });
     });
 
     it("still truncates a true self-cycle to {} without overflowing", () => {
@@ -342,6 +489,169 @@ describe("normalizeSchema", () => {
         maximum: 150,
       });
       expect(result.required).toEqual(["name"]);
+    });
+  });
+
+  describe("shared components through the plugin", () => {
+    const userSchemas = {
+      User: {
+        type: "object",
+        required: ["id", "name"],
+        properties: {
+          id: { type: "integer", readOnly: true },
+          name: { type: "string" },
+          password: { type: "string", writeOnly: true },
+        },
+      },
+    };
+
+    it("accepts a request that omits a readOnly id in a $ref copy that carries a description", async () => {
+      for (const version of ["3.0.3", "3.1.0"]) {
+        const pair = {
+          type: "object",
+          properties: {
+            author: { $ref: "#/components/schemas/User" },
+            reviewer: {
+              $ref: "#/components/schemas/User",
+              description: "The reviewer",
+            },
+          },
+        };
+        const mock = await mockFor(
+          specWith(
+            {
+              "/reviews": {
+                post: {
+                  requestBody: { required: true, content: json(pair) },
+                  responses: { "201": { description: "ok" } },
+                },
+              },
+            },
+            userSchemas,
+            version,
+          ),
+          { validateRequests: true },
+        );
+
+        const response = await mock.handle("POST", "/reviews", {
+          body: { author: { name: "a" }, reviewer: { name: "b" } },
+        });
+        expect(response.status).toBe(201);
+      }
+    });
+
+    it("never returns a writeOnly value in either copy of a $ref that carries a description", async () => {
+      const team = {
+        type: "object",
+        required: ["lead", "deputy"],
+        properties: {
+          deputy: {
+            $ref: "#/components/schemas/User",
+            description: "The deputy",
+          },
+          lead: { $ref: "#/components/schemas/User" },
+          members: {
+            type: "array",
+            items: { $ref: "#/components/schemas/User" },
+          },
+        },
+      };
+      const mock = await mockFor(
+        specWith(
+          {
+            "/team": {
+              get: {
+                responses: {
+                  "200": { description: "ok", content: json(team) },
+                },
+              },
+            },
+          },
+          {
+            User: {
+              ...userSchemas.User,
+              required: ["name", "password"],
+            },
+          },
+          "3.1.0",
+        ),
+        { fakerSeed: 3 },
+      );
+
+      for (let i = 0; i < 5; i++) {
+        const response = await mock.handle("GET", "/team");
+        expect(response.status).toBe(200);
+        expect(JSON.stringify(response.body)).not.toContain("password");
+      }
+    });
+
+    it("ignores client values for every property that references a shared readOnly component", async () => {
+      const pet = { $ref: "#/components/schemas/Pet" };
+      const mock = await mockFor(
+        specWith(
+          {
+            "/pets": {
+              post: {
+                requestBody: { content: json(pet) },
+                responses: { "201": { description: "ok", content: json(pet) } },
+              },
+              get: {
+                responses: {
+                  "200": {
+                    description: "ok",
+                    content: json({ type: "array", items: pet }),
+                  },
+                },
+              },
+            },
+            "/pets/{id}": {
+              parameters: [
+                {
+                  name: "id",
+                  in: "path",
+                  required: true,
+                  schema: { type: "integer" },
+                },
+              ],
+              get: {
+                responses: { "200": { description: "ok", content: json(pet) } },
+              },
+              patch: {
+                requestBody: { content: json(pet) },
+                responses: { "200": { description: "ok", content: json(pet) } },
+              },
+            },
+          },
+          {
+            Timestamp: { type: "string", format: "date-time", readOnly: true },
+            Pet: {
+              type: "object",
+              properties: {
+                id: { type: "integer" },
+                name: { type: "string" },
+                createdAt: { $ref: "#/components/schemas/Timestamp" },
+                updatedAt: { $ref: "#/components/schemas/Timestamp" },
+              },
+            },
+          },
+        ),
+      );
+      const client = "1999-01-01T00:00:00Z";
+
+      const created = await mock.handle("POST", "/pets", {
+        body: { name: "Rex", createdAt: client, updatedAt: client },
+      });
+      expect(created.status).toBe(201);
+      const body = created.body as Record<string, unknown>;
+      expect(body.createdAt).not.toBe(client);
+      expect(body.updatedAt).not.toBe(client);
+
+      const patched = await mock.handle("PATCH", `/pets/${body.id}`, {
+        body: { updatedAt: client },
+      });
+      expect((patched.body as Record<string, unknown>).updatedAt).toBe(
+        body.updatedAt,
+      );
     });
   });
 

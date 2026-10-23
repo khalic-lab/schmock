@@ -162,46 +162,95 @@ function applyNullability(
   return node;
 }
 
+/**
+ * Copy a normalized node's recorded access modes onto a derived copy, so
+ * {@link collectAccessModes} still finds them through the copy.
+ */
+function inheritAccessModes(copy: object, source: object): void {
+  const recorded = accessModesByNode.get(source);
+  if (recorded) accessModesByNode.set(copy, recorded);
+}
+
+/**
+ * A discriminated branch, required to carry the discriminator property and,
+ * when load-document.ts resolved its mapping values, pinned to them.
+ *
+ * Returns a copy: the normalized branch is memoized, so the same component
+ * used outside this composition must not pick up the pin.
+ */
+function pinDiscriminator(
+  branch: JSONSchema7,
+  propName: string,
+  marked: unknown,
+): JSONSchema7 {
+  const required = Array.isArray(branch.required) ? [...branch.required] : [];
+  if (!required.includes(propName)) required.push(propName);
+  const pinned: JSONSchema7 = { ...branch, required };
+
+  const mappingValues = Array.isArray(marked)
+    ? marked.filter((value): value is string => typeof value === "string")
+    : [];
+  if (mappingValues.length > 0) {
+    const props = isRecord(branch.properties) ? branch.properties : {};
+    const existing = isRecord(props[propName]) ? props[propName] : {};
+    pinned.properties = {
+      ...props,
+      [propName]: { ...existing, enum: mappingValues },
+    };
+  }
+
+  inheritAccessModes(pinned, branch);
+  return pinned;
+}
+
 function normalizeNode(
-  node: Record<string, unknown>,
+  input: Record<string, unknown>,
   direction: "request" | "response",
   stack: Set<object>,
   memo: Map<object, JSONSchema7>,
 ): JSONSchema7 {
-  if (!node || typeof node !== "object" || Array.isArray(node)) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
     return toJsonSchema({});
   }
 
   // Already normalized in this pass — `$ref` dereference makes two occurrences
   // of one component the SAME object, and they must both normalize fully.
-  const cached = memo.get(node);
+  const cached = memo.get(input);
   if (cached) {
     return cached;
   }
 
   // Circular reference detection — break true cycles (node is on the stack)
-  if (stack.has(node)) {
+  if (stack.has(input)) {
     return toJsonSchema({});
   }
-  stack.add(node);
+  stack.add(input);
+
+  // Everything below writes to this copy, never to `input`. Dereferencing
+  // shares one object between every use of a component, and a `$ref` with
+  // siblings is a fresh object that still shares its target's `properties`
+  // and `required`: a change made in place leaked into every other use.
+  const node: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (!key.startsWith("x-")) node[key] = value;
+  }
 
   const isNullable = node.nullable === true;
   delete node.nullable;
+  // The parent's `properties` loop reads these from the input; the normalized
+  // schema carries them only as recorded access modes.
+  delete node.readOnly;
+  delete node.writeOnly;
   const readOnlyNames: string[] = [];
   const writeOnlyNames: string[] = [];
 
-  // Strip x-* extensions
-  for (const key of Object.keys(node)) {
-    if (key.startsWith("x-")) {
-      delete node[key];
-    }
-  }
-
   // Handle discriminator
+  let discriminated: "oneOf" | undefined;
   if (node.discriminator && isRecord(node.discriminator)) {
     const disc = node.discriminator;
     const propName = disc.propertyName;
-    if (typeof propName === "string" && Array.isArray(node.oneOf)) {
+    const branches = node.oneOf;
+    if (typeof propName === "string" && Array.isArray(branches)) {
       // Explicit mapping keys or implicit `$ref` component names are resolved
       // BEFORE dereference in load-document.ts (`markDiscriminatorValues` /
       // `markDereferencedDiscriminatorValues`) and handed over index-aligned
@@ -209,92 +258,60 @@ function normalizeNode(
       const resolvedRaw = disc[DISCRIMINATOR_VALUES_MARKER];
       const resolved = Array.isArray(resolvedRaw) ? resolvedRaw : undefined;
 
-      node.oneOf = node.oneOf.map((branch, index) => {
-        if (!isRecord(branch)) return branch;
-        const normalized = normalizeNode(branch, direction, stack, memo);
-        // Ensure discriminator property is required
-        if (isRecord(normalized)) {
-          const required = Array.isArray(normalized.required)
-            ? [...normalized.required]
-            : [];
-          if (!required.includes(propName)) {
-            required.push(propName);
-          }
-          normalized.required = required;
-
-          // Add enum constraint for the discriminator value
-          const marked = resolved?.[index];
-          const mappingValues = Array.isArray(marked)
-            ? marked.filter(
-                (value): value is string => typeof value === "string",
-              )
-            : [];
-          if (mappingValues.length > 0) {
-            const props = isRecord(normalized.properties)
-              ? normalized.properties
-              : {};
-            const existingRaw = props[propName] ?? {};
-            const existing = isRecord(existingRaw) ? existingRaw : {};
-            props[propName] = { ...existing, enum: mappingValues };
-            normalized.properties = props;
-          }
-        }
-        return normalized;
-      });
+      node.oneOf = branches.map((branch: unknown, index) =>
+        isRecord(branch)
+          ? pinDiscriminator(
+              normalizeNode(branch, direction, stack, memo),
+              propName,
+              resolved?.[index],
+            )
+          : branch,
+      );
+      discriminated = "oneOf";
     }
     delete node.discriminator;
   }
 
   // Handle readOnly/writeOnly on properties
   if (isRecord(node.properties)) {
-    const props = node.properties;
-    const required = Array.isArray(node.required)
+    const declaredRequired = Array.isArray(node.required)
       ? node.required.filter((r): r is string => typeof r === "string")
       : [];
-    const keysToRemove: string[] = [];
+    const props: Record<string, unknown> = {};
+    const stripped: string[] = [];
 
-    for (const [propName, propSchemaRaw] of Object.entries(props)) {
-      if (!isRecord(propSchemaRaw)) continue;
-      const propSchema = propSchemaRaw;
+    for (const [propName, propSchema] of Object.entries(node.properties)) {
+      if (!isRecord(propSchema)) {
+        props[propName] = propSchema;
+        continue;
+      }
 
-      // Recorded in both directions: the flags are erased below either way.
+      // Read, never deleted: every property referencing one component shares
+      // its object, and each of them has to see the flag.
       if (propSchema.readOnly === true) readOnlyNames.push(propName);
       if (propSchema.writeOnly === true) writeOnlyNames.push(propName);
 
-      // readOnly fields: remove from request schemas
-      if (direction === "request" && propSchema.readOnly === true) {
-        keysToRemove.push(propName);
-        continue;
-      }
-      // writeOnly fields: remove from response schemas
-      if (direction === "response" && propSchema.writeOnly === true) {
-        keysToRemove.push(propName);
+      // readOnly fields leave request schemas, writeOnly ones response schemas
+      if (
+        (direction === "request" && propSchema.readOnly === true) ||
+        (direction === "response" && propSchema.writeOnly === true)
+      ) {
+        stripped.push(propName);
         continue;
       }
 
-      // Clean up the flags after handling
-      delete propSchema.readOnly;
-      delete propSchema.writeOnly;
-
-      // Recurse into property
       props[propName] = normalizeNode(propSchema, direction, stack, memo);
     }
+    node.properties = props;
 
-    for (const key of keysToRemove) {
-      delete props[key];
-      const reqIdx = required.indexOf(key);
-      if (reqIdx !== -1) {
-        required.splice(reqIdx, 1);
-      }
-    }
-
+    const required = declaredRequired.filter(
+      (name) => !stripped.includes(name),
+    );
     if (required.length > 0) {
       node.required = required;
-    } else if (keysToRemove.length > 0 && Array.isArray(node.required)) {
-      // If we removed all required fields, clean up
-      if (required.length === 0) {
-        delete node.required;
-      }
+    } else if (stripped.length > 0 && Array.isArray(node.required)) {
+      // Every required field was stripped
+      delete node.required;
     }
   }
 
@@ -347,8 +364,9 @@ function normalizeNode(
     );
   }
 
-  // Recurse into composition keywords
+  // Recurse into composition keywords (discriminated branches are done)
   for (const keyword of ["allOf", "anyOf", "oneOf"]) {
+    if (keyword === discriminated) continue;
     const keywordValue = node[keyword];
     if (Array.isArray(keywordValue)) {
       node[keyword] = keywordValue.map((branch: unknown) =>
@@ -374,12 +392,13 @@ function normalizeNode(
 
   // Recurse into patternProperties
   if (isRecord(node.patternProperties)) {
-    const pp = node.patternProperties;
-    for (const [pattern, schema] of Object.entries(pp)) {
-      if (isRecord(schema)) {
-        pp[pattern] = normalizeNode(schema, direction, stack, memo);
-      }
+    const pp: Record<string, unknown> = {};
+    for (const [pattern, schema] of Object.entries(node.patternProperties)) {
+      pp[pattern] = isRecord(schema)
+        ? normalizeNode(schema, direction, stack, memo)
+        : schema;
     }
+    node.patternProperties = pp;
   }
 
   const out = toJsonSchema(isNullable ? applyNullability(node) : node);
@@ -389,7 +408,7 @@ function normalizeNode(
       writeOnly: new Set(writeOnlyNames),
     });
   }
-  stack.delete(node);
-  memo.set(node, out);
+  stack.delete(input);
+  memo.set(input, out);
   return out;
 }
