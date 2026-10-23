@@ -107,6 +107,40 @@ function isValidParamLocation(
 }
 
 /**
+ * The JSON Schema keywords a Swagger 2.0 header or non-body parameter carries
+ * inline next to its `type`. The rest of the object (`name`, `in`,
+ * `collectionFormat`, `description`) describes the wire, not the value.
+ */
+const SWAGGER2_INLINE_SCHEMA_KEYWORDS = [
+  "type",
+  "format",
+  "items",
+  "default",
+  "enum",
+  "multipleOf",
+  "maximum",
+  "exclusiveMaximum",
+  "minimum",
+  "exclusiveMinimum",
+  "maxLength",
+  "minLength",
+  "pattern",
+  "maxItems",
+  "minItems",
+  "uniqueItems",
+] as const;
+
+function swagger2InlineSchema(
+  node: Record<string, unknown>,
+): Record<string, unknown> {
+  const schema: Record<string, unknown> = {};
+  for (const keyword of SWAGGER2_INLINE_SCHEMA_KEYWORDS) {
+    if (node[keyword] !== undefined) schema[keyword] = node[keyword];
+  }
+  return schema;
+}
+
+/**
  * Swagger 2.0 declares a file download as a response schema of `type: file`.
  * JSON Schema has no `file` type, so faker and Ajv both rejected it; read it
  * as the binary string OpenAPI 3 writes for the same payload. Only a root is
@@ -159,10 +193,7 @@ export function extractParameters(
             : undefined;
         } else {
           schema = p.type
-            ? ctx.normalize(
-                { type: p.type, format: p.format, enum: p.enum },
-                "request",
-              )
+            ? ctx.normalize(swagger2InlineSchema(p), "request")
             : undefined;
         }
       } else {
@@ -472,14 +503,9 @@ function extractResponseHeaders(
     let headerSchema: JSONSchema7 | undefined;
 
     if (ctx.dialect === "swagger2") {
-      // Swagger 2.0: type/format/enum are inline on the header
       if (headerRaw.type) {
         headerSchema = ctx.normalize(
-          {
-            type: headerRaw.type,
-            format: headerRaw.format,
-            enum: headerRaw.enum,
-          },
+          swagger2InlineSchema(headerRaw),
           "response",
         );
       }

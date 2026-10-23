@@ -13,3 +13,10 @@ Feature: Reading an operation's contract out of a spec
     When I download the report
     Then the download response status is 200
     And the download response content type is "application/pdf"
+
+  Scenario: Swagger 2.0 response headers honour their inline default, bounds and length
+    Given a mock from a Swagger 2.0 spec whose item list declares constrained headers
+    When I list the items
+    Then the rate limit header uses its default "100"
+    And the page size header uses its minimum "10"
+    And the token header is "xxxxxxxx" at its minimum length

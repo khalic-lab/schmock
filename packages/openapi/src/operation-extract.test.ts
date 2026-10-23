@@ -12,6 +12,87 @@ function swagger2(paths: Record<string, unknown>) {
 }
 
 describe("operation extraction", () => {
+  describe("Swagger 2.0 inline schema keywords", () => {
+    const headerSpec = swagger2({
+      "/items": {
+        get: {
+          parameters: [
+            {
+              name: "limit",
+              in: "query",
+              type: "integer",
+              minimum: 1,
+              maximum: 50,
+              default: 10,
+            },
+          ],
+          responses: {
+            "200": {
+              description: "OK",
+              headers: {
+                "X-Rate-Limit": { type: "integer", default: 100 },
+                "X-Page-Size": { type: "integer", minimum: 10 },
+                "X-Version": { type: "string", default: "v2" },
+                "X-Token": { type: "string", minLength: 8 },
+                "X-Retry": {
+                  type: "number",
+                  minimum: 2,
+                  exclusiveMinimum: true,
+                  maximum: 4,
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    it("keeps every JSON Schema keyword a header declares inline", async () => {
+      const spec = await parseSpec(headerSpec);
+      const headers = spec.paths[0].responses.get(200)?.headers;
+
+      expect(headers?.["X-Rate-Limit"].schema).toEqual({
+        type: "integer",
+        default: 100,
+      });
+      expect(headers?.["X-Token"].schema).toEqual({
+        type: "string",
+        minLength: 8,
+      });
+      expect(headers?.["X-Retry"].schema).toEqual({
+        type: "number",
+        exclusiveMinimum: 2,
+        maximum: 4,
+      });
+    });
+
+    it("keeps every JSON Schema keyword a parameter declares inline", async () => {
+      const spec = await parseSpec(headerSpec);
+
+      expect(spec.paths[0].parameters[0].schema).toEqual({
+        type: "integer",
+        minimum: 1,
+        maximum: 50,
+        default: 10,
+      });
+    });
+
+    it("generates header values from those keywords", async () => {
+      const mock = schmock();
+      mock.pipe(await openapi({ spec: headerSpec }));
+
+      const response = await mock.handle("GET", "/items");
+
+      expect(response.headers).toMatchObject({
+        "X-Rate-Limit": "100",
+        "X-Page-Size": "10",
+        "X-Version": "v2",
+        "X-Token": "xxxxxxxx",
+        "X-Retry": "3",
+      });
+    });
+  });
+
   describe("Swagger 2.0 type: file", () => {
     const downloadSpec = swagger2({
       "/report": {

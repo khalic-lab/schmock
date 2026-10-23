@@ -22,6 +22,27 @@ const fileDownloadSpec = {
   },
 };
 
+const constrainedHeaderSpec = {
+  swagger: "2.0",
+  info: { title: "items", version: "1.0.0" },
+  paths: {
+    "/items": {
+      get: {
+        responses: {
+          "200": {
+            description: "OK",
+            headers: {
+              "X-Rate-Limit": { type: "integer", default: 100 },
+              "X-Page-Size": { type: "integer", minimum: 10 },
+              "X-Token": { type: "string", minLength: 8 },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -47,6 +68,35 @@ describeFeature(feature, ({ Scenario }) => {
 
       And("the download response content type is {string}", (_, type) => {
         expect(response.headers["content-type"]).toBe(type);
+      });
+    },
+  );
+
+  Scenario(
+    "Swagger 2.0 response headers honour their inline default, bounds and length",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a mock from a Swagger 2.0 spec whose item list declares constrained headers",
+        async () => {
+          mock = schmock();
+          mock.pipe(await openapi({ spec: constrainedHeaderSpec }));
+        },
+      );
+
+      When("I list the items", async () => {
+        response = await mock.handle("GET", "/items");
+      });
+
+      Then("the rate limit header uses its default {string}", (_, value) => {
+        expect(response.headers["X-Rate-Limit"]).toBe(value);
+      });
+
+      And("the page size header uses its minimum {string}", (_, value) => {
+        expect(response.headers["X-Page-Size"]).toBe(value);
+      });
+
+      And("the token header is {string} at its minimum length", (_, value) => {
+        expect(response.headers["X-Token"]).toBe(value);
       });
     },
   );
