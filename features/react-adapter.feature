@@ -43,3 +43,12 @@ Feature: React Adapter
     Given two roots whose mocks both serve the same route
     When I rerender the older root with a new request hook
     Then the newer root should still win the shared route
+
+  # React runs layout cleanups, but not passive ones, when a Suspense boundary
+  # hides content it already showed, so the lease is released from a passive
+  # cleanup.
+  Scenario: A provider keeps intercepting while a Suspense boundary above it shows its fallback again
+    Given a provider inside a Suspense boundary whose content is shown
+    When its content suspends again on a plain update
+    Then the Suspense fallback should be shown
+    And requests should still be answered by the provider's mock

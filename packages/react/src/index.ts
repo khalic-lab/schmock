@@ -110,8 +110,19 @@ function InterceptionInstaller({ mock, options }: InterceptionInstallerProps) {
   // owner and legitimately takes a new position in the interception stack;
   // option changes must not, or this provider would silently steal precedence
   // from another root that registered later.
+  //
+  // It is claimed in a commit (layout) effect, so a descendant's layout
+  // effect is intercepted on the first mount, but released from a passive
+  // effect's cleanup. A Suspense boundary that hides content it already
+  // showed runs the layout cleanups of that content and keeps its passive
+  // effects, so a layout cleanup would leave fetch unpatched for as long as
+  // the fallback shows, and lose the provider its dispatch position.
   useCommitEffect(() => {
     if (!hasDom()) return;
+
+    // Still held: a reveal after such a hide runs this effect again.
+    const committed = committedRef.current;
+    if (committed?.mock === mock && committed.handle.active) return;
 
     // Claim the render's lease; take a fresh one when there is none — after
     // StrictMode's simulated unmount, or once an uncommitted lease lapsed.
@@ -129,10 +140,21 @@ function InterceptionInstaller({ mock, options }: InterceptionInstallerProps) {
     }
     pendingRef.current = null;
     committedRef.current = lease;
+  }, [mock]);
 
+  // Declared after the claim so that, on a commit, it sees the lease the
+  // claim just took. A new mock's claim runs before this cleanup for the old
+  // one, so the cleanup releases the lease it saw, plus any later lease for
+  // the same mock, never the new mock's.
+  useEffect(() => {
+    const claimed = committedRef.current;
     return () => {
-      if (committedRef.current === lease) committedRef.current = null;
-      lease.handle.restore();
+      const current = committedRef.current;
+      if (current !== null && (current === claimed || current.mock === mock)) {
+        committedRef.current = null;
+        current.handle.restore();
+      }
+      claimed?.handle.restore();
     };
   }, [mock]);
 

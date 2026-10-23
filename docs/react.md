@@ -59,6 +59,11 @@ reconfiguring one root never promotes it above a root that mounted later.
 Interception is re-acquired only when the `mock` prop itself changes — a new
 owner legitimately takes a new position at the front.
 
+A Suspense boundary above the provider that hides content it already showed
+(a plain, non-transition update that suspends) does not release the lease: the
+provider keeps intercepting while the fallback shows, and keeps its dispatch
+position when the content is revealed.
+
 Calling `mock.reset()` while the provider is mounted clears routes, state,
 history, plugins, and listeners but preserves the provider's explicit
 interception lease. Re-register routes on the same mock without remounting the

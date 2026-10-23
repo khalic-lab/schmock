@@ -2,8 +2,8 @@
 
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { Suspense, use, useEffect, useLayoutEffect, useState } from "react";
 import { expect, type Mock, vi } from "vitest";
 import { SchmockProvider, useSchmock } from "../index.js";
 
@@ -393,6 +393,59 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         const response = await fetch("http://localhost/api/shared");
         expect(await response.json()).toEqual({ source: "newer" });
       });
+    },
+  );
+
+  Scenario(
+    "A provider keeps intercepting while a Suspense boundary above it shows its fallback again",
+    ({ Given, When, Then, And }) => {
+      let suspendOn: (promise: Promise<void>) => void = () => {};
+      const never = new Promise<void>(() => {});
+
+      function Gate() {
+        const [pending, setPending] = useState<Promise<void> | undefined>();
+        suspendOn = setPending;
+        if (pending !== undefined) use(pending);
+        return <p>suspense content</p>;
+      }
+
+      Given(
+        "a provider inside a Suspense boundary whose content is shown",
+        async () => {
+          originalFetch = globalThis.fetch;
+          globalThis.fetch = vi.fn(async () =>
+            Response.json({ source: "net" }),
+          );
+          mock = schmock();
+          mock("GET /api/suspended", { source: "mock" });
+          await act(async () => {
+            render(
+              <Suspense fallback={<p>suspense fallback</p>}>
+                <SchmockProvider mock={mock}>
+                  <Gate />
+                </SchmockProvider>
+              </Suspense>,
+            );
+          });
+          expect(screen.getByText("suspense content")).toBeDefined();
+        },
+      );
+
+      When("its content suspends again on a plain update", () => {
+        act(() => suspendOn(never));
+      });
+
+      Then("the Suspense fallback should be shown", () => {
+        expect(screen.getByText("suspense fallback")).toBeDefined();
+      });
+
+      And(
+        "requests should still be answered by the provider's mock",
+        async () => {
+          const response = await fetch("http://localhost/api/suspended");
+          expect(await response.json()).toEqual({ source: "mock" });
+        },
+      );
     },
   );
 });
