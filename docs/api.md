@@ -366,8 +366,16 @@ Express and Angular adapters do.
 An empty JSON body reaches the route as `undefined`. With `passthrough: false`,
 a JSON body that does not parse gets 400
 `{ error: 'Malformed JSON request body', code: 'MALFORMED_JSON' }` before any
-route runs, and nothing enters history, as with the Node ingress. With
-`passthrough: true` a matching route still receives the unparsed text.
+route runs, and nothing enters history, as with the Node ingress. A JSON body
+nested more than 256 levels deep is refused the same way, with
+`{ error: 'JSON request body nests deeper than 256 levels', code: 'JSON_TOO_DEEP' }`:
+it parses, but it could never be serialized back, so a route that stored it
+would answer every later request that includes it with a 500. With
+`passthrough: true` a matching route still receives the unparsed text of
+either body. The interceptor and `collectBody()` share one decode table and one
+depth-capped JSON parser, so a non-empty JSON, form, text or binary body
+reaches a route as the same value through `mock.intercept()` and
+`mock.listen()`.
 
 A method outside `HTTP_METHODS` (`PROPFIND`, `PURGE`, …), including one a
 `beforeRequest` hook produces, is a route miss: it passes through when

@@ -42,6 +42,14 @@ Feature: Core response and error-path review fixes
     Then the fetched status is 500
     And the fetched body carries the formatted message "inner call gave up"
 
+  Scenario: An intercepted JSON body nested past 256 levels is refused like the Node ingress refuses it
+    Given a mock whose route "POST /items" stores the body it receives
+    And an intercept with passthrough off
+    When I POST a JSON array nested 300 levels deep to "/items" through that intercept
+    Then the fetched status is 400
+    And the fetched body is the error "JSON request body nests deeper than 256 levels" with code "JSON_TOO_DEEP"
+    And the route never ran and history is empty
+
   # ── Debug mode ───────────────────────────────────────────────────────────
 
   Scenario: Debug mode answers requests where crypto.randomUUID is unavailable

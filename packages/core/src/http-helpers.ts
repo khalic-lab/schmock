@@ -2,6 +2,12 @@ import { HTTP_METHODS, isHttpMethod } from "./constants.js";
 import { errorMessage, SchmockError, toError } from "./errors.js";
 import { getHeader, hasHeader } from "./headers.js";
 import {
+  HttpIngressError,
+  parseFormBody,
+  parseJsonBody,
+  requestBodyKindOf,
+} from "./request-body.js";
+import {
   buildJsonErrorResponse,
   serializeResponseBody,
   withDefaultContentType,
@@ -27,23 +33,10 @@ interface ResponseWritable {
   end(body?: string | Uint8Array): this;
 }
 
-export type HttpIngressErrorCode =
-  | "MALFORMED_JSON"
-  | "JSON_TOO_DEEP"
-  | "MALFORMED_MULTIPART"
-  | "PAYLOAD_TOO_LARGE";
-
-/** An HTTP client error raised while collecting an incoming request body. */
-export class HttpIngressError extends Error {
-  constructor(
-    public readonly status: 400 | 413,
-    public readonly code: HttpIngressErrorCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "HttpIngressError";
-  }
-}
+// Declared with the body decoder the fetch interceptor shares; exported from
+// here, as before.
+export type { HttpIngressErrorCode } from "./request-body.js";
+export { HttpIngressError } from "./request-body.js";
 
 /**
  * Convert Node.js IncomingMessage headers to a flat Record<string, string>.
@@ -90,59 +83,6 @@ function requestAbortedError(): Error {
   return error;
 }
 
-/**
- * Deepest JSON nesting a request body may carry. A body nested far deeper
- * parses fine but cannot be serialized back (JSON.stringify overflows the
- * stack), so a handler that stores it poisons every later response that
- * includes it. Rejecting it at ingress keeps that from ever happening.
- */
-const MAX_JSON_BODY_DEPTH = 256;
-
-function baseMediaTypeOf(contentType: string): string {
-  return contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-}
-
-function isJsonMediaType(mediaType: string): boolean {
-  return mediaType === "application/json" || mediaType.endsWith("+json");
-}
-
-/** Whether a parsed JSON value nests deeper than `maxDepth` containers. */
-function exceedsJsonDepth(value: unknown, maxDepth: number): boolean {
-  const pending: Array<{ value: unknown; depth: number }> = [
-    { value, depth: 0 },
-  ];
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    if (typeof next.value !== "object" || next.value === null) continue;
-    const depth = next.depth + 1;
-    if (depth > maxDepth) return true;
-    for (const child of Object.values(next.value)) {
-      pending.push({ value: child, depth });
-    }
-  }
-  return false;
-}
-
-function parseJsonBody(text: string): unknown {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new HttpIngressError(
-      400,
-      "MALFORMED_JSON",
-      "Malformed JSON request body",
-    );
-  }
-  if (exceedsJsonDepth(parsed, MAX_JSON_BODY_DEPTH)) {
-    throw new HttpIngressError(
-      400,
-      "JSON_TOO_DEEP",
-      `JSON request body nests deeper than ${MAX_JSON_BODY_DEPTH} levels`,
-    );
-  }
-  return parsed;
-}
-
 async function parseMultipartBody(
   bytes: Uint8Array<ArrayBuffer>,
   contentType: string,
@@ -162,35 +102,25 @@ async function parseMultipartBody(
 
 /**
  * Turn the collected bytes into the body shape the fetch interceptor gives
- * the same request, so `mock.listen()`, the CLI and `mock.intercept()` hand a
- * handler the same value:
- *
- * - `application/json` and `+json`: the parsed value
- * - `application/x-www-form-urlencoded`: a flat object, last duplicate wins
- * - `text/*`: a UTF-8 string
- * - `multipart/*`: `FormData`
- * - anything else, including no content type: an `ArrayBuffer`
+ * the same request (see `RequestBodyKind`), so `mock.listen()`, the CLI and
+ * `mock.intercept()` hand a handler the same value.
  */
 function decodeRequestBody(
   bytes: Uint8Array<ArrayBuffer>,
   contentType: string,
 ): unknown {
-  const mediaType = baseMediaTypeOf(contentType);
-  if (isJsonMediaType(mediaType)) {
-    return parseJsonBody(new TextDecoder().decode(bytes));
+  switch (requestBodyKindOf(contentType)) {
+    case "json":
+      return parseJsonBody(new TextDecoder().decode(bytes));
+    case "form":
+      return parseFormBody(new TextDecoder().decode(bytes));
+    case "text":
+      return new TextDecoder().decode(bytes);
+    case "multipart":
+      return parseMultipartBody(bytes, contentType);
+    case "binary":
+      return bytes.buffer;
   }
-  if (mediaType === "application/x-www-form-urlencoded") {
-    return Object.fromEntries(
-      new URLSearchParams(new TextDecoder().decode(bytes)),
-    );
-  }
-  if (mediaType.startsWith("text/")) {
-    return new TextDecoder().decode(bytes);
-  }
-  if (mediaType.startsWith("multipart/")) {
-    return parseMultipartBody(bytes, contentType);
-  }
-  return bytes.buffer;
 }
 
 /** Copy the chunks into one buffer that the body exclusively owns. */

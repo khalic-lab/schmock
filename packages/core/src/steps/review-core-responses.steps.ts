@@ -284,6 +284,58 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     },
   );
 
+  Scenario(
+    "An intercepted JSON body nested past 256 levels is refused like the Node ingress refuses it",
+    ({ Given, And, When, Then }) => {
+      let routeRuns = 0;
+
+      Given(
+        'a mock whose route "POST /items" stores the body it receives',
+        () => {
+          routeRuns = 0;
+          const stored: unknown[] = [];
+          mock = schmock();
+          mock("POST /items", ({ body }) => {
+            routeRuns += 1;
+            stored.push(body);
+            return [201, { stored: stored.length }];
+          });
+        },
+      );
+
+      And("an intercept with passthrough off", () => {
+        intercept = currentMock().intercept({ passthrough: false });
+      });
+
+      When(
+        "I POST a JSON array nested {int} levels deep to {string} through that intercept",
+        async (_, depth: number, path: string) => {
+          fetched = await fetch(`http://localhost${path}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: `${"[".repeat(depth)}${"]".repeat(depth)}`,
+          });
+        },
+      );
+
+      Then("the fetched status is {int}", (_, status: number) => {
+        expect(currentResponse().status).toBe(status);
+      });
+
+      And(
+        "the fetched body is the error {string} with code {string}",
+        async (_, error: string, code: string) => {
+          expect(await currentResponse().json()).toEqual({ error, code });
+        },
+      );
+
+      And("the route never ran and history is empty", () => {
+        expect(routeRuns).toBe(0);
+        expect(currentMock().history()).toEqual([]);
+      });
+    },
+  );
+
   // ── Debug mode ─────────────────────────────────────────────────────────
 
   Scenario(

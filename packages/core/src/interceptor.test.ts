@@ -847,6 +847,73 @@ describe("mock.intercept()", () => {
     handle.restore();
   });
 
+  // The same 256-level cap mock.listen() applies: a body nested deeper parses
+  // but can never be serialized back, so a route that stores it would answer
+  // every later request that includes it with a 500.
+  describe("JSON bodies nested past the depth limit", () => {
+    const tooDeep = `${"[".repeat(300)}${"]".repeat(300)}`;
+    const deepEnough = `${"[".repeat(256)}${"]".repeat(256)}`;
+
+    it("answers 400 JSON_TOO_DEEP before any route runs when passthrough is off", async () => {
+      const route = vi.fn(() => [201, { stored: true }]);
+      mock("POST /api/items", route);
+      const handle = mock.intercept({ passthrough: false });
+
+      try {
+        const response = await fetch("http://localhost/api/items", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: tooDeep,
+        });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({
+          error: "JSON request body nests deeper than 256 levels",
+          code: "JSON_TOO_DEEP",
+        });
+        expect(route).not.toHaveBeenCalled();
+        expect(mock.history()).toHaveLength(0);
+      } finally {
+        handle.restore();
+      }
+    });
+
+    it("hands a matching route the unparsed text when passthrough is on", async () => {
+      mock("POST /api/items", ({ body }) => [200, { type: typeof body }]);
+      const handle = mock.intercept();
+
+      try {
+        const response = await fetch("http://localhost/api/items", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: tooDeep,
+        });
+        expect(await response.json()).toEqual({ type: "string" });
+      } finally {
+        handle.restore();
+      }
+    });
+
+    it("still parses a body nested exactly to the limit", async () => {
+      mock("POST /api/items", ({ body }) => [
+        200,
+        { array: Array.isArray(body) },
+      ]);
+      const handle = mock.intercept({ passthrough: false });
+
+      try {
+        const response = await fetch("http://localhost/api/items", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: deepEnough,
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ array: true });
+      } finally {
+        handle.restore();
+      }
+    });
+  });
+
   it("passes unmatched malformed JSON through without entering history", async () => {
     const baselineFetch = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {

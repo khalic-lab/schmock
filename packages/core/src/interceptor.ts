@@ -11,6 +11,12 @@ import {
 } from "./constants.js";
 import { toError } from "./errors.js";
 import {
+  HttpIngressError,
+  parseFormBody,
+  parseJsonBody,
+  requestBodyKindOf,
+} from "./request-body.js";
+import {
   buildFormattedErrorResponse,
   buildJsonErrorResponse,
   normalizeResponse,
@@ -527,47 +533,49 @@ function abortedExchange(
   };
 }
 
-function normalizeMediaType(contentType: string | null): string {
-  return contentType?.split(";", 1)[0].trim().toLowerCase() ?? "";
-}
-
 interface ExtractedBody {
   value: unknown;
-  /** The body claims a JSON media type but does not parse; `value` is its text. */
-  malformedJson: boolean;
+  /**
+   * Why a JSON body was refused, as the Node ingress refuses it: it does not
+   * parse, or it nests past the depth limit. `value` is then its text.
+   */
+  rejected?: HttpIngressError;
 }
 
+/**
+ * Read a request body into the shape `collectBody()` gives the same request,
+ * by the shared decode table and JSON parser. A refused JSON body is reported
+ * rather than thrown, so the lease can answer it 400 or route its text.
+ * Multipart is read with the platform's own parser, whose rejection
+ * propagates as before.
+ */
 async function extractBody(request: Request): Promise<ExtractedBody> {
-  if (request.body === null) return { value: undefined, malformedJson: false };
+  if (request.body === null) return { value: undefined };
 
-  const mediaType = normalizeMediaType(request.headers.get("content-type"));
-  if (mediaType !== "application/json" && !mediaType.endsWith("+json")) {
-    return { value: await extractNonJsonBody(request), malformedJson: false };
-  }
-
-  const text = await request.clone().text();
-  // An empty JSON body is no body at all, as the Node ingress reads it.
-  if (text === "") return { value: undefined, malformedJson: false };
-  try {
-    return { value: JSON.parse(text), malformedJson: false };
-  } catch {
-    return { value: text, malformedJson: true };
-  }
-}
-
-async function extractNonJsonBody(request: Request): Promise<unknown> {
   const body = request.clone();
-  const mediaType = normalizeMediaType(request.headers.get("content-type"));
-  if (mediaType === "application/x-www-form-urlencoded") {
-    return Object.fromEntries(new URLSearchParams(await body.text()));
+  switch (requestBodyKindOf(request.headers.get("content-type"))) {
+    case "json": {
+      const text = await body.text();
+      // An empty JSON body is no body at all, as the Node ingress reads it.
+      if (text === "") return { value: undefined };
+      try {
+        return { value: parseJsonBody(text) };
+      } catch (error) {
+        if (error instanceof HttpIngressError) {
+          return { value: text, rejected: error };
+        }
+        throw error;
+      }
+    }
+    case "form":
+      return { value: parseFormBody(await body.text()) };
+    case "text":
+      return { value: await body.text() };
+    case "multipart":
+      return { value: await body.formData() };
+    case "binary":
+      return { value: await body.arrayBuffer() };
   }
-  if (mediaType.startsWith("text/")) {
-    return body.text();
-  }
-  if (mediaType.startsWith("multipart/")) {
-    return body.formData();
-  }
-  return body.arrayBuffer();
 }
 
 /** An admission's route probe (`hasRoute`), when it carries one. */
@@ -808,19 +816,20 @@ export function createFetchLease(
       try {
         const body: ExtractedBody =
           routeProbe !== undefined && !routeProbe(initialMethod, path)
-            ? { value: undefined, malformedJson: false }
+            ? { value: undefined }
             : await awaitWithAbort(extractBody(request), request.signal);
         if (draft.observed) draft.requestBody = snapshotRequestBody(body.value);
         throwIfAborted(request.signal);
 
         // With passthrough off the lease owns every request that reaches it,
-        // as the Node server does, so a JSON body that does not parse gets
-        // the server's 400 before any route runs or history records it.
-        if (body.malformedJson && !passthrough) {
+        // as the Node server does, so a JSON body that does not parse, or
+        // nests too deep to ever be serialized back, gets the server's 400
+        // before any route runs or history records it.
+        if (body.rejected !== undefined && !passthrough) {
           return jsonErrorResponse({
-            status: 400,
-            error: "Malformed JSON request body",
-            code: "MALFORMED_JSON",
+            status: body.rejected.status,
+            error: body.rejected.message,
+            code: body.rejected.code,
             context,
           });
         }
