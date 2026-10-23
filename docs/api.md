@@ -752,10 +752,13 @@ toRouteKey(m, path)   // build a RouteKey, supplying the required leading slash
 `toHttpMethod()` compares case-insensitively and throws `InvalidHttpMethodError`
 (`INVALID_HTTP_METHOD`) for any other verb, with the message
 `Invalid HTTP method: "<method>"`. It used to throw a plain `Error` with the same
-message, so `err instanceof SchmockError` now catches it. With
-`passErrorsToNext: false`, the Express adapter now renders a `beforeRequest`
-that rewrites the method to an unsupported verb as a 500 with code
-`INVALID_HTTP_METHOD` instead of `INTERNAL_ERROR`.
+message, so `err instanceof SchmockError` now catches it. The Express adapter
+does not raise it for a `beforeRequest` that rewrites the method to an
+unsupported verb: no route can match that request, so the middleware calls
+`next()` (unless the hook has already answered it) and the rest of the Express
+stack answers it, whatever `passErrorsToNext` says, as an incoming
+non-standard method already is and as the Angular adapter passes such a
+request to the real backend.
 
 ### Response helpers
 
