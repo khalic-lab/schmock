@@ -660,7 +660,30 @@ const res = await mock.handle('GET', '/protected-resource', {
 Supported schemes: Bearer, Basic, API Key (header, query, or cookie), OAuth2,
 and OpenID Connect. Security simulation verifies that credentials are present;
 it does not authenticate their value. An operation-level `security: []`
-explicitly overrides global security and makes that operation public.
+explicitly overrides global security and makes that operation public. A scheme
+of any other type (OpenAPI 3.1 `mutualTLS`, for one) is skipped with a parse
+warning, and a requirement that names it is never satisfied.
+
+A cookie API key is read from the request's `Cookie` header, and in a browser
+that header never reaches the mock. Page code cannot set it, and the fetch
+interceptor answers before the browser attaches its cookie jar. So under
+`mock.intercept()`, the React and Vue adapters, the DevTools relay and the
+Angular interceptor, an operation secured only by a cookie API key answers 401
+even when the browser holds the cookie. Because only presence is checked, add
+the cookie in the adapter's `beforeRequest` hook; any value works, HttpOnly
+sessions included:
+
+```typescript
+mock.intercept({
+  beforeRequest: (request) => ({
+    ...request,
+    headers: { ...request.headers, cookie: 'session_key=present' },
+  }),
+})
+```
+
+`mock.handle()`, `mock.listen()`, the CLI and Express see the `Cookie` header
+the client sent.
 
 ## Content Negotiation
 
@@ -726,9 +749,54 @@ Request validation and security run before route generators, so rejected CRUD
 requests cannot mutate their collections. A missing body is rejected when the
 OpenAPI operation declares `requestBody.required: true`.
 
-A `requestBody` schema of `type: string, format: binary` accepts `ArrayBuffer`,
-typed-array and `Blob` bodies, which is how every transport delivers raw
-uploads.
+A `requestBody` schema of `type: string, format: binary`, nullable or not,
+accepts `ArrayBuffer`, typed-array and `Blob` bodies. That is how
+`mock.listen()`, the CLI, the fetch interceptor and the Angular interceptor
+deliver a raw upload. Express hands the mock whatever the app's body parser
+left in `req.body`, so there a raw upload arrives as bytes only when the route
+uses `express.raw()` (or another parser that yields a `Buffer`); behind
+`express.json()` alone the mock receives no bytes.
+
+### Form bodies
+
+`mock.listen()`, the CLI and the fetch interceptor decode a form body the same
+way: `multipart/form-data` to a `FormData`, `application/x-www-form-urlencoded`
+to a record of strings. The Angular interceptor passes on the body the app
+sent, so a `FormData` it posts is read the same way. Under Express the body is
+whatever the app's parser produced (`express.urlencoded()` builds arrays from
+repeated names and, with `extended: true`, nested objects from brackets;
+multipart needs a parser such as multer), and it is read through the schema the
+same way. Validation reads the body as the object its schema describes:
+
+- A multipart field sent once is its value; a name sent more than once is an
+  array of its values. A file part satisfies `type: string, format: binary`,
+  and fails any schema that does not accept a string. Its size in bytes counts
+  as its length, so `minLength` and `maxLength` bound the upload (sizes past
+  64 MiB count as 64 MiB).
+- A string field is read as the type its property declares: a plain decimal
+  (`3`, `-1.5`; not `1e3`, `0x10` or ` 7 `) for `integer` and `number`,
+  `true` or `false` for `boolean`, an empty value as `null` for a nullable
+  property, and a single value as a one-element array. A value its type cannot
+  take stays a string and is reported, so `qty=abc` against `type: integer`
+  answers 400. A field whose schema also allows a string stays text only when
+  that string branch takes it: against
+  `anyOf: [{ type: integer }, { type: string, enum: [''] }]`, `100` reads as the
+  integer and an empty value stays `''`.
+- A bracketed key nests under the property it names when that property is
+  declared as an object or an array and the bracketed key itself is not
+  declared: `metadata[order]=42` reads as `{ metadata: { order: "42" } }`, and
+  `expand[]=a&expand[]=b` or `expand[0]=a&expand[1]=b` as an array. That covers
+  OpenAPI's `deepObject` encoding; other `encoding` styles are not read.
+- An urlencoded name sent more than once keeps its last value, because that is
+  how those transports decode the form.
+
+```typescript
+await fetch('/orders', {
+  method: 'POST',
+  body: new URLSearchParams('qty=3&gift=true&metadata[ref]=A1'),
+})
+// validated as { qty: 3, gift: true, metadata: { ref: 'A1' } }
+```
 
 ### Per-media-type request schemas and 415
 
@@ -748,6 +816,14 @@ Wildcard keys (`application/*`, `*/*`) are honored and media type parameters
 such as `; charset=utf-8` are ignored when matching. A request that sends **no**
 `Content-Type` is not rejected — it validates against the JSON-ish default
 schema, the same contract used before per-media-type schemas existed.
+
+A body in a media type the transports do not parse (`text/*` arrives as a
+string, XML and everything else that is neither JSON nor a form as bytes) is
+checked against the declared media types, so it can still answer 415, but not
+against an object schema it cannot satisfy: an XML body under a schema with
+`required` properties is accepted. Text is validated only against a schema that
+can take a string: one with a `string` type or branch, such as `text/plain` with
+`type: string, maxLength: 140`, or one that declares no type at all.
 
 415 rides on `validateRequests`, like 400 does: without it the plugin does not
 police request contracts at all.
