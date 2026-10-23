@@ -301,14 +301,23 @@ export function createListGenerator(
   const wrapperMemo = new WeakMap<object, ArrayPropertyInfo>();
   const hints = listArrayHints(resource);
   // GET and POST on one path with no item route: a singleton read through the
-  // list generator. Only there is a top-level id read as "this is the item",
-  // so a real collection's envelope that also carries an `id` (a request id)
-  // keeps serving its rows.
-  const singleton = !resource.operations.some(
-    (op) => op === "read" || op === "update" || op === "delete",
-  );
+  // list generator, or a list+create collection with no item routes. The GET
+  // contract is the item only when the POST answers with that same shape (the
+  // same top-level property names, as Stripe's Dispute GET and POST share one
+  // schema). Only then is a top-level id read as "this is the item", so a real
+  // collection's envelope that also carries an `id` (a request id) keeps
+  // serving its rows.
+  const singleton =
+    !resource.operations.some(
+      (op) => op === "read" || op === "update" || op === "delete",
+    ) &&
+    sameTopLevelProperties(
+      meta?.responseSchema,
+      resource.routes.find((route) => route.op === "create")?.meta
+        .responseSchema,
+    );
   const declaresId = (schema: JSONSchema7): boolean =>
-    Object.hasOwn(collectSchemaProperties(schema), resource.idProperty);
+    declaresTopLevel(schema, resource.idProperty);
 
   return async (ctx: Schmock.RequestContext) => {
     const headers = generateHeaderValues(headerDefs, headerSeed);
@@ -523,6 +532,24 @@ function resourceWrapperProperty(
 /** Whether `schema` declares `property` at its top level (`allOf` included). */
 function declaresTopLevel(schema: JSONSchema7, property: string): boolean {
   return Object.hasOwn(collectSchemaProperties(schema), property);
+}
+
+/**
+ * Whether two contracts declare the same, non-empty set of top-level property
+ * names: how a list route's GET is recognized as the item its POST creates.
+ */
+function sameTopLevelProperties(
+  a: JSONSchema7 | undefined,
+  b: JSONSchema7 | undefined,
+): boolean {
+  if (!a || !b) return false;
+  const left = Object.keys(collectSchemaProperties(a));
+  const right = new Set(Object.keys(collectSchemaProperties(b)));
+  return (
+    left.length > 0 &&
+    left.length === right.size &&
+    left.every((name) => right.has(name))
+  );
 }
 
 /**

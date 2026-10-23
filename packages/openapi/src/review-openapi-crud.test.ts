@@ -817,6 +817,42 @@ describe("CRUD review fixes", () => {
         { id: 1, name: "rex" },
       ]);
     });
+
+    it("injects the collection into an envelope with an id when no item route exists", async () => {
+      const item = {
+        type: "object",
+        properties: { id: { type: "integer" }, name: { type: "string" } },
+      };
+      const mock = await mockOf(
+        spec({
+          "/pets": {
+            get: {
+              responses: {
+                "200": {
+                  description: "list",
+                  content: json({
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      data: { type: "array", items: item },
+                    },
+                  }),
+                },
+              },
+            },
+            post: {
+              responses: { "201": { description: "c", content: json(item) } },
+            },
+          },
+        }),
+        { fakerSeed: 1 },
+      );
+      await mock.handle("POST", "/pets", { body: { name: "rex" } });
+      const list = await mock.handle("GET", "/pets");
+      expect((list.body as Record<string, unknown>).data).toEqual([
+        { id: 1, name: "rex" },
+      ]);
+    });
   });
 
   describe("form bodies on CRUD create and update", () => {

@@ -496,11 +496,13 @@ A list operation whose success schema is an object with no array (for example
 that schema instead of a bare array. When that object cannot be generated, the
 route serves the bare collection and logs a warning instead of answering 500.
 The same applies to a singleton (a `GET` and a `POST` on one path, with no item
-path) whose schema declares the resource's id property at its top level, even
-when it holds an array of objects. Stripe's
-`GET /v1/charges/{charge}/dispute` is one: its `balance_transactions` array is
-a field of the dispute, so it is generated rather than filled with created
-disputes.
+path) whose `GET` schema declares the resource's id property at its top level
+and the same top-level properties as the `POST` response, even when it holds an
+array of objects. Stripe's `GET /v1/charges/{charge}/dispute` is one: its
+`balance_transactions` array is a field of the dispute, so it is generated
+rather than filled with created disputes. A list envelope that only carries an
+id of its own (`{ id, data: [Pet] }` next to a `POST` answering a `Pet`) is
+still a collection, and serves the created rows.
 
 ### Collection scoping
 
