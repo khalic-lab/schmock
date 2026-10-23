@@ -204,6 +204,14 @@ Feature: Angular Adapter
     Then the response should be an HttpResponse
     And the response body should be the string "1970-01-01T00:00:00.000Z"
 
+  # A status tuple skips the route's default content type, so core labels the
+  # Date's JSON text application/json itself, or the decode could not fire.
+  Scenario: A status tuple returning a Date gives Angular code its ISO string
+    Given I create an Angular mock whose route returns the epoch as a Date in a status tuple
+    When I make an Angular request to "GET /api/epoch"
+    Then the response should be an HttpResponse
+    And the response body should be the string "1970-01-01T00:00:00.000Z"
+
   Scenario: Emitted responses report the URL with params
     Given I create an Angular mock returning an object for "GET /api/users"
     When I make an Angular request to "GET /api/users" with query params

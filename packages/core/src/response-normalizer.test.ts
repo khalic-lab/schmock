@@ -493,6 +493,33 @@ describe("response normalization", () => {
       },
     );
 
+    it("labels a body serialized to a JSON string application/json when it declares no type", () => {
+      const normalized = normalizeResponse(createResponse(new Date(0)), "GET");
+
+      expect(normalized.body).toBe('"1970-01-01T00:00:00.000Z"');
+      expect(normalized.headers).toEqual({
+        "content-type": "application/json",
+      });
+    });
+
+    it("keeps the declared type of a body serialized to a JSON string", () => {
+      const normalized = normalizeResponse(
+        createResponse(new Date(0), { headers: { "Content-Type": "text/x" } }),
+        "GET",
+      );
+
+      expect(normalized.headers).toEqual({ "Content-Type": "text/x" });
+    });
+
+    it("leaves a string body the route wrote unlabelled", () => {
+      const normalized = normalizeResponse(
+        createResponse('"1970-01-01T00:00:00.000Z"'),
+        "GET",
+      );
+
+      expect(normalized.headers).toEqual({});
+    });
+
     it("keeps a top-level toJSON number as a number", () => {
       const normalized = normalizeResponse(
         createResponse({ toJSON: () => 42 }),

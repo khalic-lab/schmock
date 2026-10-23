@@ -377,6 +377,18 @@ export function normalizeResponse(
       ? undefined
       : normalizeBody(response.body);
 
+  // A value whose toJSON yields a string is now its JSON text, which no
+  // transport can tell from a string the route wrote itself, so the JSON type
+  // a non-string body gets by default is given here or it is lost. A route
+  // returning `[200, new Date(0)]` is then labelled as `() => new Date(0)` is.
+  if (
+    typeof body === "string" &&
+    typeof response.body !== "string" &&
+    !hasHeader(headers, "content-type")
+  ) {
+    headers["content-type"] = "application/json";
+  }
+
   // HEAD and 304 may keep an entity Content-Length (RFC 9110), but 204/205
   // never carry one. Trailer and Transfer-Encoding are always removed —
   // Node's writeHead rejects them on bodyless responses, killing the socket

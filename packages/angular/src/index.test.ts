@@ -1261,21 +1261,28 @@ describe("Angular Adapter", () => {
       expect(response?.body).toBe('"quoted"');
     });
 
-    it("gives Angular code the ISO string of a route returning a Date", async () => {
-      const mock = schmock();
-      mock("GET /api/test", () => new Date(0));
-      const InterceptorClass = createSchmockInterceptor(mock);
+    it.each([
+      ["a function", () => new Date(0)],
+      ["a status tuple", [200, new Date(0)]],
+    ] satisfies Array<[string, Schmock.Generator]>)(
+      "gives Angular code the ISO string of a Date returned by %s",
+      async (_label, generator) => {
+        const mock = schmock();
+        mock("GET /api/test", generator);
+        const InterceptorClass = createSchmockInterceptor(mock);
 
-      const event = await lastValueFrom(
-        new InterceptorClass().intercept(new HttpRequest("GET", "/api/test"), {
-          handle: vi.fn(),
-        }),
-      );
+        const event = await lastValueFrom(
+          new InterceptorClass().intercept(
+            new HttpRequest("GET", "/api/test"),
+            { handle: vi.fn() },
+          ),
+        );
 
-      expect(event instanceof HttpResponse && event.body).toBe(
-        "1970-01-01T00:00:00.000Z",
-      );
-    });
+        expect(event instanceof HttpResponse && event.body).toBe(
+          "1970-01-01T00:00:00.000Z",
+        );
+      },
+    );
 
     it("decodes a JSON string literal on the error channel too", async () => {
       const { error } = await interceptOnce(

@@ -501,12 +501,16 @@ A non-string body whose `toJSON()` yields a string, such as a `Date` or a money
 or ID class, is kept as that JSON text, quotes included, so it goes out as a
 valid JSON string literal. `handle()` reports it the same way:
 `new Date(0)` comes back as the body `'"1970-01-01T00:00:00.000Z"'`.
+When the response names no content type, that text is labelled
+`application/json`, since no transport could tell it from a string the route
+wrote: `[200, new Date(0)]` is labelled like `() => new Date(0)`, although a
+tuple otherwise leaves its body untyped in `handle()`.
 An in-process consumer that reads `handle().body` as a value gets that JSON
 text, quotes included, as it would any pre-serialized string body. To see the
 value a JSON-parsing client sees, `JSON.parse` a string body labelled
-`application/json`. The Angular adapter's `json` response type does not do
-this: it passes a string body through as is, so a `Date` route reaches the
-app as the quoted string.
+`application/json`. The Angular adapter's `json` response type does this for
+a JSON string literal, as `HttpClient` does with a real backend, so a `Date`
+route reaches the app as the ISO string.
 
 Advanced adapter authors can import `normalizeResponse()` and
 `serializeResponseBody()` from `@schmock/core` to apply this same contract.
