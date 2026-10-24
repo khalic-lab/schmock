@@ -28,6 +28,7 @@ import {
   normalizeRequestBody,
   toValidationInstance,
 } from "./request-body.js";
+import { routeIdExamples } from "./resource-placement.js";
 import {
   findResponseEntry,
   findSuccessResponse,
@@ -936,6 +937,7 @@ export async function processPreferHeader(
       const body = schema
         ? await generateResponseBody({
             schema,
+            status: prefer.code,
             seed: fakerSeed,
             onSchema,
             context,
@@ -977,6 +979,7 @@ export async function processPreferHeader(
       if (!schema) return replaced(code, code === 204 ? undefined : {});
       const body = await generateResponseBody({
         schema,
+        status: code,
         seed: fakerSeed,
         onSchema,
         context,
@@ -1028,6 +1031,8 @@ function selectResponseExample(
 
 interface ResponseBodyGeneration {
   schema: JSONSchema7;
+  /** The status the body is generated for. */
+  status: number;
   seed?: number;
   onSchema?: Schmock.OnSchemaCallback;
   context: Schmock.PluginContext;
@@ -1035,6 +1040,7 @@ interface ResponseBodyGeneration {
 
 async function generateResponseBody({
   schema,
+  status,
   seed,
   onSchema,
   context,
@@ -1053,6 +1059,12 @@ async function generateResponseBody({
       headers: context.headers,
     });
     if (patched) finalSchema = patched;
+  }
+  // A CRUD route's success body carries its resource, whose id takes no
+  // value from the id's examples, as in the route's own generated bodies.
+  const idExamples = routeIdExamples(context.route);
+  if (idExamples && status >= 200 && status < 300) {
+    finalSchema = idExamples.apply(finalSchema);
   }
   try {
     return await generateFromSchema({ schema: finalSchema, seed });

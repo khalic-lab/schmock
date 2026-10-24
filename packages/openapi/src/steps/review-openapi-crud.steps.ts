@@ -505,6 +505,56 @@ const patchCallbackSpec = spec({
   },
 });
 
+// ── The resource id in generated bodies ─────────────────────────────────────
+
+/** A pets resource whose list GET answers exactly four pets. */
+function examplePetsSpec(
+  id: Record<string, unknown>,
+  name: Record<string, unknown> = { type: "string" },
+) {
+  const examplePet = {
+    type: "object",
+    required: ["id", "name"],
+    properties: { id, name },
+  };
+  return spec({
+    "/pets": {
+      get: {
+        responses: {
+          "200": {
+            description: "list",
+            content: json({
+              type: "array",
+              minItems: 4,
+              maxItems: 4,
+              items: examplePet,
+            }),
+          },
+        },
+      },
+      post: {
+        requestBody: { content: json(examplePet) },
+        responses: {
+          "201": { description: "created", content: json(examplePet) },
+        },
+      },
+    },
+  });
+}
+
+const scalarGalaxyPath = `${import.meta.dirname}/../__fixtures__/scalar-galaxy.yaml`;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The records of a list body: a flat array, or the array under `data`. */
+function listEntries(body: unknown): Record<string, unknown>[] {
+  const list = isRecord(body) ? body.data : body;
+  expect(Array.isArray(list)).toBe(true);
+  return Array.isArray(list) ? list.filter(isRecord) : [];
+}
+
 describeFeature(feature, ({ Scenario }) => {
   let mock: Schmock.CallableMockInstance;
   let response: Schmock.Response;
@@ -1210,6 +1260,108 @@ describeFeature(feature, ({ Scenario }) => {
 
       And("the pets collection is empty", () => {
         expect(storedPets()).toEqual([]);
+      });
+    },
+  );
+  Scenario(
+    "A dynamic Scalar Galaxy planet list has distinct ids",
+    ({ Given, When, Then, And }) => {
+      Given("the Scalar Galaxy mock with faker seed 42", async () => {
+        mock = schmock({ state: {} });
+        mock.pipe(await openapi({ spec: scalarGalaxyPath, fakerSeed: 42 }));
+      });
+
+      When('I list the planets with Prefer header "dynamic=true"', async () => {
+        response = await mock.handle("GET", "/planets", {
+          headers: { prefer: "dynamic=true" },
+        });
+        expect(response.status).toBe(200);
+      });
+
+      Then("every planet has a different id", () => {
+        const ids = listEntries(response.body).map((planet) => planet.id);
+        expect(ids.length).toBeGreaterThan(1);
+        expect(new Set(ids).size).toBe(ids.length);
+      });
+
+      And("every planet name is one of the spec's examples", () => {
+        for (const planet of listEntries(response.body)) {
+          expect(["Mars", "Jupiter", "HD 40307g"]).toContain(planet.name);
+        }
+      });
+    },
+  );
+
+  Scenario(
+    "A dynamic list takes no id from a 3.0 example but keeps the name example",
+    ({ Given, When, Then, And }) => {
+      Given(
+        'a pets mock whose id declares the example 1 and whose name declares the example "Rex"',
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: examplePetsSpec(
+                { type: "integer", example: 1 },
+                { type: "string", example: "Rex" },
+              ),
+              fakerSeed: 7,
+            }),
+          );
+        },
+      );
+
+      When('I list the pets with Prefer header "dynamic=true"', async () => {
+        response = await mock.handle("GET", "/pets", {
+          headers: { prefer: "dynamic=true" },
+        });
+        expect(response.status).toBe(200);
+      });
+
+      Then("the 4 listed pets have different ids", () => {
+        const ids = listEntries(response.body).map((listed) => listed.id);
+        expect(ids).toHaveLength(4);
+        expect(new Set(ids).size).toBe(4);
+      });
+
+      And('every listed pet is named "Rex"', () => {
+        expect(listEntries(response.body).map((listed) => listed.name)).toEqual(
+          ["Rex", "Rex", "Rex", "Rex"],
+        );
+      });
+    },
+  );
+
+  Scenario(
+    "A default the spec declares on the id still pins it in a dynamic list",
+    ({ Given, When, Then }) => {
+      Given(
+        "a pets mock whose id declares the default 5 and the example 1",
+        async () => {
+          mock = schmock({ state: {} });
+          mock.pipe(
+            await openapi({
+              spec: examplePetsSpec({
+                type: "integer",
+                default: 5,
+                example: 1,
+              }),
+            }),
+          );
+        },
+      );
+
+      When('I list the pets with Prefer header "dynamic=true"', async () => {
+        response = await mock.handle("GET", "/pets", {
+          headers: { prefer: "dynamic=true" },
+        });
+        expect(response.status).toBe(200);
+      });
+
+      Then("every listed pet has the id 5", () => {
+        expect(listEntries(response.body).map((listed) => listed.id)).toEqual([
+          5, 5, 5, 5,
+        ]);
       });
     },
   );

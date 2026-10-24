@@ -32,6 +32,15 @@ const VALUE_KEYWORDS = [
 const POOL_METHOD = "helpers.arrayElement";
 
 /**
+ * The value a node's examples gave it: a `default` (one accepted value) or a
+ * `faker` draw from several, exactly as written on the node.
+ */
+export interface ExampleValue {
+  readonly keyword: "default" | "faker";
+  readonly value: unknown;
+}
+
+/**
  * How many compiled checks are kept. Each distinct set of value keywords is
  * compiled once, and AJV also keeps every schema it compiled, so a process
  * that loads spec after spec (the CLI reloading under `--watch`) would keep
@@ -200,28 +209,37 @@ function canDrawFromPool(node: Record<string, unknown>): boolean {
  *
  * `nullable` is the node's 3.0 `nullable: true`, already removed from `node`:
  * it makes a `null` example acceptable whatever the type says.
+ *
+ * Returns what it wrote, so the normalizer can tell that value from one the
+ * spec declared (see `withoutExampleValues` in normalizer.ts).
  */
 export function applyExampleValues(
   node: Record<string, unknown>,
   nullable: boolean,
-): void {
-  if ("default" in node || isCompositeNode(node)) return;
+): ExampleValue | undefined {
+  if ("default" in node || isCompositeNode(node)) return undefined;
 
   if ("example" in node) {
     const { example } = node;
     if (
-      isPrimitive(example) &&
-      ((example === null && nullable) || acceptsValue(node, example))
+      !isPrimitive(example) ||
+      !((example === null && nullable) || acceptsValue(node, example))
     ) {
-      node.default = example;
+      return undefined;
     }
-    return;
+    node.default = example;
+    return { keyword: "default", value: example };
   }
 
   const pool = examplePool(node);
   if (pool.length === 1) {
     node.default = pool[0];
-  } else if (pool.length > 1 && canDrawFromPool(node)) {
-    node.faker = { [POOL_METHOD]: [pool] };
+    return { keyword: "default", value: pool[0] };
   }
+  if (pool.length > 1 && canDrawFromPool(node)) {
+    const draw = { [POOL_METHOD]: [pool] };
+    node.faker = draw;
+    return { keyword: "faker", value: draw };
+  }
+  return undefined;
 }

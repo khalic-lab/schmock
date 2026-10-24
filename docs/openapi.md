@@ -397,6 +397,20 @@ overwritten on create. Its shape follows the declared type of that property:
 UUIDs are synthetic rather than random on purpose: `format: uuid` is enforced
 when `validateResponses` is on, and a `fakerSeed` run has to stay reproducible.
 
+A body generated from the schema rather than from stored rows takes no id from
+the id property's `example` or `examples` either: a list or an item answered
+under `Prefer: dynamic=true` or `Prefer: code=`, the object body of a list
+route that holds no list, and a lookup-only read with no stored rows. There the
+id generates as a property without examples does, so a generated list does
+not repeat one sample id (Scalar Galaxy's `Planet.id` declares
+`examples: [1]`). The id is the one in the item, in an envelope's slot, or in
+each list entry; every other property keeps its examples, and a `default`
+declared on the id still pins it. The values taken from examples are known by
+the schema objects the plugin built: an `onSchema` hook that deep-copies the
+id's schema (`structuredClone`, a JSON round trip) brings them back, and a
+hook that sets the id's `default` to the very value its example gave still
+has it dropped.
+
 Seed rows written with the old path-parameter key (`{ planetId: 1, … }`) are
 rewritten onto the resolved id property when the collection is seeded, and the
 id counter continues past the highest seeded id.
@@ -1120,6 +1134,8 @@ whose `multipleOf` is fractional, uses a single accepted entry but does not draw
 from several. The draw reaches an `onSchema` hook as a `faker` keyword
 (`helpers.arrayElement`) on the property. json-schema-faker reads it before
 `default`, `const` or `enum`, so a hook that pins such a property removes it.
+A CRUD resource's id is the exception: it takes no value from its examples in
+any body generated for the resource (see [Identifiers](#identifiers)).
 
 A nullable value is `null` about 5% of the time, whether the schema uses 3.0
 `nullable: true` or the 3.1 forms `type: [T, "null"]` and

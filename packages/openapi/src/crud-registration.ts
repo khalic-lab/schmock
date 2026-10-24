@@ -29,6 +29,11 @@ import type { ParsedPath } from "./parser.js";
 import type { FormEncodingMap } from "./request-body.js";
 import { selectRequestMediaType } from "./request-pipeline.js";
 import {
+  ID_EXAMPLES_KEY,
+  IdExampleFilter,
+  listServesItem,
+} from "./resource-placement.js";
+import {
   findRepresentativeResponse,
   findSuccessResponse,
 } from "./response-status.js";
@@ -154,16 +159,24 @@ export function registerCrudRoutes(
         selectRequestEncoding(requestContent, requestEncoding, contentType),
       ...hooks,
     };
+    // The id rule of every body generated for this route, the generator's own
+    // and those `Prefer` generates from the route's metadata.
+    const idExamples = new IdExampleFilter(
+      resource,
+      route.op,
+      route.op === "list" && listServesItem(resource, routeMeta),
+    );
     let gen = createCrudGenerator(route.op, resource, routeMeta, genHooks);
     if (route.op === "read" && resource.lookupOnly) {
       gen = createLookupGenerator(
         resource,
         gen,
-        createStaticGenerator(route.parsed, hooks),
+        createStaticGenerator(route.parsed, hooks, idExamples),
       );
     }
 
     const config = buildRouteConfig(route.parsed, ownerToken);
+    config[ID_EXAMPLES_KEY] = idExamples;
     if (route.op === "create" && routeMeta.responseStatus !== undefined) {
       config["openapi:preflightResponseStatus"] = routeMeta.responseStatus;
     }

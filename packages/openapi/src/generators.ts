@@ -38,8 +38,17 @@ import {
   normalizeRequestBody,
   readRequestBody,
 } from "./request-body.js";
+import {
+  declaresTopLevel,
+  IdExampleFilter,
+  listServesItem,
+  resourceWrapperProperty,
+} from "./resource-placement.js";
 import { generateHeaderValues, type HeaderSeed } from "./response-headers.js";
-import { findRepresentativeResponse } from "./response-status.js";
+import {
+  findRepresentativeResponse,
+  isStatusInRange,
+} from "./response-status.js";
 import { collectionStateKey, counterStateKey } from "./state-keys.js";
 import { isRecord, toJsonSchema } from "./utils.js";
 
@@ -309,24 +318,10 @@ export function createListGenerator(
   // cannot invalidate an entry.
   const wrapperMemo = new WeakMap<object, ArrayPropertyInfo>();
   const hints = listArrayHints(resource);
-  // GET and POST on one path with no item route: a singleton read through the
-  // list generator, or a list+create collection with no item routes. The GET
-  // contract is the item only when the POST answers with that same shape (the
-  // same top-level property names, as Stripe's Dispute GET and POST share one
-  // schema). Only then is a top-level id read as "this is the item", so a real
-  // collection's envelope that also carries an `id` (a request id) keeps
-  // serving its rows.
-  const singleton =
-    !resource.operations.some(
-      (op) => op === "read" || op === "update" || op === "delete",
-    ) &&
-    sameTopLevelProperties(
-      meta?.responseSchema,
-      resource.routes.find((route) => route.op === "create")?.meta
-        .responseSchema,
-    );
+  const singleton = listServesItem(resource, meta);
   const declaresId = (schema: JSONSchema7): boolean =>
     declaresTopLevel(schema, resource.idProperty);
+  const idExamples = new IdExampleFilter(resource, "list", singleton);
 
   return async (ctx: Schmock.RequestContext) => {
     const headers = generateHeaderValues(headerDefs, headerSeed);
@@ -370,7 +365,10 @@ export function createListGenerator(
       // level is the item itself even when it holds an array of objects
       // (Stripe's Dispute and its `balance_transactions`): that array is a
       // field of the item, not a slot for the collection.
-      const declared = await generateDeclaredBody(effective, hooks?.fakerSeed);
+      const declared = await generateDeclaredBody(
+        idExamples.apply(effective),
+        hooks?.fakerSeed,
+      );
       return declared === undefined
         ? flat
         : buildResponse({ status: responseStatus, body: declared, headers });
@@ -491,74 +489,6 @@ function injectAtPath(
     }
   }
   return out;
-}
-
-/**
- * When the create response is an envelope (`{ data: <Resource> }`) rather than
- * the resource itself, find the property that carries the resource, so the
- * stored item stays resource-shaped and only the *response* is wrapped.
- *
- * The response is "item-shaped" — no wrapper — when it declares the resource's
- * own id property at its top level. Otherwise the wrapper is the property whose
- * schema declares that id property. Returns `{}` (item-shaped) when no such
- * property exists, so a spec whose envelope this can't identify is left at the
- * historical behaviour rather than mis-wrapped.
- */
-function findResourceWrapper(
-  schema: JSONSchema7 | undefined,
-  idProperty: string,
-): { property?: string } {
-  if (!schema || typeof schema === "boolean") return {};
-  const top = collectSchemaProperties(schema);
-  if (idProperty in top) return {};
-  for (const [key, value] of Object.entries(top)) {
-    if (idProperty in collectSchemaProperties(value)) return { property: key };
-  }
-  return {};
-}
-
-/**
- * The envelope property an operation's response wraps the resource in, if any.
- *
- * Only trusted when a resolved item schema exists to store and declares the id
- * property at its own top level. Without one (incomplete specs) the response
- * schema is treated as the item, so nothing that worked before is re-shaped.
- * When the item schema does not declare the id, the id is the path
- * parameter's fallback: a response without it at the top is then the plain
- * item, and a nested object that declares an `id` of its own (`team: { id }`
- * on a `User { userId }`) is a field of that item, not an envelope slot.
- */
-function resourceWrapperProperty(
-  resource: CrudResource,
-  responseSchema: JSONSchema7 | undefined,
-): string | undefined {
-  const item = resource.schema;
-  if (!item || !responseSchema || responseSchema === item) return undefined;
-  if (!declaresTopLevel(item, resource.idProperty)) return undefined;
-  return findResourceWrapper(responseSchema, resource.idProperty).property;
-}
-
-/** Whether `schema` declares `property` at its top level (`allOf` included). */
-function declaresTopLevel(schema: JSONSchema7, property: string): boolean {
-  return Object.hasOwn(collectSchemaProperties(schema), property);
-}
-
-/**
- * Whether two contracts declare the same, non-empty set of top-level property
- * names: how a list route's GET is recognized as the item its POST creates.
- */
-function sameTopLevelProperties(
-  a: JSONSchema7 | undefined,
-  b: JSONSchema7 | undefined,
-): boolean {
-  if (!a || !b) return false;
-  const left = Object.keys(collectSchemaProperties(a));
-  const right = new Set(Object.keys(collectSchemaProperties(b)));
-  return (
-    left.length > 0 &&
-    left.length === right.size &&
-    left.every((name) => right.has(name))
-  );
 }
 
 /**
@@ -1078,9 +1008,15 @@ export function createDeleteGenerator(
   };
 }
 
+/**
+ * A route answering from its declared schema. `idExamples` is given for a
+ * lookup-only CRUD read, whose generated item takes no id from the id's
+ * examples.
+ */
 export function createStaticGenerator(
   parsedPath: ParsedPath,
   hooks: GenerationHooks = {},
+  idExamples?: IdExampleFilter,
 ): Schmock.GeneratorFunction {
   // Not `findSuccessResponse`: an operation declaring only error statuses must
   // answer one of them rather than an undeclared 200. The headers captured
@@ -1110,6 +1046,9 @@ export function createStaticGenerator(
           headers: ctx.headers,
         });
         if (patched) schema = patched;
+      }
+      if (idExamples && isStatusInRange(responseStatus, 200, 300)) {
+        schema = idExamples.apply(schema);
       }
       try {
         const body = await generateFromSchema({

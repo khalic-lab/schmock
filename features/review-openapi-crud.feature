@@ -144,3 +144,29 @@ Feature: OpenAPI CRUD, Prefer and callback review fixes
     When I create a pet named "rex" and abort it during the delay
     Then the create is rejected with an AbortError
     And the pets collection is empty
+
+  # ── The resource id in generated bodies ────────────────────────────────────
+
+  # Design Decision: a generated body takes no id from the id's examples
+  # - Stored rows get minted ids. A list or item generated from the schema
+  #   (Prefer: dynamic=true or code=, a lookup-only read) generates its ids
+  #   as a property with no examples does, so entries do not repeat a sample
+  # - A default the spec declares on the id still pins it
+  # - Every other property keeps its examples
+
+  Scenario: A dynamic Scalar Galaxy planet list has distinct ids
+    Given the Scalar Galaxy mock with faker seed 42
+    When I list the planets with Prefer header "dynamic=true"
+    Then every planet has a different id
+    And every planet name is one of the spec's examples
+
+  Scenario: A dynamic list takes no id from a 3.0 example but keeps the name example
+    Given a pets mock whose id declares the example 1 and whose name declares the example "Rex"
+    When I list the pets with Prefer header "dynamic=true"
+    Then the 4 listed pets have different ids
+    And every listed pet is named "Rex"
+
+  Scenario: A default the spec declares on the id still pins it in a dynamic list
+    Given a pets mock whose id declares the default 5 and the example 1
+    When I list the pets with Prefer header "dynamic=true"
+    Then every listed pet has the id 5

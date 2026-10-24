@@ -1,5 +1,5 @@
 import type { JSONSchema7 } from "json-schema";
-import { applyExampleValues } from "./example-values.js";
+import { applyExampleValues, type ExampleValue } from "./example-values.js";
 import { isRecord, toJsonSchema } from "./utils.js";
 
 /**
@@ -71,6 +71,64 @@ export function collectAccessModes(
   visit(schema);
   if (readOnly.size === 0 && writeOnly.size === 0) return NO_ACCESS_MODES;
   return { readOnly, writeOnly };
+}
+
+/**
+ * Side table from a normalized node to the value {@link applyExampleValues}
+ * derived for it from its `example` or `examples`, as {@link accessModesByNode}
+ * records access modes: an in-schema marker would reach validation.
+ */
+const exampleValueByNode = new WeakMap<object, ExampleValue>();
+
+/**
+ * `node` generating as if it declared no `example` or `examples`: the
+ * `default` or `faker` pool the normalizer derived from them is dropped, on
+ * the node and on the branches of its `allOf`, `anyOf` and `oneOf` (the
+ * nullable wrapper included). A `default` the spec declares is kept, and so
+ * is any value written over the derived one since, by a hook for instance.
+ *
+ * An unchanged node comes back as it is, a changed one as a copy: normalized
+ * nodes are memoized and shared. A copy of the schema made elsewhere (an
+ * `onSchema` result built afresh) is no longer recognized, and keeps what it
+ * holds.
+ */
+export function withoutExampleValues(
+  node: Record<string, unknown>,
+): Record<string, unknown> {
+  return stripExampleValues(node, new Map());
+}
+
+function stripExampleValues(
+  node: Record<string, unknown>,
+  done: Map<object, Record<string, unknown>>,
+): Record<string, unknown> {
+  const finished = done.get(node);
+  if (finished) return finished;
+  done.set(node, node);
+
+  const copy: Record<string, unknown> = { ...node };
+  let changed = false;
+  const derived = exampleValueByNode.get(node);
+  if (derived && node[derived.keyword] === derived.value) {
+    delete copy[derived.keyword];
+    changed = true;
+  }
+  for (const keyword of ["allOf", "anyOf", "oneOf"]) {
+    const branches = node[keyword];
+    if (!Array.isArray(branches)) continue;
+    const next = branches.map((branch: unknown) =>
+      isRecord(branch) ? stripExampleValues(branch, done) : branch,
+    );
+    if (next.some((branch, index) => branch !== branches[index])) {
+      copy[keyword] = next;
+      changed = true;
+    }
+  }
+
+  if (!changed) return node;
+  inheritAccessModes(copy, node);
+  done.set(node, copy);
+  return copy;
 }
 
 /**
@@ -575,10 +633,16 @@ function normalizeNode(
   // A scalar node generates from its own examples, checked against the whole
   // node: its bounds are numeric by now and its branches normalized, so an
   // example the node or any branch rejects is never generated.
-  applyExampleValues(node, isNullable);
+  const fromExamples = applyExampleValues(node, isNullable);
   delete node.example;
 
-  const out = toJsonSchema(isNullable ? applyNullability(node) : node);
+  const finished = isNullable ? applyNullability(node) : node;
+  const out = toJsonSchema(finished);
+  if (fromExamples) {
+    // A nullable wrapper holds `node` itself as its branch; otherwise `out`
+    // is the copy the value now sits on.
+    exampleValueByNode.set(finished === node ? out : node, fromExamples);
+  }
   if (readOnlyNames.length > 0 || writeOnlyNames.length > 0) {
     accessModesByNode.set(out, {
       readOnly: new Set(readOnlyNames),
