@@ -59,7 +59,7 @@ npm install @schmock/core
 
 ### Define routes, call them directly
 
-```typescript
+```typescript docs-run=routes
 const mock = schmock()
 
 mock('GET /users', [
@@ -78,7 +78,7 @@ const res = await mock.handle('GET', '/users/1')
 
 ### Stateful mocks with CRUD
 
-```typescript
+```typescript docs-run=stateful
 const mock = schmock({ state: { items: [] } })
 
 // State is typed Record<string, unknown>, so narrow it before use.
@@ -123,7 +123,10 @@ await mock.handle('DELETE', '/pets/1')      // delete
 
 ### Request spying
 
-```typescript
+```typescript docs-run=spying
+const mock = schmock()
+mock('POST /items', ({ body }) => [201, body])
+
 await mock.handle('POST', '/items', { body: { name: 'A' } })
 await mock.handle('POST', '/items', { body: { name: 'B' } })
 
@@ -134,9 +137,12 @@ mock.lastRequest('POST', '/items')  // { body: { name: 'B' }, ... }
 
 ### Plugin pipeline
 
-```typescript
+```typescript docs-run=plugins
+import { schmock } from '@schmock/core'
 import { validationPlugin } from '@schmock/validation'
 import { queryPlugin } from '@schmock/query'
+
+const mock = schmock({ state: { users: [] } })
 
 // Plugins apply to every route on the mock, not only to one route.
 mock.pipe(validationPlugin({
