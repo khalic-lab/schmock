@@ -467,7 +467,7 @@ The same rules apply to `mock.listen()`:
 | Content type | Body |
 |---|---|
 | `application/json` and any `+json` type | The parsed value. Malformed JSON gives 400 `MALFORMED_JSON`; nesting deeper than 256 levels gives 400 `JSON_TOO_DEEP` |
-| `application/x-www-form-urlencoded` | A flat object of strings; the last duplicate key wins |
+| `application/x-www-form-urlencoded` | A flat object of strings; the last duplicate key wins. The whole form, every value of a repeated key included, also reaches the route as [`form`](./api.md#request-context) |
 | `text/*` | A UTF-8 string (the `charset` parameter is ignored) |
 | `multipart/*` | `FormData`. Malformed multipart gives 400 `MALFORMED_MULTIPART` |
 | Anything else, including no content type | An `ArrayBuffer` |

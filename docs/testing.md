@@ -456,7 +456,9 @@ in core and angular, and in openapi `browser-compat.test.ts`,
 The `@schmock/devtools` service-worker relay is tested without a browser.
 `packages/devtools/src/test-support/relay-harness.ts` fakes only the
 service-worker objects in process (the registration lifecycle, scope matching,
-claims, the client message queue, fetch events and Cache Storage) on top of
+claims, the client message queue, fetch events, Cache Storage, and the
+back/forward cache with the three ways Chrome evicts a page from it: a worker
+posting to it, a claim reaching it, a new version activating) on top of
 Node's real `MessageChannel`, `Request`, `Response` and `AbortController`. Its
 self-test, `relay-harness.test.ts`, pins each modelled behaviour before the
 worker and page tests rely on it. By default the harness does not forward a

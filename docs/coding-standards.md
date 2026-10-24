@@ -391,7 +391,16 @@ dereferences a spec, `operation-extract.ts` reads one operation's contract out
 of it, and `parser.ts` walks the paths. `list-envelope.ts` reads what an object
 contract declares and which array a list envelope carries,
 `response-headers.ts` generates declared response header values, and
-`crud-ids.ts` finds a CRUD resource's stored rows by id and mints new ids. In
+`crud-ids.ts` finds a CRUD resource's stored rows by id and mints new ids.
+`resource-placement.ts` tells where a CRUD response carries its resource (the
+item, an envelope's slot, the list entries) and keeps the resource's id from
+its examples in generated bodies. `normalizer.ts` turns a spec schema into the
+JSON Schema generation and validation read, `example-values.ts` decides which
+of a scalar's examples drive what it generates, and `ajv-setup.ts` is the one
+AJV setup that check and request and response validation compile with: a leaf
+the normalizer can import without reaching `request-pipeline.ts`.
+`request-body.ts` reads a request body as its schema describes it, an
+urlencoded form through its `encoding` map included. In
 `packages/faker/src`, `validation.ts` holds the schema walk, the generation
 limits and the size estimate, `ref-index.ts` the local `$ref` index,
 `faker-allocation.ts` the rules for the `faker` keyword, `regex-bounds.ts` the

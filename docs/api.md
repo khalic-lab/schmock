@@ -878,6 +878,11 @@ same request, or `undefined` for an empty body:
 | anything else, or none | an `ArrayBuffer` |
 
 It reads `content-type` and `content-length` from `headers` case-insensitively.
+For an urlencoded body it resolves to the record only, as its return type
+says. `serveNodeRequest()` decodes the body the same way and also passes the
+whole form to `handle()` as `form`, so a route served through it, or through
+`mock.listen()` or the CLI, gets every value of a repeated name (see
+[Request Context](#request-context)).
 
 It rejects with `HttpIngressError`, which carries `status` and `code`:
 
@@ -1337,6 +1342,7 @@ the ambient `Schmock` namespace.
 | `NodeRequestLike`, `NodeResponseLike` | the structural `req` and `res` `serveNodeRequest()` accepts |
 | `Exchange`, `AnsweredExchange`, `FailedExchange`, `AbortedExchange`, `ExchangeRequest`, `ExchangeResponse` | what `Plugin.onExchange` receives (see [Plugin Interface](#plugin-interface)) |
 | `PluginHookResult` | what `install()` and `uninstall()` may return: anything but a thenable |
+| `ReadonlyURLSearchParams` | `RequestOptions.form`, `RequestContext.form` and `PluginContext.form`: an urlencoded body's form, without `URLSearchParams`' mutators (see [Request Context](#request-context)) |
 
 ---
 
@@ -1455,10 +1461,14 @@ re-mapped by its name. Neither is one with a `format` the generator can
 produce: `date-time`, `date`, `time`, `duration`, `email`, `idn-email`,
 `hostname`, `idn-hostname`, `ipv4`, `ipv6`, `uri`, `uri-reference`, `iri`,
 `iri-reference`, `json-pointer`, `relative-json-pointer`, `uuid` or `byte`. The
-OpenAPI normalizer turns `example` into `default`, so an OpenAPI example also
-wins. A declared `schmockTrueProbability` is never overwritten by the name
-weighting: `active: { type: 'boolean', schmockTrueProbability: 0.1 }` is 10%
-true, not 90%.
+OpenAPI normalizer turns an `example` the schema accepts, or a single 3.1
+`examples` entry it accepts, into `default`, and several accepted entries into
+a `faker` draw from them, seeded like every other value, so an OpenAPI example
+also wins. A CRUD resource's id takes neither in the bodies `@schmock/openapi`
+generates for the resource (see [Identifiers](./openapi.md#identifiers)). A
+declared `schmockTrueProbability` is never overwritten by the name weighting:
+`active: { type: 'boolean', schmockTrueProbability: 0.1 }` is 10% true, not
+90%.
 
 A node that carries `allOf`, `anyOf`, `oneOf`, `not` or `if` is generated from
 that composition wherever it sits, so it gets no name mapping, no lorem

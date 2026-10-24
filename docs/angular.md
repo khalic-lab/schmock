@@ -478,7 +478,11 @@ describe('UserService', () => {
   JSON parser from `@schmock/core/adapter`. JSON is parsed, a urlencoded form
   (an `HttpParams` body included) becomes a flat object, `text/*` a string,
   `FormData` and a `multipart/*`-labelled string or `Blob` arrive as
-  `FormData`, and anything else is an `ArrayBuffer`. A bodyless request has no
+  `FormData`, and anything else is an `ArrayBuffer`. The urlencoded object
+  keeps the last value of a repeated name, and the whole form arrives beside
+  it as [`form`](./api.md#request-context), every field included, unless a
+  `transformRequest` or `beforeRequest` hook replaced the body, which drops
+  `form`. A bodyless request has no
   body (`undefined`, not `null`). A JSON-labelled body that does not parse, or
   nests deeper than 256 levels, is refused as `mock.listen()` refuses it: with
   `passthrough: false` the request gets a 400 `HttpErrorResponse` whose body is
