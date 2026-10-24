@@ -246,7 +246,8 @@ function enhanceSchema(
   const cached = contexts.get(context);
   if (cached) return cached;
 
-  const enhanced = stripNullableForGeneration({ ...schema } as FakerSchema);
+  const copy: FakerSchema = { ...schema };
+  const enhanced = stripNullableForGeneration(copy);
   // Only the enhancer marks a faker as its own; a schema cannot.
   Reflect.deleteProperty(enhanced, INFERRED_FAKER_MARKER);
   contexts.set(context, enhanced);
