@@ -1106,3 +1106,404 @@ describe("a decimal multipleOf (faker-7)", () => {
     ).toBe(0.5);
   });
 });
+
+describe("numeric bounds that meet through allOf (faker-8)", () => {
+  async function numbersFrom(schema: JSONSchema7, seeds = 40) {
+    return (await generateSeeds(schema, seeds)).map((value) => {
+      if (typeof value !== "number") {
+        throw new Error(`Expected a number, got ${String(value)}`);
+      }
+      return value;
+    });
+  }
+
+  /** The number at `key` of every value generated from `schema`. */
+  async function numbersAt(schema: JSONSchema7, key: string) {
+    return (await generateSeeds(schema)).map((value) => {
+      const entry = objectOf(value)[key];
+      if (typeof entry !== "number") {
+        throw new Error(`Expected a number at ${key}, got ${String(entry)}`);
+      }
+      return entry;
+    });
+  }
+
+  /** `value % step` is -0 for a negative multiple, so compare by absolute. */
+  function isMultiple(value: number, step: number): boolean {
+    return Math.abs(value % step) === 0;
+  }
+
+  it("moves the tightest bound of each side onto the node", () => {
+    expect(
+      normalizeSchemaForJsf({
+        type: "integer",
+        maximum: 20,
+        allOf: [{ minimum: 10 }, { exclusiveMinimum: 0, exclusiveMaximum: 30 }],
+      }),
+    ).toEqual({ type: "integer", minimum: 10, maximum: 20, allOf: [{}, {}] });
+    expect(
+      normalizeSchemaForJsf({
+        allOf: [
+          { type: "number", minimum: 10, maximum: 20 },
+          { exclusiveMinimum: 10 },
+        ],
+      }),
+    ).toEqual({
+      exclusiveMinimum: 10,
+      maximum: 20,
+      allOf: [{ type: "number" }, {}],
+    });
+  });
+
+  it("generates inside the tighter of an inclusive and an exclusive bound from different entries", async () => {
+    for (const value of await numbersFrom({
+      type: "integer",
+      maximum: 20,
+      allOf: [{ minimum: 10 }, { exclusiveMinimum: 0 }],
+    })) {
+      expect(value).toBeGreaterThanOrEqual(10);
+      expect(value).toBeLessThanOrEqual(20);
+    }
+    for (const value of await numbersFrom({
+      type: "number",
+      allOf: [{ minimum: 0, maximum: 5 }, { exclusiveMaximum: 100 }],
+    })) {
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it("closes the merged range of lone bounds instead of each entry's", async () => {
+    const minimums = await numbersFrom({
+      type: "integer",
+      allOf: [{ minimum: 5_000 }, { minimum: 8_000 }],
+    });
+    for (const value of minimums) expect(value).toBeGreaterThanOrEqual(8_000);
+    expect(new Set(minimums).size).toBeGreaterThan(1);
+    for (const value of await numbersFrom({
+      type: "number",
+      allOf: [{ exclusiveMaximum: -2_000 }, { maximum: -3_000 }],
+    })) {
+      expect(value).toBeLessThanOrEqual(-3_000);
+    }
+  });
+
+  it("combines several multipleOf into their least common multiple", async () => {
+    const integers: JSONSchema7 = {
+      type: "integer",
+      minimum: 0,
+      maximum: 100,
+      allOf: [{ multipleOf: 3 }, { multipleOf: 5 }],
+    };
+    expect(normalizeSchemaForJsf(integers).multipleOf).toBe(15);
+    for (const value of await numbersFrom(integers)) {
+      expect(isMultiple(value, 15)).toBe(true);
+    }
+    const decimals: JSONSchema7 = {
+      type: "number",
+      minimum: 0,
+      maximum: 10,
+      allOf: [{ multipleOf: 0.1 }, { multipleOf: 0.25 }],
+    };
+    expect(normalizeSchemaForJsf(decimals).multipleOf).toBe(0.5);
+    for (const value of await numbersFrom(decimals)) {
+      expect(Number.isInteger(value * 2)).toBe(true);
+    }
+  });
+
+  it("keeps the last step when the steps have no exact common multiple", () => {
+    expect(
+      normalizeSchemaForJsf({
+        type: "number",
+        allOf: [{ multipleOf: 3 }, { multipleOf: 1e-16 }],
+      }).multipleOf,
+    ).toBe(1e-16);
+  });
+
+  it("keeps a multiple of a $ref entry's wide step inside a lone bound", async () => {
+    for (const value of await numbersFrom({
+      allOf: [{ $ref: "#/$defs/Step" }, { maximum: -5_000 }],
+      $defs: { Step: { type: "integer", multipleOf: 4_000 } },
+    })) {
+      expect(value).toBeLessThanOrEqual(-5_000);
+      expect(isMultiple(value, 4_000)).toBe(true);
+    }
+  });
+
+  it("reads a $ref entry with the keywords beside it over its target", async () => {
+    for (const value of await numbersFrom({
+      type: "integer",
+      allOf: [{ $ref: "#/$defs/Small", minimum: 10 }, { exclusiveMinimum: 0 }],
+      $defs: { Small: { minimum: 0, maximum: 20 } },
+    })) {
+      expect(value).toBeGreaterThanOrEqual(10);
+      expect(value).toBeLessThanOrEqual(20);
+    }
+  });
+
+  it("lets a looser keyword beside a $ref entry replace its target's, as a lone $ref does", () => {
+    expect(
+      normalizeSchemaForJsf({
+        type: "integer",
+        allOf: [{ $ref: "#/$defs/Small", minimum: 0 }, { maximum: 50 }],
+        $defs: { Small: { minimum: 10, maximum: 20 } },
+      }),
+    ).toMatchObject({ minimum: 0, maximum: 20, allOf: [{}, {}] });
+  });
+
+  it("follows a $ref entry whose target is itself a $ref", async () => {
+    const schema: JSONSchema7 = {
+      type: "integer",
+      maximum: 20,
+      allOf: [{ $ref: "#/$defs/A" }, { exclusiveMinimum: 0 }],
+      $defs: { A: { $ref: "#/$defs/B" }, B: { minimum: 10 } },
+    };
+    const normalized = normalizeSchemaForJsf(schema);
+    expect(normalized).toMatchObject({ minimum: 10, maximum: 20 });
+    expect(normalized.allOf).toEqual([{}, {}]);
+    expect(objectOf(normalized.$defs)).toMatchObject({
+      A: { $ref: "#/$defs/B" },
+      B: { minimum: 10 },
+    });
+    for (const value of await numbersFrom(schema)) {
+      expect(value).toBeGreaterThanOrEqual(10);
+      expect(value).toBeLessThanOrEqual(20);
+    }
+  });
+
+  it("reads the keywords beside each $ref of a chain over the farther ones", () => {
+    expect(
+      normalizeSchemaForJsf({
+        type: "integer",
+        allOf: [{ $ref: "#/$defs/A", maximum: 30 }, { exclusiveMaximum: 100 }],
+        $defs: {
+          A: { $ref: "#/$defs/B", minimum: 5, maximum: 40 },
+          B: { minimum: 1, maximum: 50 },
+        },
+      }),
+    ).toMatchObject({ minimum: 5, maximum: 30, allOf: [{}, {}] });
+  });
+
+  it("leaves an allOf whose $ref chain loops back as it is", () => {
+    const normalized = normalizeSchemaForJsf({
+      type: "integer",
+      allOf: [{ $ref: "#/$defs/A" }, { minimum: 1 }],
+      $defs: { A: { $ref: "#/$defs/B" }, B: { $ref: "#/$defs/A" } },
+    });
+    expect(normalized.allOf).toEqual([{ $ref: "#/$defs/A" }, { minimum: 1 }]);
+  });
+
+  it.each([
+    ["before", true],
+    ["after", false],
+  ])(
+    "reconciles a bound three $refs down with the definitions %s the node",
+    async (_, definitionsFirst) => {
+      const $defs: Record<string, JSONSchema7> = {
+        Top: { allOf: [{ $ref: "#/$defs/Middle" }], exclusiveMinimum: 0 },
+        Middle: { allOf: [{ $ref: "#/$defs/Bottom" }] },
+        Bottom: { type: "integer", minimum: 10, maximum: 20 },
+      };
+      const object: JSONSchema7 = {
+        type: "object",
+        properties: { n: { $ref: "#/$defs/Top" } },
+        required: ["n"],
+      };
+      const schema = definitionsFirst
+        ? { $defs, ...object }
+        : { ...object, $defs };
+      for (const value of await numbersAt(schema, "n")) {
+        expect(value).toBeGreaterThanOrEqual(10);
+        expect(value).toBeLessThanOrEqual(20);
+      }
+    },
+  );
+
+  it("leaves a definition used on its own with its own bounds", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: {
+        alone: { $ref: "#/$defs/Big" },
+        merged: { allOf: [{ $ref: "#/$defs/Big" }, { minimum: 8_000 }] },
+      },
+      required: ["alone", "merged"],
+      $defs: { Big: { type: "integer", minimum: 5_000 } },
+    };
+    for (const value of await generateSeeds(schema)) {
+      const { alone, merged } = objectOf(value);
+      expect(alone).toBeGreaterThanOrEqual(5_000);
+      expect(alone).toBeLessThan(8_000);
+      expect(merged).toBeGreaterThanOrEqual(8_000);
+    }
+    const defs = objectOf(normalizeSchemaForJsf(schema).$defs);
+    expect(objectOf(defs.Big)).toMatchObject({ minimum: 5_000 });
+  });
+
+  it("reconciles a property's bounds across the entries that declare it", async () => {
+    for (const value of await numbersAt(
+      {
+        type: "object",
+        required: ["n"],
+        allOf: [
+          { properties: { n: { type: "integer", minimum: 10, maximum: 20 } } },
+          { properties: { n: { exclusiveMinimum: 0 } } },
+        ],
+      },
+      "n",
+    )) {
+      expect(value).toBeGreaterThanOrEqual(10);
+      expect(value).toBeLessThanOrEqual(20);
+    }
+  });
+
+  it.each([
+    ["first", true],
+    ["second", false],
+  ])(
+    "reconciles a property declared by a $ref in the %s entry",
+    async (_, refFirst) => {
+      const byRef = { properties: { a: { $ref: "#/$defs/A" } } };
+      const inline = { properties: { a: { minimum: 5_000 } } };
+      const schema: JSONSchema7 = {
+        type: "object",
+        required: ["a", "alone"],
+        properties: { alone: { $ref: "#/$defs/A" } },
+        allOf: refFirst ? [byRef, inline] : [inline, byRef],
+        $defs: { A: { type: "integer", minimum: 8_000, maximum: 9_000 } },
+      };
+      for (const value of await numbersAt(schema, "a")) {
+        expect(value).toBeGreaterThanOrEqual(8_000);
+        expect(value).toBeLessThanOrEqual(9_000);
+      }
+      const normalized = normalizeSchemaForJsf(schema);
+      expect(objectOf(objectOf(normalized.$defs).A)).toMatchObject({
+        minimum: 8_000,
+        maximum: 9_000,
+      });
+      expect(objectOf(normalized.properties).alone).toEqual({
+        $ref: "#/$defs/A",
+      });
+    },
+  );
+
+  it("stops at a $ref property declaration that leads back to a schema being reconciled", () => {
+    const normalized = normalizeSchemaForJsf({
+      type: "object",
+      properties: {
+        node: {
+          allOf: [
+            { $ref: "#/$defs/Node" },
+            {
+              properties: {
+                n: { minimum: 10 },
+                child: { properties: { child: { minimum: 1 } } },
+              },
+            },
+          ],
+        },
+      },
+      $defs: {
+        Node: {
+          type: "object",
+          properties: {
+            n: { type: "integer", exclusiveMinimum: 0, maximum: 20 },
+            child: { $ref: "#/$defs/Node" },
+          },
+        },
+      },
+    });
+    const { allOf } = objectOf(objectOf(normalized.properties).node);
+    if (!Array.isArray(allOf)) throw new Error("Expected the allOf to stay");
+    expect(objectOf(objectOf(allOf[0]).properties)).toEqual({
+      n: { type: "integer", minimum: 10, maximum: 20 },
+      child: { $ref: "#/$defs/Node" },
+    });
+  });
+
+  it("leaves a $ref property declaration that adds no bound as it is", () => {
+    const normalized = normalizeSchemaForJsf({
+      type: "object",
+      allOf: [
+        { properties: { a: { $ref: "#/$defs/A" } } },
+        { properties: { a: { description: "count" } } },
+      ],
+      $defs: { A: { type: "integer", minimum: 8_000 } },
+    });
+    expect(normalized.allOf).toEqual([
+      { properties: { a: { $ref: "#/$defs/A" } } },
+      { properties: { a: { description: "count" } } },
+    ]);
+  });
+
+  it("reconciles a property declared on the node and in a nested allOf entry", async () => {
+    for (const value of await numbersAt(
+      {
+        type: "object",
+        required: ["n"],
+        properties: { n: { type: "integer", minimum: 10, maximum: 20 } },
+        allOf: [{ allOf: [{ properties: { n: { exclusiveMinimum: 0 } } }] }],
+      },
+      "n",
+    )) {
+      expect(value).toBeGreaterThanOrEqual(10);
+      expect(value).toBeLessThanOrEqual(20);
+    }
+  });
+
+  it("generates a merged range with no valid value as it does the same range on one node", async () => {
+    for (const [merged, single] of [
+      [
+        { type: "integer", allOf: [{ minimum: 10 }, { maximum: 5 }] },
+        { type: "integer", minimum: 10, maximum: 5 },
+      ],
+      [
+        {
+          type: "integer",
+          allOf: [{ minimum: 10 }, { exclusiveMinimum: 0 }, { maximum: 5 }],
+        },
+        { type: "integer", minimum: 10, maximum: 5 },
+      ],
+      [
+        {
+          type: "integer",
+          allOf: [{ minimum: 10, maximum: 12 }, { multipleOf: 7 }],
+        },
+        { type: "integer", minimum: 10, maximum: 12, multipleOf: 7 },
+      ],
+    ] satisfies [JSONSchema7, JSONSchema7][]) {
+      expect(await generateSeeds(merged, 12)).toEqual(
+        await generateSeeds(single, 12),
+      );
+    }
+  });
+
+  it("leaves an allOf whose entries hold no bounds as it is", () => {
+    const normalized = normalizeSchemaForJsf({
+      type: "integer",
+      minimum: 3,
+      allOf: [{ $ref: "#/$defs/Base" }, { description: "count" }],
+      $defs: { Base: { type: "integer" } },
+    });
+    expect(normalized.allOf).toEqual([
+      { $ref: "#/$defs/Base" },
+      { description: "count" },
+    ]);
+    expect(normalized.minimum).toBe(3);
+  });
+
+  it("leaves a node with its own $ref, and an allOf that loops back, as they are", () => {
+    const beside = normalizeSchemaForJsf({
+      $ref: "#/$defs/Base",
+      allOf: [{ minimum: 1 }],
+      $defs: { Base: { type: "integer", maximum: 9 } },
+    });
+    expect(beside.allOf).toEqual([{ minimum: 1 }]);
+    const loop = normalizeSchemaForJsf({
+      $ref: "#/$defs/Loop",
+      $defs: { Loop: { minimum: 1, allOf: [{ $ref: "#/$defs/Loop" }] } },
+    });
+    expect(objectOf(objectOf(loop.$defs).Loop).allOf).toEqual([
+      { $ref: "#/$defs/Loop" },
+    ]);
+  });
+});

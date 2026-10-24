@@ -32,6 +32,11 @@ function numeric(value: unknown): number {
   return value;
 }
 
+function expectTenToTwenty(value: unknown): void {
+  expect(numeric(value)).toBeGreaterThanOrEqual(10);
+  expect(numeric(value)).toBeLessThanOrEqual(20);
+}
+
 /** A schema, and what every value generated from it must satisfy. */
 interface FidelityCase {
   schema: JSONSchema7;
@@ -558,6 +563,65 @@ const CASES: Record<string, FidelityCase> = {
       expect(numeric(value)).toBeLessThanOrEqual(5);
     },
   },
+  "all-of-inclusive-minimum-beside-exclusive": {
+    schema: {
+      type: "integer",
+      maximum: 20,
+      allOf: [{ minimum: 10 }, { exclusiveMinimum: 0 }],
+    },
+    fits: expectTenToTwenty,
+  },
+  "all-of-two-lone-minimums": {
+    schema: { type: "integer", allOf: [{ minimum: 5000 }, { minimum: 8000 }] },
+    fits: (value) => expect(numeric(value)).toBeGreaterThanOrEqual(8000),
+  },
+  "all-of-steps-three-and-five": {
+    schema: {
+      type: "integer",
+      minimum: 0,
+      maximum: 100,
+      allOf: [{ multipleOf: 3 }, { multipleOf: 5 }],
+    },
+    fits: (value) => {
+      expect(numeric(value) % 15).toBe(0);
+      expect(numeric(value)).toBeGreaterThanOrEqual(0);
+      expect(numeric(value)).toBeLessThanOrEqual(100);
+    },
+  },
+  "all-of-ref-wide-step-lone-maximum": {
+    schema: {
+      allOf: [{ $ref: "#/$defs/Step" }, { maximum: -5000 }],
+      $defs: { Step: { type: "integer", multipleOf: 4000 } },
+    },
+    fits: (value) => {
+      expect(numeric(value)).toBeLessThanOrEqual(-5000);
+      expect(Math.abs(numeric(value) % 4000)).toBe(0);
+    },
+  },
+  "all-of-property-bounds-across-entries": {
+    schema: {
+      type: "object",
+      required: ["n"],
+      allOf: [
+        { properties: { n: { type: "integer", minimum: 10, maximum: 20 } } },
+        { properties: { n: { exclusiveMinimum: 0 } } },
+      ],
+    },
+    fits: (value) => expectTenToTwenty(record(value).n),
+  },
+  "ref-chain-bound-under-looser-exclusive": {
+    schema: {
+      type: "object",
+      properties: { n: { $ref: "#/$defs/Top" } },
+      required: ["n"],
+      $defs: {
+        Top: { allOf: [{ $ref: "#/$defs/Middle" }], exclusiveMinimum: 0 },
+        Middle: { allOf: [{ $ref: "#/$defs/Bottom" }] },
+        Bottom: { type: "integer", minimum: 10, maximum: 20 },
+      },
+    },
+    fits: (value) => expectTenToTwenty(record(value).n),
+  },
 };
 
 function fidelityCase(name: string): FidelityCase {
@@ -582,6 +646,7 @@ const OUTLINES = [
   "A uniqueItems array never receives two rolled nulls",
   "A nullable type union rolls no null its own composition rejects",
   "count sizes a root array reached through $ref, allOf or a null union",
+  "Numeric bounds that meet through allOf entries hold together",
 ];
 
 describeFeature(feature, ({ ScenarioOutline }) => {

@@ -480,8 +480,9 @@ const TUPLE_TARGETS: Readonly<Record<string, string>> = {
  * keyword. Convert Draft 7 tuple `items` recursively at the library boundary,
  * then adapt every node whose subschemas JSF merges: drop the `faker` a merge
  * would let override another declaration's constraints
- * (`dropMergedPropertyFakers`), and restate composition beside `allOf` so the
- * merge carries it (`carryCompositionThroughAllOf`).
+ * (`dropMergedPropertyFakers`), reconcile the numeric bounds that meet
+ * through `allOf` (`reconcileAllOfBounds`), and restate composition beside
+ * `allOf` so the merge carries it (`carryCompositionThroughAllOf`).
  */
 export function normalizeSchemaForJsf(
   schema: JSONSchema7,
@@ -511,11 +512,22 @@ export function normalizeSchemaForJsf(
     inferredFakers: context.inferredFakers,
   };
   for (const copy of copies) dropMergedPropertyFakers(copy, resolve, state);
+  // After the fakers are dropped, so the members their groups replaced are
+  // the ones whose bounds move; the copies built here are restated below.
+  const bounds: BoundsContext = {
+    resolve,
+    replaced: state.replaced,
+    ancestors: new Set(),
+  };
+  for (const copy of [...copies, ...state.replaced]) {
+    reconcileAllOfBounds(copy, bounds);
+  }
   for (const copy of [...copies, ...state.replaced]) {
     carryCompositionThroughAllOf(copy, resolve);
     // After the merge pass, which may drop this `faker` and must then leave
     // the `format` in place.
     pinFakerDateToUtc(copy);
+    closeLoneNumericBound(copy);
   }
   return normalized;
 }
@@ -867,6 +879,8 @@ function dropOverriddenFakers(
     ) {
       const { faker: _dropped, ...rest } = declaration;
       declarationMember(first, name, state)?.replace(rest);
+      // Restated with the members, which closes its lone numeric bound.
+      state.replaced.push(rest);
     }
     const nested = declaring.flatMap(
       (member) => declarationMember(member, name, state) ?? [],
@@ -901,7 +915,7 @@ function normalizeSchemaNodeForJsf(
     }
   }
   integerizeStep(normalized);
-  normalizeNumericBounds(normalized);
+  keepTighterBounds(normalized);
   boundByteLength(normalized);
 
   // Bespoke pre-step: a Draft-7 tuple's list becomes `prefixItems`, and its
@@ -1185,16 +1199,21 @@ function keepTighterBound(
   delete normalized[exclusiveIsTighter ? inclusiveKey : exclusiveKey];
 }
 
-/**
- * Hand json-schema-faker one bound per side, and a finite partner for a lone
- * bound past its default range so the range it draws from is not inverted.
- * The `multipleOf` path starts from the same default range, so it needs the
- * partner too; there the partner sits at least two steps away, so a multiple
- * always lies between the bounds. Only the JSF copy changes.
- */
-function normalizeNumericBounds(normalized: JsfObjectSchema): void {
+/** Hand json-schema-faker one bound per side of a node. */
+function keepTighterBounds(normalized: JsfObjectSchema): void {
   keepTighterBound(normalized, "minimum", "exclusiveMinimum");
   keepTighterBound(normalized, "maximum", "exclusiveMaximum");
+}
+
+/**
+ * Give a lone bound past json-schema-faker's default range a finite partner,
+ * so the range it draws from is not inverted. The `multipleOf` path starts
+ * from the same default range, so it needs the partner too; there the partner
+ * sits at least two steps away, so a multiple always lies between the bounds.
+ * Runs once the bounds that meet through `allOf` are reconciled: a partner
+ * written earlier would read as a real bound there. Only the JSF copy changes.
+ */
+function closeLoneNumericBound(normalized: JsfObjectSchema): void {
   const lower = numericBound(
     normalized.minimum,
     normalized.exclusiveMinimum,
@@ -1223,6 +1242,362 @@ function normalizeNumericBounds(normalized: JsfObjectSchema): void {
   ) {
     normalized.minimum = upper - span;
   }
+}
+
+/** The keywords of one numeric range. */
+const NUMERIC_KEYWORDS = [
+  "minimum",
+  "exclusiveMinimum",
+  "maximum",
+  "exclusiveMaximum",
+  "multipleOf",
+] as const;
+
+/** Most schemas one merge reconciles; past that it is left to JSF. */
+const MAX_MERGE_SLOTS = 256;
+
+/** One side of a numeric range. */
+interface NumericBound {
+  value: number;
+  exclusive: boolean;
+}
+
+/** The numeric range of schemas merged into one value. */
+interface NumericRange {
+  lower?: NumericBound;
+  upper?: NumericBound;
+  /** Every `multipleOf`, in json-schema-faker's merge order. */
+  steps: number[];
+}
+
+/** What one `reconcileAllOfBounds` pass reads and records. */
+interface BoundsContext {
+  resolve: ResolveMember;
+  /** Every copy built for a merge, for the passes that restate the copies. */
+  replaced: JsfObjectSchema[];
+  /** The property declarations already being reconciled. */
+  ancestors: ReadonlySet<JsfObjectSchema>;
+}
+
+/** One schema json-schema-faker merges, and the `allOf` entries it merges in turn. */
+interface MergeSlot {
+  /** The entry, or the target of its `$ref` with its other keywords over it. */
+  schema: JsfObjectSchema;
+  /** One per `allOf` entry of `schema`; undefined for a boolean entry. */
+  entries: (MergeSlot | undefined)[];
+}
+
+function hasNumericBound(schema: JsfObjectSchema): boolean {
+  return NUMERIC_KEYWORDS.some((key) => typeof schema[key] === "number");
+}
+
+/** `candidate` when it is tighter than `current`; an exclusive bound wins a tie. */
+function tighterBound(
+  current: NumericBound | undefined,
+  candidate: NumericBound,
+  direction: 1 | -1,
+): NumericBound {
+  if (!current) return candidate;
+  const gap = (candidate.value - current.value) * direction;
+  return gap > 0 || (gap === 0 && candidate.exclusive) ? candidate : current;
+}
+
+/** Narrow `range` by the numeric keywords of one schema. */
+function narrowRange(range: NumericRange, schema: JsfObjectSchema): void {
+  const sides = [
+    ["minimum", "lower", false, 1],
+    ["exclusiveMinimum", "lower", true, 1],
+    ["maximum", "upper", false, -1],
+    ["exclusiveMaximum", "upper", true, -1],
+  ] as const;
+  for (const [key, side, exclusive, direction] of sides) {
+    const value = schema[key];
+    if (typeof value !== "number") continue;
+    range[side] = tighterBound(range[side], { value, exclusive }, direction);
+  }
+  if (typeof schema.multipleOf === "number") {
+    range.steps.push(schema.multipleOf);
+  }
+}
+
+/**
+ * The least common multiple of `steps`, which is a multiple of every one of
+ * them. Undefined when a step is not positive, is finer than
+ * `MAX_STEP_PLACES` decimals, or the multiple is not a safe integer once
+ * scaled to whole numbers.
+ */
+function leastCommonMultiple(steps: number[]): number | undefined {
+  const distinct = [...new Set(steps)];
+  if (distinct.length === 1) return distinct[0];
+  if (distinct.some((step) => !(step > 0) || !Number.isFinite(step))) {
+    return undefined;
+  }
+  const places = Math.max(...distinct.map(decimalPlaces));
+  if (places > MAX_STEP_PLACES) return undefined;
+  const scale = 10 ** places;
+  let multiple = 1;
+  for (const step of distinct) {
+    const scaled = Math.round(step * scale);
+    multiple = (multiple / greatestCommonDivisor(multiple, scaled)) * scaled;
+    if (!Number.isSafeInteger(multiple)) return undefined;
+  }
+  return multiple / scale;
+}
+
+/**
+ * Write `range` as one bound per side and one step. json-schema-faker keeps
+ * only the last `multipleOf` it merges, so that is the step when the steps
+ * have no least common multiple `leastCommonMultiple` can compute.
+ */
+function writeRange(target: JsfObjectSchema, range: NumericRange): void {
+  const { lower, upper, steps } = range;
+  if (lower) {
+    target[lower.exclusive ? "exclusiveMinimum" : "minimum"] = lower.value;
+  }
+  if (upper) {
+    target[upper.exclusive ? "exclusiveMaximum" : "maximum"] = upper.value;
+  }
+  if (steps.length > 0) {
+    target.multipleOf = leastCommonMultiple(steps) ?? steps[steps.length - 1];
+  }
+}
+
+function withoutNumericBounds(schema: JsfObjectSchema): JsfObjectSchema {
+  const next = { ...schema };
+  for (const key of NUMERIC_KEYWORDS) {
+    if (typeof next[key] === "number") delete next[key];
+  }
+  return next;
+}
+
+/**
+ * What json-schema-faker merges for an `allOf` entry or a property
+ * declaration: the schema itself, or the end of its `$ref` chain with the
+ * keywords beside each `$ref` over it, a nearer holder's over a farther
+ * one's, as JSF resolves each hop. Undefined when a `$ref` does not reach a
+ * local schema or the chain loops back. `origins` are the schemas it stands
+ * for: the schema itself, or every target along the chain.
+ */
+function mergedEntry(
+  entry: JsfObjectSchema,
+  resolve: ResolveMember,
+): { schema: JsfObjectSchema; origins: JsfObjectSchema[] } | undefined {
+  if (entry.$ref === undefined) return { schema: entry, origins: [entry] };
+  const origins: JsfObjectSchema[] = [];
+  let overlay: JsfObjectSchema = {};
+  let current = entry;
+  while (current.$ref !== undefined) {
+    const target =
+      typeof current.$ref === "string" ? resolve(current) : undefined;
+    if (!target || origins.includes(target)) return undefined;
+    const { $ref: _ref, ...siblings } = current;
+    overlay = { ...siblings, ...overlay };
+    origins.push(target);
+    current = target;
+  }
+  const schema =
+    Object.keys(overlay).length === 0 ? current : { ...current, ...overlay };
+  return { schema, origins };
+}
+
+/**
+ * `schema` and the `allOf` entries json-schema-faker merges with it: JSF
+ * appends an entry's own `allOf` to the merged list, so those meet too.
+ * Undefined when an entry cannot be followed, the entries loop back, or the
+ * merge holds more than `MAX_MERGE_SLOTS` schemas (`budget` counts them).
+ */
+function mergeSlot(
+  schema: JsfObjectSchema,
+  resolve: ResolveMember,
+  path: ReadonlySet<JsfObjectSchema>,
+  budget: { slots: number },
+): MergeSlot | undefined {
+  budget.slots += 1;
+  if (budget.slots > MAX_MERGE_SLOTS) return undefined;
+  const { allOf } = schema;
+  if (!Array.isArray(allOf)) return { schema, entries: [] };
+  const entries: (MergeSlot | undefined)[] = [];
+  for (const entry of allOf) {
+    if (!isJsfObject(entry)) {
+      entries.push(undefined);
+      continue;
+    }
+    const merged = mergedEntry(entry, resolve);
+    if (!merged || merged.origins.some((origin) => path.has(origin))) {
+      return undefined;
+    }
+    const slot = mergeSlot(
+      merged.schema,
+      resolve,
+      new Set([...path, ...merged.origins]),
+      budget,
+    );
+    if (!slot) return undefined;
+    entries.push(slot);
+  }
+  return { schema, entries };
+}
+
+/** The slots of `roots`, in the order json-schema-faker merges them. */
+function mergeOrder(roots: MergeSlot[]): MergeSlot[] {
+  const ordered: MergeSlot[] = [];
+  let level = roots;
+  while (level.length > 0) {
+    ordered.push(...level);
+    level = level.flatMap((slot) =>
+      slot.entries.flatMap((entry) => entry ?? []),
+    );
+  }
+  return ordered;
+}
+
+/** `properties` with each of `replaced`'s declarations in its name's place. */
+function withDeclarations(
+  properties: Record<string, JsonSchema>,
+  replaced: ReadonlyMap<string, JsfObjectSchema>,
+): Record<string, JsonSchema> {
+  const next: Record<string, JsonSchema> = { ...properties };
+  for (const [name, declaration] of replaced) {
+    Object.defineProperty(next, name, {
+      value: declaration,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  return next;
+}
+
+/**
+ * json-schema-faker merges a property that several merged schemas declare by
+ * merging the declarations, so their bounds meet as well: reconcile each such
+ * property's declarations as one merge, level by level. Returns, per slot,
+ * the declarations to put in its `properties`. A `$ref` declaration is read
+ * as `mergedEntry` reads one. A property declared by a boolean or by a
+ * `$ref` that cannot be followed is left as it is, as is one whose schemas
+ * are already being reconciled.
+ */
+function reconcileDeclarations(
+  ordered: MergeSlot[],
+  context: BoundsContext,
+): Map<MergeSlot, Map<string, JsfObjectSchema>> {
+  const replaced = new Map<MergeSlot, Map<string, JsfObjectSchema>>();
+  const names = new Set(
+    ordered.flatMap((slot) => Object.keys(propertiesOf(slot.schema))),
+  );
+  for (const name of names) {
+    const declaring = ordered.filter((slot) =>
+      Object.hasOwn(propertiesOf(slot.schema), name),
+    );
+    if (declaring.length < 2) continue;
+    const merged = declaring.flatMap((slot) => {
+      const declaration = propertiesOf(slot.schema)[name];
+      const entry = isJsfObject(declaration)
+        ? mergedEntry(declaration, context.resolve)
+        : undefined;
+      return entry ? [entry] : [];
+    });
+    const origins = merged.flatMap((entry) => entry.origins);
+    if (
+      merged.length < declaring.length ||
+      origins.some((origin) => context.ancestors.has(origin))
+    ) {
+      continue;
+    }
+    // A `$ref` declaration stands for its target, with its own keywords
+    // over it; a changed one is written back as an inline copy.
+    const declarations = merged.map((entry) => entry.schema);
+    const next = reconcileMerge(declarations, {
+      ...context,
+      ancestors: new Set([...context.ancestors, ...origins]),
+    });
+    if (!next) continue;
+    declaring.forEach((slot, index) => {
+      if (next[index] === declarations[index]) return;
+      context.replaced.push(next[index]);
+      const forSlot = replaced.get(slot) ?? new Map();
+      forSlot.set(name, next[index]);
+      replaced.set(slot, forSlot);
+    });
+  }
+  return replaced;
+}
+
+/**
+ * json-schema-faker merges numeric bounds keyword by keyword: the largest
+ * `minimum` and the largest `exclusiveMinimum` both survive, and the
+ * exclusive one is used even when the inclusive one is tighter; only the last
+ * `multipleOf` is kept. Reconcile the bounds of `roots`, schemas merged into
+ * one value in that order, and of every `allOf` entry merged with them: the
+ * first root takes the tightest bound of each side and the least common
+ * multiple of the steps, and every other schema drops its numeric keywords.
+ * Returns the schemas to use in place of `roots`, unchanged ones included,
+ * or undefined when nothing changes. Shared schemas are never written to; a
+ * changed one is copied, and each copy is added to `context.replaced`.
+ */
+function reconcileMerge(
+  roots: JsfObjectSchema[],
+  context: BoundsContext,
+): JsfObjectSchema[] | undefined {
+  const budget = { slots: 0 };
+  const slots: MergeSlot[] = [];
+  for (const root of roots) {
+    const slot = mergeSlot(root, context.resolve, new Set([root]), budget);
+    if (!slot) return undefined;
+    slots.push(slot);
+  }
+  const [carrier] = slots;
+  const ordered = mergeOrder(slots);
+  const range: NumericRange = { steps: [] };
+  for (const slot of ordered) narrowRange(range, slot.schema);
+  // True when a bound sits off the first root and so moves onto it.
+  const moved = ordered.some(
+    (slot) => slot !== carrier && hasNumericBound(slot.schema),
+  );
+  const declarations = reconcileDeclarations(ordered, context);
+  if (!moved && declarations.size === 0) return undefined;
+
+  const rebuild = (slot: MergeSlot): JsfObjectSchema | undefined => {
+    const entries = slot.entries.map((entry) => entry && rebuild(entry));
+    const replaced = declarations.get(slot);
+    const bounded = slot === carrier ? moved : hasNumericBound(slot.schema);
+    if (!bounded && !replaced && entries.every((entry) => !entry)) {
+      return undefined;
+    }
+    const next = bounded
+      ? withoutNumericBounds(slot.schema)
+      : { ...slot.schema };
+    if (slot === carrier && moved) writeRange(next, range);
+    if (replaced) {
+      next.properties = withDeclarations(propertiesOf(slot.schema), replaced);
+    }
+    const { allOf } = slot.schema;
+    if (Array.isArray(allOf) && entries.some((entry) => entry)) {
+      next.allOf = allOf.map((entry, index) => entries[index] ?? entry);
+    }
+    if (!slots.includes(slot)) context.replaced.push(next);
+    return next;
+  };
+  return slots.map((slot) => rebuild(slot) ?? slot.schema);
+}
+
+/**
+ * Reconcile the numeric bounds a node shares with its `allOf` entries (see
+ * `reconcileMerge`), writing the result onto the node's own copy. A node
+ * with a `$ref` is left as it is: JSF lets its own keywords override the
+ * target's, so bounds written there would replace the target's.
+ */
+function reconcileAllOfBounds(
+  copy: JsfObjectSchema,
+  context: BoundsContext,
+): void {
+  if (!Array.isArray(copy.allOf) || copy.$ref !== undefined) return;
+  const [next] = reconcileMerge([copy], context) ?? [];
+  if (!next || next === copy) return;
+  for (const key of NUMERIC_KEYWORDS) {
+    if (typeof copy[key] === "number") delete copy[key];
+  }
+  Object.assign(copy, next);
 }
 
 interface PatternKeyRequest {

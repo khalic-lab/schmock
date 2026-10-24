@@ -175,3 +175,18 @@ Feature: Faker output honours every keyword of its schema
       | count-through-ref-root        |
       | count-through-all-of-root     |
       | count-through-null-union-root |
+
+  # Review 2026-10-23 faker-8: json-schema-faker merged allOf bounds keyword by keyword
+  Scenario Outline: Numeric bounds that meet through allOf entries hold together
+    Given the fidelity schema "<case>"
+    When I generate it with 40 different seeds
+    Then every generated value fits "<case>"
+
+    Examples:
+      | case                                      |
+      | all-of-inclusive-minimum-beside-exclusive |
+      | all-of-two-lone-minimums                  |
+      | all-of-steps-three-and-five               |
+      | all-of-ref-wide-step-lone-maximum         |
+      | all-of-property-bounds-across-entries     |
+      | ref-chain-bound-under-looser-exclusive    |

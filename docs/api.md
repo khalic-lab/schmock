@@ -1567,9 +1567,20 @@ register them the same way:
   keys to reach `minProperties` without passing `maxProperties`.
 - A lone `minimum`/`exclusiveMinimum` of 1000 or more, or a lone
   `maximum`/`exclusiveMaximum` of -1000 or less, generates in range, with or
-  without `multipleOf`. When one side of the same node has both an inclusive
-  and an exclusive bound, the tighter one applies; bounds that meet only
-  through `allOf` entries are not reconciled.
+  without `multipleOf`. Bounds that meet on one node, or through `allOf` (the
+  node, its entries inline or behind a `$ref` or a chain of them at any
+  depth, and the declarations of a property several of them declare, inline
+  or by `$ref`), are reconciled: the tightest bound of each side applies,
+  inclusive or exclusive (an exclusive bound wins a tie), and several
+  `multipleOf` combine into their least common multiple. When that multiple
+  can't be computed exactly (a step finer than 15 decimal places, or a
+  multiple past 2^53 once scaled to whole numbers), the last step is kept. A
+  keyword beside a `$ref` replaces its target's, looser or not, as it does
+  on a `$ref` used on its own. Bounds that meet through `oneOf`, `anyOf`
+  or `if`/`then`/`else`, or through `allOf` beside the node's own `$ref`, are
+  left as json-schema-faker merges them, and so is a whole merge that holds
+  more than 256 schemas, a `$ref` that can't be followed, or an `allOf` or
+  `$ref` chain that loops back.
 - Generation avoids what `not` rejects when it is a lone `not.type` (a type
   union is narrowed, an untyped node gets another type), a `not.const` or
   `not.enum`, or a lone `not.required` (one optional listed property is left
