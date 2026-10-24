@@ -111,6 +111,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "[exports-bun 1/1] Import every candidate entry point with Bun and exercise the CLI"
   echo "[types 1/1] Compile every declaration-bearing entry in isolation"
   echo "[types-ts56 1/1] Compile the Core declaration entry with TypeScript 5.6"
+  echo "[meta 1/1] Install the @schmock/schmock tarball alone in a second isolated consumer, then import and type-check every documented re-export"
   echo "[browser 1/2] Bundle the validation candidate with esbuild for a browser target and gate its Node imports"
   echo "[browser 2/2] Bundle the OpenAPI candidate with esbuild for a browser target and gate its Node imports"
   exit 0
@@ -131,7 +132,8 @@ fi
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/schmock-release-candidate.XXXXXX")"
 PACK_DIR="$WORK_DIR/packs"
 FIXTURE_DIR="$WORK_DIR/consumer"
-mkdir -p "$PACK_DIR" "$FIXTURE_DIR"
+META_FIXTURE_DIR="$WORK_DIR/meta-consumer"
+mkdir -p "$PACK_DIR" "$FIXTURE_DIR" "$META_FIXTURE_DIR"
 
 cleanup() {
   if [[ "${KEEP_RELEASE_CANDIDATE:-0}" == "1" ]]; then
@@ -324,6 +326,44 @@ echo "[types-ts56 1/1] Compiling the Core declaration entry with TypeScript 5.6"
 (
   cd "$FIXTURE_DIR"
   node "$ROOT_DIR/scripts/check-typescript-5-6.mjs"
+)
+
+# The consumer above depends on every candidate directly, so a re-export the
+# meta-package claims but cannot resolve by itself still resolves there. This
+# second consumer depends on the @schmock/schmock tarball alone; the overrides
+# map every @schmock/* package to its packed tarball, as above, so the
+# meta-package's own dependencies are the candidates rather than a registry
+# release. The isolated install still hoists a fallback copy of every package
+# into node_modules/.bun/node_modules, which the meta-package can reach, so
+# scripts/release-candidate-meta.js also fails on any @schmock/* import the
+# meta-package ships without declaring. It names the re-exports too.
+echo "[meta 1/1] Installing the @schmock/schmock tarball alone and checking every documented re-export"
+node -e '
+  const { readFileSync, writeFileSync } = require("node:fs");
+  const [consumerManifestPath, metaManifestPath] = process.argv.slice(1);
+  const consumer = JSON.parse(readFileSync(consumerManifestPath, "utf8"));
+  const metaPackage = "@schmock/schmock";
+  const tarball = consumer.dependencies?.[metaPackage];
+  if (typeof tarball !== "string") {
+    throw new Error(`No ${metaPackage} release candidate was packed`);
+  }
+  const manifest = {
+    name: "schmock-release-candidate-meta-consumer",
+    private: true,
+    type: "module",
+    dependencies: { [metaPackage]: tarball },
+    overrides: consumer.overrides,
+  };
+  writeFileSync(metaManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+' \
+  "$FIXTURE_DIR/package.json" \
+  "$META_FIXTURE_DIR/package.json"
+cp "$CANDIDATES_FILE" "$META_FIXTURE_DIR/candidates.tsv"
+cp "$ROOT_DIR/scripts/release-candidate-meta.js" "$META_FIXTURE_DIR/meta-consumer.mjs"
+(
+  cd "$META_FIXTURE_DIR"
+  bun install --linker isolated
+  TSC_BIN="$ROOT_DIR/node_modules/.bin/tsc" node ./meta-consumer.mjs
 )
 
 # Both browser stages bundle with esbuild, `--platform=browser`, and every

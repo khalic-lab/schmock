@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import test from "node:test";
@@ -8,12 +16,20 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { ESLint } from "eslint";
 
 /**
- * Repository tooling that no package suite covers: the root ESLint config and
- * the Git hooks under .githooks/.
+ * Repository tooling that no package suite covers: the root ESLint config,
+ * the Git hooks under .githooks/, and the meta-only release-candidate stage of
+ * scripts/check-release-candidate.sh.
  */
 
 const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const COMMIT_MSG_HOOK = join(ROOT_DIR, ".githooks/commit-msg");
+const RELEASE_CANDIDATE_SCRIPT = join(
+  ROOT_DIR,
+  "scripts/check-release-candidate.sh",
+);
+const META_CONSUMER = join(ROOT_DIR, "scripts/release-candidate-meta.js");
+const META_SOURCE = join(ROOT_DIR, "packages/schmock/src/index.ts");
+const TSC_BIN = join(ROOT_DIR, "node_modules/.bin/tsc");
 
 /**
  * Runs the commit-msg hook on a message file and returns its exit status.
@@ -145,4 +161,305 @@ test("eslint does not lint a nested worktree with its own config", async () => {
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+});
+
+// ── Meta-only release-candidate consumer ────────────────────────────────────
+
+/** The names packages/schmock/src/index.ts re-exports from @schmock/core. */
+function metaSourceExports() {
+  const source = readFileSync(META_SOURCE, "utf8");
+  const match = /export\s*\{([^}]*)\}\s*from\s*"@schmock\/core"/.exec(source);
+  assert.ok(match, `${META_SOURCE} has no re-export from @schmock/core`);
+  return match[1]
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .sort();
+}
+
+const DOCUMENTED = metaSourceExports();
+
+function writePackage(directory, manifest, files) {
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(
+    join(directory, "package.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  );
+  for (const [name, contents] of Object.entries(files)) {
+    writeFileSync(join(directory, name), contents);
+  }
+}
+
+function packageManifest(name, extra = {}) {
+  return {
+    name,
+    version: "9.9.9",
+    type: "module",
+    exports: {
+      ".": { types: "./index.d.ts", default: "./index.js" },
+      "./package.json": "./package.json",
+    },
+    ...extra,
+  };
+}
+
+/**
+ * Builds the layout `bun install --linker isolated` gives the meta-only
+ * fixture: @schmock/schmock alone at the root, a link into its store
+ * directory under node_modules/.bun, and @schmock/core beside it there,
+ * reachable only from inside it. Each option breaks that layout one way.
+ */
+function metaFixture({
+  coreNames = DOCUMENTED,
+  runtimeReexports = DOCUMENTED,
+  typeReexports = runtimeReexports,
+  coreLocation = "sibling",
+  metaDependencies = { "@schmock/core": "9.9.9" },
+  fixtureDependencies = { "@schmock/schmock": "file:schmock.tgz" },
+  overrides = {
+    "@schmock/core": "file:core.tgz",
+    "@schmock/schmock": "file:schmock.tgz",
+  },
+} = {}) {
+  const fixture = mkdtempSync(join(tmpdir(), "schmock-meta-consumer-"));
+  writeFileSync(
+    join(fixture, "package.json"),
+    `${JSON.stringify({
+      private: true,
+      dependencies: fixtureDependencies,
+      overrides,
+    })}\n`,
+  );
+  writeFileSync(
+    join(fixture, "candidates.tsv"),
+    "@schmock/core\t9.9.9\tcore.package.json\n" +
+      "@schmock/schmock\t9.9.9\tschmock.package.json\n",
+  );
+  copyFileSync(META_CONSUMER, join(fixture, "meta-consumer.mjs"));
+
+  const metaDir = join(
+    fixture,
+    "node_modules/.bun/@schmock+schmock@9.9.9/node_modules/@schmock/schmock",
+  );
+  mkdirSync(join(fixture, "node_modules/@schmock"), { recursive: true });
+  const reexport = (names) =>
+    `export { ${names.join(", ")} } from "@schmock/core";\n`;
+  writePackage(
+    metaDir,
+    packageManifest("@schmock/schmock", { dependencies: metaDependencies }),
+    {
+      "index.js": reexport(runtimeReexports),
+      // The real declaration file opens with the source's docblock, whose
+      // usage examples import from packages the meta-package does not
+      // declare (itself included).
+      "index.d.ts": `/**
+ * import { schmock } from "@schmock/schmock";
+ * import { openapi } from "@schmock/unlisted";
+ */
+${reexport(typeReexports)}`,
+    },
+  );
+  symlinkSync(metaDir, join(fixture, "node_modules/@schmock/schmock"), "dir");
+
+  // Just enough of core for the consumer's requests: a route table and a 404
+  // helper. Every other name is a function that does nothing.
+  const coreRuntime = coreNames
+    .map((name) => {
+      if (name === "schmock") {
+        return `export function schmock() {
+  const routes = new Map();
+  const mock = (key, generator) => routes.set(key, generator);
+  mock.handle = async (method, path) => {
+    const generator = routes.get(\`\${method} \${path}\`);
+    const output = typeof generator === "function" ? generator() : generator;
+    return Array.isArray(output)
+      ? { status: output[0], body: output[1] }
+      : { status: 200, body: output };
+  };
+  return mock;
+}`;
+      }
+      if (name === "notFound") {
+        return 'export function notFound() { return [404, { message: "Not Found" }]; }';
+      }
+      return `export function ${name}() {}`;
+    })
+    .join("\n");
+  const coreTypes = coreNames
+    .map((name) => `export declare function ${name}(...args: unknown[]): any;`)
+    .join("\n");
+  // "sibling" puts core beside the meta-package in its store directory, where
+  // bun links a declared dependency; "fallback" puts it in the hoisted copy
+  // under node_modules/.bun/node_modules, which every package in the store
+  // resolves whether or not it declares core.
+  const coreDirs = {
+    sibling: join(dirname(metaDir), "core"),
+    root: join(fixture, "node_modules/@schmock/core"),
+    fallback: join(fixture, "node_modules/.bun/node_modules/@schmock/core"),
+  };
+  if (coreLocation !== "absent") {
+    writePackage(coreDirs[coreLocation], packageManifest("@schmock/core"), {
+      "index.js": `${coreRuntime}\n`,
+      "index.d.ts": `${coreTypes}\n`,
+    });
+  }
+  return fixture;
+}
+
+function runMetaConsumer(options) {
+  const fixture = metaFixture(options);
+  try {
+    const result = spawnSync(process.execPath, ["meta-consumer.mjs"], {
+      cwd: fixture,
+      encoding: "utf8",
+      env: { ...process.env, TSC_BIN },
+    });
+    return {
+      status: result.status,
+      output: `${result.stdout}${result.stderr}`,
+    };
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+}
+
+const without = (names, removed) => names.filter((name) => name !== removed);
+
+test("the meta consumer checks the names the meta-package documents", () => {
+  // The consumer pins its own list and fails on any export outside it, so a
+  // meta-package re-exporting exactly the source's names passes only while
+  // the two lists agree.
+  const passed = runMetaConsumer();
+  assert.equal(passed.status, 0, passed.output);
+  assert.match(
+    passed.output,
+    new RegExp(`type-checks all ${DOCUMENTED.length} documented re-exports`),
+  );
+
+  // The source's docblock is what tells users which names it re-exports:
+  // `schmock` and a parenthesised list of response helpers, which must be
+  // exactly the names the source re-exports.
+  const docblock = /^\/\*\*[\s\S]*?\*\//.exec(
+    readFileSync(META_SOURCE, "utf8"),
+  )?.[0];
+  assert.ok(docblock, `${META_SOURCE} has no leading docblock`);
+  const prose = docblock.replace(/^\s*\*+\s?/gm, "").replace(/\s+/g, " ");
+  const clause =
+    /re-exports only `(\w+)` and the response helpers \(([^)]*)\)/.exec(prose);
+  assert.ok(clause, `${META_SOURCE}'s docblock does not list its re-exports`);
+  const listed = clause[2]
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  assert.deepEqual([clause[1], ...listed].sort(), DOCUMENTED);
+});
+
+test("the meta consumer fails when a re-export does not resolve at runtime", () => {
+  const result = runMetaConsumer({
+    coreNames: without(DOCUMENTED, "paginate"),
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.output, /does not load on its own/);
+  assert.match(result.output, /paginate/);
+});
+
+test("the meta consumer fails when a re-export does not type-check", () => {
+  const result = runMetaConsumer({
+    typeReexports: without(DOCUMENTED, "paginate"),
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.output, /has no exported member 'paginate'/);
+  assert.match(result.output, /do not type-check on their own/);
+});
+
+test("the meta consumer fails on a @schmock/* import its manifest does not declare", () => {
+  // The isolated install's hoisted fallback resolves core for the
+  // meta-package even when it is not declared.
+  const result = runMetaConsumer({
+    coreLocation: "fallback",
+    metaDependencies: {},
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.output,
+    /imports @schmock\/core in index\.(?:d\.ts|js) but does not declare it as a dependency/,
+  );
+});
+
+test("the meta consumer fails when the fixture does not override a candidate", () => {
+  const result = runMetaConsumer({
+    overrides: { "@schmock/schmock": "file:schmock.tgz" },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.output,
+    /does not override @schmock\/core to its packed tarball/,
+  );
+});
+
+test("the meta consumer fails when the meta-package cannot reach core", () => {
+  const result = runMetaConsumer({ coreLocation: "absent" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.output, /cannot resolve its dependency @schmock\/core/);
+});
+
+test("the meta consumer fails on an export its documentation does not list", () => {
+  const result = runMetaConsumer({
+    coreNames: [...DOCUMENTED, "undocumented"],
+    runtimeReexports: [...DOCUMENTED, "undocumented"],
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.output, /exports names its documentation does not list/);
+});
+
+test("the meta consumer refuses a fixture that is not meta-only", () => {
+  // Hoisted, core would resolve whether or not the meta-package declares it.
+  const hoisted = runMetaConsumer({ coreLocation: "root" });
+  assert.notEqual(hoisted.status, 0);
+  assert.match(hoisted.output, /resolvable from the meta-only fixture root/);
+
+  const direct = runMetaConsumer({
+    fixtureDependencies: {
+      "@schmock/core": "file:core.tgz",
+      "@schmock/schmock": "file:schmock.tgz",
+    },
+  });
+  assert.notEqual(direct.status, 0);
+  assert.match(direct.output, /must depend on @schmock\/schmock alone/);
+});
+
+test("check-release-candidate.sh runs the meta-only consumer", () => {
+  const syntax = spawnSync("bash", ["-n", RELEASE_CANDIDATE_SCRIPT], {
+    encoding: "utf8",
+  });
+  assert.equal(syntax.status, 0, syntax.stderr);
+
+  const dryRun = spawnSync("bash", [RELEASE_CANDIDATE_SCRIPT, "--dry-run"], {
+    encoding: "utf8",
+  });
+  assert.equal(dryRun.status, 0, dryRun.stderr);
+  assert.match(
+    dryRun.stdout,
+    /^\[meta 1\/1\] Install the @schmock\/schmock tarball alone/m,
+  );
+
+  // The stage copies the consumer into its own fixture and runs it there,
+  // with the repository's tsc, after an isolated install.
+  const script = readFileSync(RELEASE_CANDIDATE_SCRIPT, "utf8");
+  assert.match(
+    script,
+    /cp "\$ROOT_DIR\/scripts\/release-candidate-meta\.js" "\$META_FIXTURE_DIR\/meta-consumer\.mjs"/,
+  );
+  // Its manifest depends on the meta tarball alone and carries the main
+  // consumer's overrides.
+  assert.match(
+    script,
+    /dependencies: \{ \[metaPackage\]: tarball \},\n\s*overrides: consumer\.overrides,/,
+  );
+  const stage = script.slice(script.indexOf('cd "$META_FIXTURE_DIR"'));
+  assert.match(stage, /^\s*bun install --linker isolated$/m);
+  assert.match(
+    stage,
+    /^\s*TSC_BIN="\$ROOT_DIR\/node_modules\/\.bin\/tsc" node \.\/meta-consumer\.mjs$/m,
+  );
 });
