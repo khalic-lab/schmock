@@ -1,4 +1,6 @@
+import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
+import { serveNodeRequest } from "./http-helpers.js";
 import { schmock } from "./index.js";
 import { routeRelayedRequest } from "./interceptor.js";
 import { decodeFormBody } from "./request-body.js";
@@ -204,6 +206,41 @@ describe("urlencoded request forms", () => {
 
       expect(response.status).toBe(200);
       expect(recording.seen).toEqual([
+        { body: { tag: "b" }, tags: ["a", "b"], hasForm: true },
+      ]);
+    });
+  });
+
+  describe("serveNodeRequest() (the CLI's ingress)", () => {
+    let server: Server | undefined;
+
+    afterEach(async () => {
+      await new Promise(
+        (resolve) => server?.close(resolve) ?? resolve(undefined),
+      );
+      server = undefined;
+    });
+
+    it("passes every value of a repeated name beside the last-wins body", async () => {
+      const { mock, seen } = recordingMock();
+      server = createServer((req, res) => {
+        void serveNodeRequest(req, res, { handle: mock.handle.bind(mock) });
+      });
+      await new Promise<void>((resolve) =>
+        server?.listen(0, "127.0.0.1", resolve),
+      );
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        throw new Error("expected a TCP address");
+      }
+
+      await fetch(`http://127.0.0.1:${address.port}/tags`, {
+        method: "POST",
+        headers: { "content-type": FORM_TYPE },
+        body: "tag=a&tag=b",
+      });
+
+      expect(seen).toEqual([
         { body: { tag: "b" }, tags: ["a", "b"], hasForm: true },
       ]);
     });
