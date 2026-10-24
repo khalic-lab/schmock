@@ -1,6 +1,7 @@
 import type * as Schmock from "@schmock/core";
 import type { JSONSchema7 } from "json-schema";
-import { hasType } from "./utils.js";
+import { poolEntries } from "./example-values.js";
+import { hasType, isRecord } from "./utils.js";
 
 /*
  * Response header values, generated from each declared header's schema.
@@ -119,7 +120,7 @@ export function generateHeaderValues(
     : undefined;
 
   for (const [name, def] of Object.entries(headerDefs)) {
-    const value = generateSingleHeaderValue(def.schema, reservation);
+    const value = generateSingleHeaderValue(name, def.schema, reservation);
     if (value !== undefined) {
       headers[name] = value;
     }
@@ -128,9 +129,15 @@ export function generateHeaderValues(
   return headers;
 }
 
+interface HeaderReservation {
+  seed: number;
+  ordinal: number;
+}
+
 function generateSingleHeaderValue(
+  name: string,
   schema: JSONSchema7 | undefined,
-  reservation?: { seed: number; ordinal: number },
+  reservation?: HeaderReservation,
 ): string | undefined {
   if (!schema || typeof schema === "boolean") return undefined;
 
@@ -142,6 +149,18 @@ function generateSingleHeaderValue(
   if (Array.isArray(schema.enum)) {
     const value = schema.enum.find(isHeaderScalar);
     if (value !== undefined) return String(value);
+  }
+
+  // Several examples the schema accepts became a pool (example-values.ts),
+  // which a body value draws from through json-schema-faker: the header draws
+  // from it too. The pool stands where a single example's `default` would,
+  // so a fixed value (`const`, `enum`) still wins, and a declared
+  // Content-Type is kept or ignored as operation-extract.ts decides.
+  const pool = isRecord(schema)
+    ? poolEntries(schema)?.filter(isHeaderScalar)
+    : undefined;
+  if (pool && pool.length > 0) {
+    return String(pool[poolIndex(pool.length, name, reservation)]);
   }
 
   // Has default (from example → default normalization). Only a scalar has one
@@ -188,6 +207,26 @@ function generateSingleHeaderValue(
   // guessing one would be worse than omitting the header. Not an oversight —
   // do not "fix" it without deciding the serialization first.
   return undefined;
+}
+
+/**
+ * Which of `size` pool entries a header takes. Seeded, a hash of the seed,
+ * the request's ordinal and the header's name, so the same seed replays the
+ * same draws while each request and each header draws on its own; unseeded,
+ * `Math.random`.
+ */
+function poolIndex(
+  size: number,
+  name: string,
+  reservation: HeaderReservation | undefined,
+): number {
+  if (!reservation) return Math.floor(Math.random() * size);
+  // FNV-1a, 32-bit.
+  let hash = 0x811c9dc5;
+  for (const char of `${reservation.seed}:${reservation.ordinal}:${name}`) {
+    hash = Math.imul(hash ^ (char.codePointAt(0) ?? 0), 0x01000193);
+  }
+  return (hash >>> 0) % size;
 }
 
 function isHeaderScalar(value: unknown): value is string | number | boolean {

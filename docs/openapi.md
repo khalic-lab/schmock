@@ -1047,6 +1047,9 @@ the header schema:
 
 - a scalar `const` is used verbatim;
 - an `enum` uses its first non-null value;
+- several `examples` the schema accepts give a value drawn from them on each
+  request, which `fakerSeed` replays; a single accepted one is used as a
+  `default`;
 - a scalar `default` is used verbatim (an object or array default is ignored);
 - `format: uuid` and `format: date-time` are generated;
 - `integer` and `number` fall back to `0`, or to the nearest whole number inside
@@ -1135,7 +1138,10 @@ from several. The draw reaches an `onSchema` hook as a `faker` keyword
 (`helpers.arrayElement`) on the property. json-schema-faker reads it before
 `default`, `const` or `enum`, so a hook that pins such a property removes it.
 A CRUD resource's id is the exception: it takes no value from its examples in
-any body generated for the resource (see [Identifiers](#identifiers)).
+any body generated for the resource (see [Identifiers](#identifiers)). A
+response header schema draws from its accepted examples the same way, a new
+draw per request that `fakerSeed` replays, unless a `const` or `enum` fixes
+its value (see [Response Headers](#response-headers)).
 
 A nullable value is `null` about 5% of the time, whether the schema uses 3.0
 `nullable: true` or the 3.1 forms `type: [T, "null"]` and

@@ -12,6 +12,7 @@ import {
   generateSeedItems,
 } from "./generators";
 import { findArrayProperty } from "./list-envelope";
+import { normalizeSchema } from "./normalizer";
 import type { ParsedPath } from "./parser";
 import { openapi } from "./plugin";
 import { createHeaderSeed, generateHeaderValues } from "./response-headers";
@@ -772,6 +773,101 @@ describe("generators", () => {
         },
       });
       expect(headers["X-Flag"]).toBe("false");
+    });
+
+    describe("a header whose examples became a pool", () => {
+      const regions = ["eu-west", "us-east", "ap-south"];
+      const defs = {
+        "X-Region": {
+          // What the normalizer writes for several accepted 3.1 examples.
+          schema: normalizeSchema(
+            { type: "string", examples: [...regions, 42] },
+            "response",
+          ),
+          description: "Region",
+        },
+      };
+
+      /** `count` successive requests' X-Region under one header seed. */
+      function drawn(count: number, seed?: number): string[] {
+        const headerSeed = createHeaderSeed(seed);
+        return Array.from(
+          { length: count },
+          () => generateHeaderValues(defs, headerSeed)["X-Region"],
+        );
+      }
+
+      it("draws each request's value from the examples", () => {
+        const values = drawn(24, 42);
+        for (const value of values) expect(regions).toContain(value);
+        expect(new Set(values).size).toBeGreaterThan(1);
+      });
+
+      it("replays the same draws for the same seed", () => {
+        expect(drawn(12, 42)).toEqual(drawn(12, 42));
+        expect(drawn(12, 42)).not.toEqual(drawn(12, 7));
+      });
+
+      it("draws from the same examples unseeded", () => {
+        for (const value of drawn(12)) expect(regions).toContain(value);
+      });
+
+      it("reaches a response through the plugin, replayed by fakerSeed", async () => {
+        const spec = {
+          openapi: "3.1.0",
+          info: { title: "Regions", version: "1.0.0" },
+          paths: {
+            "/region": {
+              get: {
+                responses: {
+                  "200": {
+                    description: "OK",
+                    headers: {
+                      "X-Region": {
+                        schema: { type: "string", examples: regions },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        };
+        const run = async (): Promise<unknown[]> => {
+          const mock = schmock();
+          mock.pipe(
+            await openapi({ spec: structuredClone(spec), fakerSeed: 42 }),
+          );
+          const values: unknown[] = [];
+          for (let i = 0; i < 8; i++) {
+            values.push(
+              (await mock.handle("GET", "/region")).headers["X-Region"],
+            );
+          }
+          return values;
+        };
+
+        const first = await run();
+        for (const value of first) expect(regions).toContain(value);
+        expect(await run()).toEqual(first);
+      });
+
+      it("leaves an enum's first value ahead of the pool", () => {
+        const schema = normalizeSchema(
+          { type: "string", enum: ["c", "b"], examples: ["b", "c"] },
+          "response",
+        );
+        expect(schema).toHaveProperty("faker");
+        const headerSeed = createHeaderSeed(42);
+        for (let i = 0; i < 6; i++) {
+          expect(
+            generateHeaderValues(
+              { "X-H": { schema, description: "" } },
+              headerSeed,
+            )["X-H"],
+          ).toBe("c");
+        }
+      });
     });
   });
 

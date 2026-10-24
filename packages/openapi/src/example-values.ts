@@ -41,6 +41,24 @@ export interface ExampleValue {
 }
 
 /**
+ * The entries a node's `faker` keyword draws from, when it is the pool
+ * {@link applyExampleValues} writes (`{ "helpers.arrayElement": [entries] }`),
+ * or a spec's own draw of the same form: what a value generated without
+ * json-schema-faker, such as a response header, draws from too.
+ */
+export function poolEntries(
+  node: Record<string, unknown>,
+): readonly unknown[] | undefined {
+  const draw = node.faker;
+  if (typeof draw !== "object" || draw === null || Array.isArray(draw)) {
+    return undefined;
+  }
+  const args: unknown = Reflect.get(draw, POOL_METHOD);
+  const entries: unknown = Array.isArray(args) ? args[0] : undefined;
+  return Array.isArray(entries) && entries.length > 0 ? entries : undefined;
+}
+
+/**
  * How many compiled checks are kept. Each distinct set of value keywords is
  * compiled once, and AJV also keeps every schema it compiled, so a process
  * that loads spec after spec (the CLI reloading under `--watch`) would keep
