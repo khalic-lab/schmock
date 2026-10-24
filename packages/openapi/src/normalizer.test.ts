@@ -1149,23 +1149,28 @@ describe("normalizeSchema", () => {
       ).toBe("x");
     });
 
+    // Each case: a node that composes, an entry a branch rejects, and an entry
+    // the whole node accepts.
     it.each([
       [
         "allOf",
         { type: "string", allOf: [{ format: "uuid" }] },
-        [malformed, stationA],
+        malformed,
+        stationA,
       ],
       [
         "anyOf",
         { anyOf: [{ type: "string", format: "uuid" }, { type: "integer" }] },
-        [malformed, "zzz"],
+        "zzz",
+        7,
       ],
       [
         "oneOf",
         { type: "string", oneOf: [{ format: "uuid" }, { format: "email" }] },
-        ["nope", "x@y.co"],
+        "nope",
+        "x@y.co",
       ],
-      ["not", { type: "string", not: { const: "x" } }, ["x", "y"]],
+      ["not", { type: "string", not: { const: "x" } }, "x", "y"],
       [
         "if/then",
         {
@@ -1174,30 +1179,77 @@ describe("normalizeSchema", () => {
           // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
           then: { pattern: "^[A-Z]+$" },
         },
-        ["ab", "CD"],
+        "ab",
+        "CD",
       ],
     ])(
-      "takes no value from the examples of a node that composes with %s",
-      (_, schema, entries) => {
-        for (const examples of [
-          { examples: entries },
-          { examples: [entries[0]] },
-        ]) {
-          const result = normalizeSchema(
-            { ...schema, ...examples },
-            "response",
-          );
-          expect(result).not.toHaveProperty("default");
-          expect(result).not.toHaveProperty("faker");
-        }
-        const promoted = normalizeSchema(
-          { ...schema, example: entries[0] },
+      "checks an example against every branch of a node that composes with %s",
+      (_, schema, rejected, accepted) => {
+        // One accepted entry pins the value, as on any scalar node.
+        const pinned = normalizeSchema(
+          { ...schema, examples: [rejected, accepted] },
           "response",
         );
-        expect(promoted).not.toHaveProperty("default");
-        expect(promoted).not.toHaveProperty("example");
+        expect(pinned.default).toBe(accepted);
+        expect(pinned).not.toHaveProperty("faker");
+
+        const none = normalizeSchema(
+          { ...schema, examples: [rejected] },
+          "response",
+        );
+        expect(none).not.toHaveProperty("default");
+        expect(none).not.toHaveProperty("faker");
+
+        // A 3.0 example is promoted only when the whole node accepts it.
+        expect(
+          normalizeSchema({ ...schema, example: accepted }, "response").default,
+        ).toBe(accepted);
+        const refused = normalizeSchema(
+          { ...schema, example: rejected },
+          "response",
+        );
+        expect(refused).not.toHaveProperty("default");
+        expect(refused).not.toHaveProperty("example");
       },
     );
+
+    it("draws from no pool on a node that composes, however many entries it accepts", () => {
+      // json-schema-faker evaluates `faker` before the composition, and
+      // @schmock/faker refuses a faker draw beside `not`.
+      for (const schema of [
+        { type: "string", not: { const: "x" }, examples: ["y", "z"] },
+        {
+          type: "string",
+          allOf: [{ format: "uuid" }],
+          examples: [stationA, stationB],
+        },
+      ]) {
+        const result = normalizeSchema(schema, "response");
+        expect(result).not.toHaveProperty("default");
+        expect(result).not.toHaveProperty("faker");
+      }
+    });
+
+    it("checks a composed node against its normalized branches", () => {
+      // The 3.0 boolean exclusiveMinimum inside the branch is numeric by the
+      // time the node is checked, so 0 is refused and 1 accepted.
+      const result = normalizeSchema(
+        {
+          type: "integer",
+          allOf: [{ minimum: 0, exclusiveMinimum: true }],
+          examples: [0, 1],
+        },
+        "response",
+      );
+      expect(result.default).toBe(1);
+      // A typeless allOf is read as an object and takes no example, as before.
+      expect(
+        normalizeSchema(
+          { allOf: [{ type: "string" }], example: "x" },
+          "response",
+        ),
+      ).not.toHaveProperty("default");
+    });
 
     it("does not draw from a pool json-schema-faker would alter", () => {
       // A drawn value is cast to a type picked at random from a union, and
@@ -1325,20 +1377,22 @@ describe("normalizeSchema", () => {
       expect(ids.size).toBeGreaterThan(1);
     });
 
-    it("generates a composed node from its composition, not its examples", async () => {
-      const uuids = await readSeeded(
-        {
-          type: "string",
-          allOf: [{ format: "uuid" }],
-          examples: [malformed, stationA],
-        },
-        6,
-      );
-      for (const value of uuids) expect(value).toMatch(UUID);
-      expect(uuids).not.toContain(malformed);
+    it("never generates an example a composed node's branches reject", async () => {
+      for (const examples of [
+        { examples: [malformed, stationA] },
+        { example: malformed },
+      ]) {
+        const uuids = await readSeeded(
+          { type: "string", allOf: [{ format: "uuid" }], ...examples },
+          6,
+          "example" in examples ? "3.0.3" : undefined,
+        );
+        for (const value of uuids) expect(value).toMatch(UUID);
+        expect(uuids).not.toContain(malformed);
+      }
 
-      // A faker draw beside `not` is rejected by @schmock/faker; the node
-      // generates as it did before examples drove generation.
+      // `not` rejects "x", so "y" is the one accepted entry, and the default
+      // it becomes is what @schmock/faker returns.
       for (let fakerSeed = 0; fakerSeed < 4; fakerSeed++) {
         const mock = await mockFor(
           valueSpec({
@@ -1350,8 +1404,7 @@ describe("normalizeSchema", () => {
         );
         const response = await mock.handle("GET", "/value");
         expect(response.status).toBe(200);
-        expect(typeof response.body).toBe("string");
-        expect(response.body).not.toBe("x");
+        expect(response.body).toBe("y");
       }
     });
 

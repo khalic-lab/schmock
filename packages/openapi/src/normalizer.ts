@@ -85,8 +85,8 @@ export function collectAccessModes(
  * - readOnly/writeOnly -> strip based on direction (names recorded, see
  *   {@link collectAccessModes})
  * - example, or else the 3.1 `examples` entries -> what a scalar node
- *   generates, counting only values the node accepts (see
- *   {@link applyExampleValues}); a `default` still pins
+ *   generates, counting only values the whole node accepts, composition
+ *   included (see {@link applyExampleValues}); a `default` still pins
  * - exclusiveMinimum/exclusiveMaximum boolean -> number format
  * - x-* extensions -> stripped
  * - a cycle -> ended where generation can stop: an optional property closing
@@ -479,11 +479,6 @@ function normalizeNode(
     delete node.exclusiveMaximum;
   }
 
-  // A scalar node generates from its own examples, once the bounds above are
-  // numeric: an example the node rejects is never generated.
-  applyExampleValues(node, isNullable);
-  delete node.example;
-
   // Recurse into items (array schema)
   if (node.items) {
     if (Array.isArray(node.items)) {
@@ -576,6 +571,12 @@ function normalizeNode(
     }
     node.patternProperties = pp;
   }
+
+  // A scalar node generates from its own examples, checked against the whole
+  // node: its bounds are numeric by now and its branches normalized, so an
+  // example the node or any branch rejects is never generated.
+  applyExampleValues(node, isNullable);
+  delete node.example;
 
   const out = toJsonSchema(isNullable ? applyNullability(node) : node);
   if (readOnlyNames.length > 0 || writeOnlyNames.length > 0) {

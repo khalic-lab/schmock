@@ -648,6 +648,53 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   );
 
   Scenario(
+    "A composed scalar generates the one example its whole schema accepts",
+    ({ Given, When, Then }) => {
+      let statusSpec: Record<string, unknown>;
+      const statuses: unknown[] = [];
+
+      Given(
+        'a 3.1 mock whose status string excludes "x" through not and declares the examples "x" and "y"',
+        () => {
+          statusSpec = specWith(
+            {
+              "/status": {
+                get: {
+                  responses: {
+                    "200": {
+                      description: "OK",
+                      content: json({
+                        type: "string",
+                        not: { const: "x" },
+                        examples: ["x", "y"],
+                      }),
+                    },
+                  },
+                },
+              },
+            },
+            {},
+            "3.1.0",
+          );
+        },
+      );
+
+      When("I read the status with 4 different faker seeds", async () => {
+        for (let fakerSeed = 0; fakerSeed < 4; fakerSeed++) {
+          await build({ spec: structuredClone(statusSpec), fakerSeed });
+          response = await mock.handle("GET", "/status");
+          expect(response.status).toBe(200);
+          statuses.push(response.body);
+        }
+      });
+
+      Then('every status is "y"', () => {
+        expect(statuses).toEqual(["y", "y", "y", "y"]);
+      });
+    },
+  );
+
+  Scenario(
     "A resource whose paths end in a slash stores what it creates",
     ({ Given, When, Then, And }) => {
       Given(

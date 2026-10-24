@@ -60,14 +60,37 @@ function acceptanceCache(): AcceptanceCache {
   return acceptance;
 }
 
+/** The keywords that constrain a node through other schemas. */
+const COMPOSITION_KEYWORDS = [
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "not",
+  "if",
+  "then",
+  "else",
+] as const;
+
+/**
+ * The check of what `node` accepts, compiled from its value keywords and its
+ * composition keywords, whose branches the normalizer has already
+ * normalized: a uuid `format` in an `allOf` entry rejects a malformed example
+ * as surely as one beside `type`. `undefined` when the keywords do not
+ * compile, or a cyclic branch cannot be keyed.
+ */
 function valueCheck(
   node: Record<string, unknown>,
 ): ValidateFunction | undefined {
   const keywords: Record<string, unknown> = {};
-  for (const keyword of VALUE_KEYWORDS) {
+  for (const keyword of [...VALUE_KEYWORDS, ...COMPOSITION_KEYWORDS]) {
     if (node[keyword] !== undefined) keywords[keyword] = node[keyword];
   }
-  const key = JSON.stringify(keywords);
+  let key: string;
+  try {
+    key = JSON.stringify(keywords);
+  } catch {
+    return undefined;
+  }
   const { ajv, checks } = acceptanceCache();
   if (checks.has(key)) return checks.get(key);
 
@@ -82,9 +105,10 @@ function valueCheck(
 }
 
 /**
- * Does `node` accept `value` by its type, format, pattern, enum, const, length
- * and numeric bounds? A node whose keywords do not compile cannot tell, so it
- * rejects nothing, as before the check existed.
+ * Does `node` accept `value`, by its type, format, pattern, enum, const,
+ * length and numeric bounds and by every branch it composes with? A node
+ * whose keywords do not compile cannot tell, so it rejects nothing, as before
+ * the check existed.
  */
 function acceptsValue(node: Record<string, unknown>, value: unknown): boolean {
   const check = valueCheck(node);
@@ -111,24 +135,12 @@ function isCompositeNode(node: Record<string, unknown>): boolean {
   );
 }
 
-/** The keywords that constrain a node through other schemas. */
-const COMPOSITION_KEYWORDS = [
-  "allOf",
-  "anyOf",
-  "oneOf",
-  "not",
-  "if",
-  "then",
-  "else",
-] as const;
-
 /**
  * Does `node` constrain its value through `allOf`, `anyOf`, `oneOf`, `not` or
- * `if`/`then`/`else`? The value check sees only the node's own keywords, so it
- * would accept an example a branch rejects (a uuid `format` in an `allOf`
- * entry, an `anyOf` with no `type` beside it). Such a node generates from its
- * composition, as @schmock/faker generates it, and a `faker` draw beside `not`
- * is rejected outright, because json-schema-faker never checks it.
+ * `if`/`then`/`else`? Such a node never draws from several examples:
+ * json-schema-faker evaluates a `faker` keyword before the composition, so a
+ * draw would skip what the branches add, and @schmock/faker rejects a `faker`
+ * draw beside `not` outright, because json-schema-faker never checks it.
  */
 function isComposedNode(node: Record<string, unknown>): boolean {
   return COMPOSITION_KEYWORDS.some((keyword) => node[keyword] !== undefined);
@@ -159,10 +171,11 @@ function examplePool(node: Record<string, unknown>): unknown[] {
  * the drawn value to the node's type, and to a type picked at random from a
  * union, so a string entry drawn as `integer` comes back NaN. It also snaps a
  * number onto a fractional `multipleOf`: 19.99 drawn on a 0.01 step comes
- * back as 19.98. A `faker` keyword the spec declares itself is kept.
+ * back as 19.98. A `faker` keyword the spec declares itself is kept, and a
+ * node that composes never draws (see {@link isComposedNode}).
  */
 function canDrawFromPool(node: Record<string, unknown>): boolean {
-  if (node.faker !== undefined) return false;
+  if (node.faker !== undefined || isComposedNode(node)) return false;
   const types = Array.isArray(node.type)
     ? node.type.filter((type) => type !== "null")
     : [];
@@ -173,18 +186,17 @@ function canDrawFromPool(node: Record<string, unknown>): boolean {
 
 /**
  * Let a scalar node's own examples drive what is generated for it, writing to
- * `node` in place:
+ * `node` in place. The normalizer calls it once the node's composition
+ * branches are normalized, so the check covers the whole node:
  *
  * - a `default` pins the value, and nothing changes;
- * - a node that composes (see {@link isComposedNode}) generates from its
- *   composition, and neither keyword is used;
  * - a primitive 3.0 `example` the node accepts becomes its `default`;
  * - with no `example`, the distinct primitive 3.1 `examples` entries the node
  *   accepts form a pool. One entry becomes the `default`, exactly as an
  *   `example` would. With several, each generated value is drawn from them
  *   through the generator's seeded faker instance (`fakerSeed` reproduces the
- *   draws), unless json-schema-faker would alter a drawn value (see
- *   {@link canDrawFromPool}).
+ *   draws), unless json-schema-faker would alter a drawn value or skip the
+ *   node's composition (see {@link canDrawFromPool}).
  *
  * `nullable` is the node's 3.0 `nullable: true`, already removed from `node`:
  * it makes a `null` example acceptable whatever the type says.
@@ -193,9 +205,7 @@ export function applyExampleValues(
   node: Record<string, unknown>,
   nullable: boolean,
 ): void {
-  if ("default" in node || isCompositeNode(node) || isComposedNode(node)) {
-    return;
-  }
+  if ("default" in node || isCompositeNode(node)) return;
 
   if ("example" in node) {
     const { example } = node;

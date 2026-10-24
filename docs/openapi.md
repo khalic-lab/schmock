@@ -1106,9 +1106,13 @@ by its type, format, pattern, enum, const, length and numeric bounds, so an
 example it rejects, such as that spec's malformed trip uuid, is never
 generated, and a schema that accepts none of its examples generates as if it
 had none. A schema that composes with `allOf`, `anyOf`, `oneOf`, `not` or
-`if`/`then`/`else` uses neither keyword and generates from its composition,
-because the check sees only the schema's own keywords. A `default` still pins
-the value over both. Examples steer generation
+`if`/`then`/`else` is checked whole, its branches included: an `example`, or
+the one `examples` entry, that it accepts becomes its `default`, so
+`type: string, not: { const: x }` with `examples: [x, y]` returns `y`. Several
+accepted entries are not drawn from on such a schema, and json-schema-faker
+returns the `default` only beside `not`: under `allOf`, `anyOf`, `oneOf` or
+`if`/`then`/`else` it generates from the branches, never a rejected example.
+A `default` still pins the value over both. Examples steer generation
 only: validation accepts whatever the schema accepts, listed or not. `null`
 entries are left to the nullable rate below, and a drawn `date-time` comes back
 in its `toISOString()` form. A schema whose `type` lists two non-null types, or

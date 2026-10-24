@@ -97,6 +97,13 @@ Feature: OpenAPI schema model fixes
     When I create the pets "Rex" and "Tom"
     Then the created pets have the ids 1 and 2
 
+  # A schema that composes is checked whole, its branches included, and
+  # several accepted entries form no pool on it.
+  Scenario: A composed scalar generates the one example its whole schema accepts
+    Given a 3.1 mock whose status string excludes "x" through not and declares the examples "x" and "y"
+    When I read the status with 4 different faker seeds
+    Then every status is "y"
+
   # ── CRUD detection ────────────────────────────────────────────────────────
 
   Scenario: A resource whose paths end in a slash stores what it creates
