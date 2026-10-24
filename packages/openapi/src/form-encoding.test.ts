@@ -319,6 +319,92 @@ describe("urlencoded forms read through their encoding", () => {
     });
   });
 
+  describe("normalizeRequestBody with the record alone", () => {
+    /** A record as Express's parser or a handle() caller hands it over. */
+    function readRecord(
+      record: Record<string, unknown>,
+      encoding?: Record<string, FormEncoding>,
+      contentType = FORM_TYPE,
+    ): unknown {
+      return normalizeRequestBody(record, contentType, formSchema, {
+        encoding:
+          encoding === undefined
+            ? undefined
+            : new Map(Object.entries(encoding)),
+      });
+    }
+
+    it("splits a value on commas when the property's form style does not explode", () => {
+      expect(
+        readRecord(
+          { tags: "a,b", ids: "1,2" },
+          {
+            tags: { style: "form", explode: false },
+            ids: { style: "form", explode: false },
+          },
+        ),
+      ).toEqual({ tags: ["a", "b"], ids: [1, 2] });
+    });
+
+    it("splits spaceDelimited and pipeDelimited values on their delimiter", () => {
+      expect(
+        readRecord(
+          { tags: "a b", ids: "1|2" },
+          {
+            tags: { style: "spaceDelimited", explode: false },
+            ids: { style: "pipeDelimited", explode: false },
+          },
+        ),
+      ).toEqual({ tags: ["a", "b"], ids: [1, 2] });
+    });
+
+    it("leaves a value whole where the property explodes or names no encoding", () => {
+      for (const encoding of [
+        undefined,
+        {},
+        { tags: { style: "form" as const, explode: true } },
+        { tags: { style: "spaceDelimited" as const, explode: true } },
+        { name: { style: "form" as const, explode: false } },
+      ]) {
+        expect(readRecord({ tags: "a,b" }, encoding)).toEqual({
+          tags: ["a,b"],
+        });
+      }
+    });
+
+    it("splits only properties declared as arrays, and only text values", () => {
+      const explodeFalse = { style: "form" as const, explode: false };
+      expect(readRecord({ name: "a,b" }, { name: explodeFalse })).toEqual({
+        name: "a,b",
+      });
+      expect(
+        readRecord({ tags: ["a,b", "c"] }, { tags: explodeFalse }),
+      ).toEqual({ tags: ["a,b", "c"] });
+      expect(readRecord({ tags: "" }, { tags: explodeFalse })).toEqual({
+        tags: [""],
+      });
+    });
+
+    it("reads a record the form no longer describes the same way", () => {
+      expect(
+        normalizeRequestBody({ tags: "c,d" }, FORM_TYPE, formSchema, {
+          fields: new URLSearchParams("tags=a,b"),
+          encoding: new Map([["tags", { style: "form", explode: false }]]),
+        }),
+      ).toEqual({ tags: ["c", "d"] });
+    });
+
+    it("never splits a multipart record", () => {
+      expect(
+        readRecord(
+          { tags: "a,b" },
+          { tags: { style: "form", explode: false } },
+          "multipart/form-data",
+        ),
+      ).toEqual({ tags: ["a,b"] });
+    });
+  });
+
   describe("request validation and CRUD storage", () => {
     let mock: Schmock.CallableMockInstance | undefined;
 
@@ -434,6 +520,48 @@ describe("urlencoded forms read through their encoding", () => {
         status: expressCreated.status,
         body: expressCreated.body,
       });
+    });
+
+    it("splits a value its encoding does not explode under Express as intercept() does", async () => {
+      const encoding = { tags: { style: "form", explode: false } };
+      for (const extended of [false, true]) {
+        const viaExpress = await notesMock({ encoding });
+        const app = express();
+        app.use(express.urlencoded({ extended }));
+        app.use(toExpress(viaExpress));
+
+        const expressCreated = await request(app)
+          .post("/notes")
+          .type("form")
+          .send("tags=a,b");
+        const intercepted = await interceptedCreate(
+          await notesMock({ encoding }),
+          "tags=a,b",
+        );
+
+        expect(expressCreated.status).toBe(201);
+        expect(expressCreated.body).toEqual({ noteId: 1, tags: ["a", "b"] });
+        expect(intercepted).toEqual({
+          status: expressCreated.status,
+          body: expressCreated.body,
+        });
+        const stored = await viaExpress.handle("GET", "/notes/1");
+        expect(stored.body).toEqual({ noteId: 1, tags: ["a", "b"] });
+      }
+    });
+
+    it("reads a record a handle() caller passes the way Express's is read", async () => {
+      const viaHandle = await notesMock({
+        encoding: { tags: { style: "pipeDelimited" } },
+      });
+
+      const created = await viaHandle.handle("POST", "/notes", {
+        headers: { "content-type": FORM_TYPE },
+        body: { tags: "a|b" },
+      });
+
+      expect(created.status).toBe(201);
+      expect(created.body).toEqual({ noteId: 1, tags: ["a", "b"] });
     });
   });
 });

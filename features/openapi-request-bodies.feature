@@ -69,6 +69,22 @@ Feature: OpenAPI request bodies as the transports deliver them
     Then the upload response status is 201
     And the stored note has the tags "a" and "b"
 
+  # Express hands over no form, only its parser's record, and a mock.handle
+  # caller may pass a record alone: a value the encoding does not explode is
+  # split from the record, so every transport stores the same tags.
+
+  Scenario: A comma-separated value fills an array property whose encoding does not explode through Express
+    Given a validating notes mock whose urlencoded tags are encoded as form with explode false
+    When I create a note with the urlencoded form "tags=a,b" through Express
+    Then the upload response status is 201
+    And the stored note has the tags "a" and "b"
+
+  Scenario: A comma-separated value in a record passed to mock.handle fills an array property whose encoding does not explode
+    Given a validating notes mock whose urlencoded tags are encoded as form with explode false
+    When I create a note by passing mock.handle the urlencoded record whose tags are "a,b"
+    Then the upload response status is 201
+    And the stored note has the tags "a" and "b"
+
   # ── Bodies core does not parse ───────────────────────────────────────────
 
   Scenario: An XML body is not validated against its object schema

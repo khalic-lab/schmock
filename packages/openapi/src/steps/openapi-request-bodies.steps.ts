@@ -470,6 +470,71 @@ describeFeature(feature, ({ Scenario }) => {
   );
 
   Scenario(
+    "A comma-separated value fills an array property whose encoding does not explode through Express",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a validating notes mock whose urlencoded tags are encoded as form with explode false",
+        async () => {
+          await notesMock({ style: "form", explode: false });
+        },
+      );
+
+      When(
+        "I create a note with the urlencoded form {string} through Express",
+        async (_, form: string) => {
+          await expressCreate(form);
+        },
+      );
+
+      Then("the upload response status is 201", () => {
+        expect(result.status).toBe(201);
+      });
+
+      And(
+        "the stored note has the tags {string} and {string}",
+        async (_, first: string, second: string) => {
+          await expectStoredTags(first, second);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A comma-separated value in a record passed to mock.handle fills an array property whose encoding does not explode",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a validating notes mock whose urlencoded tags are encoded as form with explode false",
+        async () => {
+          await notesMock({ style: "form", explode: false });
+        },
+      );
+
+      When(
+        "I create a note by passing mock.handle the urlencoded record whose tags are {string}",
+        async (_, tags: string) => {
+          // A record and no form, as a direct handle() caller passes it.
+          const response = await mock.handle("POST", "/notes", {
+            headers: { "content-type": URLENCODED },
+            body: { tags },
+          });
+          result = { status: response.status, body: response.body };
+        },
+      );
+
+      Then("the upload response status is 201", () => {
+        expect(result.status).toBe(201);
+      });
+
+      And(
+        "the stored note has the tags {string} and {string}",
+        async (_, first: string, second: string) => {
+          await expectStoredTags(first, second);
+        },
+      );
+    },
+  );
+
+  Scenario(
     "An XML body is not validated against its object schema",
     ({ Given, When, Then }) => {
       Given(

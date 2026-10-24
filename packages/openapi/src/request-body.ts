@@ -105,6 +105,9 @@ export function isJsonMediaType(mediaType: string): boolean {
  * - An urlencoded record that `form.fields` describes (see
  *   {@link SubmittedForm}) is read from those fields instead, so a repeated
  *   name and a delimited value become arrays the way `form.encoding` says.
+ *   An urlencoded record read alone (Express, or no form that describes it)
+ *   still has a delimited value split, where `form.encoding` says the
+ *   property does not explode (see {@link splitDelimitedFields}).
  *
  * Files (`Blob`/`File`) are kept as they are. Every other body (JSON, text,
  * bytes) is returned unchanged.
@@ -117,6 +120,7 @@ export function normalizeRequestBody(
 ): unknown {
   const fields =
     submittedFields(body, contentType, schema, form) ??
+    recordFields(body, contentType, schema, form?.encoding) ??
     formFields(body, contentType);
   if (fields === undefined) return body;
   return coerceObject(nestBracketKeys(fields, schema), schema);
@@ -275,6 +279,54 @@ function submittedFields(
       name,
       submittedValue(name, values, schemas, form.encoding),
     );
+  }
+  return fields;
+}
+
+/**
+ * The fields of an urlencoded body record read without the form, with every
+ * value a non-exploding encoding joined split on its delimiter (see
+ * {@link splitDelimitedFields}), or `undefined` when the media type declares
+ * no encoding, and {@link formFields} copies the record as it is.
+ */
+function recordFields(
+  body: unknown,
+  contentType: string | undefined,
+  schema: JSONSchema7 | undefined,
+  encoding: FormEncodingMap | undefined,
+): Record<string, unknown> | undefined {
+  if (encoding === undefined || contentType === undefined) return undefined;
+  if (normalizeMediaType(contentType) !== URLENCODED_MEDIA_TYPE) {
+    return undefined;
+  }
+  if (!isPlainRecord(body)) return undefined;
+  return splitDelimitedFields({ ...body }, schema, encoding);
+}
+
+/**
+ * `fields` with each string value split on its delimiter where the property
+ * is declared as an array and its `encoding` entry does not explode: `form`
+ * with `explode: false` (`tags=a,b`), or `spaceDelimited` or `pipeDelimited`.
+ * Express's parser, and a `handle()` caller passing a record, hand such a
+ * value over joined, as it was sent. A property with no `encoding` entry
+ * explodes, by OpenAPI's default for `form`, and keeps its value. Only a
+ * top-level property can name an encoding, as when the form is read.
+ */
+function splitDelimitedFields(
+  fields: Record<string, unknown>,
+  schema: JSONSchema7 | undefined,
+  encoding: FormEncodingMap,
+): Record<string, unknown> {
+  const schemas = fieldSchemas(schema);
+  for (const [name, style] of encoding) {
+    const delimiter = style.explode ? undefined : STYLE_DELIMITERS[style.style];
+    if (delimiter === undefined || !Object.hasOwn(fields, name)) continue;
+    const value = fields[name];
+    if (typeof value !== "string" || value === "") continue;
+    if (!admitsType(schemas.of(name), "array")) continue;
+    const parts = value.split(delimiter);
+    // One value stays a string, exactly as the record holds it.
+    defineField(fields, name, parts.length === 1 ? parts[0] : parts);
   }
   return fields;
 }

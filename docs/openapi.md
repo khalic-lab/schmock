@@ -949,8 +949,16 @@ another plugin replaced or edited, or a `handle()` call that passes a record
 without a `form`, is read from the record alone, where a repeated name has
 already lost all but its last value. Express hands over no form either: its
 parser builds the arrays for repeated names, so those read the same on every
-transport, but it does not split delimited values, so `tags=a,b` under
-`explode: false` stays the one value `'a,b'` there.
+transport. A record read alone still has a delimited value split, when its
+property is declared as an array and its `encoding` entry is
+`style: form, explode: false`, `spaceDelimited` or `pipeDelimited` (not
+exploded), so `tags=a,b` reads as `['a', 'b']` under Express too. Only a
+single text value is split: a name both repeated and delimited still differs,
+since Express's parser already made an array of the whole values, so
+`tags=a,b&tags=c` reads as `['a,b', 'c']` under Express and as
+`['a', 'b', 'c']` on the core transports. A property
+with no `encoding` entry explodes, as OpenAPI defaults `form`, and keeps the
+value the record holds.
 
 CRUD create, `PUT` and `PATCH` store a form body read the same way, through the
 request schema declared for its media type, whether `validateRequests` is on
