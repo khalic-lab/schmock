@@ -57,9 +57,14 @@ export function installRelayWorker(
   async function relay(event: FetchEventLike): Promise<Response> {
     try {
       const client = await scope.clients.get(event.clientId);
-      // A client the Clients API cannot find may be in the back/forward
-      // cache and still relaying, so it is not forgotten here; activate
-      // prunes the registry.
+      // Chrome's clients.get finds no client for a page in the back/forward
+      // cache, as for a closed one: its GetWindowClientInfo treats a cached
+      // frame as not existing. Such a request, a sendBeacon() from pagehide
+      // fetched once the page is stored, goes to the network. The id is not
+      // forgotten here, because a cached page that comes back still relays;
+      // activate prunes the registry. A page found here can still enter the
+      // cache before the post below reaches it, and Chrome then evicts it
+      // (PostMessageToClient).
       if (client === undefined) return await scope.fetch(event.request);
       const serialized = await serializeRequest(event.request.clone());
       // A keepalive request is bounded: past the bound, its page is taken to
