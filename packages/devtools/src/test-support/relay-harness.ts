@@ -34,9 +34,13 @@ import type {
  * - Aborts: by default a page's abort never reaches FetchEvent.request.signal,
  *   as in Chrome, Firefox and WebKit; createRelayHarness({ forwardAborts:
  *   true }) follows the spec's Handle Fetch instead.
- * - The back/forward cache: a frozen page holds its events until show().
- *   Chrome evicts it instead when a worker messages, claims or hands it over;
- *   eviction is not modelled.
+ * - The back/forward cache: as in Chrome (content/browser/service_worker),
+ *   a hidden page is evicted when a worker posts to it, a claim reaches it or
+ *   a new version activates over its controller; a statechange, or a message
+ *   or controllerchange already on its way, waits until show(). Not
+ *   modelled: eviction when a version is doomed (nothing unregisters), and
+ *   Chrome not counting a cached page as a controllee, so here it still keeps
+ *   a waiting worker waiting.
  * - Responses: the page gets the worker's Response object as is (url "", type
  *   "default"), a 3xx is not followed, and no browser default header (accept)
  *   is added. Forbidden request headers (cookie, host) reach the worker,
@@ -172,13 +176,18 @@ export interface FakePage {
   /** schmock:request frames this page's container received. */
   readonly relayedFrames: readonly unknown[];
   /**
-   * Fire pagehide listeners; persisted true puts the page in the bfcache (matchAll omits it; claim takes it, as the spec's does) until show().
-   * While in the bfcache, its events (statechange, controllerchange, container messages) wait until show().
-   * Chrome evicts a bfcached page instead when a worker messages, claims or hands it over; that eviction is not modelled.
-   * hide(false) does not close the page: call close() for that.
+   * Fire pagehide listeners; persisted true puts the page in the bfcache (matchAll omits it, clients.get finds it) until show().
+   * While in the bfcache, a statechange, or a container message or controllerchange already on its way, waits until show().
+   * As in Chrome, the page is evicted instead when a worker posts to it, a claim reaches it, or a new version activates over its
+   * controller: see evicted. hide(false) does not close the page: call close() for that.
    */
   hide(persisted: boolean): void;
-  /** Restore from the bfcache, then deliver the events it held. */
+  /**
+   * Why the browser evicted this page from the bfcache, by Chrome's NotRestoredReason names; undefined while it was not evicted.
+   * An evicted page is gone, as after close(): clients.get and matchAll omit it, and the events it held are dropped.
+   */
+  readonly evicted: BfcacheEviction | undefined;
+  /** Restore from the bfcache, then deliver the events it held. Throws for an evicted page: going back to it is a fresh load, openPage(). */
   show(): void;
   /** The client disappears: clients.get(id) → undefined, matchAll omits it. */
   close(): void;
@@ -203,6 +212,12 @@ const SCRIPT_NOT_FOUND =
  * names another protocol the stub tab says hello again with that one.
  */
 const STUB_TAB_FIRST_PROTOCOL = 1;
+
+/** Chrome's NotRestoredReason for each way a service worker evicts a page from the bfcache. */
+type BfcacheEviction =
+  | "ServiceWorkerPostMessage"
+  | "ServiceWorkerClaim"
+  | "ServiceWorkerVersionActivation";
 
 type WorkerState =
   | "installing"
@@ -286,8 +301,9 @@ interface PageRecord {
   readonly serviceWorkers: boolean;
   readonly claimable: boolean;
   open: boolean;
-  /** In the back/forward cache: events for it wait until show(). */
+  /** In the back/forward cache: a statechange, or a message or controllerchange already on its way, waits until show(). */
   frozen: boolean;
+  evicted: BfcacheEviction | undefined;
   controller: WorkerVersion | null;
   messagesStarted: boolean;
   readonly messageQueue: RelayMessageEvent[];
@@ -733,7 +749,13 @@ export function createRelayHarness(settings?: {
     }
   }
 
-  /** Spec "Notify Controller Change": the new controller and its event arrive together, on a later task. */
+  /**
+   * Spec "Notify Controller Change": the new controller and its event arrive
+   * together, on a later task. Claim and activation evict a bfcached page
+   * instead of calling this; a page that entered the bfcache after the change
+   * was sent holds its controllerchange until show(), as it holds a message
+   * already on its way.
+   */
   function changeController(
     page: PageRecord,
     version: WorkerVersion,
@@ -757,8 +779,6 @@ export function createRelayHarness(settings?: {
         "Failed to execute 'claim' on 'Clients': Only the active worker can claim clients.",
       );
     }
-    // The spec's claim() has no bfcache exception: a frozen page is claimed,
-    // and its controllerchange waits for show() (dispatchOrDefer).
     const claimed = pages.filter(
       (page) =>
         page.open &&
@@ -768,7 +788,16 @@ export function createRelayHarness(settings?: {
         page.controller !== version &&
         matchRegistration(page.url) === registration,
     );
-    await Promise.all(claimed.map((page) => changeController(page, version)));
+    // The spec's claim() has no bfcache exception, and Chrome's ClaimClients
+    // reaches bfcached pages in order to evict them.
+    for (const page of claimed) {
+      if (page.frozen) evict(page, "ServiceWorkerClaim");
+    }
+    await Promise.all(
+      claimed
+        .filter((page) => page.open)
+        .map((page) => changeController(page, version)),
+    );
   }
 
   async function dispatchLifecycleEvent(
@@ -801,7 +830,16 @@ export function createRelayHarness(settings?: {
     await tick();
     if (registration.waiting !== version) return;
     const previous = registration.active;
-    if (previous !== null) setState(previous, "redundant");
+    // Chrome's ActivateWaitingVersion: "Whenever activation happens, evict
+    // bfcached controllees", before the exiting version turns redundant.
+    if (previous !== null) {
+      for (const page of pages) {
+        if (page.open && page.frozen && page.controller === previous) {
+          evict(page, "ServiceWorkerVersionActivation");
+        }
+      }
+      setState(previous, "redundant");
+    }
     registration.active = version;
     registration.waiting = null;
     setState(version, "activating");
@@ -924,6 +962,19 @@ export function createRelayHarness(settings?: {
   function dispatchOrDefer(page: PageRecord, run: () => void): void {
     if (page.frozen) page.deferred.push(run);
     else run();
+  }
+
+  /** The page is gone, as after close(): nothing it held is delivered. */
+  function discard(page: PageRecord): void {
+    page.open = false;
+    page.frozen = false;
+    page.messageQueue.length = 0;
+    page.deferred.length = 0;
+  }
+
+  function evict(page: PageRecord, reason: BfcacheEviction): void {
+    page.evicted = reason;
+    discard(page);
   }
 
   function pumpMessages(page: PageRecord): void {
@@ -1348,6 +1399,7 @@ export function createRelayHarness(settings?: {
       claimable: options.claimable ?? true,
       open: true,
       frozen: false,
+      evicted: undefined,
       controller: null,
       messagesStarted: false,
       messageQueue: [],
@@ -1362,6 +1414,9 @@ export function createRelayHarness(settings?: {
       client: {
         id,
         postMessage(message, transfer) {
+          // Chrome's PostMessageToClient evicts a bfcached client instead of
+          // delivering; the transfer still detaches on the sender.
+          if (record.frozen) evict(record, "ServiceWorkerPostMessage");
           post(message, transfer, (data, ports) => {
             if (!record.open) return;
             if (messageType(data) === "schmock:request") {
@@ -1443,6 +1498,9 @@ export function createRelayHarness(settings?: {
       load: (target, kind) => browserRequest(record, target, undefined, kind),
       browserLog: record.browserLog,
       relayedFrames: record.relayedFrames,
+      get evicted() {
+        return record.evicted;
+      },
       hide(persisted) {
         for (const listener of [...record.pageHideListeners]) {
           invoke(listener, persisted);
@@ -1450,6 +1508,11 @@ export function createRelayHarness(settings?: {
         if (persisted) record.frozen = true;
       },
       show() {
+        if (record.evicted !== undefined) {
+          throw new Error(
+            `show(): ${url} was evicted from the back/forward cache (${record.evicted}); going back to it is a fresh load: openPage()`,
+          );
+        }
         if (!record.frozen) return;
         record.frozen = false;
         track(
@@ -1460,10 +1523,7 @@ export function createRelayHarness(settings?: {
         );
       },
       close() {
-        record.open = false;
-        record.frozen = false;
-        record.messageQueue.length = 0;
-        record.deferred.length = 0;
+        discard(record);
       },
       respondToRelaysWith: (body) => respondToRelaysWith(record, body),
     };

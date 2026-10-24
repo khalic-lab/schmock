@@ -627,7 +627,36 @@ describe("fetch", () => {
     expect(await sent.text()).toBe("event");
   });
 
-  it("W14 falls back to scope.fetch for a client it cannot find, and keeps its id", async () => {
+  it("W26 sends a pagehide keepalive request to the network once relaying it evicts the page from the bfcache", async () => {
+    h.installWorker((scope) =>
+      installRelayWorker(scope, { keepaliveAnswerMs: 50 }),
+    );
+    await h.activateWorker();
+    await h.flush();
+    const page = h.openPage();
+    await page.respondToRelaysWith({ tab: "A" });
+    let beacon: Promise<Response> | undefined;
+    page.environment.onPageHide(() => {
+      beacon = page.networkFetch("/api/beacon", {
+        method: "POST",
+        body: "event",
+        keepalive: true,
+      });
+    });
+
+    page.hide(true);
+    if (beacon === undefined) throw new Error("pagehide sent nothing");
+    const response = await beacon;
+
+    // The worker posts the request to a page already in the bfcache, which
+    // Chrome's PostMessageToClient answers by evicting the page.
+    expect(page.evicted).toBe("ServiceWorkerPostMessage");
+    expect(page.relayedFrames).toEqual([]);
+    expect(await response.text()).toBe("real network");
+    expect(h.network).toHaveBeenCalledTimes(1);
+  });
+
+  it("W14falls back to scope.fetch for a client it cannot find, and keeps its id", async () => {
     await relayWorker();
     const page = h.openPage();
     await page.respondToRelaysWith({ tab: "A" });
@@ -707,8 +736,11 @@ describe("restarts", () => {
     expect(await response.json()).toEqual({ tab: "A" });
     expect(a.browserLog.at(-1)?.servedBy).toBe("worker");
 
+    // Activation evicts the page from the bfcache, so its id is pruned.
     a.hide(true);
     await h.replaceWorker();
+    expect(a.evicted).toBe("ServiceWorkerVersionActivation");
+    expect(await h.worker.clients.get(a.id)).toBeUndefined();
     expect(await stored()).not.toContain(a.id);
 
     expect(

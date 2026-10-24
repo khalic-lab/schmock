@@ -102,6 +102,18 @@ function settledFlag(promise: Promise<unknown>): { settled: boolean } {
   return flag;
 }
 
+function requestFrame(): RequestMessage {
+  return {
+    type: "schmock:request",
+    request: {
+      url: "http://localhost/",
+      method: "GET",
+      headers: [],
+      body: null,
+    },
+  };
+}
+
 function openMessagePorts(): number {
   return process
     .getActiveResourcesInfo()
@@ -411,7 +423,7 @@ describe("registration lifecycle", () => {
 });
 
 describe("claim", () => {
-  it("takes only open, claimable pages whose longest-prefix registration is the claimer's, bfcached ones included", async () => {
+  it("takes only open, claimable pages whose longest-prefix registration is the claimer's, and evicts the bfcached ones among them", async () => {
     const h = setUp();
     h.seedForeignRegistration("/app/app-sw.js", "/app/");
     h.installWorker(claimingWorker());
@@ -434,15 +446,60 @@ describe("claim", () => {
       "http://localhost/app/app-sw.js",
     );
     expect(containerOf(unclaimable).controller).toBeNull();
-    // The spec's claim() has no bfcache exception; the event waits for show().
-    expect(containerOf(hidden).controller?.scriptURL).toBe(
-      "http://localhost/schmock-sw.js",
+    // The spec's claim() has no bfcache exception, and Chrome's evicts the
+    // page instead of handing it a controller.
+    expect(hidden.evicted).toBe("ServiceWorkerClaim");
+    expect(containerOf(hidden).controller).toBeNull();
+    expect(await h.worker.clients.get(hidden.id)).toBeUndefined();
+    expect([page, underApp, unclaimable].map((p) => p.evicted)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(() => hidden.show()).toThrow(
+      "show(): http://localhost/hidden.html was evicted from the back/forward cache (ServiceWorkerClaim); going back to it is a fresh load: openPage()",
     );
-    expect(changes.map((counter) => counter.count)).toEqual([1, 0, 0, 0]);
-
-    hidden.show();
     await h.flush();
-    expect(changes.map((counter) => counter.count)).toEqual([1, 0, 0, 1]);
+    expect(changes.map((counter) => counter.count)).toEqual([1, 0, 0, 0]);
+  });
+
+  it("evicts no bfcached page it would not take: one the claimer controls, or one under another registration", async () => {
+    const h = setUp();
+    h.seedForeignRegistration("/app/app-sw.js", "/app/");
+    h.installWorker(
+      claimingWorker((scope) => {
+        scope.addEventListener("message", (event) => {
+          event.waitUntil(scope.clients.claim());
+        });
+      }),
+    );
+    await h.activateWorker();
+    const controlled = h.openPage();
+    const underApp = h.openPage({ path: "/app/index.html" });
+    const reloaded = h.openPage({ controlled: false });
+    controlled.hide(true);
+    underApp.hide(true);
+    const registration = await containerOf(reloaded).getRegistration();
+
+    registration?.active?.postMessage({ type: "schmock:claim" }, []);
+    await h.flush();
+
+    expect(containerOf(reloaded).controller).toBe(registration?.active);
+    expect([controlled.evicted, underApp.evicted]).toEqual([
+      undefined,
+      undefined,
+    ]);
+    controlled.show();
+    underApp.show();
+    await h.flush();
+    expect(
+      (
+        await h.worker.clients.matchAll({
+          includeUncontrolled: true,
+          type: "all",
+        })
+      ).map((client) => client.id),
+    ).toEqual([controlled.id, underApp.id, reloaded.id]);
   });
 
   it("claims a page that registered while it was uncontrolled (a hard reload)", async () => {
@@ -465,6 +522,28 @@ describe("claim", () => {
     expect(claims).toBe(1);
     expect(changes.count).toBe(1);
     expect(containerOf(page).controller).toBe(registration?.active);
+  });
+
+  it("holds the controllerchange of a page that entered the bfcache after the claim reached it until show()", async () => {
+    const h = setUp();
+    h.installWorker(() => {});
+    await h.activateWorker();
+    const page = h.openPage({ controlled: false });
+    const changes = countControllerChanges(page);
+
+    const claimed = h.worker.clients.claim();
+    page.hide(true);
+    await claimed;
+    await h.flush();
+    expect(page.evicted).toBeUndefined();
+    expect(changes.count).toBe(0);
+
+    page.show();
+    await h.flush();
+    expect(changes.count).toBe(1);
+    expect(containerOf(page).controller?.scriptURL).toBe(
+      "http://localhost/schmock-sw.js",
+    );
   });
 
   it("rejects a claim from a worker that is not active yet", async () => {
@@ -850,7 +929,7 @@ describe("messages", () => {
     }
   });
 
-  it("holds events for a page in the bfcache until show()", async () => {
+  it("holds a message posted before the page entered the bfcache until show()", async () => {
     const h = setUp();
     h.installWorker(claimingWorker());
     await h.activateWorker();
@@ -862,24 +941,75 @@ describe("messages", () => {
       deliveries += 1;
     });
     const client = await h.worker.clients.get(page.id);
-    const frame: RequestMessage = {
-      type: "schmock:request",
-      request: {
-        url: "http://localhost/",
-        method: "GET",
-        headers: [],
-        body: null,
-      },
-    };
 
+    client?.postMessage(requestFrame(), []);
     page.hide(true);
-    client?.postMessage(frame, []);
     await h.flush();
     expect(deliveries).toBe(0);
+    expect(page.evicted).toBeUndefined();
 
     page.show();
     await h.flush();
     expect(deliveries).toBe(1);
+  });
+
+  it("evicts a page in the bfcache that a worker posts to, and drops the message", async () => {
+    const h = setUp();
+    h.installWorker(claimingWorker());
+    await h.activateWorker();
+    const page = h.openPage();
+    const container = containerOf(page);
+    container.startMessages();
+    let deliveries = 0;
+    container.addEventListener("message", () => {
+      deliveries += 1;
+    });
+    const client = await h.worker.clients.get(page.id);
+    page.hide(true);
+
+    client?.postMessage(requestFrame(), []);
+
+    // Chrome's PostMessageToClient evicts the client instead of delivering.
+    expect(page.evicted).toBe("ServiceWorkerPostMessage");
+    expect(() => page.show()).toThrow(
+      "show(): http://localhost/index.html was evicted from the back/forward cache (ServiceWorkerPostMessage); going back to it is a fresh load: openPage()",
+    );
+    await h.flush();
+    expect(deliveries).toBe(0);
+    expect(page.relayedFrames).toEqual([]);
+    expect(await h.worker.clients.get(page.id)).toBeUndefined();
+    expect(
+      await h.worker.clients.matchAll({
+        includeUncontrolled: true,
+        type: "all",
+      }),
+    ).toEqual([]);
+  });
+
+  it("holds a statechange for a page in the bfcache that nothing evicts until show()", async () => {
+    const h = setUp();
+    // skipWaiting without a claim: the hidden page is no controllee and is
+    // never claimed, so nothing evicts it.
+    h.installWorker((scope) => {
+      scope.addEventListener("install", (event) => {
+        event.waitUntil(scope.skipWaiting());
+      });
+    });
+    const page = h.openPage();
+    const registration = await containerOf(page).register("/schmock-sw.js");
+    const installing = registration.installing;
+    if (installing === null) throw new Error("nothing is installing");
+    const states = recordStates(installing, () => true);
+
+    page.hide(true);
+    await h.flush();
+    expect(installing.state).toBe("activated");
+    expect(states).toEqual([]);
+
+    page.show();
+    await h.flush();
+    expect(page.evicted).toBeUndefined();
+    expect(states).toHaveLength(3);
   });
 });
 
@@ -945,6 +1075,46 @@ describe("worker instances", () => {
     expect(containerOf(page).controller?.scriptURL).toBe(old?.scriptURL);
     expect(await (await page.xhr("/x")).text()).toBe("v2");
     expect(h.worker.received).toEqual([]);
+  });
+
+  it("replaceWorker() evicts the bfcached pages the old version controls instead of handing them over", async () => {
+    const h = setUp();
+    h.seedForeignRegistration("/app/app-sw.js", "/app/");
+    h.installWorker(answeringWorker("v1"));
+    await h.activateWorker();
+    const live = h.openPage();
+    const hidden = h.openPage({ path: "/hidden.html" });
+    const underApp = h.openPage({ path: "/app/index.html" });
+    const uncontrolled = h.openPage({ controlled: false });
+    for (const page of [hidden, underApp, uncontrolled]) page.hide(true);
+    const changes = [live, hidden].map(countControllerChanges);
+
+    // As above, the new version does not claim: only activation evicts here.
+    await h.replaceWorker((scope) => {
+      scope.addEventListener("fetch", (event) => {
+        event.respondWith(Promise.resolve(new Response("v2")));
+      });
+    });
+    await h.flush();
+
+    expect(hidden.evicted).toBe("ServiceWorkerVersionActivation");
+    expect(await h.worker.clients.get(hidden.id)).toBeUndefined();
+    expect(() => hidden.show()).toThrow(
+      "show(): http://localhost/hidden.html was evicted from the back/forward cache (ServiceWorkerVersionActivation); going back to it is a fresh load: openPage()",
+    );
+    expect([underApp.evicted, uncontrolled.evicted]).toEqual([
+      undefined,
+      undefined,
+    ]);
+    underApp.show();
+    uncontrolled.show();
+    await h.flush();
+    expect(changes.map((counter) => counter.count)).toEqual([1, 0]);
+    expect(await (await live.xhr("/x")).text()).toBe("v2");
+    expect(containerOf(underApp).controller?.scriptURL).toBe(
+      "http://localhost/app/app-sw.js",
+    );
+    expect(containerOf(uncontrolled).controller).toBeNull();
   });
 });
 

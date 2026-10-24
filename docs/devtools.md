@@ -265,7 +265,11 @@ script, `"not-controlled"` when another script took control.
 
 **Page lifecycle.** A page that unloads tells the worker to forget it. A page
 that enters the back/forward cache keeps its relay and needs no new handshake
-when it comes back.
+when it comes back. Chromium's service worker code evicts it from the cache
+instead when a new version of the worker activates, or when the worker relays
+one of its requests to it while it is cached, as can happen to a `sendBeacon()`
+sent from `pagehide`; such a request reaches the network after 5 seconds.
+Going back then loads the page afresh, and it starts a new relay.
 
 ### Fallback reasons
 
