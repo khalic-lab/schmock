@@ -36,7 +36,8 @@ const MAX_JSON_BODY_DEPTH = 256;
  *
  * - `json` (`application/json` and `+json`): the parsed value
  * - `form` (`application/x-www-form-urlencoded`): a flat object, last
- *   duplicate wins
+ *   duplicate wins; the transports also pass every field as sent, as
+ *   `RequestOptions.form`
  * - `text` (`text/*`): a UTF-8 string
  * - `multipart` (`multipart/*`): `FormData`
  * - `binary` (anything else, including no content type): an `ArrayBuffer`
@@ -108,4 +109,18 @@ export function parseJsonBody(text: string): unknown {
 /** A flat object of urlencoded form fields; a repeated key keeps its last value. */
 export function parseFormBody(text: string): Record<string, string> {
   return Object.fromEntries(new URLSearchParams(text));
+}
+
+/** An urlencoded body in both shapes `handle()` takes it. */
+interface DecodedFormBody {
+  /** The fields as `parseFormBody` reads them: the last value of a name wins. */
+  value: Record<string, string>;
+  /** Every field as sent, for `RequestOptions.form`. */
+  form: URLSearchParams;
+}
+
+/** Decode an urlencoded body into its record and its complete form. */
+export function decodeFormBody(text: string): DecodedFormBody {
+  const form = new URLSearchParams(text);
+  return { value: Object.fromEntries(form), form };
 }

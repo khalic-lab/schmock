@@ -48,3 +48,17 @@ Feature: Node ingress matches the fetch interceptor
     Given a listening mock that echoes the query of GET /echo
     When I GET "/echo?tag=a&tag=b"
     Then the echoed query should be {"tag":"b"}
+
+  # A repeated urlencoded body name keeps its last value in `body` (D40), and
+  # every transport also hands the handler the whole form as `form`.
+  Scenario: A repeated urlencoded name reaches the handler in full as its form
+    Given a listening mock that records the body and form of POST /echo
+    When I POST "tag=a&tag=b&name=Rex" to /echo as "application/x-www-form-urlencoded"
+    Then the recorded body should be the object {"tag":"b","name":"Rex"}
+    And the recorded form entries should be [["tag","a"],["tag","b"],["name","Rex"]]
+
+  Scenario: The fetch interceptor hands a handler the same urlencoded form
+    Given an intercepting mock that records the body and form of POST /echo
+    When I fetch POST /echo with the urlencoded body "tag=a&tag=b&name=Rex"
+    Then the recorded body should be the object {"tag":"b","name":"Rex"}
+    And the recorded form entries should be [["tag","a"],["tag","b"],["name","Rex"]]

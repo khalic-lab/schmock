@@ -30,14 +30,30 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let mock: Schmock.CallableMockInstance | undefined;
   let port = 0;
   let recorded: unknown = NOTHING_RECORDED;
+  let recordedForm: Array<[string, string]> | undefined;
   let response: Response | undefined;
+  let interception: Schmock.InterceptHandle | undefined;
 
   AfterEachScenario(() => {
+    interception?.restore();
+    interception = undefined;
     mock?.close();
     mock = undefined;
     recorded = NOTHING_RECORDED;
+    recordedForm = undefined;
     response = undefined;
   });
+
+  /** A mock whose POST /echo records the body and the urlencoded form. */
+  function formRecordingMock(): Schmock.CallableMockInstance {
+    const formMock = schmock();
+    formMock("POST /echo", ({ body, form }) => {
+      recorded = body;
+      recordedForm = form === undefined ? undefined : [...form];
+      return { ok: true };
+    });
+    return formMock;
+  }
 
   async function listenRecordingEcho(): Promise<void> {
     mock = schmock();
@@ -284,6 +300,88 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       Then('the echoed query should be {"tag":"b"}', async () => {
         await expect(response?.json()).resolves.toEqual({ tag: "b" });
       });
+    },
+  );
+
+  Scenario(
+    "A repeated urlencoded name reaches the handler in full as its form",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a listening mock that records the body and form of POST /echo",
+        async () => {
+          mock = formRecordingMock();
+          port = (await mock.listen(0)).port;
+        },
+      );
+
+      When(
+        'I POST "tag=a&tag=b&name=Rex" to /echo as "application/x-www-form-urlencoded"',
+        () =>
+          post("tag=a&tag=b&name=Rex", {
+            "content-type": "application/x-www-form-urlencoded",
+          }),
+      );
+
+      Then(
+        'the recorded body should be the object {"tag":"b","name":"Rex"}',
+        () => {
+          expect(response?.status).toBe(200);
+          expect(recorded).toEqual({ tag: "b", name: "Rex" });
+        },
+      );
+
+      And(
+        'the recorded form entries should be [["tag","a"],["tag","b"],["name","Rex"]]',
+        () => {
+          expect(recordedForm).toEqual([
+            ["tag", "a"],
+            ["tag", "b"],
+            ["name", "Rex"],
+          ]);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "The fetch interceptor hands a handler the same urlencoded form",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "an intercepting mock that records the body and form of POST /echo",
+        () => {
+          mock = formRecordingMock();
+          interception = mock.intercept({ passthrough: false });
+        },
+      );
+
+      When(
+        'I fetch POST /echo with the urlencoded body "tag=a&tag=b&name=Rex"',
+        async () => {
+          response = await fetch("http://localhost/echo", {
+            method: "POST",
+            body: new URLSearchParams("tag=a&tag=b&name=Rex"),
+          });
+        },
+      );
+
+      Then(
+        'the recorded body should be the object {"tag":"b","name":"Rex"}',
+        () => {
+          expect(response?.status).toBe(200);
+          expect(recorded).toEqual({ tag: "b", name: "Rex" });
+        },
+      );
+
+      And(
+        'the recorded form entries should be [["tag","a"],["tag","b"],["name","Rex"]]',
+        () => {
+          expect(recordedForm).toEqual([
+            ["tag", "a"],
+            ["tag", "b"],
+            ["name", "Rex"],
+          ]);
+        },
+      );
     },
   );
 });

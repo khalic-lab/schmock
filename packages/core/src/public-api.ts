@@ -131,6 +131,7 @@ export type {
   PluginContext,
   PluginHookResult,
   PluginResult,
+  ReadonlyURLSearchParams,
   RequestContext,
   RequestEndEvent,
   RequestMatchEvent,

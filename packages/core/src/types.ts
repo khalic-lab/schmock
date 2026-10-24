@@ -10,6 +10,7 @@ export type ResponseResult = Schmock.ResponseResult;
 export type RequestContext = Schmock.RequestContext;
 export type Response = Schmock.Response;
 export type RequestOptions = Schmock.RequestOptions;
+export type ReadonlyURLSearchParams = Schmock.ReadonlyURLSearchParams;
 export type GlobalConfig = Schmock.GlobalConfig;
 export type RouteConfig = Schmock.RouteConfig;
 export type Generator = Schmock.Generator;

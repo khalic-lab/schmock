@@ -154,6 +154,7 @@ handle(method: HttpMethod, path: string, options?: RequestOptions): Promise<Resp
 interface RequestOptions {
   headers?: Record<string, string>
   body?: unknown
+  form?: ReadonlyURLSearchParams  // an urlencoded body's fields as sent
   query?: Record<string, string>
   signal?: AbortSignal
 }
@@ -164,6 +165,11 @@ interface Response {
   headers: Record<string, string>
 }
 ```
+
+`form` is for a transport that decodes an urlencoded body itself: pass the
+record as `body` and every field as sent as `form`, and the route and plugins
+receive both (see [Request Context](#request-context)). `handle()` does not
+check that the two agree.
 
 #### `.pipe(plugin)`
 
@@ -431,10 +437,14 @@ interface RequestContext {
   query: Record<string, string>
   headers: Record<string, string>
   body?: unknown
+  form?: ReadonlyURLSearchParams     // an urlencoded body's fields as sent
   state: Record<string, unknown>     // mutable shared state
   pluginState?: Map<string, unknown> // per-request plugin state (same Map as PluginContext.state)
   readonly signal?: AbortSignal     // request cancellation
 }
+
+// URLSearchParams without append, delete, set and sort
+type ReadonlyURLSearchParams = Omit<URLSearchParams, 'append' | 'delete' | 'set' | 'sort'>
 ```
 
 `pluginState` is the channel a generator uses to hand request-scoped data to the
@@ -447,6 +457,27 @@ called outside the request pipeline.
 A repeated query key resolves to its last value (`?tag=a&tag=b` gives `'b'`)
 on every transport: the CLI, `mock.listen()`, `mock.intercept()` (React and
 Vue), Express and Angular.
+
+An `application/x-www-form-urlencoded` body follows the same rule in `body`:
+`tag=a&tag=b` arrives as `{ tag: 'b' }`. `form` carries the whole form beside
+it, every field in the order sent, so a route can still read each value of a
+repeated name:
+
+```typescript
+mock('POST /search', ({ body, form }) => ({
+  last: body,                      // { tag: 'b' }
+  all: form?.getAll('tag') ?? [],  // ['a', 'b']
+}))
+```
+
+The CLI, `mock.listen()`, `mock.intercept()` (React, Vue and the DevTools
+relay) and the Angular adapter set `form` for every urlencoded body; it is
+absent for any other body. A multipart body is a `FormData`, which keeps
+repeated names itself. A `beforeRequest` (or Angular `transformRequest`) hook
+that returns a different body leaves the route without a `form`, since it no
+longer describes the body. Express hands the mock what its body parser built:
+`express.urlencoded()` already makes a repeated name an array, and the
+adapter sets no `form`.
 
 ### Response Result
 
@@ -538,6 +569,7 @@ interface PluginContext {
   query: Record<string, string>
   headers: Record<string, string>
   body?: unknown
+  form?: ReadonlyURLSearchParams           // see RequestContext.form
   state: Map<string, unknown>              // shared across plugins per request
   requestShortCircuited?: boolean          // response came from beforeRequest
   routeState?: Record<string, unknown>     // route-level persistent state

@@ -297,4 +297,62 @@ describe("Angular request bodies reach handlers as the backend sends them", () =
       expect(error).toMatchObject({ status: 500 });
     });
   });
+
+  describe("urlencoded forms keep every value of a repeated name", () => {
+    interface SeenForm {
+      body: unknown;
+      tags: string[] | undefined;
+    }
+
+    async function seenForm(
+      request: HttpRequest<unknown>,
+      options: AngularAdapterOptions = {},
+    ): Promise<SeenForm> {
+      const mock = schmock();
+      let seen: SeenForm | undefined;
+      mock("POST /echo", ({ body, form }) => {
+        seen = { body, tags: form?.getAll("tag") };
+        return [200, { ok: true }];
+      });
+      const Interceptor = createSchmockInterceptor(mock, {
+        passthrough: false,
+        ...options,
+      });
+      const real: HttpEvent<unknown> = new HttpResponse({ body: "real" });
+      await lastValueFrom(
+        new Interceptor().intercept(request, { handle: () => of(real) }),
+      );
+      if (seen === undefined) throw new Error("the route did not run");
+      return seen;
+    }
+
+    const repeatedTags = () =>
+      new HttpRequest(
+        "POST",
+        "/echo",
+        new HttpParams().append("tag", "a").append("tag", "b"),
+      );
+
+    it("hands the route the form beside the last-wins body", async () => {
+      expect(await seenForm(repeatedTags())).toEqual({
+        body: { tag: "b" },
+        tags: ["a", "b"],
+      });
+    });
+
+    it("keeps the form when a request hook leaves the body alone", async () => {
+      const seen = await seenForm(repeatedTags(), {
+        transformRequest: () => ({ headers: { "x-hooked": "1" } }),
+      });
+      expect(seen.tags).toEqual(["a", "b"]);
+    });
+
+    it("drops the form when a request hook replaces the body", async () => {
+      expect(
+        await seenForm(repeatedTags(), {
+          transformRequest: () => ({ body: { tag: "c" } }),
+        }),
+      ).toEqual({ body: { tag: "c" }, tags: undefined });
+    });
+  });
 });

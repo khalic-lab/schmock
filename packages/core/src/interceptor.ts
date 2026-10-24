@@ -11,8 +11,8 @@ import {
 } from "./constants.js";
 import { toError } from "./errors.js";
 import {
+  decodeFormBody,
   HttpIngressError,
-  parseFormBody,
   parseJsonBody,
   requestBodyKindOf,
 } from "./request-body.js";
@@ -535,6 +535,8 @@ function abortedExchange(
 
 interface ExtractedBody {
   value: unknown;
+  /** Every field of an urlencoded body as sent (`RequestOptions.form`). */
+  form?: URLSearchParams;
   /**
    * Why a JSON body was refused, as the Node ingress refuses it: it does not
    * parse, or it nests past the depth limit. `value` is then its text.
@@ -568,7 +570,7 @@ async function extractBody(request: Request): Promise<ExtractedBody> {
       }
     }
     case "form":
-      return { value: parseFormBody(await body.text()) };
+      return decodeFormBody(await body.text());
     case "text":
       return { value: await body.text() };
     case "multipart":
@@ -882,9 +884,14 @@ export function createFetchLease(
           draft.answers = answersFor(effectiveMethod, adapterRequest.path);
         }
 
+        // The form describes the body it was decoded with, so it goes along
+        // only while the body is still that one: a beforeRequest hook that
+        // returns another body leaves the route without a form.
+        const form = adapterRequest.body === body.value ? body.form : undefined;
         const requestOptions: InterceptorRequestOptions = {
           headers: adapterRequest.headers,
           body: adapterRequest.body,
+          ...(form === undefined ? {} : { form }),
           query: adapterRequest.query,
           signal: request.signal,
         };

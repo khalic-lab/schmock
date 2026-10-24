@@ -267,6 +267,12 @@ declare namespace Schmock {
     headers: Record<string, string>;
     /** Request body */
     body?: unknown;
+    /**
+     * An `application/x-www-form-urlencoded` body as it was sent, when the
+     * transport decoded one: see {@link RequestContext.form}. A plugin that
+     * replaces `body` should replace or delete `form` too.
+     */
+    form?: ReadonlyURLSearchParams;
     /** Shared state between plugins for this request */
     state: Map<string, unknown>;
     /** True when a beforeRequest hook supplied the response instead of the route generator. */
@@ -377,6 +383,23 @@ declare namespace Schmock {
     headers: Record<string, string>;
     /** Request body (for POST, PUT, PATCH) */
     body?: unknown;
+    /**
+     * An `application/x-www-form-urlencoded` body as it was sent: every field
+     * in order, a name repeated once per value. `body` holds the same fields
+     * as a record in which a repeated name keeps its last value.
+     *
+     * Set by `mock.listen()`, the CLI, `mock.intercept()` (React, Vue, the
+     * DevTools relay) and the Angular adapter, or by a `handle()` caller
+     * through `RequestOptions.form`. Absent for every other body; a multipart
+     * body is already a `FormData`, which keeps repeated names itself.
+     *
+     * @example
+     * ```typescript
+     * // tag=a&tag=b: body is { tag: 'b' }, the route answers ['a', 'b']
+     * mock('POST /search', ({ form }) => form?.getAll('tag') ?? [])
+     * ```
+     */
+    form?: ReadonlyURLSearchParams;
     /** Shared mutable state */
     state: Record<string, unknown>;
     /**
@@ -428,9 +451,26 @@ declare namespace Schmock {
   interface RequestOptions {
     headers?: Record<string, string>;
     body?: unknown;
+    /**
+     * Every field of an urlencoded `body` as it was sent, for a transport that
+     * decodes the form itself; handed to generators and plugins as
+     * `RequestContext.form` and `PluginContext.form` unchanged. Pass it with
+     * the record it was decoded into as `body`.
+     */
+    form?: ReadonlyURLSearchParams;
     query?: Record<string, string>;
     signal?: AbortSignal;
   }
+
+  /**
+   * `URLSearchParams` without its mutators (`append`, `delete`, `set`,
+   * `sort`): how a request's urlencoded fields are handed over. A
+   * `URLSearchParams` is one.
+   */
+  type ReadonlyURLSearchParams = Omit<
+    URLSearchParams,
+    "append" | "delete" | "set" | "sort"
+  >;
 
   /**
    * Record of a single request handled by the mock

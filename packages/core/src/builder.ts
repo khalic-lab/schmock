@@ -120,6 +120,8 @@ interface RequestScope {
   readonly query: Record<string, string>;
   readonly headers: Record<string, string>;
   readonly body: unknown;
+  /** `RequestOptions.form`: every field of an urlencoded body as sent. */
+  readonly form: Schmock.ReadonlyURLSearchParams | undefined;
   /**
    * Set once a route matched, so a request that fails afterwards is finalized
    * like a successful one: its own delay override and a history record.
@@ -534,6 +536,7 @@ export class CallableMockInstance {
       query: { ...(options?.query ?? {}) },
       headers: { ...(options?.headers ?? {}) },
       body: options?.body,
+      form: options?.form,
     };
     const { requestId } = scope;
     this.logger.log("request", `[${requestId}] ${method} ${path}`, {
@@ -693,6 +696,8 @@ export class CallableMockInstance {
       query: scope.query,
       headers: scope.headers,
       body: scope.body,
+      // Only when given, so a context of any other request keeps its keys.
+      ...(scope.form === undefined ? {} : { form: scope.form }),
       state: new Map(),
       routeState: scope.admission.state,
       signal,
@@ -737,6 +742,7 @@ export class CallableMockInstance {
       query: pluginContext.query,
       headers: pluginContext.headers,
       body: pluginContext.body,
+      ...(pluginContext.form === undefined ? {} : { form: pluginContext.form }),
       state: pluginContext.routeState ?? scope.admission.state,
       pluginState: pluginContext.state,
       signal,

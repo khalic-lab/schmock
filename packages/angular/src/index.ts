@@ -29,7 +29,6 @@ import {
 import {
   buildJsonErrorResponse,
   HttpIngressError,
-  parseFormBody,
   parseJsonBody,
   requestBodyKindOf,
   toError,
@@ -550,6 +549,8 @@ function wireHeaders(request: HttpRequest<unknown>): Record<string, string> {
  */
 interface DecodedBody {
   value: unknown;
+  /** Every field of an urlencoded body as sent, for `RequestOptions.form`. */
+  form?: URLSearchParams;
   rejected?: HttpIngressError;
 }
 
@@ -569,8 +570,12 @@ function decodeBodyText(
         }
         throw error;
       }
-    case "form":
-      return { value: parseFormBody(text) };
+    case "form": {
+      // One decode for both shapes, as core's ingress reads it: the record
+      // `parseFormBody` would build, last value winning, and the form.
+      const form = new URLSearchParams(text);
+      return { value: Object.fromEntries(form), form };
+    }
     case "text":
       return { value: text };
     case "multipart":
@@ -627,7 +632,8 @@ async function decodeMultipart(
  * a `Blob`. The serialized body is decoded by its content type with core's
  * own decode table and JSON parser (`@schmock/core/adapter`), the ones
  * `mock.listen()` and the fetch interceptor use: JSON parsed, a urlencoded
- * form a flat object, `text/*` a string, `multipart/*` and `FormData` a
+ * form a flat object (with every field as sent beside it, as `form`),
+ * `text/*` a string, `multipart/*` and `FormData` a
  * `FormData`, anything else an `ArrayBuffer`. A `Blob` or a multipart body
  * can only be read asynchronously; every other body is decoded at once.
  */
@@ -676,6 +682,8 @@ interface RoutedRequest {
   path: string;
   headers: Record<string, string>;
   body: unknown;
+  /** Every field of an urlencoded `body` as sent, while `body` is that form. */
+  form?: URLSearchParams;
   query: Record<string, string>;
 }
 
@@ -963,13 +971,20 @@ function applyRequestOverride(
     interception.innerSub = next.handle(req).subscribe(observer);
     return;
   }
-  dispatchRequest(interception, {
-    ...requestData,
+  const { form, ...request } = requestData;
+  const routed: RoutedRequest = {
+    ...request,
     ...override,
     method,
     headers: { ...requestData.headers, ...override.headers },
     query: { ...requestData.query, ...override.query },
-  });
+  };
+  // The form describes the body it was decoded with: an override that
+  // replaces the body leaves none, as the fetch interceptor's hook does.
+  if (form !== undefined && routed.body === requestData.body) {
+    routed.form = form;
+  }
+  dispatchRequest(interception, routed);
 }
 
 /** Route the request through the mock and emit what it answers. */
@@ -987,6 +1002,7 @@ function dispatchRequest(
       // capitalized keys.
       headers: lowercaseHeaderKeys(routed.headers),
       body: routed.body,
+      ...(routed.form === undefined ? {} : { form: routed.form }),
       query: routed.query,
       signal: abortController.signal,
     })
@@ -1014,11 +1030,12 @@ function runInterception(interception: Interception, routePath: string): void {
   const { req } = interception;
   try {
     const headers = wireHeaders(req);
-    const routedRequest = (decoded: unknown): RoutedRequest => ({
+    const routedRequest = (decoded: DecodedBody): RoutedRequest => ({
       method: interception.responseMethod,
       path: routePath,
       headers,
-      body: decoded,
+      body: decoded.value,
+      ...(decoded.form === undefined ? {} : { form: decoded.form }),
       // Angular's HttpParams are already parsed
       query: extractQueryParams(req),
     });
@@ -1032,7 +1049,7 @@ function runInterception(interception: Interception, routePath: string): void {
         emitIngressError(interception, decoded.rejected);
         return;
       }
-      runRequestHook(interception, routedRequest(decoded.value));
+      runRequestHook(interception, routedRequest(decoded));
     };
 
     const body = routedRequestBody(req, getHeader(headers, "content-type"));

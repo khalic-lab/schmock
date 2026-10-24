@@ -2,8 +2,8 @@ import { HTTP_METHODS, isHttpMethod } from "./constants.js";
 import { errorMessage, SchmockError, toError } from "./errors.js";
 import { getHeader, hasHeader } from "./headers.js";
 import {
+  decodeFormBody,
   HttpIngressError,
-  parseFormBody,
   parseJsonBody,
   requestBodyKindOf,
 } from "./request-body.js";
@@ -102,6 +102,15 @@ async function parseMultipartBody(
 }
 
 /**
+ * A collected request body, and for an urlencoded one every field as sent
+ * (`RequestOptions.form`).
+ */
+interface CollectedBody {
+  body: unknown;
+  form?: URLSearchParams;
+}
+
+/**
  * Turn the collected bytes into the body shape the fetch interceptor gives
  * the same request (see `RequestBodyKind`), so `mock.listen()`, the CLI and
  * `mock.intercept()` hand a handler the same value.
@@ -109,18 +118,20 @@ async function parseMultipartBody(
 function decodeRequestBody(
   bytes: Uint8Array<ArrayBuffer>,
   contentType: string,
-): unknown {
+): CollectedBody | Promise<CollectedBody> {
   switch (requestBodyKindOf(contentType)) {
     case "json":
-      return parseJsonBody(new TextDecoder().decode(bytes));
-    case "form":
-      return parseFormBody(new TextDecoder().decode(bytes));
+      return { body: parseJsonBody(new TextDecoder().decode(bytes)) };
+    case "form": {
+      const { value, form } = decodeFormBody(new TextDecoder().decode(bytes));
+      return { body: value, form };
+    }
     case "text":
-      return new TextDecoder().decode(bytes);
+      return { body: new TextDecoder().decode(bytes) };
     case "multipart":
-      return parseMultipartBody(bytes, contentType);
+      return parseMultipartBody(bytes, contentType).then((body) => ({ body }));
     case "binary":
-      return bytes.buffer;
+      return { body: bytes.buffer };
   }
 }
 
@@ -154,6 +165,17 @@ export function collectBody(
   headers: Record<string, string>,
   maxBodySize = DEFAULT_MAX_BODY_SIZE,
 ): Promise<unknown> {
+  return collectRequestBody(req, headers, maxBodySize).then(
+    (collected) => collected.body,
+  );
+}
+
+/** `collectBody`, keeping an urlencoded body's complete form beside it. */
+function collectRequestBody(
+  req: BodyReadable,
+  headers: Record<string, string>,
+  maxBodySize: number,
+): Promise<CollectedBody> {
   const contentLength = getHeader(headers, "content-length");
   const declaredBodyTooLarge =
     contentLength !== undefined &&
@@ -172,11 +194,13 @@ export function collectBody(
       reject(error);
     };
 
-    const resolveOnce = (body: unknown): void => {
+    const resolveOnce = (
+      collected: CollectedBody | Promise<CollectedBody>,
+    ): void => {
       if (settled) return;
       settled = true;
       chunks.length = 0;
-      resolve(body);
+      resolve(collected);
     };
 
     if (declaredBodyTooLarge) {
@@ -202,7 +226,7 @@ export function collectBody(
       if (settled) return;
 
       if (totalSize === 0) {
-        resolveOnce(undefined);
+        resolveOnce({ body: undefined });
         return;
       }
       const bytes = concatChunks(chunks, totalSize);
@@ -623,10 +647,15 @@ async function handleWithBody(
 ): Promise<Schmock.Response> {
   const headers = parseNodeHeaders(req);
   const query = parseNodeQuery(url);
-  const body = await collectBody(req, headers, options.maxBodySize);
+  const { body, form } = await collectRequestBody(
+    req,
+    headers,
+    options.maxBodySize,
+  );
   return options.handle(method, path, {
     headers,
     body,
+    ...(form === undefined ? {} : { form }),
     query,
     signal: options.signal,
   });
