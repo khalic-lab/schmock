@@ -2,10 +2,10 @@ import type * as Schmock from "@schmock/core";
 import { getHeader, getResponseParts } from "@schmock/core";
 import { toError } from "@schmock/core/adapter";
 import { generateFromSchema } from "@schmock/faker";
-import type { CodeOptions, ValidateFunction } from "ajv";
-import Ajv2020 from "ajv/dist/2020.js";
-import addFormats from "ajv-formats";
+import type { ValidateFunction } from "ajv";
+import type Ajv2020 from "ajv/dist/2020.js";
 import type { JSONSchema7 } from "json-schema";
+import { createSpecAjv } from "./ajv-setup.js";
 import {
   negotiateContentType,
   selectResponseMediaType,
@@ -322,37 +322,6 @@ export function processContentNegotiation(
 }
 
 /**
- * Decimal places of tolerance AJV allows when it divides a value by
- * `multipleOf`. Without one, 19.99 / 0.01 comes out as 1998.9999999999998 and
- * an exact amount of cents fails `multipleOf: 0.01`. The quotient's rounding
- * error grows with the value, so a tighter tolerance rejects large amounts
- * again: 1e-9 already refuses 1234567.89, while 1e-6 holds for cent values
- * past a hundred million.
- */
-const MULTIPLE_OF_PRECISION = 6;
-
-/**
- * Compiles a spec `pattern` the way faker's `compilePattern` does: with the
- * `u` flag first, then without it for patterns only the legacy grammar
- * accepts. AJV's default engine is `u`-only, so a pattern such as
- * `^\d{3}\-\d{4}$` (an identity escape `u` forbids) failed to compile while
- * faker generated values from it. A pattern neither grammar accepts still
- * throws.
- */
-const specPatternEngine: NonNullable<CodeOptions["regExp"]> = Object.assign(
-  (pattern: string, flags: string): RegExp => {
-    try {
-      return new RegExp(pattern, flags);
-    } catch (error) {
-      if (!flags.includes("u")) throw error;
-      return new RegExp(pattern, flags.replace("u", ""));
-    }
-  },
-  // Read only when AJV emits standalone source, which this package never does.
-  { code: "specPatternEngine" },
-);
-
-/**
  * Per-plugin validator context. Each openapi() call creates its own
  * AJV instance and schema cache so that loading multiple specs in the
  * same process can't collide on duplicate \$id values.
@@ -368,23 +337,8 @@ export interface BodyValidatorContext {
 }
 
 export function createBodyValidatorContext(): BodyValidatorContext {
-  const ajv = new Ajv2020({
-    allErrors: true,
-    strictSchema: false,
-    strictTypes: false,
-    multipleOfPrecision: MULTIPLE_OF_PRECISION,
-    code: { regExp: specPatternEngine },
-    // With strictSchema off AJV ignores an unknown format such as Stripe's
-    // `unix-time`, but logs two console lines per occurrence on every compile:
-    // tens of thousands for one large response schema, with no option to
-    // silence them. Its other warnings are strict-mode remarks on the spec's
-    // own schemas, which the mock's user cannot act on either.
-    logger: false,
-  });
-  addFormats(ajv);
-
   return {
-    ajv,
+    ajv: createSpecAjv({ allErrors: true }),
     cache: new WeakMap(),
     failures: new WeakMap(),
   };

@@ -1,6 +1,6 @@
-import type { CodeOptions, ValidateFunction } from "ajv";
-import Ajv2020 from "ajv/dist/2020.js";
-import addFormats from "ajv-formats";
+import type { ValidateFunction } from "ajv";
+import type Ajv2020 from "ajv/dist/2020.js";
+import { createSpecAjv } from "./ajv-setup.js";
 
 /*
  * Which of a schema node's own examples drive generation. An example counts
@@ -31,49 +31,33 @@ const VALUE_KEYWORDS = [
 /** The faker method a generated value is drawn from a pool with. */
 const POOL_METHOD = "helpers.arrayElement";
 
-/** The request pipeline's `multipleOf` tolerance (request-pipeline.ts). */
-const MULTIPLE_OF_PRECISION = 6;
+/**
+ * How many compiled checks are kept. Each distinct set of value keywords is
+ * compiled once, and AJV also keeps every schema it compiled, so a process
+ * that loads spec after spec (the CLI reloading under `--watch`) would keep
+ * them all. Past the cap both are dropped and a fresh instance starts over;
+ * compiling a check again costs about 0.1 ms.
+ */
+const MAX_CACHED_CHECKS = 1024;
 
 /**
- * The request pipeline's pattern engine (request-pipeline.ts): the `u` flag
- * first, then without it for patterns only the legacy grammar accepts.
+ * The spec AJV setup (ajv-setup.ts) and its compiled checks, by the JSON text
+ * of the keywords they check. A node whose keywords do not compile maps to
+ * `undefined`.
  */
-const specPatternEngine: NonNullable<CodeOptions["regExp"]> = Object.assign(
-  (pattern: string, flags: string): RegExp => {
-    try {
-      return new RegExp(pattern, flags);
-    } catch (error) {
-      if (!flags.includes("u")) throw error;
-      return new RegExp(pattern, flags.replace("u", ""));
-    }
-  },
-  // Read only when AJV emits standalone source, which this package never does.
-  { code: "specPatternEngine" },
-);
+interface AcceptanceCache {
+  ajv: Ajv2020;
+  checks: Map<string, ValidateFunction | undefined>;
+}
 
-let acceptanceAjv: Ajv2020 | undefined;
+let acceptance: AcceptanceCache | undefined;
 
-/**
- * Compiled value checks by the JSON text of the keywords they check. A node
- * whose keywords do not compile maps to `undefined`.
- */
-const valueChecks = new Map<string, ValidateFunction | undefined>();
-
-/** The request pipeline's AJV setup, formats included, created on first use. */
-function getAcceptanceAjv(): Ajv2020 {
-  if (!acceptanceAjv) {
-    acceptanceAjv = new Ajv2020({
-      strictSchema: false,
-      strictTypes: false,
-      multipleOfPrecision: MULTIPLE_OF_PRECISION,
-      code: { regExp: specPatternEngine },
-      // An unknown format (Train Travel's `iso-country-code`) is ignored, as
-      // the request pipeline ignores it, without a console line per compile.
-      logger: false,
-    });
-    addFormats(acceptanceAjv);
+/** The current cache, created on first use and again past the cap. */
+function acceptanceCache(): AcceptanceCache {
+  if (!acceptance || acceptance.checks.size >= MAX_CACHED_CHECKS) {
+    acceptance = { ajv: createSpecAjv(), checks: new Map() };
   }
-  return acceptanceAjv;
+  return acceptance;
 }
 
 function valueCheck(
@@ -84,15 +68,16 @@ function valueCheck(
     if (node[keyword] !== undefined) keywords[keyword] = node[keyword];
   }
   const key = JSON.stringify(keywords);
-  if (valueChecks.has(key)) return valueChecks.get(key);
+  const { ajv, checks } = acceptanceCache();
+  if (checks.has(key)) return checks.get(key);
 
   let check: ValidateFunction | undefined;
   try {
-    check = getAcceptanceAjv().compile(keywords);
+    check = ajv.compile(keywords);
   } catch {
     check = undefined;
   }
-  valueChecks.set(key, check);
+  checks.set(key, check);
   return check;
 }
 
