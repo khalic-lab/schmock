@@ -98,6 +98,40 @@ const timestampPetsSpec = specWith(
   },
 );
 
+// The Train Travel spec's trip uuid has seven hex digits in its first group.
+const MALFORMED_UUID = "4f4e4e1-c824-4d63-b37a-d8d698862f1d";
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * GET /trips/{id} answering a uuid that declares the malformed uuid as its
+ * sample: a 3.1 `examples` entry, or a 3.0 `example`.
+ */
+function malformedTripIdSpec(
+  version: "3.0.3" | "3.1.0",
+): Record<string, unknown> {
+  const sample =
+    version === "3.1.0"
+      ? { examples: [MALFORMED_UUID] }
+      : { example: MALFORMED_UUID };
+  return specWith(
+    {
+      "/trips/{id}": {
+        get: {
+          responses: {
+            "200": {
+              description: "OK",
+              content: json({ type: "string", format: "uuid", ...sample }),
+            },
+          },
+        },
+      },
+    },
+    {},
+    version,
+  );
+}
+
 const account = {
   allOf: [
     { $ref: "#/components/schemas/Base" },
@@ -397,36 +431,63 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   );
 
   Scenario(
-    "A 3.1 examples array does not pin the generated value",
+    "A 3.1 examples array supplies varied generated values",
+    ({ Given, When, Then, And }) => {
+      const examples = ["active", "idle", "paused"];
+      let statusSpec: Record<string, unknown>;
+      const statuses: unknown[] = [];
+
+      Given(
+        'a 3.1 mock whose status string declares the examples "active", "idle" and "paused"',
+        () => {
+          statusSpec = specWith(
+            {
+              "/status": {
+                get: {
+                  responses: {
+                    "200": {
+                      description: "OK",
+                      content: json({ type: "string", examples }),
+                    },
+                  },
+                },
+              },
+            },
+            {},
+            "3.1.0",
+          );
+        },
+      );
+
+      When("I read the status with 12 different faker seeds", async () => {
+        for (let fakerSeed = 0; fakerSeed < 12; fakerSeed++) {
+          await build({ spec: structuredClone(statusSpec), fakerSeed });
+          response = await mock.handle("GET", "/status");
+          expect(response.status).toBe(200);
+          statuses.push(response.body);
+        }
+      });
+
+      Then("every status is one of the examples", () => {
+        expect(statuses).toHaveLength(12);
+        for (const status of statuses) expect(examples).toContain(status);
+      });
+
+      And("more than one of the examples appears", () => {
+        expect(new Set(statuses).size).toBeGreaterThan(1);
+      });
+    },
+  );
+
+  Scenario(
+    "A 3.1 examples entry the schema rejects is never generated",
     ({ Given, When, Then }) => {
-      const malformed = "4f4e4e1-c824-4d63-b37a-d8d698862f1d";
       const ids: unknown[] = [];
 
       Given(
         "a 3.1 mock whose trip id is a uuid declaring a malformed example",
         async () => {
-          await build({
-            spec: specWith(
-              {
-                "/trips/{id}": {
-                  get: {
-                    responses: {
-                      "200": {
-                        description: "OK",
-                        content: json({
-                          type: "string",
-                          format: "uuid",
-                          examples: [malformed],
-                        }),
-                      },
-                    },
-                  },
-                },
-              },
-              {},
-              "3.1.0",
-            ),
-          });
+          await build({ spec: malformedTripIdSpec("3.1.0") });
         },
       );
 
@@ -439,14 +500,150 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       Then(
         "every trip id is a well-formed uuid and none is the example",
         () => {
-          for (const id of ids) {
-            expect(id).toMatch(
-              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-            );
-          }
-          expect(ids).not.toContain(malformed);
+          for (const id of ids) expect(id).toMatch(UUID_RE);
+          expect(ids).not.toContain(MALFORMED_UUID);
         },
       );
+    },
+  );
+
+  Scenario(
+    "A 3.0 example the schema rejects is never generated",
+    ({ Given, When, Then }) => {
+      const ids: unknown[] = [];
+
+      Given(
+        "a 3.0 mock whose trip id is a uuid with a malformed example",
+        async () => {
+          await build({ spec: malformedTripIdSpec("3.0.3") });
+        },
+      );
+
+      When("I read the trip id three times", async () => {
+        for (let i = 0; i < 3; i++) {
+          ids.push((await mock.handle("GET", "/trips/1")).body);
+        }
+      });
+
+      Then(
+        "every trip id is a well-formed uuid and none is the example",
+        () => {
+          for (const id of ids) expect(id).toMatch(UUID_RE);
+          expect(ids).not.toContain(MALFORMED_UUID);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "Request validation still accepts a value the examples do not list",
+    ({ Given, When, Then }) => {
+      Given(
+        'a 3.1 request-validating mock whose status body declares the examples "active" and "idle"',
+        async () => {
+          await build({
+            spec: specWith(
+              {
+                "/status": {
+                  put: {
+                    requestBody: {
+                      required: true,
+                      content: json({
+                        type: "object",
+                        required: ["status"],
+                        properties: {
+                          status: {
+                            type: "string",
+                            examples: ["active", "idle"],
+                          },
+                        },
+                      }),
+                    },
+                    responses: { "204": { description: "Saved" } },
+                  },
+                },
+              },
+              {},
+              "3.1.0",
+            ),
+            validateRequests: true,
+          });
+        },
+      );
+
+      When('I save the status "archived"', async () => {
+        response = await mock.handle("PUT", "/status", {
+          body: { status: "archived" },
+        });
+      });
+
+      Then("the save response has status 204", () => {
+        expect(response.status).toBe(204);
+      });
+    },
+  );
+
+  Scenario(
+    "Created rows get minted ids even when the id declares examples",
+    ({ Given, When, Then }) => {
+      const ids: unknown[] = [];
+
+      Given(
+        "a 3.1 pets mock whose integer id declares the examples 7 and 9",
+        async () => {
+          const id = { type: "integer", examples: [7, 9] };
+          const pet = {
+            type: "object",
+            properties: { id, name: { type: "string" } },
+          };
+          await build({
+            spec: specWith(
+              {
+                "/pets": {
+                  get: {
+                    responses: {
+                      "200": {
+                        description: "OK",
+                        content: json({ type: "array", items: pet }),
+                      },
+                    },
+                  },
+                  post: {
+                    requestBody: { content: json(pet) },
+                    responses: {
+                      "201": { description: "Created", content: json(pet) },
+                    },
+                  },
+                },
+                "/pets/{id}": {
+                  parameters: [
+                    { name: "id", in: "path", required: true, schema: id },
+                  ],
+                  get: {
+                    responses: {
+                      "200": { description: "OK", content: json(pet) },
+                    },
+                  },
+                },
+              },
+              {},
+              "3.1.0",
+            ),
+          });
+        },
+      );
+
+      When('I create the pets "Rex" and "Tom"', async () => {
+        for (const name of ["Rex", "Tom"]) {
+          response = await mock.handle("POST", "/pets", { body: { name } });
+          expect(response.status).toBe(201);
+          ids.push(isRecord(response.body) ? response.body.id : undefined);
+        }
+      });
+
+      Then("the created pets have the ids 1 and 2", () => {
+        expect(ids).toEqual([1, 2]);
+      });
     },
   );
 

@@ -64,10 +64,38 @@ Feature: OpenAPI schema model fixes
 
   # ── Examples ──────────────────────────────────────────────────────────────
 
-  Scenario: A 3.1 examples array does not pin the generated value
+  # Design Decision: a scalar generates from the examples it accepts itself
+  # - A default pins the value, and so does a 3.0 example the schema accepts
+  # - Otherwise each value is drawn, seeded, from the 3.1 examples entries
+  #   the schema accepts; one accepted entry pins like an example
+  # - An example the schema rejects is never generated
+  # - Validation is unchanged: it accepts what the schema accepts
+
+  Scenario: A 3.1 examples array supplies varied generated values
+    Given a 3.1 mock whose status string declares the examples "active", "idle" and "paused"
+    When I read the status with 12 different faker seeds
+    Then every status is one of the examples
+    And more than one of the examples appears
+
+  Scenario: A 3.1 examples entry the schema rejects is never generated
     Given a 3.1 mock whose trip id is a uuid declaring a malformed example
     When I read the trip id three times
     Then every trip id is a well-formed uuid and none is the example
+
+  Scenario: A 3.0 example the schema rejects is never generated
+    Given a 3.0 mock whose trip id is a uuid with a malformed example
+    When I read the trip id three times
+    Then every trip id is a well-formed uuid and none is the example
+
+  Scenario: Request validation still accepts a value the examples do not list
+    Given a 3.1 request-validating mock whose status body declares the examples "active" and "idle"
+    When I save the status "archived"
+    Then the save response has status 204
+
+  Scenario: Created rows get minted ids even when the id declares examples
+    Given a 3.1 pets mock whose integer id declares the examples 7 and 9
+    When I create the pets "Rex" and "Tom"
+    Then the created pets have the ids 1 and 2
 
   # ── CRUD detection ────────────────────────────────────────────────────────
 

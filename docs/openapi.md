@@ -1094,10 +1094,28 @@ on a scalar schema, so a property declaring `example: "active"` is returned as
 and seed rows are generated from the schema, so required properties hold,
 seeded rows differ, and a `writeOnly` field present in the example never
 reaches a response. Set an explicit `default` to pin an object value.
-Media-type examples for `Prefer: example=` are unaffected. The JSON Schema
-`examples` array that OpenAPI 3.1 uses instead of `example` is not promoted: it
-lists sample values, and generation stays varied. Set a `default` (or a 3.0
-`example`) to pin a scalar value.
+Media-type examples for `Prefer: example=` are unaffected.
+
+OpenAPI 3.1 replaces `example` with the JSON Schema `examples` array. When a
+scalar schema declares neither a `default` nor an `example`, each generated
+value is drawn from its primitive `examples` entries: the Train Travel spec's
+station `name` comes back as `Berlin Hauptbahnhof` or `Paris Gare du Nord`, and
+`fakerSeed` reproduces the draws. A single entry is returned every time, as an
+`example` is. Either keyword counts only the values the schema itself accepts
+by its type, format, pattern, enum, const, length and numeric bounds, so an
+example it rejects, such as that spec's malformed trip uuid, is never
+generated, and a schema that accepts none of its examples generates as if it
+had none. A schema that composes with `allOf`, `anyOf`, `oneOf`, `not` or
+`if`/`then`/`else` uses neither keyword and generates from its composition,
+because the check sees only the schema's own keywords. A `default` still pins
+the value over both. Examples steer generation
+only: validation accepts whatever the schema accepts, listed or not. `null`
+entries are left to the nullable rate below, and a drawn `date-time` comes back
+in its `toISOString()` form. A schema whose `type` lists two non-null types, or
+whose `multipleOf` is fractional, uses a single accepted entry but does not draw
+from several. The draw reaches an `onSchema` hook as a `faker` keyword
+(`helpers.arrayElement`) on the property. json-schema-faker reads it before
+`default`, `const` or `enum`, so a hook that pins such a property removes it.
 
 A nullable value is `null` about 5% of the time, whether the schema uses 3.0
 `nullable: true` or the 3.1 forms `type: [T, "null"]` and

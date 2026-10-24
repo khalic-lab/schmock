@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type * as Schmock from "@schmock/core";
 import { schmock } from "@schmock/core";
 import { generateFromSchema } from "@schmock/faker";
+import Ajv from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
@@ -885,7 +886,54 @@ describe("normalizeSchema", () => {
     });
   });
 
-  describe("example → default", () => {
+  describe("examples → generated values", () => {
+    // The Train Travel spec's trip uuid has seven hex digits in its first
+    // group; its station uuids are well formed.
+    const malformed = "4f4e4e1-c824-4d63-b37a-d8d698862f1d";
+    const stationA = "efdbb9d1-02c2-4bc3-afb7-6788d8782b1e";
+    const stationB = "b2e783e1-c824-4d63-b37a-d8d698862f1d";
+    const UUID =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const pool = (entries: unknown[]) => ({
+      "helpers.arrayElement": [entries],
+    });
+
+    function valueSpec(schema: object, version = "3.1.0") {
+      return specWith(
+        {
+          "/value": {
+            get: {
+              responses: {
+                "200": { description: "ok", content: json(schema) },
+              },
+            },
+          },
+        },
+        {},
+        version,
+      );
+    }
+
+    /** One GET /value body per faker seed 0..seeds-1. */
+    async function readSeeded(
+      schema: object,
+      seeds: number,
+      version?: string,
+    ): Promise<unknown[]> {
+      const values: unknown[] = [];
+      for (let fakerSeed = 0; fakerSeed < seeds; fakerSeed++) {
+        const mock = await mockFor(valueSpec(schema, version), { fakerSeed });
+        values.push((await mock.handle("GET", "/value")).body);
+      }
+      return values;
+    }
+
+    function listData(body: unknown): Record<string, unknown>[] {
+      const data = isRecord(body) ? body.data : undefined;
+      expect(Array.isArray(data)).toBe(true);
+      return Array.isArray(data) ? data.filter(isRecord) : [];
+    }
+
     it("copies example to default when default is not set", () => {
       const result = normalizeSchema(
         { type: "string", example: "hello" },
@@ -895,69 +943,580 @@ describe("normalizeSchema", () => {
       expect(result).not.toHaveProperty("example");
     });
 
-    it("leaves a 3.1 examples array out of the default", () => {
-      const result = normalizeSchema(
-        { type: "string", examples: ["active", "idle"] },
-        "response",
-      );
-      expect(result).not.toHaveProperty("default");
-      expect(result.examples).toEqual(["active", "idle"]);
-    });
-
-    it("still promotes a 3.0 example beside an examples array", () => {
-      expect(
-        normalizeSchema(
-          { type: "string", example: "one", examples: ["x"] },
-          "response",
-        ).default,
-      ).toBe("one");
-    });
-
-    it("keeps generating varied values for a 3.1 spec with examples", async () => {
-      // The Train Travel spec's example uuid has seven hex digits in its first
-      // group; pinning it made every generated id that malformed value.
-      const malformed = "4f4e4e1-c824-4d63-b37a-d8d698862f1d";
-      const mock = await mockFor(
-        specWith(
-          {
-            "/trips/{id}": {
-              get: {
-                responses: {
-                  "200": {
-                    description: "ok",
-                    content: json({
-                      type: "string",
-                      format: "uuid",
-                      examples: [malformed],
-                    }),
-                  },
-                },
-              },
-            },
-          },
-          {},
-          "3.1.0",
-        ),
-      );
-
-      const ids = new Set<unknown>();
-      for (let i = 0; i < 3; i++) {
-        const { body } = await mock.handle("GET", "/trips/1");
-        expect(body).toMatch(
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-        );
-        ids.add(body);
-      }
-      expect(ids.has(malformed)).toBe(false);
-      expect(ids.size).toBeGreaterThan(1);
-    });
-
     it("preserves existing default when example is present", () => {
       const result = normalizeSchema(
         { type: "string", example: "hello", default: "world" },
         "response",
       );
       expect(result.default).toBe("world");
+    });
+
+    it("draws from several 3.1 examples entries instead of pinning one", () => {
+      const result = normalizeSchema(
+        { type: "string", examples: ["active", "idle"] },
+        "response",
+      );
+      expect(result).not.toHaveProperty("default");
+      expect(result).toHaveProperty("faker", pool(["active", "idle"]));
+      expect(result.examples).toEqual(["active", "idle"]);
+    });
+
+    it("pins a single accepted examples entry as a default, like a 3.0 example", () => {
+      for (const examples of [["active"], ["active", "active"]]) {
+        const result = normalizeSchema(
+          { type: "string", examples },
+          "response",
+        );
+        expect(result.default).toBe("active");
+        expect(result).not.toHaveProperty("faker");
+      }
+      expect(
+        normalizeSchema(
+          { type: ["string", "null"], examples: ["active"] },
+          "response",
+        ).default,
+      ).toBe("active");
+    });
+
+    it.each([
+      [
+        "format",
+        { type: "string", format: "uuid", examples: [malformed, stationA] },
+        stationA,
+      ],
+      ["type", { type: "integer", examples: ["7", 7.5, 7] }, 7],
+      [
+        "pattern",
+        { type: "string", pattern: "^[A-Z]{2}$", examples: ["de", "DE"] },
+        "DE",
+      ],
+      ["enum", { type: "string", enum: ["a", "b"], examples: ["c", "b"] }, "b"],
+      ["const", { const: "on", examples: ["off", "on"] }, "on"],
+      [
+        "length",
+        {
+          type: "string",
+          minLength: 2,
+          maxLength: 3,
+          examples: ["a", "abcd", "ab"],
+        },
+        "ab",
+      ],
+      [
+        "inclusive bounds",
+        { type: "integer", minimum: 1, maximum: 10, examples: [0, 11, 5] },
+        5,
+      ],
+      [
+        "3.0 boolean exclusive bound",
+        {
+          type: "number",
+          minimum: 0,
+          exclusiveMinimum: true,
+          examples: [0, 2.5],
+        },
+        2.5,
+      ],
+      [
+        "3.1 numeric exclusive bound",
+        { type: "number", exclusiveMaximum: 100, examples: [100, 95.3] },
+        95.3,
+      ],
+      ["multipleOf", { type: "integer", multipleOf: 5, examples: [7, 10] }, 10],
+    ])(
+      "keeps only the examples entries the node's %s accepts",
+      (_, schema, kept) => {
+        const result = normalizeSchema(schema, "response");
+        expect(result.default).toBe(kept);
+        expect(result).not.toHaveProperty("faker");
+      },
+    );
+
+    it("generates as before when the node accepts no examples entry", () => {
+      const result = normalizeSchema(
+        { type: "string", format: "uuid", examples: [malformed] },
+        "response",
+      );
+      expect(result).not.toHaveProperty("default");
+      expect(result).not.toHaveProperty("faker");
+    });
+
+    it("does not promote a 3.0 example its own node rejects", () => {
+      for (const schema of [
+        { type: "string", format: "uuid", example: malformed },
+        { type: "integer", minimum: 1, example: 0 },
+        { type: "integer", example: "7" },
+        { type: "string", enum: ["a", "b"], example: "c" },
+        { type: "string", maxLength: 2, example: "abc" },
+        { type: "string", pattern: "^[0-9]+$", example: "abc" },
+      ]) {
+        const result = normalizeSchema(schema, "response");
+        expect(result).not.toHaveProperty("default");
+        expect(result).not.toHaveProperty("example");
+      }
+      expect(
+        normalizeSchema(
+          { type: "string", format: "uuid", example: stationA },
+          "response",
+        ).default,
+      ).toBe(stationA);
+    });
+
+    it("promotes a null example only onto a node that accepts null", () => {
+      expect(
+        normalizeSchema(
+          { type: "string", nullable: true, example: null },
+          "response",
+        ),
+      ).toHaveProperty("default", null);
+      expect(
+        normalizeSchema(
+          { type: ["string", "null"], example: null },
+          "response",
+        ),
+      ).toHaveProperty("default", null);
+      expect(
+        normalizeSchema({ type: "string", example: null }, "response"),
+      ).not.toHaveProperty("default");
+    });
+
+    it("leaves null out of an examples pool", () => {
+      expect(
+        normalizeSchema(
+          { type: ["string", "null"], examples: [null, "a", "b"] },
+          "response",
+        ),
+      ).toHaveProperty("faker", pool(["a", "b"]));
+      expect(
+        normalizeSchema(
+          { type: "string", nullable: true, examples: [null, "a"] },
+          "response",
+        ).default,
+      ).toBe("a");
+    });
+
+    it("lets a default pin the value whatever the examples say", () => {
+      const result = normalizeSchema(
+        {
+          type: "string",
+          default: "set",
+          example: "one",
+          examples: ["a", "b"],
+        },
+        "response",
+      );
+      expect(result.default).toBe("set");
+      expect(result).not.toHaveProperty("faker");
+    });
+
+    it("ignores the examples array beside a 3.0 example, even one the node rejects", () => {
+      const accepted = normalizeSchema(
+        { type: "string", example: "one", examples: ["x", "y"] },
+        "response",
+      );
+      expect(accepted.default).toBe("one");
+      expect(accepted).not.toHaveProperty("faker");
+
+      const rejected = normalizeSchema(
+        {
+          type: "string",
+          format: "uuid",
+          example: malformed,
+          examples: [stationA, stationB],
+        },
+        "response",
+      );
+      expect(rejected).not.toHaveProperty("default");
+      expect(rejected).not.toHaveProperty("faker");
+    });
+
+    it("never takes a value from examples on a composite node or from a composite entry", () => {
+      for (const schema of [
+        { type: "array", items: { type: "string" }, examples: [["a"], ["b"]] },
+        { type: "object", examples: ["a", "b"] },
+        { properties: { a: { type: "string" } }, examples: ["a", "b"] },
+        { type: "string", examples: [{ a: 1 }, ["b"]] },
+      ]) {
+        const result = normalizeSchema(schema, "response");
+        expect(result).not.toHaveProperty("default");
+        expect(result).not.toHaveProperty("faker");
+      }
+      expect(
+        normalizeSchema(
+          { type: "string", examples: [{ a: 1 }, "x"] },
+          "response",
+        ).default,
+      ).toBe("x");
+    });
+
+    it.each([
+      [
+        "allOf",
+        { type: "string", allOf: [{ format: "uuid" }] },
+        [malformed, stationA],
+      ],
+      [
+        "anyOf",
+        { anyOf: [{ type: "string", format: "uuid" }, { type: "integer" }] },
+        [malformed, "zzz"],
+      ],
+      [
+        "oneOf",
+        { type: "string", oneOf: [{ format: "uuid" }, { format: "email" }] },
+        ["nope", "x@y.co"],
+      ],
+      ["not", { type: "string", not: { const: "x" } }, ["x", "y"]],
+      [
+        "if/then",
+        {
+          type: "string",
+          if: { minLength: 2 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { pattern: "^[A-Z]+$" },
+        },
+        ["ab", "CD"],
+      ],
+    ])(
+      "takes no value from the examples of a node that composes with %s",
+      (_, schema, entries) => {
+        for (const examples of [
+          { examples: entries },
+          { examples: [entries[0]] },
+        ]) {
+          const result = normalizeSchema(
+            { ...schema, ...examples },
+            "response",
+          );
+          expect(result).not.toHaveProperty("default");
+          expect(result).not.toHaveProperty("faker");
+        }
+        const promoted = normalizeSchema(
+          { ...schema, example: entries[0] },
+          "response",
+        );
+        expect(promoted).not.toHaveProperty("default");
+        expect(promoted).not.toHaveProperty("example");
+      },
+    );
+
+    it("does not draw from a pool json-schema-faker would alter", () => {
+      // A drawn value is cast to a type picked at random from a union, and
+      // snapped onto a fractional multipleOf.
+      for (const schema of [
+        { type: ["string", "integer"], examples: ["a", 1] },
+        { type: "number", multipleOf: 0.01, examples: [19.99, 5.49] },
+      ]) {
+        const result = normalizeSchema(schema, "response");
+        expect(result).not.toHaveProperty("default");
+        expect(result).not.toHaveProperty("faker");
+      }
+      // A faker keyword the spec declares is its own choice.
+      expect(
+        normalizeSchema(
+          { type: "string", faker: "lorem.word", examples: ["a", "b"] },
+          "response",
+        ),
+      ).toHaveProperty("faker", "lorem.word");
+    });
+
+    it("lets a node its own keywords cannot check keep its examples", () => {
+      // Neither regular-expression grammar compiles "(", so the node cannot
+      // tell, and the example is promoted as it always was.
+      expect(
+        normalizeSchema(
+          { type: "string", pattern: "(", example: "x" },
+          "response",
+        ).default,
+      ).toBe("x");
+      // An unknown format constrains nothing, as in the request pipeline.
+      expect(
+        normalizeSchema(
+          {
+            type: "string",
+            format: "iso-country-code",
+            examples: ["DE", "FR"],
+          },
+          "response",
+        ),
+      ).toHaveProperty("faker", pool(["DE", "FR"]));
+    });
+
+    it("leaves what validation accepts unchanged", () => {
+      const result = normalizeSchema(
+        { type: "string", examples: ["active", "idle"] },
+        "response",
+      );
+      expect(result).not.toHaveProperty("enum");
+      expect(result).not.toHaveProperty("const");
+      expect(accepts(result, "archived")).toBe(true);
+      // @schmock/validation compiles draft-07 with Schmock's generation
+      // keywords registered as vocabulary.
+      const draft7 = new Ajv({ allErrors: true });
+      draft7.addVocabulary([
+        "faker",
+        "schmockNullable",
+        "schmockTrueProbability",
+      ]);
+      expect(draft7.compile(result)("archived")).toBe(true);
+    });
+
+    it("generates every value from the accepted examples, varied across seeds", async () => {
+      const examples = ["active", "idle", "paused"];
+      const values = await readSeeded(
+        { type: "string", examples: [...examples, 42] },
+        12,
+      );
+      for (const value of values) expect(examples).toContain(value);
+      expect(new Set(values).size).toBeGreaterThan(1);
+    });
+
+    it("reproduces the same draws for the same faker seed", async () => {
+      const schema = {
+        type: "array",
+        minItems: 8,
+        maxItems: 8,
+        items: { type: "string", examples: ["a", "b", "c"] },
+      };
+      const first = await readSeeded(schema, 3);
+      expect(await readSeeded(schema, 3)).toEqual(first);
+      for (const value of first.flat())
+        expect(["a", "b", "c"]).toContain(value);
+      expect(new Set(first.flat()).size).toBeGreaterThan(1);
+    });
+
+    it("draws numbers and dates from a pool", async () => {
+      const integers = await readSeeded(
+        { type: "integer", format: "int64", examples: [3, 7] },
+        8,
+      );
+      for (const value of integers) expect([3, 7]).toContain(value);
+
+      const dates = ["2024-02-01", "2024-03-01"];
+      const drawnDates = await readSeeded(
+        { type: "string", format: "date", examples: dates },
+        8,
+      );
+      for (const value of drawnDates) expect(dates).toContain(value);
+
+      // json-schema-faker restates a drawn date-time in its toISOString form.
+      const instants = ["2024-02-01T10:00:00Z", "2024-03-01T10:00:00Z"];
+      const restated = instants.map((instant) =>
+        new Date(instant).toISOString(),
+      );
+      const drawnInstants = await readSeeded(
+        { type: "string", format: "date-time", examples: instants },
+        8,
+      );
+      for (const value of drawnInstants) expect(restated).toContain(value);
+    });
+
+    it("never generates a 3.1 examples entry its own node rejects", async () => {
+      const mock = await mockFor(
+        valueSpec({ type: "string", format: "uuid", examples: [malformed] }),
+      );
+
+      const ids = new Set<unknown>();
+      for (let i = 0; i < 3; i++) {
+        const { body } = await mock.handle("GET", "/value");
+        expect(body).toMatch(UUID);
+        ids.add(body);
+      }
+      expect(ids.has(malformed)).toBe(false);
+      expect(ids.size).toBeGreaterThan(1);
+    });
+
+    it("generates a composed node from its composition, not its examples", async () => {
+      const uuids = await readSeeded(
+        {
+          type: "string",
+          allOf: [{ format: "uuid" }],
+          examples: [malformed, stationA],
+        },
+        6,
+      );
+      for (const value of uuids) expect(value).toMatch(UUID);
+      expect(uuids).not.toContain(malformed);
+
+      // A faker draw beside `not` is rejected by @schmock/faker; the node
+      // generates as it did before examples drove generation.
+      for (let fakerSeed = 0; fakerSeed < 4; fakerSeed++) {
+        const mock = await mockFor(
+          valueSpec({
+            type: "string",
+            not: { const: "x" },
+            examples: ["x", "y"],
+          }),
+          { fakerSeed },
+        );
+        const response = await mock.handle("GET", "/value");
+        expect(response.status).toBe(200);
+        expect(typeof response.body).toBe("string");
+        expect(response.body).not.toBe("x");
+      }
+    });
+
+    it("never generates a 3.0 example its own node rejects", async () => {
+      const values = await readSeeded(
+        { type: "string", format: "uuid", example: malformed },
+        3,
+        "3.0.3",
+      );
+      for (const value of values) expect(value).toMatch(UUID);
+      expect(values).not.toContain(malformed);
+    });
+
+    it("generates Train Travel stations from the spec's examples and trips with well-formed ids", async () => {
+      const spec = resolve(__dirname, "__fixtures__/train-travel.yaml");
+      const names = new Set<unknown>();
+      for (let fakerSeed = 0; fakerSeed < 4; fakerSeed++) {
+        const mock = schmock({ state: {} });
+        mock.pipe(await openapi({ spec, fakerSeed }));
+
+        const stations = await mock.handle("GET", "/stations");
+        for (const station of listData(stations.body)) {
+          names.add(station.name);
+          expect([stationA, stationB]).toContain(station.id);
+        }
+
+        const trips = await mock.handle("GET", "/trips");
+        for (const trip of listData(trips.body)) {
+          expect(trip.id).toMatch(UUID);
+          expect(trip.id).not.toBe(malformed);
+        }
+      }
+      expect([...names].sort()).toEqual([
+        "Berlin Hauptbahnhof",
+        "Paris Gare du Nord",
+      ]);
+    });
+
+    it("mints distinct ids for created rows even when the id declares examples", async () => {
+      for (const id of [
+        { type: "integer", examples: [7, 9] },
+        { type: "string", format: "uuid", examples: [stationA, stationB] },
+      ]) {
+        const pet = {
+          type: "object",
+          properties: { id, name: { type: "string" } },
+        };
+        const mock = await mockFor(
+          specWith(
+            {
+              "/pets": {
+                get: {
+                  responses: {
+                    "200": {
+                      description: "ok",
+                      content: json({ type: "array", items: pet }),
+                    },
+                  },
+                },
+                post: {
+                  requestBody: { content: json(pet) },
+                  responses: {
+                    "201": { description: "created", content: json(pet) },
+                  },
+                },
+              },
+              "/pets/{id}": {
+                parameters: [
+                  { name: "id", in: "path", required: true, schema: id },
+                ],
+                get: {
+                  responses: {
+                    "200": { description: "ok", content: json(pet) },
+                  },
+                },
+              },
+            },
+            {},
+            "3.1.0",
+          ),
+        );
+
+        const ids: unknown[] = [];
+        for (const name of ["Rex", "Tom"]) {
+          const created = await mock.handle("POST", "/pets", {
+            body: { name },
+          });
+          expect(created.status).toBe(201);
+          ids.push(isRecord(created.body) ? created.body.id : undefined);
+        }
+        expect(new Set(ids).size).toBe(2);
+        for (const value of ids) expect(id.examples).not.toContain(value);
+      }
+    });
+
+    it("answers drawn values that response validation accepts and validates requests as before", async () => {
+      const status = {
+        type: "object",
+        required: ["status"],
+        properties: {
+          status: { type: "string", examples: ["active", "idle"] },
+        },
+      };
+      const mock = await mockFor(
+        specWith(
+          {
+            "/status": {
+              get: {
+                responses: {
+                  "200": { description: "ok", content: json(status) },
+                },
+              },
+              put: {
+                requestBody: { required: true, content: json(status) },
+                responses: { "204": { description: "saved" } },
+              },
+            },
+          },
+          {},
+          "3.1.0",
+        ),
+        { validateRequests: true, validateResponses: true },
+      );
+
+      const read = await mock.handle("GET", "/status");
+      expect(read.status).toBe(200);
+      expect(isRecord(read.body) ? read.body.status : undefined).toMatch(
+        /^(active|idle)$/,
+      );
+
+      const saved = await mock.handle("PUT", "/status", {
+        body: { status: "archived" },
+      });
+      expect(saved.status).toBe(204);
+    });
+
+    it("hands the draw to an onSchema hook as a faker keyword it can remove to pin a value", async () => {
+      const seen: unknown[] = [];
+      const mock = await mockFor(
+        valueSpec({
+          type: "object",
+          required: ["status"],
+          properties: {
+            status: { type: "string", examples: ["active", "idle"] },
+          },
+        }),
+        {
+          onSchema: (schema) => {
+            const status = isRecord(schema.properties)
+              ? schema.properties.status
+              : undefined;
+            if (!isRecord(status)) return undefined;
+            seen.push(status.faker);
+            const { faker: _, ...pinned } = status;
+            return {
+              ...schema,
+              properties: { status: { ...pinned, default: "archived" } },
+            };
+          },
+        },
+      );
+
+      const { body } = await mock.handle("GET", "/value");
+      expect(seen).toEqual([pool(["active", "idle"])]);
+      expect(body).toEqual({ status: "archived" });
     });
   });
 

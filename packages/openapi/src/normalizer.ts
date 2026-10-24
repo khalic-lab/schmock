@@ -1,4 +1,5 @@
 import type { JSONSchema7 } from "json-schema";
+import { applyExampleValues } from "./example-values.js";
 import { isRecord, toJsonSchema } from "./utils.js";
 
 /**
@@ -73,30 +74,6 @@ export function collectAccessModes(
 }
 
 /**
- * Is `node` shaped as an object or array, by its declared type or structure?
- *
- * Only a node that is neither gets its `example` promoted to `default`:
- * json-schema-faker returns an object/array default verbatim, so a partial
- * object example dropped required properties, cloned every seed row and leaked
- * `writeOnly` fields the direction had just stripped from `properties`.
- */
-function isCompositeNode(node: Record<string, unknown>): boolean {
-  const types = Array.isArray(node.type) ? node.type : [node.type];
-  if (types.includes("object") || types.includes("array")) return true;
-  return (
-    node.type === undefined &&
-    (node.properties !== undefined ||
-      node.items !== undefined ||
-      node.allOf !== undefined ||
-      node.additionalProperties !== undefined)
-  );
-}
-
-function isPrimitive(value: unknown): boolean {
-  return value === null || typeof value !== "object";
-}
-
-/**
  * Normalize an OpenAPI schema to pure JSON Schema 7 that json-schema-faker understands.
  *
  * Transforms applied:
@@ -107,8 +84,9 @@ function isPrimitive(value: unknown): boolean {
  * - discriminator beside oneOf or anyOf -> required + enum on branches
  * - readOnly/writeOnly -> strip based on direction (names recorded, see
  *   {@link collectAccessModes})
- * - example -> default (if default not set), on scalar nodes only; a 3.1
- *   `examples` array is left alone
+ * - example, or else the 3.1 `examples` entries -> what a scalar node
+ *   generates, counting only values the node accepts (see
+ *   {@link applyExampleValues}); a `default` still pins
  * - exclusiveMinimum/exclusiveMaximum boolean -> number format
  * - x-* extensions -> stripped
  * - a cycle -> ended where generation can stop: an optional property closing
@@ -486,21 +464,6 @@ function normalizeNode(
     }
   }
 
-  // Handle example -> default, for scalar values on scalar nodes only. An object
-  // or array default is returned verbatim by json-schema-faker, so promoting a
-  // composite example replaced every generated body with it. A 3.1 `examples`
-  // array is not promoted: it lists sample values rather than naming one, and
-  // pinning its first entry made every generated value that sample.
-  if (
-    "example" in node &&
-    !("default" in node) &&
-    isPrimitive(node.example) &&
-    !isCompositeNode(node)
-  ) {
-    node.default = node.example;
-  }
-  delete node.example;
-
   // Handle exclusiveMinimum/exclusiveMaximum boolean -> number
   if (node.exclusiveMinimum === true && typeof node.minimum === "number") {
     node.exclusiveMinimum = node.minimum;
@@ -515,6 +478,11 @@ function normalizeNode(
   } else if (node.exclusiveMaximum === false) {
     delete node.exclusiveMaximum;
   }
+
+  // A scalar node generates from its own examples, once the bounds above are
+  // numeric: an example the node rejects is never generated.
+  applyExampleValues(node, isNullable);
+  delete node.example;
 
   // Recurse into items (array schema)
   if (node.items) {
