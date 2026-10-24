@@ -45,6 +45,30 @@ Feature: OpenAPI request bodies as the transports deliver them
     When I post the urlencoded form "metadata[order]=42" through the fetch interceptor
     Then the upload response status is 201
 
+  # ── Repeated names and the encoding map ──────────────────────────────────
+  # Core keeps the last value of a repeated urlencoded name in the body record
+  # and passes the whole form beside it; Express's parser builds the array
+  # itself. Either way a property declared as an array gets every value, and
+  # a property whose encoding does not explode is split on its delimiter.
+
+  Scenario: A repeated urlencoded name fills an array property through the fetch interceptor
+    Given a validating notes mock whose urlencoded tags are an array of at least two strings
+    When I create a note with the urlencoded form "tags=a&tags=b" through the fetch interceptor
+    Then the upload response status is 201
+    And the stored note has the tags "a" and "b"
+
+  Scenario: A repeated urlencoded name fills an array property through Express
+    Given a validating notes mock whose urlencoded tags are an array of at least two strings
+    When I create a note with the urlencoded form "tags=a&tags=b" through Express
+    Then the upload response status is 201
+    And the stored note has the tags "a" and "b"
+
+  Scenario: A comma-separated value fills an array property whose encoding does not explode
+    Given a validating notes mock whose urlencoded tags are encoded as form with explode false
+    When I create a note with the urlencoded form "tags=a,b" through the fetch interceptor
+    Then the upload response status is 201
+    And the stored note has the tags "a" and "b"
+
   # ── Bodies core does not parse ───────────────────────────────────────────
 
   Scenario: An XML body is not validated against its object schema

@@ -22,6 +22,7 @@ import {
   describePathTemplateProblem,
   templateToRoutePath,
 } from "./path-template.js";
+import type { FormEncodingMap } from "./request-body.js";
 import type { ResponseStatusKey } from "./response-status.js";
 import { isRecord } from "./utils.js";
 
@@ -94,6 +95,11 @@ export interface ParsedPath {
    * without a schema maps to `undefined`: accepted, but not validated.
    */
   requestContent?: Map<string, JSONSchema7 | undefined>;
+  /**
+   * The `encoding` map of each request media type that declares one, keyed
+   * like `requestContent`: how an urlencoded body's properties are written.
+   */
+  requestEncoding?: Map<string, FormEncodingMap>;
   responses: Map<ResponseStatusKey, ParsedResponseEntry>;
   tags: string[];
   /** Per-operation security requirements (each entry is OR, keys within are AND) */
@@ -231,8 +237,12 @@ export async function parseSpec(
       );
       const mergedParams = mergeParameters(pathLevelParams, operationParams);
 
-      const { requestBody, requestBodyRequired, requestContent } =
-        extractRequestBody(operation, mergedParams, ctx);
+      const {
+        requestBody,
+        requestBodyRequired,
+        requestContent,
+        requestEncoding,
+      } = extractRequestBody(operation, mergedParams, ctx);
 
       const responses = extractResponses(operation, ctx, label);
 
@@ -268,6 +278,7 @@ export async function parseSpec(
         requestBody,
         requestBodyRequired,
         requestContent,
+        ...(requestEncoding === undefined ? {} : { requestEncoding }),
         responses,
         tags,
         security: operationSecurity,

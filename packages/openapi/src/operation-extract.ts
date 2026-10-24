@@ -11,6 +11,11 @@ import type {
   ParsedResponseEntry,
   SecurityScheme,
 } from "./parser.js";
+import type {
+  FormEncoding,
+  FormEncodingMap,
+  FormStyle,
+} from "./request-body.js";
 import {
   parseResponseStatusKey,
   type ResponseStatusKey,
@@ -240,7 +245,7 @@ export function mergeParameters(
 /** An operation's request-body contract, as `ParsedPath` carries it. */
 type ExtractedRequestBody = Pick<
   ParsedPath,
-  "requestBody" | "requestBodyRequired" | "requestContent"
+  "requestBody" | "requestBodyRequired" | "requestContent" | "requestEncoding"
 >;
 
 /**
@@ -278,6 +283,7 @@ export function extractRequestBody(
       rawRequestBody,
       ctx.normalize,
     ),
+    requestEncoding: extractOpenApi3RequestEncoding(rawRequestBody),
   };
 }
 
@@ -336,6 +342,55 @@ function extractOpenApi3RequestContent(
   }
 
   return result.size > 0 ? result : undefined;
+}
+
+/**
+ * The `encoding` map of every request media type that declares one, keyed by
+ * normalized media type. Only `style` and `explode` are read: they say how an
+ * urlencoded property is written (OpenAPI ignores them for other media types,
+ * and so does the body decoder). Entries that are not objects are skipped.
+ */
+function extractOpenApi3RequestEncoding(
+  requestBody: Record<string, unknown> | undefined,
+): Map<string, FormEncodingMap> | undefined {
+  const content = isRecord(requestBody?.content)
+    ? requestBody.content
+    : undefined;
+  if (!content) return undefined;
+
+  const result = new Map<string, FormEncodingMap>();
+  for (const [mediaType, entry] of Object.entries(content)) {
+    if (!isRecord(entry) || !isRecord(entry.encoding)) continue;
+    const encoding = new Map<string, FormEncoding>();
+    for (const [property, value] of Object.entries(entry.encoding)) {
+      if (isRecord(value)) encoding.set(property, readFormEncoding(value));
+    }
+    if (encoding.size > 0) result.set(normalizeMediaType(mediaType), encoding);
+  }
+  return result.size > 0 ? result : undefined;
+}
+
+const FORM_STYLES: ReadonlySet<string> = new Set<FormStyle>([
+  "form",
+  "spaceDelimited",
+  "pipeDelimited",
+  "deepObject",
+]);
+
+function isFormStyle(value: unknown): value is FormStyle {
+  return typeof value === "string" && FORM_STYLES.has(value);
+}
+
+/**
+ * One Encoding Object's `style` and `explode`, defaulted as OpenAPI defaults
+ * them: `style` is `form`, and `explode` is true for `form` only. A style no
+ * query parameter can take (`simple`, `matrix`, `label`) reads as `form`.
+ */
+function readFormEncoding(encoding: Record<string, unknown>): FormEncoding {
+  const style = isFormStyle(encoding.style) ? encoding.style : "form";
+  const explode =
+    typeof encoding.explode === "boolean" ? encoding.explode : style === "form";
+  return { style, explode };
 }
 
 /**

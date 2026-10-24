@@ -10,6 +10,7 @@ import {
   logResourceDetection,
   registerCrudRoutes,
   registerNonCrudRoutes,
+  selectRequestEncoding,
   selectRequestSchema,
 } from "./crud-registration.js";
 import {
@@ -388,6 +389,14 @@ function storeNormalizedBody(context: Schmock.PluginContext): void {
       context.body,
       contentType,
       requestSchemaFor(context.route, contentType),
+      {
+        fields: context.form,
+        encoding: selectRequestEncoding(
+          context.route["openapi:requestContent"],
+          context.route["openapi:requestEncoding"],
+          contentType,
+        ),
+      },
     ),
   );
 }

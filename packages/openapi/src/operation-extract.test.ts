@@ -343,4 +343,68 @@ describe("operation extraction", () => {
       expect(response.status).toBe(204);
     });
   });
+
+  describe("a request media type's encoding map", () => {
+    async function encodingOf(
+      content: Record<string, unknown>,
+    ): Promise<unknown> {
+      const spec = await parseSpec({
+        openapi: "3.0.3",
+        info: { title: "encoding", version: "1.0.0" },
+        paths: {
+          "/notes": {
+            post: {
+              requestBody: { content },
+              responses: { "204": { description: "stored" } },
+            },
+          },
+        },
+      });
+      return spec.paths[0]?.requestEncoding;
+    }
+
+    it("reads each property's style and explode, defaulted as OpenAPI defaults them", async () => {
+      const encoding = await encodingOf({
+        "Application/X-WWW-Form-Urlencoded; charset=utf-8": {
+          schema: { type: "object" },
+          encoding: {
+            tags: {},
+            ids: { explode: false },
+            words: { style: "spaceDelimited" },
+            codes: { style: "pipeDelimited", explode: true },
+            filter: { style: "deepObject" },
+            legacy: { style: "simple" },
+          },
+        },
+      });
+
+      expect(encoding).toEqual(
+        new Map([
+          [
+            "application/x-www-form-urlencoded",
+            new Map([
+              ["tags", { style: "form", explode: true }],
+              ["ids", { style: "form", explode: false }],
+              ["words", { style: "spaceDelimited", explode: false }],
+              ["codes", { style: "pipeDelimited", explode: true }],
+              ["filter", { style: "deepObject", explode: false }],
+              ["legacy", { style: "form", explode: true }],
+            ]),
+          ],
+        ]),
+      );
+    });
+
+    it("skips entries that are not objects and media types without one", async () => {
+      expect(
+        await encodingOf({
+          "application/x-www-form-urlencoded": {
+            schema: { type: "object" },
+            encoding: { tags: "form", ids: null },
+          },
+          "application/json": { schema: { type: "object" } },
+        }),
+      ).toBeUndefined();
+    });
+  });
 });

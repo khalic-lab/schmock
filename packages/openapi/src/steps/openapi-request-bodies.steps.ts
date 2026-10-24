@@ -1,6 +1,9 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
+import express from "express";
+import request from "supertest";
 import { expect } from "vitest";
+import { toExpress } from "../../../express/src/index";
 import { openapi } from "../plugin";
 
 const feature = await loadFeature(
@@ -42,6 +45,77 @@ const typedFormContent = {
   },
 };
 
+const URLENCODED = "application/x-www-form-urlencoded";
+
+/**
+ * A CRUD notes resource created from an urlencoded form whose `tags` must be
+ * an array of at least two strings, so a form read as one value fails.
+ */
+function notesSpec(tagsEncoding?: Record<string, unknown>) {
+  const note = {
+    type: "object",
+    properties: {
+      noteId: { type: "integer" },
+      tags: { type: "array", items: { type: "string" } },
+    },
+  };
+  return {
+    openapi: "3.0.3",
+    info: { title: "notes", version: "1.0.0" },
+    paths: {
+      "/notes": {
+        post: {
+          requestBody: {
+            required: true,
+            content: {
+              [URLENCODED]: {
+                schema: {
+                  type: "object",
+                  required: ["tags"],
+                  properties: {
+                    tags: {
+                      type: "array",
+                      minItems: 2,
+                      items: { type: "string" },
+                    },
+                  },
+                },
+                ...(tagsEncoding === undefined
+                  ? {}
+                  : { encoding: { tags: tagsEncoding } }),
+              },
+            },
+          },
+          responses: {
+            "201": {
+              description: "created",
+              content: { "application/json": { schema: note } },
+            },
+          },
+        },
+      },
+      "/notes/{noteId}": {
+        get: {
+          parameters: [
+            {
+              name: "noteId",
+              in: "path",
+              required: true,
+              schema: { type: "integer" },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "one note",
+              content: { "application/json": { schema: note } },
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
 interface UploadResult {
   status: number;
   body: unknown;
@@ -80,6 +154,40 @@ describeFeature(feature, ({ Scenario }) => {
       code: "VALIDATION_ERROR",
       details: [expect.objectContaining({ path })],
     });
+  }
+
+  async function notesMock(tagsEncoding?: Record<string, unknown>) {
+    mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({ spec: notesSpec(tagsEncoding), validateRequests: true }),
+    );
+  }
+
+  async function interceptedCreate(form: string): Promise<void> {
+    const handle = mock.intercept({ passthrough: false });
+    try {
+      const response = await fetch("http://localhost/notes", {
+        method: "POST",
+        body: new URLSearchParams(form),
+      });
+      result = { status: response.status, body: await response.json() };
+    } finally {
+      handle.restore();
+    }
+  }
+
+  async function expressCreate(form: string): Promise<void> {
+    const app = express();
+    app.use(express.urlencoded({ extended: false }));
+    app.use(toExpress(mock));
+    const response = await request(app).post("/notes").type("form").send(form);
+    result = { status: response.status, body: response.body };
+  }
+
+  async function expectStoredTags(first: string, second: string) {
+    expect(result.body).toMatchObject({ tags: [first, second] });
+    const stored = await mock.handle("GET", "/notes/1");
+    expect(stored.body).toEqual({ noteId: 1, tags: [first, second] });
   }
 
   Scenario(
@@ -268,6 +376,96 @@ describeFeature(feature, ({ Scenario }) => {
       Then("the upload response status is 201", () => {
         expect(result.status).toBe(201);
       });
+    },
+  );
+
+  Scenario(
+    "A repeated urlencoded name fills an array property through the fetch interceptor",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a validating notes mock whose urlencoded tags are an array of at least two strings",
+        async () => {
+          await notesMock();
+        },
+      );
+
+      When(
+        "I create a note with the urlencoded form {string} through the fetch interceptor",
+        async (_, form: string) => {
+          await interceptedCreate(form);
+        },
+      );
+
+      Then("the upload response status is 201", () => {
+        expect(result.status).toBe(201);
+      });
+
+      And(
+        "the stored note has the tags {string} and {string}",
+        async (_, first: string, second: string) => {
+          await expectStoredTags(first, second);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A repeated urlencoded name fills an array property through Express",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a validating notes mock whose urlencoded tags are an array of at least two strings",
+        async () => {
+          await notesMock();
+        },
+      );
+
+      When(
+        "I create a note with the urlencoded form {string} through Express",
+        async (_, form: string) => {
+          await expressCreate(form);
+        },
+      );
+
+      Then("the upload response status is 201", () => {
+        expect(result.status).toBe(201);
+      });
+
+      And(
+        "the stored note has the tags {string} and {string}",
+        async (_, first: string, second: string) => {
+          await expectStoredTags(first, second);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A comma-separated value fills an array property whose encoding does not explode",
+    ({ Given, When, Then, And }) => {
+      Given(
+        "a validating notes mock whose urlencoded tags are encoded as form with explode false",
+        async () => {
+          await notesMock({ style: "form", explode: false });
+        },
+      );
+
+      When(
+        "I create a note with the urlencoded form {string} through the fetch interceptor",
+        async (_, form: string) => {
+          await interceptedCreate(form);
+        },
+      );
+
+      Then("the upload response status is 201", () => {
+        expect(result.status).toBe(201);
+      });
+
+      And(
+        "the stored note has the tags {string} and {string}",
+        async (_, first: string, second: string) => {
+          await expectStoredTags(first, second);
+        },
+      );
     },
   );
 

@@ -19,6 +19,7 @@ import type {
 import { parsePreferHeader } from "./prefer.js";
 import {
   admitsType,
+  type FormEncodingMap,
   isBinaryPayload,
   isFormMediaType,
   isJsonMediaType,
@@ -84,6 +85,17 @@ function getRouteRequestContent(
 ): Map<string, JSONSchema7 | undefined> | undefined {
   const value = route["openapi:requestContent"];
   return value instanceof Map ? value : undefined;
+}
+
+/** The `encoding` map the route's request media type `mediaType` declares. */
+function getRouteRequestEncoding(
+  route: Schmock.RouteConfig,
+  mediaType: string,
+): FormEncodingMap | undefined {
+  const encodings: unknown = route["openapi:requestEncoding"];
+  if (!(encodings instanceof Map)) return undefined;
+  const encoding: unknown = encodings.get(mediaType);
+  return encoding instanceof Map ? encoding : undefined;
 }
 
 /**
@@ -613,6 +625,7 @@ export function validateRequestBody(
   }
 
   let requestBodySchema = getRouteRequestBody(context.route);
+  let encoding: FormEncodingMap | undefined;
   const content = getRouteRequestContent(context.route);
   const rawContentType = getHeader(context.headers, "content-type");
   if (content && content.size > 0) {
@@ -627,16 +640,20 @@ export function validateRequestBody(
         return unsupportedMediaTypeError(context, [...content.keys()]);
       }
       requestBodySchema = content.get(selected);
+      encoding = getRouteRequestEncoding(context.route, selected);
     }
   }
 
   // Form bodies are validated as the record the schema describes rather than
   // the FormData or string record core decoded, and that record is kept for
-  // the CRUD generators to read through readRequestBody().
+  // the CRUD generators to read through readRequestBody(). An urlencoded body
+  // is read from the complete form core passed beside it, through the media
+  // type's `encoding`.
   const body = normalizeRequestBody(
     context.body,
     rawContentType,
     requestBodySchema,
+    { fields: context.form, encoding },
   );
   context.state.set(NORMALIZED_BODY_STATE_KEY, body);
 

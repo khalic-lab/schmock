@@ -866,14 +866,16 @@ uses `express.raw()` (or another parser that yields a `Buffer`); behind
 
 ### Form bodies
 
-`mock.listen()`, the CLI and the fetch interceptor decode a form body the same
-way: `multipart/form-data` to a `FormData`, `application/x-www-form-urlencoded`
-to a record of strings. The Angular interceptor passes on the body the app
-sent, so a `FormData` it posts is read the same way. Under Express the body is
-whatever the app's parser produced (`express.urlencoded()` builds arrays from
-repeated names and, with `extended: true`, nested objects from brackets;
-multipart needs a parser such as multer), and it is read through the schema the
-same way. Validation reads the body as the object its schema describes:
+`mock.listen()`, the CLI, the fetch interceptor (React, Vue, the DevTools
+relay) and the Angular interceptor decode a form body the same way:
+`multipart/form-data` to a `FormData`, `application/x-www-form-urlencoded` to a
+record of strings in which a repeated name keeps its last value, with the whole
+form beside it as [`form`](./api.md#request-context). The plugin reads an
+urlencoded body from that form. Under Express the body is whatever the app's
+parser produced (`express.urlencoded()` builds arrays from repeated names and,
+with `extended: true`, nested objects from brackets; multipart needs a parser
+such as multer), and it is read through the schema the same way. Validation
+reads the body as the object its schema describes:
 
 - A multipart field sent once is its value; a name sent more than once is an
   array of its values. A file part satisfies `type: string, format: binary`,
@@ -889,25 +891,57 @@ same way. Validation reads the body as the object its schema describes:
   that string branch takes it: against
   `anyOf: [{ type: integer }, { type: string, enum: [''] }]`, `100` reads as the
   integer and an empty value stays `''`.
+- An urlencoded name sent more than once is an array of all its values when
+  its property is declared as an array (`tags=a&tags=b` reads as
+  `{ tags: ['a', 'b'] }`), and keeps its last value otherwise.
 - A bracketed key nests under the property it names when that property is
   declared as an object or an array and the bracketed key itself is not
   declared: `metadata[order]=42` reads as `{ metadata: { order: "42" } }`, and
   `expand[]=a&expand[]=b` or `expand[0]=a&expand[1]=b` as an array. That covers
-  OpenAPI's `deepObject` encoding; other `encoding` styles are not read.
-- An urlencoded name sent more than once keeps its last value, because that is
-  how those transports decode the form.
+  OpenAPI's `deepObject` encoding. A bracketed name sent more than once follows
+  the rule above, by the schema it lands on: `filter[sizes]=s&filter[sizes]=m`
+  gives every value to an array `sizes`, and `filter[color]=red&filter[color]=blue`
+  keeps `blue` for a string `color`.
+- An urlencoded property's entry in the media type's `encoding` map says how an
+  array was written, through its `style` (`form` when unset) and `explode`
+  (true for `form`, false for the other styles, when unset):
+
+  | The property's `encoding` | Sent as | Read as |
+  |---------------------------|---------|---------|
+  | none, or `style: form` | `tags=a&tags=b` | `tags: ['a', 'b']` |
+  | `style: form`, `explode: false` | `tags=a,b` | `tags: ['a', 'b']` |
+  | `style: spaceDelimited` | `tags=a%20b` | `tags: ['a', 'b']` |
+  | `style: pipeDelimited` | `tags=a\|b` | `tags: ['a', 'b']` |
+  | `style: deepObject` (an object) | `filter[color]=red` | `filter: { color: 'red' }` |
+
+  A delimited style with `explode: true` is read like `form`, by repeated
+  names. Only a property declared as an array is split, a name repeated under
+  a style that does not explode contributes every value it carries, and a
+  style no query parameter takes (`simple`, `matrix`, `label`) reads as
+  `form`. Other Encoding Object fields, and `encoding` under a multipart media
+  type, are not read.
 
 ```typescript
 await fetch('/orders', {
   method: 'POST',
-  body: new URLSearchParams('qty=3&gift=true&metadata[ref]=A1'),
+  body: new URLSearchParams('qty=3&gift=true&metadata[ref]=A1&tags=a&tags=b'),
 })
-// validated as { qty: 3, gift: true, metadata: { ref: 'A1' } }
+// validated as { qty: 3, gift: true, metadata: { ref: 'A1' }, tags: ['a', 'b'] }
+// when tags is declared as an array
 ```
+
+The form decides only while it still describes the body record: a body that
+another plugin replaced or edited, or a `handle()` call that passes a record
+without a `form`, is read from the record alone, where a repeated name has
+already lost all but its last value. Express hands over no form either: its
+parser builds the arrays for repeated names, so those read the same on every
+transport, but it does not split delimited values, so `tags=a,b` under
+`explode: false` stays the one value `'a,b'` there.
 
 CRUD create, `PUT` and `PATCH` store a form body read the same way, through the
 request schema declared for its media type, whether `validateRequests` is on
-or off: `name=Tom&age=4` stores `age: 4` against an `integer` property, and a
+or off: `name=Tom&age=4` stores `age: 4` against an `integer` property,
+`tags=a&tags=b` stores `tags: ['a', 'b']` against an array property, and a
 multipart create stores its text fields. When a plugin piped after
 `@schmock/openapi` replaces the body in its own `beforeRequest`, the
 replacement is what gets stored, read through the same request schema but not

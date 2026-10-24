@@ -26,6 +26,7 @@ import {
 } from "./list-envelope.js";
 import { OWNER_KEY } from "./owner.js";
 import type { ParsedPath } from "./parser.js";
+import type { FormEncodingMap } from "./request-body.js";
 import { selectRequestMediaType } from "./request-pipeline.js";
 import {
   findRepresentativeResponse,
@@ -56,6 +57,7 @@ function buildRouteConfig(
     "openapi:requestBody": parsedPath.requestBody,
     "openapi:requestBodyRequired": parsedPath.requestBodyRequired,
     "openapi:requestContent": parsedPath.requestContent,
+    "openapi:requestEncoding": parsedPath.requestEncoding,
     "openapi:security": parsedPath.security,
     "openapi:callbacks": parsedPath.callbacks,
     "openapi:operationId": parsedPath.operationId,
@@ -83,6 +85,31 @@ export function selectRequestSchema(
   if (key === undefined) return fallback;
   const schema: unknown = requestContent.get(key);
   return isRecord(schema) ? schema : undefined;
+}
+
+/**
+ * The `encoding` map of the request media type `contentType` selects, by the
+ * rule {@link selectRequestSchema} follows, if that media type declares one.
+ */
+export function selectRequestEncoding(
+  requestContent: unknown,
+  requestEncoding: unknown,
+  contentType: string | undefined,
+): FormEncodingMap | undefined {
+  if (
+    !contentType ||
+    !(requestContent instanceof Map) ||
+    !(requestEncoding instanceof Map)
+  ) {
+    return undefined;
+  }
+  const key = selectRequestMediaType(
+    requestContent,
+    normalizeMediaType(contentType),
+  );
+  const encoding: unknown =
+    key === undefined ? undefined : requestEncoding.get(key);
+  return encoding instanceof Map ? encoding : undefined;
 }
 
 /**
@@ -117,12 +144,14 @@ export function registerCrudRoutes(
 
   for (const route of resource.routes) {
     const routeMeta = registrationMeta(route);
-    const { requestBody, requestContent } = route.parsed;
+    const { requestBody, requestContent, requestEncoding } = route.parsed;
     const genHooks: CrudGenerationHooks = {
       method: route.method,
       path: route.parsed.path,
       requestSchema: (contentType) =>
         selectRequestSchema(requestBody, requestContent, contentType),
+      requestEncoding: (contentType) =>
+        selectRequestEncoding(requestContent, requestEncoding, contentType),
       ...hooks,
     };
     let gen = createCrudGenerator(route.op, resource, routeMeta, genHooks);

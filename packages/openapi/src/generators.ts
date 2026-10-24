@@ -33,6 +33,7 @@ import {
 import { type AccessModes, collectAccessModes } from "./normalizer.js";
 import type { ParsedPath, ParsedResponseEntry } from "./parser.js";
 import {
+  type FormEncodingMap,
   isBinaryPayload,
   normalizeRequestBody,
   readRequestBody,
@@ -113,6 +114,13 @@ export interface CrudGenerationHooks extends GenerationHooks {
    * item contract exists.
    */
   requestSchema?: (contentType: string | undefined) => JSONSchema7 | undefined;
+  /**
+   * The `encoding` map declared for a body of `contentType`, selected like
+   * `requestSchema`: how create and update read an urlencoded form.
+   */
+  requestEncoding?: (
+    contentType: string | undefined,
+  ) => FormEncodingMap | undefined;
 }
 
 /**
@@ -240,14 +248,18 @@ function readSubmittedBody(
 ): unknown {
   const contentType = getHeader(ctx.headers, "content-type");
   const schema = hooks?.requestSchema?.(contentType) ?? contract;
+  const encoding = hooks?.requestEncoding?.(contentType);
   const store = ctx.pluginState;
   if (
     store?.has(NORMALIZED_BODY_SOURCE_KEY) &&
     store.get(NORMALIZED_BODY_SOURCE_KEY) !== ctx.body
   ) {
-    return normalizeRequestBody(ctx.body, contentType, schema);
+    return normalizeRequestBody(ctx.body, contentType, schema, {
+      fields: ctx.form,
+      encoding,
+    });
   }
-  return readRequestBody(ctx, schema);
+  return readRequestBody(ctx, schema, encoding);
 }
 
 type PendingMutation = () => void;

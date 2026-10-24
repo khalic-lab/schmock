@@ -35,6 +35,45 @@ const PLAIN_DECIMAL = /^-?\d+(?:\.\d+)?$/;
 const BRACKET_KEY = /^([^[\]]+)((?:\[[^[\]]*\])+)$/;
 const BRACKET_SEGMENT = /\[([^[\]]*)\]/g;
 
+/**
+ * The OpenAPI `style` values an urlencoded property may declare in its media
+ * type's `encoding` map: the query parameter styles.
+ */
+export type FormStyle =
+  | "form"
+  | "spaceDelimited"
+  | "pipeDelimited"
+  | "deepObject";
+
+/**
+ * How an OpenAPI Encoding Object serializes one urlencoded property. Unset,
+ * `style` is `form` and `explode` is true for `form`, false for the others.
+ */
+export interface FormEncoding {
+  style: FormStyle;
+  explode: boolean;
+}
+
+/** A media type's `encoding` map: each property name it names, and how. */
+export type FormEncodingMap = ReadonlyMap<string, FormEncoding>;
+
+/** The delimiter an array is joined with under a style that does not explode. */
+const STYLE_DELIMITERS: Readonly<Partial<Record<FormStyle, string>>> = {
+  form: ",",
+  spaceDelimited: " ",
+  pipeDelimited: "|",
+};
+
+/**
+ * What core passes beside an urlencoded body, and the spec's reading of it:
+ * the complete form (`RequestContext.form`) and the `encoding` map of the
+ * media type the body was matched to.
+ */
+export interface SubmittedForm {
+  fields?: Schmock.ReadonlyURLSearchParams;
+  encoding?: FormEncodingMap;
+}
+
 /** True for the media types core decodes into form fields. */
 export function isFormMediaType(mediaType: string): boolean {
   return (
@@ -63,6 +102,9 @@ export function isJsonMediaType(mediaType: string): boolean {
  *   decimal to a number, `true`/`false` to a boolean, `""` to `null`, and one
  *   value to a one-element array. A string the type cannot take stays a
  *   string, so validation reports the real mismatch.
+ * - An urlencoded record that `form.fields` describes (see
+ *   {@link SubmittedForm}) is read from those fields instead, so a repeated
+ *   name and a delimited value become arrays the way `form.encoding` says.
  *
  * Files (`Blob`/`File`) are kept as they are. Every other body (JSON, text,
  * bytes) is returned unchanged.
@@ -71,8 +113,11 @@ export function normalizeRequestBody(
   body: unknown,
   contentType: string | undefined,
   schema: JSONSchema7 | undefined,
+  form?: SubmittedForm,
 ): unknown {
-  const fields = formFields(body, contentType);
+  const fields =
+    submittedFields(body, contentType, schema, form) ??
+    formFields(body, contentType);
   if (fields === undefined) return body;
   return coerceObject(nestBracketKeys(fields, schema), schema);
 }
@@ -83,8 +128,12 @@ export function normalizeRequestBody(
  * `validateRequests` is off.
  */
 export function readRequestBody(
-  ctx: Pick<Schmock.RequestContext, "body" | "headers" | "pluginState">,
+  ctx: Pick<
+    Schmock.RequestContext,
+    "body" | "form" | "headers" | "pluginState"
+  >,
   schema: JSONSchema7 | undefined,
+  encoding?: FormEncodingMap,
 ): unknown {
   if (ctx.pluginState?.has(NORMALIZED_BODY_STATE_KEY)) {
     return ctx.pluginState.get(NORMALIZED_BODY_STATE_KEY);
@@ -93,6 +142,7 @@ export function readRequestBody(
     ctx.body,
     getHeader(ctx.headers, "content-type"),
     schema,
+    { fields: ctx.form, encoding },
   );
 }
 
@@ -189,6 +239,136 @@ function formFields(
     return { ...body };
   }
   return undefined;
+}
+
+/**
+ * The fields of an urlencoded body read from the complete form core passed
+ * beside it, or `undefined` to read the body record alone: without a form,
+ * for any other media type, and when the form no longer describes the record
+ * (a plugin replaced or edited the body), since the record is then what the
+ * route receives.
+ *
+ * Each name takes the value its schema reads: every value of a name sent more
+ * than once, or a non-exploded value split on its style's delimiter, where
+ * the property is declared as an array; the last value, as the record holds
+ * it, everywhere else.
+ */
+function submittedFields(
+  body: unknown,
+  contentType: string | undefined,
+  schema: JSONSchema7 | undefined,
+  form: SubmittedForm | undefined,
+): Record<string, unknown> | undefined {
+  if (form?.fields === undefined || contentType === undefined) return undefined;
+  if (normalizeMediaType(contentType) !== URLENCODED_MEDIA_TYPE) {
+    return undefined;
+  }
+  if (!isPlainRecord(body)) return undefined;
+  const groups = groupFormFields(form.fields);
+  if (groups === undefined || !describesRecord(groups, body)) return undefined;
+
+  const schemas = fieldSchemas(schema);
+  const fields: Record<string, unknown> = {};
+  for (const [name, values] of groups) {
+    defineField(
+      fields,
+      name,
+      submittedValue(name, values, schemas, form.encoding),
+    );
+  }
+  return fields;
+}
+
+/**
+ * Every value of each name, in the order the names first appear, read in one
+ * pass over the form: `getAll()` per name scans the whole form each time, so
+ * a body of many fields would take quadratic time.
+ */
+function groupFormFields(
+  form: Schmock.ReadonlyURLSearchParams,
+): Map<string, string[]> | undefined {
+  // `form` is whatever a handle() caller passed, `null` or a string included;
+  // core's own is a URLSearchParams. `getAll` only marks the shape here.
+  if (
+    typeof form?.[Symbol.iterator] !== "function" ||
+    typeof form.getAll !== "function"
+  ) {
+    return undefined;
+  }
+  const groups = new Map<string, string[]>();
+  for (const [name, value] of form) {
+    const values = groups.get(name);
+    if (values === undefined) groups.set(name, [value]);
+    else values.push(value);
+  }
+  return groups;
+}
+
+/** True when `record` holds exactly the last value of every name in `groups`. */
+function describesRecord(
+  groups: ReadonlyMap<string, string[]>,
+  record: Record<string, unknown>,
+): boolean {
+  const keys = Object.keys(record);
+  if (keys.length !== groups.size) return false;
+  return keys.every((key) => {
+    const values = groups.get(key);
+    return values !== undefined && values[values.length - 1] === record[key];
+  });
+}
+
+function submittedValue(
+  name: string,
+  values: string[],
+  schemas: FieldSchemas,
+  encoding: FormEncodingMap | undefined,
+): unknown {
+  const target = submittedTarget(name, schemas);
+  if (!admitsType(target.schema, "array")) return values[values.length - 1];
+  // Only a top-level property can name an encoding; a bracket key is
+  // OpenAPI's deepObject, whose names carry the structure themselves.
+  const style = target.topLevel ? encoding?.get(name) : undefined;
+  const delimiter =
+    style === undefined || style.explode
+      ? undefined
+      : STYLE_DELIMITERS[style.style];
+  const decoded =
+    delimiter === undefined
+      ? values
+      : values.flatMap((value) =>
+          value === "" ? [value] : value.split(delimiter),
+        );
+  // One value stays a string, exactly as the record holds it.
+  return decoded.length === 1 ? decoded[0] : decoded;
+}
+
+/**
+ * The schema a field name is read through: its property's, or for a bracket
+ * key that nests (see {@link bracketPath}) the schema at the end of its path.
+ * A trailing `[]` appends to the array it names, so that array is the target.
+ */
+function submittedTarget(
+  name: string,
+  schemas: FieldSchemas,
+): { schema: JSONSchema7 | undefined; topLevel: boolean } {
+  const path = bracketPath(name, schemas);
+  if (path === undefined) return { schema: schemas.of(name), topLevel: true };
+  const [base, ...segments] = path;
+  if (segments[segments.length - 1] === "") segments.pop();
+  let schema = schemas.of(base);
+  for (const segment of segments) schema = childSchema(schema, segment);
+  return { schema, topLevel: false };
+}
+
+/** The schema of `segment` inside a container, as `finishNode` reads it. */
+function childSchema(
+  schema: JSONSchema7 | undefined,
+  segment: string,
+): JSONSchema7 | undefined {
+  if (admitsType(schema, "array") && !admitsObject(schema)) {
+    return itemSchema(schema);
+  }
+  return fieldSchemas(schema).of(segment);
 }
 
 /**
@@ -300,6 +480,25 @@ class BracketNode {
   [key: string]: unknown;
 }
 
+/**
+ * `[base, ...segments]` for a bracket key that nests: its base is a declared
+ * object or array property and the key itself is not declared. `undefined`
+ * for a key that stays literal.
+ */
+function bracketPath(key: string, schemas: FieldSchemas): string[] | undefined {
+  if (schemas.declared.has(key)) return undefined;
+  const match = BRACKET_KEY.exec(key);
+  const base = match?.[1];
+  if (!match || base === undefined || !schemas.declared.has(base)) {
+    return undefined;
+  }
+  const baseSchema = schemas.of(base);
+  if (!(admitsObject(baseSchema) || admitsType(baseSchema, "array"))) {
+    return undefined;
+  }
+  return [base, ...[...match[2].matchAll(BRACKET_SEGMENT)].map((m) => m[1])];
+}
+
 function nestBracketKeys(
   fields: Record<string, unknown>,
   schema: JSONSchema7 | undefined,
@@ -314,22 +513,12 @@ function nestBracketKeys(
   // plain field stays literal whichever of the two came first.
   const bracketed: Array<[string[], string, unknown]> = [];
   for (const [key, value] of Object.entries(fields)) {
-    const match = schemas.declared.has(key) ? null : BRACKET_KEY.exec(key);
-    const base = match?.[1];
-    const baseSchema =
-      base !== undefined && schemas.declared.has(base)
-        ? schemas.of(base)
-        : undefined;
-    if (
-      !match ||
-      base === undefined ||
-      !(admitsObject(baseSchema) || admitsType(baseSchema, "array"))
-    ) {
+    const path = bracketPath(key, schemas);
+    if (path === undefined) {
       literal(key, value);
       continue;
     }
-    const segments = [...match[2].matchAll(BRACKET_SEGMENT)].map((m) => m[1]);
-    bracketed.push([[base, ...segments], key, value]);
+    bracketed.push([path, key, value]);
   }
 
   for (const [path, key, value] of bracketed) {
