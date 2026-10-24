@@ -627,7 +627,7 @@ describe("fetch", () => {
     expect(await sent.text()).toBe("event");
   });
 
-  it("W26 sends a pagehide keepalive request to the network once relaying it evicts the page from the bfcache", async () => {
+  it("W26 sends a pagehide keepalive request straight to the network, since clients.get finds no bfcached page", async () => {
     h.installWorker((scope) =>
       installRelayWorker(scope, { keepaliveAnswerMs: 50 }),
     );
@@ -648,12 +648,14 @@ describe("fetch", () => {
     if (beacon === undefined) throw new Error("pagehide sent nothing");
     const response = await beacon;
 
-    // The worker posts the request to a page already in the bfcache, which
-    // Chrome's PostMessageToClient answers by evicting the page.
-    expect(page.evicted).toBe("ServiceWorkerPostMessage");
+    // The page is stored before the worker looks it up, and Chrome's
+    // clients.get finds no client for a cached page, so nothing is posted to
+    // it and it stays restorable.
+    expect(page.evicted).toBeUndefined();
     expect(page.relayedFrames).toEqual([]);
     expect(await response.text()).toBe("real network");
     expect(h.network).toHaveBeenCalledTimes(1);
+    expect(await stored()).toContain(page.id);
   });
 
   it("W14falls back to scope.fetch for a client it cannot find, and keeps its id", async () => {

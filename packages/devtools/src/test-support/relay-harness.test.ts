@@ -565,7 +565,7 @@ describe("claim", () => {
 });
 
 describe("clients", () => {
-  it("matchAll omits bfcached and closed pages; get still finds a hidden page", async () => {
+  it("matchAll and get omit bfcached and closed pages", async () => {
     const h = setUp();
     h.installWorker(claimingWorker());
     await h.activateWorker();
@@ -579,13 +579,14 @@ describe("clients", () => {
     expect(
       (await h.worker.clients.matchAll(all)).map((client) => client.id),
     ).toEqual([shown.id]);
-    expect((await h.worker.clients.get(hidden.id))?.id).toBe(hidden.id);
+    expect(await h.worker.clients.get(hidden.id)).toBeUndefined();
     expect(await h.worker.clients.get(closed.id)).toBeUndefined();
 
     hidden.show();
     expect(
       (await h.worker.clients.matchAll(all)).map((client) => client.id),
     ).toEqual([shown.id, hidden.id]);
+    expect((await h.worker.clients.get(hidden.id))?.id).toBe(hidden.id);
   });
 
   it("fires pagehide listeners with persisted, and stops after unsubscribe", () => {

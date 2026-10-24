@@ -35,9 +35,11 @@ import type {
  *   as in Chrome, Firefox and WebKit; createRelayHarness({ forwardAborts:
  *   true }) follows the spec's Handle Fetch instead.
  * - The back/forward cache: as in Chrome (content/browser/service_worker),
- *   a hidden page is evicted when a worker posts to it, a claim reaches it or
- *   a new version activates over its controller; a statechange, or a message
- *   or controllerchange already on its way, waits until show(). Not
+ *   clients.get and matchAll find no cached page, and a hidden page is
+ *   evicted when a worker posts to it through a Client it already held, a
+ *   claim reaches it or a new version activates over its controller; a
+ *   statechange, or a message or controllerchange already on its way, waits
+ *   until show(). Not
  *   modelled: eviction when a version is doomed (nothing unregisters), and
  *   Chrome not counting a cached page as a controllee, so here it still keeps
  *   a waiting worker waiting.
@@ -176,7 +178,8 @@ export interface FakePage {
   /** schmock:request frames this page's container received. */
   readonly relayedFrames: readonly unknown[];
   /**
-   * Fire pagehide listeners; persisted true puts the page in the bfcache (matchAll omits it, clients.get finds it) until show().
+   * Fire pagehide listeners; persisted true puts the page in the bfcache until show(). clients.get and matchAll omit it there,
+   * as Chrome's GetWindowClientInfo treats a cached frame as not existing; a Client the worker already held can still post to it.
    * While in the bfcache, a statechange, or a container message or controllerchange already on its way, waits until show().
    * As in Chrome, the page is evicted instead when a worker posts to it, a claim reaches it, or a new version activates over its
    * controller: see evicted. hide(false) does not close the page: call close() for that.
@@ -661,7 +664,8 @@ export function createRelayHarness(settings?: {
   }
 
   function clientOf(id: string): ClientLike | undefined {
-    return pages.find((page) => page.open && page.id === id)?.client;
+    return pages.find((page) => page.open && !page.frozen && page.id === id)
+      ?.client;
   }
 
   function createScope(version: VersionCore): ScopeRecord {
