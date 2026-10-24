@@ -323,6 +323,86 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     },
   );
 
+  Scenario(
+    "The release candidate checks the meta-package alone in a consumer of its own",
+    ({ Given, Then, And }) => {
+      let lines: string[] = [];
+
+      Given("the release-candidate check script", () => {
+        lines = commandLines(
+          readFileSync(
+            join(repoRoot, "scripts/check-release-candidate.sh"),
+            "utf-8",
+          ),
+        );
+      });
+
+      Then(
+        "the meta stage runs after the TypeScript 5.6 stage and before the browser stages, in the dry run too",
+        () => {
+          const stages = lines.flatMap((line) => {
+            const stage = line.match(
+              /^echo "\[(types-ts56|meta|browser) \d+\/\d+\]/,
+            )?.[1];
+            return stage === undefined ? [] : [stage];
+          });
+          // The dry-run listing first, then the stages as they run.
+          const order = ["types-ts56", "meta", "browser", "browser"];
+          expect(stages).toEqual([...order, ...order]);
+          const meta = lines.filter((line) => line.startsWith('echo "[meta '));
+          for (const line of meta) {
+            expect(line).toContain("@schmock/schmock tarball alone");
+          }
+        },
+      );
+
+      And(
+        "its consumer depends on the @schmock/schmock tarball alone, with every candidate as an override",
+        () => {
+          expect(lines).toContain('META_FIXTURE_DIR="$WORK_DIR/meta-consumer"');
+          expect(lines).toContain('FIXTURE_DIR="$WORK_DIR/consumer"');
+          expect(lines).toContain('const metaPackage = "@schmock/schmock";');
+          // The manifest is written from the main consumer's, which maps every
+          // @schmock/* package to its packed tarball.
+          const dependencies = lines.indexOf(
+            "dependencies: { [metaPackage]: tarball },",
+          );
+          expect(dependencies).toBeGreaterThan(-1);
+          expect(lines[dependencies + 1]).toBe(
+            "overrides: consumer.overrides,",
+          );
+          // The node -e program reads its first argument and writes its second.
+          expect(lines).toContainEqual(
+            expect.stringMatching(
+              /^'\s+"\$FIXTURE_DIR\/package\.json"\s+"\$META_FIXTURE_DIR\/package\.json"$/,
+            ),
+          );
+        },
+      );
+
+      And(
+        "it installs that consumer isolated and runs the meta consumer there with the repository's tsc",
+        () => {
+          expect(lines).toContain(
+            'cp "$ROOT_DIR/scripts/release-candidate-meta.js" "$META_FIXTURE_DIR/meta-consumer.mjs"',
+          );
+          const enter = lines.indexOf('cd "$META_FIXTURE_DIR"');
+          expect(enter).toBeGreaterThan(-1);
+          const stage = lines.slice(enter);
+          const install = stage.indexOf("bun install --linker isolated");
+          const run = stage.indexOf(
+            'TSC_BIN="$ROOT_DIR/node_modules/.bin/tsc" node ./meta-consumer.mjs',
+          );
+          expect(install).toBeGreaterThan(0);
+          expect(run).toBeGreaterThan(install);
+          // Nothing between entering the fixture and running the consumer
+          // leaves it.
+          expect(stage.slice(0, run)).not.toContain(")");
+        },
+      );
+    },
+  );
+
   // ── #117 / #139: downstream suites test source, not the last dist ────────
 
   Scenario(

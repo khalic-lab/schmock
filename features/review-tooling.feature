@@ -33,6 +33,12 @@ Feature: Review fixes for release and developer tooling
     Then both browser stages are bundled by esbuild with a metafile
     And each metafile is checked by the browser Node-import gate
 
+  Scenario: The release candidate checks the meta-package alone in a consumer of its own
+    Given the release-candidate check script
+    Then the meta stage runs after the TypeScript 5.6 stage and before the browser stages, in the dry run too
+    And its consumer depends on the @schmock/schmock tarball alone, with every candidate as an override
+    And it installs that consumer isolated and runs the meta consumer there with the repository's tsc
+
   Scenario: Downstream package suites resolve sibling packages to their source
     Given the unit and BDD vitest configs of faker, openapi, validation, query, react and vue
     When each config resolves the @schmock packages that package imports
