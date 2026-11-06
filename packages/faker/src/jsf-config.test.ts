@@ -1672,6 +1672,20 @@ describe("invented pattern property keys", () => {
     }
   });
 
+  it("invents keys for the usable pattern beside a false one", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      minProperties: 2,
+      additionalProperties: false,
+      patternProperties: { "^x-": false, "^y-": { type: "integer" } },
+    };
+    for (const value of await generateSeeds(schema, 5)) {
+      const keys = Object.keys(objectOf(value));
+      expect(keys.length).toBeGreaterThanOrEqual(2);
+      for (const key of keys) expect(key).toMatch(/^y-/);
+    }
+  });
+
   it("counts required names the properties do not declare", async () => {
     for (const maxProperties of [1, 2]) {
       const schema: JSONSchema7 = {
