@@ -35,6 +35,7 @@ import {
 } from "./resource-placement.js";
 import {
   findRepresentativeResponse,
+  findResponseEntry,
   findSuccessResponse,
 } from "./response-status.js";
 import {
@@ -399,6 +400,14 @@ export function applyOverrides(
         route.op === "delete"
       ) {
         route.meta.errorSchemas = errorSchemaMap;
+        // Response validation reads the declared responses, not the CRUD
+        // metadata, so the 404 the override shapes was checked against the
+        // spec's own error schema and answered 500.
+        setExactResponseSchema(
+          route.parsed.responses,
+          404,
+          override.errorSchema,
+        );
       }
     }
   }
@@ -472,6 +481,50 @@ function validateListAs(parsed: ParsedPath, schema: JSONSchema7): void {
   for (const content of entry.content?.values() ?? []) {
     content.schema = schema;
   }
+}
+
+/**
+ * Make `status` resolve to `schema` in an operation's declared responses.
+ *
+ * An exact entry is rewritten in place for every media type. Otherwise the
+ * shared `2XX`/`4XX`/`default` entry the status resolves to is copied to an
+ * exact entry with its schemas replaced, keeping its media types, headers and
+ * description, so the response keeps its Content-Type and its `Accept`
+ * negotiation; the shared entry itself is left alone for the other statuses
+ * it covers. A status nothing covers gets a bare entry.
+ */
+function setExactResponseSchema(
+  responses: ParsedPath["responses"],
+  status: number,
+  schema: JSONSchema7,
+): void {
+  const exact = responses.get(status);
+  if (exact) {
+    exact.schema = schema;
+    for (const content of exact.content?.values() ?? []) {
+      content.schema = schema;
+    }
+    return;
+  }
+  const shared = findResponseEntry(responses, status);
+  if (!shared) {
+    responses.set(status, { schema, description: "" });
+    return;
+  }
+  responses.set(status, {
+    ...shared,
+    schema,
+    ...(shared.content
+      ? {
+          content: new Map(
+            [...shared.content].map(([mediaType, content]) => [
+              mediaType,
+              { ...content, schema },
+            ]),
+          ),
+        }
+      : {}),
+  });
 }
 
 /**

@@ -1723,6 +1723,72 @@ describe("the errorSchema resource override", () => {
   });
 });
 
+describe("the errorSchema override under validateResponses", () => {
+  const user = {
+    type: "object",
+    required: ["id", "name"],
+    properties: { id: { type: "integer" }, name: { type: "string" } },
+  };
+  const specError = {
+    type: "object",
+    required: ["message"],
+    properties: { message: { type: "string" } },
+    additionalProperties: false,
+  };
+  const errorSchema: JSONSchema7 = {
+    type: "object",
+    required: ["error"],
+    properties: { error: { type: "string", const: "OVERRIDE" } },
+  };
+  const usersSpec = (errorKey: string) =>
+    spec({
+      "/users": {
+        get: {
+          responses: {
+            "200": {
+              description: "list",
+              content: json({ type: "array", items: user }),
+            },
+          },
+        },
+        post: {
+          responses: { "201": { description: "c", content: json(user) } },
+        },
+      },
+      "/users/{id}": {
+        get: {
+          responses: {
+            "200": { description: "u", content: json(user) },
+            [errorKey]: { description: "nf", content: json(specError) },
+          },
+        },
+        delete: {
+          responses: {
+            "204": { description: "gone" },
+            [errorKey]: { description: "nf", content: json(specError) },
+          },
+        },
+      },
+    });
+
+  it.each(["404", "4XX", "default"])(
+    "validates a missing item's 404 against the override (spec declares %s)",
+    async (errorKey) => {
+      const mock = await mockOf(usersSpec(errorKey), {
+        validateResponses: true,
+        resources: { users: { errorSchema } },
+      });
+
+      for (const method of ["GET", "DELETE"] as const) {
+        const missing = await mock.handle(method, "/users/99");
+        expect(missing.status).toBe(404);
+        expect(missing.body).toEqual({ error: "OVERRIDE" });
+        expect(missing.headers["content-type"]).toBe("application/json");
+      }
+    },
+  );
+});
+
 describe("a 3.1 contract closed with unevaluatedProperties (hunt openapi-1-G18)", () => {
   const petRef = { $ref: "#/components/schemas/Pet" };
   const closedSpec = {

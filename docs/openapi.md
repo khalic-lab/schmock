@@ -1498,8 +1498,15 @@ The only error body CRUD generates itself is the `404` a read, update or
 delete answers for a missing item, and `errorSchema` replaces the schema of
 that body. A create never answers `409`: a duplicate gets a new id. A request
 validation `400` keeps its fixed `{ error, code, details }` body, and a
-`Prefer: code=` status is generated from the spec's own schema for that status,
-so `errorSchema` changes neither.
+`Prefer: code=` status other than `404` is generated from the spec's own schema
+for that status, so `errorSchema` changes neither.
+
+Like a list override, `errorSchema` rewrites the `404` the read, update and
+delete operations declare, so `validateResponses` checks the missing-item body
+against the override and a `Prefer: code=404` on those routes generates it from
+the override too. A `404` the spec declares only under `4XX` or `default` gets
+an exact `404` entry with the same media types, and the shared entry keeps its
+own schema for every other status.
 
 Without an `errorSchema`, the `404` body is generated from the operation's own
 error response, picked the way response validation picks it: the exact status,
