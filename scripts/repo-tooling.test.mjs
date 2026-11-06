@@ -508,13 +508,24 @@ test("check-release-candidate.sh runs under the system Bash", {
 
 // ── Tarball allowlist ───────────────────────────────────────────────────────
 
+const REAL_BUN = spawnSync("sh", ["-c", "command -v bun"], {
+  encoding: "utf8",
+}).stdout.trim();
+
 /**
  * Runs a copy of check-release-candidate.sh against a one-package workspace
  * whose `bun pm pack` (a stub) packs exactly `entries` under package/. The
  * publint stub stops the run, so a tarball that passes the allowlist reports
  * "publint reached" and goes no further.
+ *
+ * With `throughRanges`, publint and attw pass, `bun -e` runs the real Bun, and
+ * the stubbed `bun install` stops the run instead, reporting
+ * "install reached". `shell` is the bash that runs the script.
  */
-function packAllowlistRun(entries) {
+function packAllowlistRun(
+  entries,
+  { shell = "bash", throughRanges = false } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "schmock-pack-allowlist-"));
   try {
     mkdirSync(join(root, "scripts"));
@@ -533,14 +544,30 @@ function packAllowlistRun(entries) {
     };
     stub(
       join(root, "node_modules/.bin/publint"),
-      'echo "publint reached"; exit 3',
+      throughRanges ? "exit 0" : 'echo "publint reached"; exit 3',
     );
-    stub(join(root, "node_modules/.bin/attw"), "exit 3");
+    stub(
+      join(root, "node_modules/.bin/attw"),
+      throughRanges ? "exit 0" : "exit 3",
+    );
     stub(join(root, "packages/openapi/node_modules/.bin/esbuild"), "exit 3");
+    if (throughRanges) {
+      // The consumer scripts the stage after the ranges copies in.
+      for (const name of [
+        "release-candidate-consumer.js",
+        "release-candidate-types.js",
+        "release-candidate-browser.js",
+        "release-candidate-browser-openapi.js",
+      ]) {
+        writeFileSync(join(root, "scripts", name), "");
+      }
+    }
     const bin = join(root, "bin");
     stub(
       join(bin, "bun"),
-      `[ "$1 $2 $3" = "pm pack --destination" ] || exit 3
+      `[ "$1" = "-e" ] && exec "$SCHMOCK_TEST_REAL_BUN" "$@"
+[ "$1" = "install" ] && { echo "install reached"; exit 3; }
+[ "$1 $2 $3" = "pm pack --destination" ] || exit 3
 stage=$(mktemp -d)
 cd "$stage" || exit 3
 for entry in $SCHMOCK_TEST_PACK_ENTRIES; do
@@ -550,7 +577,7 @@ done
 tar -czf "$4/schmock-fixture-9.9.9.tgz" $SCHMOCK_TEST_PACK_ENTRIES`,
     );
     const result = spawnSync(
-      "bash",
+      shell,
       [join(root, "scripts/check-release-candidate.sh")],
       {
         encoding: "utf8",
@@ -559,6 +586,7 @@ tar -czf "$4/schmock-fixture-9.9.9.tgz" $SCHMOCK_TEST_PACK_ENTRIES`,
           PATH: `${bin}:${process.env.PATH ?? ""}`,
           TMPDIR: root,
           SCHMOCK_TEST_PACK_ENTRIES: entries.join(" "),
+          SCHMOCK_TEST_REAL_BUN: REAL_BUN,
         },
       },
     );
@@ -601,4 +629,18 @@ test("the tarball allowlist rejects names that only start with an allowed file",
     );
   }
   assert.doesNotMatch(output, /publint reached/);
+});
+
+test("check-release-candidate.sh passes no consumer extras under the system Bash", {
+  skip: !existsSync(SYSTEM_BASH) && `${SYSTEM_BASH} is absent`,
+}, () => {
+  // @schmock/fixture adds no consumer dependency, so the extras array the
+  // ranges stage expands is empty: Bash 3.2 must still reach the install.
+  const output = packAllowlistRun(
+    ["package/package.json", "package/dist/index.js"],
+    { shell: SYSTEM_BASH, throughRanges: true },
+  );
+  assert.doesNotMatch(output, /unbound variable/);
+  assert.match(output, /^\[ranges 1\/1\]/m);
+  assert.match(output, /^install reached$/m);
 });
