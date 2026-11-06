@@ -61,9 +61,17 @@ type InterceptorResult =
   | typeof ALREADY_CONSULTED;
 
 interface NormalizedFetchRequest {
+  /** The effective request, exactly as native fetch would send it. */
   request: Request;
   url: URL;
   origin: string | null;
+  /**
+   * The content type the routed request carries in place of the effective
+   * request's own: set when `init.headers` replaced the header list of an
+   * input Request whose body is inherited. Only the handler side sees it, so
+   * a passthrough request reaches the network as native fetch builds it.
+   */
+  routedContentType?: string;
 }
 
 interface InterceptorRequestOptions extends Schmock.RequestOptions {
@@ -184,24 +192,24 @@ function normalizeFetchRequest(
     // clone when the body is inherited so the original remains passthrough-safe.
     const source = init?.body == null ? input.clone() : input;
     const request = new Request(source, init);
+    let routedContentType: string | undefined;
     if (init?.body != null) {
       stampBodyContentType(request, init.body);
     } else if (request.body != null && !request.headers.has("content-type")) {
       // The body was inherited from the input Request, but init.headers
       // replaces the whole header list, dropping the content type stamped
-      // when that body was extracted. Restore it so the handler still sees
-      // the body as its original kind. (Bun never stamps at construction,
+      // when that body was extracted. The handler still sees it, so it reads
+      // the body as its original kind; the request itself is left as native
+      // fetch builds it, for passthrough. (Bun never stamps at construction,
       // so a string body on a type-less input Request stays opaque there.)
-      const inheritedType = input.headers.get("content-type");
-      if (inheritedType !== null) {
-        request.headers.set("content-type", inheritedType);
-      }
+      routedContentType = input.headers.get("content-type") ?? undefined;
     }
     const url = new URL(request.url);
     return {
       request,
       url,
       origin: url.origin,
+      ...(routedContentType === undefined ? {} : { routedContentType }),
     };
   }
 
@@ -456,8 +464,16 @@ function headerRecordOf(headers: Headers): Record<string, string> {
   return record;
 }
 
-function extractHeaders(request: Request): Record<string, string> {
-  return headerRecordOf(request.headers);
+/** The request's headers as the handler sees them. */
+function extractHeaders({
+  request,
+  routedContentType,
+}: NormalizedFetchRequest): Record<string, string> {
+  const headers = headerRecordOf(request.headers);
+  if (routedContentType !== undefined) {
+    headers["content-type"] = routedContentType;
+  }
+  return headers;
 }
 
 /** Hand an exchange to its observer. */
@@ -473,13 +489,13 @@ function notify(
 }
 
 function exchangeRequestOf(
-  { request, url }: NormalizedFetchRequest,
+  normalizedRequest: NormalizedFetchRequest,
   draft: ExchangeDraft,
 ): Schmock.ExchangeRequest {
   return {
-    method: request.method,
-    url: responseUrlOf(url),
-    headers: extractHeaders(request),
+    method: normalizedRequest.request.method,
+    url: responseUrlOf(normalizedRequest.url),
+    headers: extractHeaders(normalizedRequest),
     ...(draft.requestBody !== undefined ? { body: draft.requestBody } : {}),
   };
 }
@@ -551,11 +567,16 @@ interface ExtractedBody {
  * Multipart is read with the platform's own parser, whose rejection
  * propagates as before.
  */
-async function extractBody(request: Request): Promise<ExtractedBody> {
+async function extractBody(
+  normalizedRequest: NormalizedFetchRequest,
+): Promise<ExtractedBody> {
+  const { request } = normalizedRequest;
   if (request.body === null) return { value: undefined };
 
   const body = request.clone();
-  switch (requestBodyKindOf(request.headers.get("content-type"))) {
+  const contentType =
+    normalizedRequest.routedContentType ?? request.headers.get("content-type");
+  switch (requestBodyKindOf(contentType)) {
     case "json": {
       const text = await body.text();
       // An empty JSON body is no body at all, as the Node ingress reads it.
@@ -574,7 +595,13 @@ async function extractBody(request: Request): Promise<ExtractedBody> {
     case "text":
       return { value: await body.text() };
     case "multipart":
-      return { value: await body.formData() };
+      // Parsed under the routed content type, whose boundary the request
+      // itself may no longer carry.
+      return {
+        value: await new Response(body.body, {
+          headers: { "content-type": contentType ?? "" },
+        }).formData(),
+      };
     case "binary":
       return { value: await body.arrayBuffer() };
   }
@@ -743,10 +770,11 @@ export function createFetchLease(
 
   return registerInterceptor(
     async ({
-      request: { request, url, origin },
+      request: normalizedRequest,
       claim,
       draft,
     }): Promise<InterceptorResult> => {
+      const { request, url, origin } = normalizedRequest;
       const {
         baseUrl,
         passthrough = true,
@@ -825,7 +853,10 @@ export function createFetchLease(
         const body: ExtractedBody =
           routeProbe !== undefined && !routeProbe(initialMethod, path)
             ? { value: undefined }
-            : await awaitWithAbort(extractBody(request), request.signal);
+            : await awaitWithAbort(
+                extractBody(normalizedRequest),
+                request.signal,
+              );
         if (draft.observed) draft.requestBody = snapshotRequestBody(body.value);
         throwIfAborted(request.signal);
 
@@ -845,7 +876,7 @@ export function createFetchLease(
         let adapterRequest: Schmock.AdapterRequest = {
           method: request.method,
           path,
-          headers: extractHeaders(request),
+          headers: extractHeaders(normalizedRequest),
           body: body.value,
           query: extractQuery(url),
         };
@@ -971,7 +1002,7 @@ export function createFetchLease(
             formatterRequest ?? {
               method: request.method,
               path,
-              headers: extractHeaders(request),
+              headers: extractHeaders(normalizedRequest),
               query: extractQuery(url),
             },
           );

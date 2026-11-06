@@ -1087,6 +1087,61 @@ describe("mock.intercept()", () => {
     }
   });
 
+  it("decodes an inherited multipart body when init headers replace the header list", async () => {
+    mock("POST /api/inherited-form", ({ body }) => ({
+      isFormData: body instanceof FormData,
+      field: body instanceof FormData ? body.get("a") : null,
+    }));
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const form = new FormData();
+      form.set("a", "1");
+      const input = new Request("http://localhost/api/inherited-form", {
+        method: "POST",
+        body: form,
+      });
+      const response = await fetch(input, { headers: { "x-trace": "1" } });
+      expect(await response.json()).toEqual({ isFormData: true, field: "1" });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("passes an unmatched request through with the headers native fetch would send", async () => {
+    // The content type is restored for the handler only: the network must
+    // get exactly what fetch(input, init) builds, which has none.
+    const baseline = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response("real backend"),
+    );
+    globalThis.fetch = baseline;
+    mock("GET /api/other", {});
+    const handle = mock.intercept({ passthrough: true });
+    const makeInput = () =>
+      new Request("http://localhost/api/unmocked", {
+        method: "POST",
+        body: "{}",
+        headers: { "content-type": "application/json" },
+      });
+    const native = new Request(makeInput(), { headers: { "x-a": "1" } });
+
+    try {
+      const response = await fetch(makeInput(), { headers: { "x-a": "1" } });
+      expect(await response.text()).toBe("real backend");
+      const sent = baseline.mock.calls[0]?.[0];
+      expect(sent).toBeInstanceOf(Request);
+      const sentRequest = sent as Request;
+      expect(sentRequest.headers.get("x-a")).toBe("1");
+      expect(sentRequest.headers.get("content-type")).toBe(
+        native.headers.get("content-type"),
+      );
+      expect(await sentRequest.text()).toBe("{}");
+    } finally {
+      handle.restore();
+    }
+  });
+
   it("answers and releases the admission when its hasRoute getter throws", async () => {
     const handleRequest = vi.fn(
       async (): Promise<Schmock.Response> => ({
