@@ -978,6 +978,32 @@ describe("Angular Adapter", () => {
       },
     );
 
+    it.each([
+      ["a success", 200],
+      ["an error response", 503],
+    ])(
+      "leaves the request signal live once %s is emitted",
+      async (_, status) => {
+        const realMock = schmock();
+        let signal: AbortSignal | undefined;
+        realMock("GET /api/settled", (ctx) => {
+          signal = ctx.signal;
+          return [status, { ok: status === 200 }];
+        });
+        const InterceptorClass = createSchmockInterceptor(realMock);
+
+        await lastValueFrom(
+          new InterceptorClass().intercept(
+            new HttpRequest("GET", "/api/settled"),
+            { handle: vi.fn() },
+          ),
+        ).catch(() => undefined);
+
+        expect(signal).toBeInstanceOf(AbortSignal);
+        expect(signal?.aborted).toBe(false);
+      },
+    );
+
     it("unsubscribes from inner subscription on teardown", async () => {
       mockInstance.handle = vi.fn().mockResolvedValue({
         status: 404,

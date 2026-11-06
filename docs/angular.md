@@ -555,7 +555,10 @@ failure's message and its code when it is a `SchmockError`, otherwise
 `INTERNAL_ERROR`.
 
 Unsubscribing aborts pending Schmock work and unsubscribes any unmatched
-passthrough request. No response is emitted after teardown.
+passthrough request. No response is emitted after teardown. Once the mock has
+emitted its response the request's `signal` stays live, as on every other
+transport, so work a route or an OpenAPI callbacks dispatcher started without
+awaiting it is not cancelled when the Observable completes.
 
 Each request is admitted against the mock's routes and plugins as they are
 when it is intercepted, as `mock.listen()`, Express and the fetch interceptor

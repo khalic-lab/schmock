@@ -751,6 +751,12 @@ interface Interception {
   readonly abortController: AbortController;
   aborted: boolean;
   /**
+   * Set once the mock has emitted the response. The request signal is then
+   * left live, as on every other transport, so work a route or a callbacks
+   * dispatcher left running past the response is not cancelled by teardown.
+   */
+  settled: boolean;
+  /**
    * The mock's routes and plugins as they were when the request arrived, so
    * a `mock.reset()` while its body is decoded or its hook runs changes
    * neither; `undefined` for a hand-written mock, routed through `handle`.
@@ -852,11 +858,12 @@ function resolveResponseHook(
  * the same responseType law as a success body.
  */
 function emitHttpError(
-  observer: Subscriber<HttpEvent<unknown>>,
-  req: HttpRequest<unknown>,
+  interception: Interception,
   response: Schmock.Response,
   body: unknown,
 ): void {
+  const { observer, req } = interception;
+  interception.settled = true;
   observer.error(
     new HttpErrorResponse({
       error: applyResponseType(
@@ -907,7 +914,7 @@ function emitFailure(interception: Interception, error: unknown): void {
         method,
       })
     : unformatted;
-  emitHttpError(interception.observer, req, response, response.body);
+  emitHttpError(interception, response, response.body);
 }
 
 /**
@@ -919,7 +926,7 @@ function emitIngressError(
   interception: Interception,
   rejected: HttpIngressError,
 ): void {
-  const { observer, req } = interception;
+  const { observer } = interception;
   observer.next({ type: HttpEventType.Sent });
   const response = buildJsonErrorResponse({
     status: rejected.status,
@@ -927,7 +934,7 @@ function emitIngressError(
     code: rejected.code,
     method: interception.responseMethod,
   });
-  emitHttpError(observer, req, response, response.body);
+  emitHttpError(interception, response, response.body);
 }
 
 /**
@@ -956,7 +963,7 @@ function emitResponse(
             method: responseMethod,
           })
         : response;
-    emitHttpError(observer, req, errorResponse, errorResponse.body);
+    emitHttpError(interception, errorResponse, errorResponse.body);
     return;
   }
 
@@ -969,6 +976,7 @@ function emitResponse(
       headers: new HttpHeaders(headers),
     }),
   );
+  interception.settled = true;
   observer.complete();
 }
 
@@ -1005,7 +1013,7 @@ function transformAndEmit(
       },
       interception.responseMethod,
     );
-    emitHttpError(observer, req, response, response.body);
+    emitHttpError(interception, response, response.body);
     return undefined;
   }
 
@@ -1230,12 +1238,15 @@ export function createSchmockInterceptor(
           observer,
           abortController: new AbortController(),
           aborted: false,
+          settled: false,
           responseMethod: method,
         };
         runInterception(interception, routePath);
         return () => {
           interception.aborted = true;
-          interception.abortController.abort();
+          // Teardown also runs on complete() and error(): only a request
+          // given up before the mock answered it is aborted.
+          if (!interception.settled) interception.abortController.abort();
           interception.admission?.release();
           interception.innerSub?.unsubscribe();
         };
