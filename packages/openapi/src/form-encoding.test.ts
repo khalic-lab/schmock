@@ -309,6 +309,23 @@ describe("urlencoded forms read through their encoding", () => {
       expect(body.f49999).toBe("49999");
     });
 
+    it("appends many values of a name[] key in linear time", () => {
+      const count = 40_000;
+      const form = new URLSearchParams();
+      for (let i = 0; i < count; i++) form.append("tags[]", String(i));
+      const started = performance.now();
+      const body = normalizeRequestBody(
+        Object.fromEntries(form),
+        FORM_TYPE,
+        formSchema,
+        { fields: form },
+      ) as { tags: string[] };
+      expect(performance.now() - started).toBeLessThan(2_000);
+      expect(body.tags).toHaveLength(count);
+      expect(body.tags.slice(0, 2)).toEqual(["0", "1"]);
+      expect(body.tags[count - 1]).toBe(String(count - 1));
+    });
+
     it("ignores the form for a body of any other media type", () => {
       const body = { tags: "b" };
       expect(

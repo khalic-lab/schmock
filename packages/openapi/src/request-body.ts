@@ -548,6 +548,12 @@ class BracketNode {
 }
 
 /**
+ * How many values each node has had appended through `name[]`. Counting the
+ * node's keys on every append instead took quadratic time in the values.
+ */
+const appendCounts = new WeakMap<Record<string, unknown>, number>();
+
+/**
  * `[base, ...segments]` for a bracket key that nests: its base is a declared
  * object or array property, the key itself is not declared, and it has at
  * most {@link MAX_BRACKET_DEPTH} segments. `undefined` for a key that stays
@@ -636,10 +642,13 @@ function insertAtPath(
   // `name[]` appends; a name repeated in a FormData appends each value.
   // String keys keep insertion order and sort after integer keys, which is
   // the order `finishNode` reads an array node in.
+  // An append key never collides with a sent segment, which holds no `[`.
   const appended = Array.isArray(value) ? value : [value];
+  let count = appendCounts.get(node) ?? 0;
   for (const entry of appended) {
-    defineField(node, `[]${Object.keys(node).length}`, entry);
+    defineField(node, `[]${count++}`, entry);
   }
+  appendCounts.set(node, count);
   return true;
 }
 
