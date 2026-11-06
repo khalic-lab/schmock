@@ -48,7 +48,7 @@ with the `resource` below.
 | `schema_nodes` | `MAX_SCHEMA_NODES` | 50,000 distinct schema nodes |
 | `generated_nodes` | `MAX_GENERATED_NODES` | 1,000,000 generated JSON nodes |
 | `object_properties` | `MAX_OBJECT_PROPERTIES` | 10,000 properties per object |
-| `string_length` | `MAX_STRING_LENGTH` | 65,536 UTF-16 code units per string |
+| `string_length` | `MAX_STRING_LENGTH` | 65,536 UTF-16 code units per string or object key |
 | `generated_chars` | not exported | 16,777,216 UTF-16 code units per response |
 | `schema_composition_depth` | not exported | 200 composition frames |
 

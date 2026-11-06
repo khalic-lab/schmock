@@ -90,6 +90,13 @@ export function assertOutputWithinLimits(value: unknown): void {
       );
     }
     for (const [key, entry] of entries) {
+      if (key.length > MAX_STRING_LENGTH) {
+        throw new ResourceLimitError(
+          "string_length",
+          MAX_STRING_LENGTH,
+          key.length,
+        );
+      }
       chargeChars(key.length);
       pending.push({ value: entry, exiting: false });
     }

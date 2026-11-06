@@ -78,7 +78,8 @@ export const MAX_GENERATED_NODES = 1_000_000;
 export const MAX_OBJECT_PROPERTIES = 10_000;
 
 /**
- * Maximum number of UTF-16 code units Schmock will generate for one string.
+ * Maximum number of UTF-16 code units Schmock will generate for one string
+ * or object key.
  * 64 KiB admits the repository's largest real API constraints while refusing
  * lengths large enough for one field to become an accidental bulk payload.
  */

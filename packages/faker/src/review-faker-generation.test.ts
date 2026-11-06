@@ -49,6 +49,44 @@ describe("review: aggregate output budget (finding 77)", () => {
     expectResource(error, "generated_chars");
   });
 
+  it("holds a generated key to the string length limit", () => {
+    const error = captureFailure(() =>
+      assertOutputWithinLimits({ ["k".repeat(MAX_STRING_LENGTH + 1)]: 1 }),
+    );
+    expectResource(error, "string_length");
+  });
+
+  it("refuses at creation a patternProperties key longer than one string", () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      patternProperties: {
+        [`^k{${MAX_STRING_LENGTH + 1}}$`]: { type: "integer" },
+      },
+      minProperties: 1,
+      additionalProperties: false,
+    };
+    const error = captureFailure(() => fakerPlugin({ schema }));
+    expectResource(error, "string_length");
+  });
+
+  it.each([
+    ["const", { const: { k: 1 } }],
+    ["enum", { enum: [{ k: 1 }] }],
+    ["default", { default: { k: 1 } }],
+  ] satisfies Array<[string, JSONSchema7]>)(
+    "accepts a long patternProperties key on a node pinned by %s",
+    (_, pinned) => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        patternProperties: {
+          [`^k{${MAX_STRING_LENGTH + 1}}$`]: { type: "integer" },
+        },
+        ...pinned,
+      };
+      expect(captureFailure(() => fakerPlugin({ schema }))).toBeUndefined();
+    },
+  );
+
   it("accepts output exactly at the budget", () => {
     const value = "a".repeat(MAX_STRING_LENGTH);
     const items = Math.floor(MAX_GENERATED_CHARS / MAX_STRING_LENGTH);

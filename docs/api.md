@@ -1689,7 +1689,7 @@ from `@schmock/faker`.
 | `schema_nodes` | `MAX_SCHEMA_NODES` | 50,000 distinct schema nodes |
 | `generated_nodes` | `MAX_GENERATED_NODES` | 1,000,000 generated JSON nodes |
 | `object_properties` | `MAX_OBJECT_PROPERTIES` | 10,000 properties per object |
-| `string_length` | `MAX_STRING_LENGTH` | 65,536 UTF-16 code units per string |
+| `string_length` | `MAX_STRING_LENGTH` | 65,536 UTF-16 code units per string or object key |
 | `generated_chars` | not exported | 16,777,216 UTF-16 code units per response |
 | `schema_composition_depth` | not exported | 200 composition frames |
 
@@ -1697,6 +1697,10 @@ from `@schmock/faker`.
 `minItems` and `maxItems`: json-schema-faker generates every `contains` match
 it draws before trimming the array to `maxItems`, so each draw also counts
 against `generated_nodes`.
+
+`string_length` covers object keys too. At creation, the shortest match of
+each `patternProperties` pattern is charged as a key generation invents,
+unless the object's `const`, `enum` or `default` is returned instead.
 
 `generated_chars` counts every string and object key in one response. At
 creation it is checked against the least the schema can produce: each

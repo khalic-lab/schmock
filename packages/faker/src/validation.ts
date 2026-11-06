@@ -1105,6 +1105,19 @@ function recordStringLimit(
       recordStringViolation(regexLengthBounds(schema.pattern).min, path, state);
     }
   }
+  // Generation invents a key matching a `patternProperties` pattern, so the
+  // pattern's shortest match is a key it is certain to generate, unless the
+  // node's const, enum or default is returned instead.
+  if (generatesPatternKeys(schema) && isRecord(schema.patternProperties)) {
+    for (const source of Object.keys(schema.patternProperties)) {
+      if (compilePattern(source) === undefined) continue;
+      recordStringViolation(
+        regexLengthBounds(source).min,
+        `${path}.patternProperties`,
+        state,
+      );
+    }
+  }
 
   for (const fixed of [
     schema.const,
@@ -1114,6 +1127,15 @@ function recordStringLimit(
   ]) {
     recordStringViolation(largestStringLength(fixed), path, state);
   }
+}
+
+function generatesPatternKeys(schema: JSONSchema7): boolean {
+  if (schema.type !== undefined && !hasType(schema, "object")) return false;
+  return (
+    schema.const === undefined &&
+    schema.enum === undefined &&
+    schema.default === undefined
+  );
 }
 
 function canGenerateString(schema: JSONSchema7): boolean {
