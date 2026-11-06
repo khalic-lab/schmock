@@ -1232,6 +1232,25 @@ describe("the 406 and 415 bodies docs/openapi.md shows", () => {
     });
   });
 
+  it("answers an unacceptable Accept on a POST with the same 406 body", async () => {
+    const mock = schmock();
+    mock.pipe(await openapi({ spec: usersSpec }));
+
+    const res = await mock.handle("POST", "/users", {
+      body: { name: "Ada" },
+      headers: { accept: "text/xml", "content-type": "application/json" },
+    });
+
+    expect({ status: res.status, body: res.body }).toEqual({
+      status: 406,
+      body: {
+        error: "Not Acceptable",
+        code: "NOT_ACCEPTABLE",
+        acceptable: ["application/json"],
+      },
+    });
+  });
+
   it("answers an undeclared Content-Type with the documented 415 body", async () => {
     const mock = schmock();
     mock.pipe(await openapi({ spec: usersSpec, validateRequests: true }));
