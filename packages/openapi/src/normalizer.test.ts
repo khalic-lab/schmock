@@ -1600,6 +1600,34 @@ describe("normalizeSchema", () => {
       expect(result.exclusiveMaximum).toBe(100);
       expect(result).not.toHaveProperty("maximum");
     });
+
+    it("drops a boolean bound with no numeric partner", async () => {
+      const mock = await mockFor(
+        specWith({
+          "/v": {
+            get: {
+              responses: {
+                "200": {
+                  description: "ok",
+                  content: json({
+                    type: "object",
+                    required: ["low", "high"],
+                    properties: {
+                      low: { type: "number", exclusiveMinimum: true },
+                      high: { type: "number", exclusiveMaximum: true },
+                    },
+                  }),
+                },
+              },
+            },
+          },
+        }),
+        { validateResponses: true },
+      );
+
+      const response = await mock.handle("GET", "/v");
+      expect(response.status).toBe(200);
+    });
   });
 
   describe("x-* extensions", () => {

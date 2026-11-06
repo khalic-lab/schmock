@@ -526,14 +526,18 @@ function normalizeNode(
   if (node.exclusiveMinimum === true && typeof node.minimum === "number") {
     node.exclusiveMinimum = node.minimum;
     delete node.minimum;
-  } else if (node.exclusiveMinimum === false) {
+  } else if (typeof node.exclusiveMinimum === "boolean") {
+    // false, or true with no numeric partner: a 3.0 flag with nothing to
+    // qualify, and a boolean the 2020-12 meta-schema refuses.
     delete node.exclusiveMinimum;
   }
 
   if (node.exclusiveMaximum === true && typeof node.maximum === "number") {
     node.exclusiveMaximum = node.maximum;
     delete node.maximum;
-  } else if (node.exclusiveMaximum === false) {
+  } else if (typeof node.exclusiveMaximum === "boolean") {
+    // false, or true with no numeric partner: a 3.0 flag with nothing to
+    // qualify, and a boolean the 2020-12 meta-schema refuses.
     delete node.exclusiveMaximum;
   }
 
