@@ -1815,3 +1815,67 @@ describe("a typed nullable create contract (hunt openapi-1-G16)", () => {
     expect([...outcomes]).toEqual(["complete"]);
   });
 });
+
+describe("count seeding on an id named __proto__ (hunt openapi-1-G38)", () => {
+  // Built from JSON so `__proto__` is an OWN key, as a parsed spec file has it.
+  const protoPet = JSON.parse(`{
+    "type": "object",
+    "required": ["__proto__", "name"],
+    "properties": {
+      "__proto__": { "type": "integer" },
+      "name": { "type": "string" }
+    }
+  }`);
+  const protoSpec = spec({
+    "/pets": {
+      get: {
+        responses: {
+          "200": {
+            description: "list",
+            content: json({ type: "array", items: protoPet }),
+          },
+        },
+      },
+      post: {
+        requestBody: { content: json(protoPet) },
+        responses: { "201": { description: "c", content: json(protoPet) } },
+      },
+    },
+    "/pets/{__proto__}": {
+      parameters: [
+        {
+          name: "__proto__",
+          in: "path",
+          required: true,
+          schema: { type: "integer" },
+        },
+      ],
+      get: {
+        responses: { "200": { description: "p", content: json(protoPet) } },
+      },
+    },
+  });
+
+  it("writes each generated id as an own property and resumes the counter past it", async () => {
+    const mock = await mockOf(protoSpec, {
+      seed: { pets: { count: 2 } },
+      fakerSeed: 1,
+    });
+
+    const list = await mock.handle("GET", "/pets");
+    const rows: unknown[] = Array.isArray(list.body) ? list.body : [];
+    const ids = rows.map(
+      (row) => Object.getOwnPropertyDescriptor(Object(row), "__proto__")?.value,
+    );
+    expect(ids).toEqual([1, 2]);
+    expect((await mock.handle("GET", "/pets/1")).status).toBe(200);
+
+    const created = await mock.handle("POST", "/pets", {
+      body: { name: "c" },
+    });
+    expect(
+      Object.getOwnPropertyDescriptor(created.body, "__proto__")?.value,
+    ).toBe(3);
+    expect((await mock.handle("GET", "/pets/3")).status).toBe(200);
+  });
+});

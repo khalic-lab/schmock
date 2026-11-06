@@ -1148,7 +1148,8 @@ export async function generateSeedItems(
     // Shape the seed id like a minted one so a uuid/string resource does not
     // mix integer seeds with string/uuid creates. `createSeeder` recovers the
     // counter from these via `idCounter`, so creation resumes past the seed max.
-    item[idProperty] = shapeId(i + 1, idKind);
+    // Defined, not assigned: the spec chooses the id name, `__proto__` included.
+    defineOwn(item, idProperty, shapeId(i + 1, idKind));
     nodes += countNodes(item, MAX_SEED_GENERATED_NODES - nodes);
     if (nodes > MAX_SEED_GENERATED_NODES) {
       throw new ResourceLimitError(
