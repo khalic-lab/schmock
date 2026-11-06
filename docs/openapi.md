@@ -130,7 +130,7 @@ Where the refusal happens decides the error you get:
 
 | Refused | Error |
 |---|---|
-| A `$ref` whose URL names a refused host or IP literal, however it is spelled: `//host/x`, `\\host\x`, `http:/host/x` and `http:host/x` are read as `http(s)://host/x` and refused as such | `SchmockError` with code `OPENAPI_EXTERNAL_REF_BLOCKED`, before any request is sent |
+| A `$ref` whose URL names a refused host or IP literal, in the root document or in any document it references, however it is spelled: `//host/x`, `\\host\x`, `http:/host/x` and `http:host/x` are read as `http(s)://host/x` and refused as such | `SchmockError` with code `OPENAPI_EXTERNAL_REF_BLOCKED`, before any request is sent |
 | A hostname refused after DNS resolution, or a refused redirect hop | swagger-parser's resolver error, not a `SchmockError`; under `strict: true` it is wrapped as `OPENAPI_INVALID_SPEC` |
 
 The resolver error carries the reason in its message:

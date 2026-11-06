@@ -156,7 +156,7 @@ describe("buildRefParserOptions", () => {
     });
   });
 
-  it("installs a guarded http resolver that ignores non-http URLs", () => {
+  it("installs a guarded http resolver that refuses blocked hosts and ignores non-http URLs", () => {
     const options = buildRefParserOptions({
       external: true,
       allowHttp: true,
@@ -172,8 +172,20 @@ describe("buildRefParserOptions", () => {
     }
 
     expect(canRead({ url: "https://schemas.example.com/a.json" })).toBe(true);
-    expect(canRead({ url: "https://other.example.com/a.json" })).toBe(false);
-    expect(canRead({ url: "http://127.0.0.1/a.json" })).toBe(false);
+    // Thrown, not `false`: ref-parser lets a canRead throw through as is, so
+    // a ref reached through a nested document is refused with the policy's
+    // code instead of as an uncoded "Unable to resolve $ref pointer".
+    for (const [url, reason] of [
+      ["https://other.example.com/a.json", "is not allowed"],
+      ["http://127.0.0.1/a.json", 'host "127.0.0.1" is not allowed'],
+    ]) {
+      expect(() => canRead({ url }), url).toThrow(
+        expect.objectContaining({
+          code: "OPENAPI_EXTERNAL_REF_BLOCKED",
+          message: expect.stringContaining(reason),
+        }),
+      );
+    }
     // A file path must stay with the file resolver rather than reach fetch().
     expect(canRead({ url: "/tmp/models.json" })).toBe(false);
   });

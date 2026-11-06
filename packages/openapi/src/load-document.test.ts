@@ -378,6 +378,75 @@ describe("loadDocument", () => {
     });
   });
 
+  describe("an http $ref inside a nested local document", () => {
+    let dir: string;
+
+    beforeAll(() => {
+      dir = mkdtempSync(join(tmpdir(), "schmock-nested-http-"));
+      writeFileSync(
+        join(dir, "root.json"),
+        JSON.stringify(specWithResponseSchema({ $ref: "./pet.json" })),
+      );
+      writeFileSync(
+        join(dir, "pet.json"),
+        JSON.stringify({
+          type: "object",
+          properties: { owner: { $ref: "https://127.0.0.1/owner.json" } },
+        }),
+      );
+    });
+
+    afterAll(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    for (const [label, refs, reason] of [
+      [
+        "external refs alone",
+        { external: true },
+        "http(s) reference resolution is disabled",
+      ],
+      [
+        "allowHttp, for a loopback host",
+        { external: true, allowHttp: true },
+        "loopback, link-local or private",
+      ],
+      [
+        "allowHttp, for a host outside allowedHosts",
+        { external: true, allowHttp: true, allowedHosts: ["example.com"] },
+        'host "127.0.0.1" is not allowed',
+      ],
+    ] as const) {
+      it(`is refused with the policy's code under ${label}`, async () => {
+        // The pre-scan sees only the root document; this ref is reached
+        // through pet.json and used to fail as ref-parser's uncoded
+        // "Unable to resolve $ref pointer".
+        const fetchRef = vi.fn<RefFetch>();
+        vi.spyOn(globalThis, "fetch").mockRejectedValue(
+          new Error("global fetch must not be reached"),
+        );
+
+        const error = await failureOf(
+          loadDocument(join(dir, "root.json"), { refs, fetchRef }),
+        );
+
+        expect(codeOf(error)).toBe("OPENAPI_EXTERNAL_REF_BLOCKED");
+        expect((error as Error).message).toContain(
+          "https://127.0.0.1/owner.json",
+        );
+        expect((error as Error).message).toContain(reason);
+        expect((error as SchmockError).context).toMatchObject({
+          refs: ["https://127.0.0.1/owner.json"],
+        });
+        expect(fetchRef).not.toHaveBeenCalled();
+      });
+    }
+  });
+
   describe("$refs to nothing", () => {
     let dir: string;
 

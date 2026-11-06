@@ -11,6 +11,7 @@ import {
   type RefFetch,
   type RefParserOptions,
   type RefPolicy,
+  refRefused,
   resolveRefPolicy,
 } from "./ref-policy.js";
 import { createResolver, type SpecResolver } from "./resolver.js";
@@ -192,6 +193,7 @@ export async function loadDocument(
     strict,
     source,
     diagnostics: refDiagnostics,
+    policy,
   });
   // `assertInternalRefs` keeps the root document's pointers on keys the
   // document holds; a pointer into another document is ref-parser's alone.
@@ -647,6 +649,20 @@ interface DereferenceDocumentArgs {
   strict: boolean;
   source: string | object;
   diagnostics: Map<string, string>;
+  policy: ReturnType<typeof resolveRefPolicy>;
+}
+
+/**
+ * ref-parser's complaint that no resolver claimed `url`, which for an http(s)
+ * ref under `refs: { external: true }` alone means the policy refused it: no
+ * http resolver is installed, so nothing can claim it.
+ */
+function unclaimedHttpRef(error: unknown): string | undefined {
+  if (!(error instanceof SyntaxError)) return undefined;
+  const url = /^Unable to resolve \$ref pointer "(.+)"$/.exec(
+    error.message,
+  )?.[1];
+  return url !== undefined && isHttpUrl(url) ? url : undefined;
 }
 
 async function dereferenceDocument({
@@ -657,6 +673,7 @@ async function dereferenceDocument({
   strict,
   source,
   diagnostics,
+  policy,
 }: DereferenceDocumentArgs): Promise<OpenAPI.Document> {
   // Ref-free object sources keep their fast path: no resolver, no clone, no
   // validator. `browser-compat.test.ts` pins it.
@@ -683,6 +700,17 @@ async function dereferenceDocument({
         rawError.code === "OPENAPI_EXTERNAL_REF_BLOCKED")
     ) {
       throw rawError;
+    }
+    // An http(s) ref reached through a nested document, which the root
+    // pre-scan never saw, refused because no http resolver was installed.
+    const unclaimed = unclaimedHttpRef(rawError);
+    if (unclaimed !== undefined) {
+      const verdict = checkRef(unclaimed, policy);
+      if (!verdict.allowed) {
+        const refused = refRefused(unclaimed, verdict.reason);
+        refused.cause = rawError;
+        throw refused;
+      }
     }
     // A pointer to nothing in another document. One into the root document
     // never gets here — `assertInternalRefs` refuses it first, with this code.

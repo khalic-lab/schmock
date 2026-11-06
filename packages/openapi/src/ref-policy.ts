@@ -242,6 +242,19 @@ export function isUnsafeHost(hostname: string): boolean {
 
 export type RefVerdict = { allowed: true } | { allowed: false; reason: string };
 
+/**
+ * The coded refusal of one `$ref` that {@link checkRef} ruled out while
+ * resolution was already under way: one reached through a nested document,
+ * which the root pre-scan never saw.
+ */
+export function refRefused(url: string, reason: string): SchmockError {
+  return new SchmockError(
+    `OpenAPI spec contains an external $ref that was not resolved: ${url} (${reason})`,
+    "OPENAPI_EXTERNAL_REF_BLOCKED",
+    { refs: [url] },
+  );
+}
+
 /** An absolute `http:`/`https:` URL, in any case. */
 export function isHttpUrl(ref: string): boolean {
   return /^https?:\/\//i.test(ref);
@@ -275,9 +288,9 @@ export function resolveReference(from: string, to: string): string {
  * The policy pre-scan sees a `$ref` as spelled, and {@link checkRef} waves
  * anything not spelled `http(s)://` through as a file once `external` is on.
  * WHATWG URL resolution turns `//host/x`, `\\host\x`, `http:/host/x` and
- * `http:host/x` into `http(s)://host/x` all the same. The http resolver's
- * `canRead` still refused them, so nothing was sent, but the refusal reached
- * the caller as ref-parser's uncoded `Unable to resolve $ref pointer`.
+ * `http:host/x` into `http(s)://host/x` all the same. Ruling on them as
+ * spelled waved them through, to be refused only once resolution reached
+ * them.
  */
 export function httpReadLocation(
   ref: string,
@@ -615,6 +628,9 @@ export function buildRefParserOptions(
     return { resolve: { external: false } };
   }
 
+  // No http resolver at all, so ref-parser fails an http(s) ref reached
+  // through a nested document as `Unable to resolve $ref pointer`;
+  // `loadDocument` turns that back into the policy's refusal.
   if (!resolved.allowHttp) {
     return { resolve: { external: true, http: false } };
   }
@@ -627,9 +643,18 @@ export function buildRefParserOptions(
         redirects: resolved.redirects,
         // The http resolver must claim http(s) URLs only: `checkRef` passes a
         // plain file path when `external` is on, and claiming it here would
-        // hand a filesystem path to `fetch`.
-        canRead: (file: { url: string }) =>
-          isHttpUrl(file.url) && checkRef(file.url, resolved).allowed,
+        // hand a filesystem path to `fetch`. A refused http URL throws rather
+        // than returning false: ref-parser calls `canRead` outside its
+        // resolver loop, so the coded error reaches the caller as thrown,
+        // where `false` left it to fail as an uncoded
+        // `Unable to resolve $ref pointer`. That is the path a ref reached
+        // through a nested document takes; the pre-scan sees only the root.
+        canRead: (file: { url: string }) => {
+          if (!isHttpUrl(file.url)) return false;
+          const verdict = checkRef(file.url, resolved);
+          if (!verdict.allowed) throw refRefused(file.url, verdict.reason);
+          return true;
+        },
         read: (file: { url: string }) =>
           readHttpRef({
             url: file.url,
