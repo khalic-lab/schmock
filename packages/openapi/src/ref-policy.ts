@@ -1,6 +1,7 @@
 import type * as Schmock from "@schmock/core";
 import { SchmockError } from "@schmock/core";
 import { toError } from "@schmock/core/adapter";
+import { MAX_HTTP_REF_DOCUMENTS } from "./limits.js";
 import { isRecord } from "./utils.js";
 
 /**
@@ -383,10 +384,16 @@ export type RefFetch = (
 const plainFetch: RefFetch = (url, init) =>
   fetch(url, { redirect: "manual", signal: init.signal });
 
+/** What every http read of one load has spent, shared across those reads. */
+interface HttpRefBudget {
+  documents: number;
+}
+
 interface HttpRefRead {
   url: string;
   policy: ResolvedRefPolicy;
   fetchRef: RefFetch;
+  budget: HttpRefBudget;
   diagnostics?: Map<string, string>;
 }
 
@@ -472,6 +479,7 @@ async function readHttpRef({
   url,
   policy,
   fetchRef,
+  budget,
   diagnostics,
 }: HttpRefRead): Promise<string> {
   // Keyed on the ORIGINAL url, which is the one ref-parser reports as the
@@ -482,6 +490,15 @@ async function readHttpRef({
       ? new Error(message)
       : new Error(message, { cause });
   };
+
+  // `timeoutMs` and `maxBytes` bound one document, so a host serving an
+  // endless chain of new URLs would otherwise keep the load from settling.
+  if (budget.documents >= MAX_HTTP_REF_DOCUMENTS) {
+    throw fail(
+      `external $ref ${url} was not read: this spec already reached the limit of ${MAX_HTTP_REF_DOCUMENTS} http documents`,
+    );
+  }
+  budget.documents++;
 
   // One deadline for the whole redirect chain, not per hop, so a redirector
   // cannot stretch the budget by bouncing the request around.
@@ -634,6 +651,10 @@ export function buildRefParserOptions(
     return { resolve: { external: true, http: false } };
   }
 
+  // One per result, and `loadDocument` builds one per load: the root spec
+  // URL and every http ref it leads to draw on the same budget.
+  const budget: HttpRefBudget = { documents: 0 };
+
   return {
     resolve: {
       external: true,
@@ -659,6 +680,7 @@ export function buildRefParserOptions(
             url: file.url,
             policy: resolved,
             fetchRef,
+            budget,
             diagnostics,
           }),
       },

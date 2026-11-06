@@ -111,6 +111,12 @@ await openapi({
 `Infinity`, `-1` or `NaN`, fails at construction with `OPENAPI_INVALID_OPTION`
 and context `{ option: 'refs', field }`, before any request is sent.
 
+`timeoutMs`, `redirects` and `maxBytes` apply to one document at a time. One
+spec load reads at most 500 http documents, the spec URL included, so a host
+serving an endless chain of refs cannot keep `openapi()` from settling. The
+next document fails like an over-size one, with a resolver error whose message
+ends `already reached the limit of 500 http documents`.
+
 Loopback, link-local, private and reserved addresses are always refused, even
 when they appear in `allowedHosts`. The check applies to every address a
 hostname resolves to at connect time, not only to IP literals: a name such as

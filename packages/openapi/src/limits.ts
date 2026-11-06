@@ -22,3 +22,12 @@ export const MAX_SEED_MANIFEST_BYTES = 1024 * 1024;
 
 /** Maximum generated JSON nodes across one auto-generated seed set. */
 export const MAX_SEED_GENERATED_NODES = 1_000_000;
+
+/**
+ * Maximum http `$ref` documents one spec load reads, the spec URL included.
+ *
+ * `timeoutMs` and `maxBytes` bound one document each, so a host serving an
+ * endless chain of new URLs kept a load from ever settling. This bounds the
+ * whole load to this many times either limit.
+ */
+export const MAX_HTTP_REF_DOCUMENTS = 500;

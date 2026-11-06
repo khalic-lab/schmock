@@ -11,6 +11,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { MAX_HTTP_REF_DOCUMENTS } from "./limits";
 import { loadDocument } from "./load-document";
 import { openapi } from "./plugin";
 import { type RefFetch, resolveReference } from "./ref-policy";
@@ -21,6 +22,14 @@ import { type RefFetch, resolveReference } from "./ref-policy";
  */
 
 const MARKER = "x-schmock-discriminator-values";
+
+/** What `promise` rejected with, or `undefined` when it resolved. */
+async function settle(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+}
 
 async function failureOf(promise: Promise<unknown>): Promise<unknown> {
   try {
@@ -343,6 +352,80 @@ describe("loadDocument", () => {
         });
       }
     }
+  });
+
+  describe("a chain of http $ref documents", () => {
+    it("stops after a bounded number of documents per load", async () => {
+      // Each document refers to the next, past the limit: a misbehaving
+      // allowed host. Finite only so the test ends if the limit is missing.
+      const length = MAX_HTTP_REF_DOCUMENTS + 10;
+      const fetchRef = vi.fn<RefFetch>(async (url) => {
+        const n = Number(/\/d\/(\d+)\.json$/.exec(url)?.[1]);
+        const next = `https://schemas.example.test/d/${n + 1}.json`;
+        return new Response(
+          JSON.stringify(
+            n < length
+              ? { type: "object", properties: { next: { $ref: next } } }
+              : { type: "string" },
+          ),
+          { status: 200 },
+        );
+      });
+
+      const error = await settle(
+        loadDocument(
+          specWithResponseSchema({
+            $ref: "https://schemas.example.test/d/1.json",
+          }),
+          {
+            refs: {
+              external: true,
+              allowHttp: true,
+              allowedHosts: ["schemas.example.test"],
+            },
+            fetchRef,
+          },
+        ),
+      );
+
+      expect(fetchRef).toHaveBeenCalledTimes(MAX_HTTP_REF_DOCUMENTS);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        `limit of ${MAX_HTTP_REF_DOCUMENTS} http documents`,
+      );
+    });
+
+    it("counts a document whose read failed against the same limit", async () => {
+      // More sibling refs than the limit, every one answered 404: a failed
+      // read still spent a request, so it has to spend the budget too.
+      const count = MAX_HTTP_REF_DOCUMENTS + 10;
+      const fetchRef = vi.fn<RefFetch>(
+        async () => new Response("missing", { status: 404 }),
+      );
+      const properties: Record<string, unknown> = {};
+      for (let i = 0; i < count; i++) {
+        properties[`p${i}`] = {
+          $ref: `https://schemas.example.test/missing/${i}.json`,
+        };
+      }
+
+      const error = await settle(
+        loadDocument(specWithResponseSchema({ type: "object", properties }), {
+          refs: {
+            external: true,
+            allowHttp: true,
+            allowedHosts: ["schemas.example.test"],
+          },
+          fetchRef,
+        }),
+      );
+      // ref-parser starts every sibling read before the first rejection
+      // settles the load; let the ones still in flight reach the transport.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(error).toBeInstanceOf(Error);
+      expect(fetchRef).toHaveBeenCalledTimes(MAX_HTTP_REF_DOCUMENTS);
+    });
   });
 
   describe("refs.timeoutMs on a spec without http refs", () => {
