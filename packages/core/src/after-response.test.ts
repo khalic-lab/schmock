@@ -238,6 +238,88 @@ describe("Plugin.afterResponse", () => {
     });
   });
 
+  describe("context.recoveredFromError", () => {
+    function observer() {
+      const seen: Array<boolean | undefined> = [];
+      const plugin: Schmock.Plugin = {
+        name: "observer",
+        process: passThrough,
+        afterResponse(context) {
+          seen.push(context.recoveredFromError);
+        },
+      };
+      return { seen, plugin };
+    }
+    const recoverer = (
+      hooks: Partial<Schmock.Plugin> = {},
+    ): Schmock.Plugin => ({
+      name: "recoverer",
+      process: passThrough,
+      onError: () => [200, { recovered: true }],
+      ...hooks,
+    });
+
+    it("is unset when nothing failed", async () => {
+      const { seen, plugin } = observer();
+      const mock = schmock();
+      mock("GET /ok", { ok: true }).pipe(plugin).pipe(recoverer());
+
+      expect((await mock.handle("GET", "/ok")).status).toBe(200);
+      expect(seen).toEqual([undefined]);
+    });
+
+    it("is true when an onError hook recovered a later plugin's process()", async () => {
+      const { seen, plugin } = observer();
+      const mock = schmock();
+      mock("GET /ok", { ok: true })
+        .pipe(plugin)
+        .pipe(
+          recoverer({
+            process() {
+              throw new Error("downstream");
+            },
+          }),
+        );
+
+      const response = await mock.handle("GET", "/ok");
+      expect(response).toMatchObject({
+        status: 200,
+        body: { recovered: true },
+      });
+      expect(seen).toEqual([true]);
+    });
+
+    it("is true when an onError hook recovered the route generator", async () => {
+      const { seen, plugin } = observer();
+      const mock = schmock();
+      mock("GET /boom", () => {
+        throw new Error("generator");
+      })
+        .pipe(plugin)
+        .pipe(recoverer());
+
+      expect((await mock.handle("GET", "/boom")).status).toBe(200);
+      expect(seen).toEqual([true]);
+    });
+
+    it("is true when an onError hook recovered a beforeRequest", async () => {
+      const { seen, plugin } = observer();
+      const mock = schmock();
+      mock("GET /ok", { ok: true })
+        .pipe(plugin)
+        .pipe(
+          recoverer({
+            beforeRequest() {
+              throw new Error("guard");
+            },
+          }),
+        );
+
+      expect((await mock.handle("GET", "/ok")).status).toBe(200);
+      expect(seen).toEqual([true]);
+    });
+  });
+
   describe("in isolation", () => {
     it("never changes the response when it throws or rejects, and later hooks still run", async () => {
       const later = vi.fn();

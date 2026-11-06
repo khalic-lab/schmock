@@ -588,6 +588,7 @@ interface PluginContext {
   form?: ReadonlyURLSearchParams           // see RequestContext.form
   state: Map<string, unknown>              // shared across plugins per request
   requestShortCircuited?: boolean          // response came from beforeRequest
+  recoveredFromError?: boolean             // an onError hook answered a failure
   routeState?: Record<string, unknown>     // route-level persistent state
   readonly signal?: AbortSignal            // request cancellation
 }

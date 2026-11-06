@@ -164,6 +164,16 @@ function effectiveRouteConfig(
 }
 
 /**
+ * The plugin context of a request an `onError` hook recovered, marked so
+ * `afterResponse` can tell: a plugin that staged work during a `process()`
+ * that ran before the failure must not commit it, even for a 2xx. The
+ * per-request `state` Map is shared with the unmarked copy.
+ */
+function markRecovered(context: Schmock.PluginContext): Schmock.PluginContext {
+  return { ...context, recoveredFromError: true };
+}
+
+/**
  * Callable mock instance that implements the new API.
  *
  * @internal
@@ -713,7 +723,13 @@ export class CallableMockInstance {
     throwIfAborted(signal);
     const context =
       preflight.requestShortCircuited === true
-        ? { ...preflight.context, requestShortCircuited: true }
+        ? {
+            ...preflight.context,
+            requestShortCircuited: true,
+            ...(preflight.recoveredFromError === true
+              ? { recoveredFromError: true }
+              : {}),
+          }
         : preflight.context;
     scope.context = context;
     return {
@@ -773,9 +789,10 @@ export class CallableMockInstance {
         signal,
       );
       throwIfAborted(signal);
-      scope.context = recovery.context;
+      const context = markRecovered(recovery.context);
+      scope.context = context;
       return {
-        context: recovery.context,
+        context,
         result: recovery.response,
         recovered: recovery.recoveredFromError === true,
       };
@@ -807,7 +824,10 @@ export class CallableMockInstance {
           scope.signal,
         );
         throwIfAborted(scope.signal);
-        scope.context = pipelineResult.context;
+        scope.context =
+          pipelineResult.recoveredFromError === true
+            ? markRecovered(pipelineResult.context)
+            : pipelineResult.context;
         result = pipelineResult.response;
       }
     } catch (error) {

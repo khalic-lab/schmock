@@ -66,7 +66,8 @@ const PREFER_STATUS_STATE = "openapi:preferStatus";
  * hook recovered a generator failure, since core skips the response
  * processors then, and when `process()` itself threw: the operation did not
  * run, or did not finish, so afterResponse commits nothing and dispatches no
- * callback.
+ * callback. A failure a plugin piped later raised after it was set is caught
+ * by core's `context.recoveredFromError` instead.
  */
 const OPERATION_RAN_STATE = "openapi:operationRan";
 
@@ -299,7 +300,12 @@ export async function openapi(
 
       // Commit before callbacks so a callback that re-enters the mock observes
       // committed state.
-      const ran = context.state.get(OPERATION_RAN_STATE) === true;
+      // A recovered failure settles nothing even after this plugin's own
+      // process() finished: a plugin piped later threw, so the request did
+      // not complete, whatever status the recovery answered with.
+      const ran =
+        context.state.get(OPERATION_RAN_STATE) === true &&
+        context.recoveredFromError !== true;
       settlePendingMutations(context, ran && response.status < 400);
 
       if (!options.callbacks) return undefined;
@@ -340,9 +346,9 @@ function discardPendingMutations(context: Schmock.PluginContext): void {
  * 500 that a plugin piped after this one answered with all leave the
  * collection untouched. Any applied Prefer directive has already discarded
  * the queue (see `process()`), so a `Prefer: code=201` on a create stores
- * nothing either. A generator failure, or a failure in this plugin's own
- * `process()`, that an `onError` hook recovered, even with a 2xx, did not
- * finish, so whatever it staged is dropped.
+ * nothing either. A failure an `onError` hook recovered, even with a 2xx,
+ * whether the generator, this plugin's own `process()` or a plugin piped later
+ * raised it, did not finish, so whatever it staged is dropped.
  *
  * Only the instance that owns the route settles: clearing another instance's
  * queue would drop a mutation its owner still has to commit.

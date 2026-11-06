@@ -277,6 +277,13 @@ declare namespace Schmock {
     state: Map<string, unknown>;
     /** True when a beforeRequest hook supplied the response instead of the route generator. */
     requestShortCircuited?: boolean;
+    /**
+     * True when an `onError` hook recovered a failure (in a `beforeRequest`,
+     * the route generator or a plugin's `process()`) and answered instead.
+     * Set on the context `afterResponse` receives, so a plugin that staged
+     * work before the failure can drop it whatever the final status.
+     */
+    recoveredFromError?: boolean;
     /** Route-specific state */
     routeState?: Record<string, unknown>;
     /** Abort signal associated with the admitted request */

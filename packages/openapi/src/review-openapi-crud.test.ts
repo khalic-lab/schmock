@@ -1681,6 +1681,28 @@ describe("settling a request once its response is final (#39)", () => {
     expect(stored(mock)).toEqual([{ id: 1, name: "rex" }]);
   });
 
+  it("commits nothing when a later plugin throws and its onError recovers", async () => {
+    const { mock, urls } = await pipedMock(
+      {},
+      {
+        name: "throw-and-recover",
+        process() {
+          throw new Error("downstream failed");
+        },
+        onError() {
+          return [200, { recovered: true }];
+        },
+      },
+    );
+
+    const answered = await mock.handle("POST", "/pets", {
+      body: { name: "rex" },
+    });
+    expect(answered).toMatchObject({ status: 200, body: { recovered: true } });
+    expect(urls).toEqual([]);
+    expect(stored(mock)).toEqual([]);
+  });
+
   it("commits nothing when openapi's own Prefer step throws and onError recovers", async () => {
     const urls: string[] = [];
     const preferSpec = spec({

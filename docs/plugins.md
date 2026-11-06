@@ -244,6 +244,11 @@ is skipped for a route miss and for a request aborted before then. A route
 generator can stage work too, through `ctx.pluginState`, which is the same
 `Map` as `context.state`. A returned promise is awaited; a throw or rejection
 is logged under the `PLUGIN` debug category and never changes the response.
+When an `onError` hook recovered a failure, in a `beforeRequest`, the route
+generator or any plugin's `process()`, the context `afterResponse` receives has
+`recoveredFromError: true`. The request did not finish, so a settler drops
+what it staged then, even when the recovery answered 2xx: a `process()` that
+ran before a plugin piped later threw has already staged its work.
 See the [Plugin Interface](./api.md#plugin-interface) reference.
 
 ## Context and State
@@ -260,6 +265,8 @@ interface PluginContext {
   headers: Record<string, string>
   body?: unknown
   state: Map<string, unknown>       // shared across plugins for this request
+  requestShortCircuited?: boolean   // response came from beforeRequest
+  recoveredFromError?: boolean      // an onError hook answered a failure
   routeState?: Record<string, unknown>
   readonly signal?: AbortSignal     // admitted request cancellation
 }
