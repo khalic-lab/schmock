@@ -226,6 +226,10 @@ not in the browser build.
   no `Missing`, fails with `OPENAPI_INVALID_REF` on both builds, with `strict`
   on or off. Under Node the same holds for a pointer into another document
   (`./pet.yaml#/Missing`); the original swagger-parser error is the `cause`.
+- **An empty `$ref`** (`"$ref": ""`) fails with `OPENAPI_INVALID_REF` under
+  every `refs` policy, in the root document or, with external refs on, in a
+  document it references. It names no schema, so it is not treated as an
+  external ref.
 - **A pointer through an inherited name**, such as `#/__proto__` or
   `#/constructor/prototype`, fails with `OPENAPI_INVALID_REF` on both builds.
   Only keys the document declares are followed, so a schema the document names

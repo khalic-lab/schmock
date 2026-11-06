@@ -570,6 +570,55 @@ describe("loadDocument", () => {
     }
   });
 
+  describe("an empty $ref", () => {
+    let dir: string;
+
+    beforeAll(() => {
+      dir = mkdtempSync(join(tmpdir(), "schmock-empty-ref-"));
+      writeFileSync(
+        join(dir, "root.json"),
+        JSON.stringify(specWithResponseSchema({ $ref: "./pet.json" })),
+      );
+      writeFileSync(
+        join(dir, "pet.json"),
+        JSON.stringify({
+          type: "object",
+          properties: { owner: { $ref: "" } },
+        }),
+      );
+    });
+
+    afterAll(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    for (const [label, refs] of [
+      ["the default policy", undefined],
+      ["external refs", { external: true }],
+    ] as const) {
+      it(`is refused as an invalid ref, not an external one, under ${label}`, async () => {
+        // It used to be reported as an external ref with a blank name, and
+        // under external: true the error advised enabling external: true.
+        const error = await failureOf(
+          loadDocument(specWithResponseSchema({ $ref: "" }), { refs }),
+        );
+
+        expect(codeOf(error)).toBe("OPENAPI_INVALID_REF");
+        expect((error as Error).message).toContain("empty $ref");
+        expect((error as Error).message).not.toContain("Enable them");
+      });
+    }
+
+    it("is refused the same way inside a nested document", async () => {
+      const error = await failureOf(
+        loadDocument(join(dir, "root.json"), { refs: { external: true } }),
+      );
+
+      expect(codeOf(error)).toBe("OPENAPI_INVALID_REF");
+      expect((error as Error).message).toContain("empty $ref");
+    });
+  });
+
   describe("$refs to nothing", () => {
     let dir: string;
 

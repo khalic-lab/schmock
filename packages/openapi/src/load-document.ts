@@ -164,8 +164,10 @@ export async function loadDocument(
   // is neither reported as an external ref nor followed; put back below.
   const literalRefs = hideLiteralRefs(raw);
 
+  const leaving = collectUnresolvedRefs(raw);
+  assertNoEmptyRef(leaving, source);
   const blocked: string[] = [];
-  for (const ref of collectUnresolvedRefs(raw)) {
+  for (const ref of leaving) {
     // Ruled on as ref-parser will read it, which is not always as spelled.
     const location = httpReadLocation(ref, baseUrl);
     const verdict = checkRef(location, policy);
@@ -208,6 +210,7 @@ export async function loadDocument(
   // keeps multi-megabyte specs off a second full traversal.
   if (policy.external) {
     const residual = collectUnresolvedRefs(api);
+    assertNoEmptyRef(residual, source);
     if (residual.length > 0) throw externalRefBlocked(residual, source);
   }
 
@@ -780,6 +783,24 @@ export function enrichResolverError(
 
   error.message = `${error.message}: ${detail}`;
   return error;
+}
+
+/**
+ * Refuse `$ref: ""`. It is not external: it names the document it sits in,
+ * which no resolver follows (ref-parser skips a falsy `$ref`), so it would
+ * otherwise reach generation as a `$ref` object, or be reported as an
+ * external ref with a blank name and advice to enable what is already on.
+ * Checked on the refs leaving the root and, once external refs are on, on
+ * those left in documents the root led to.
+ */
+function assertNoEmptyRef(refs: string[], source: string | object): void {
+  if (!refs.includes("")) return;
+  throw new SchmockError(
+    'OpenAPI spec contains an empty $ref ("$ref": ""), which points at no schema. ' +
+      'Point it at the schema it means, such as "#/components/schemas/Pet".',
+    "OPENAPI_INVALID_REF",
+    { ref: "", spec: typeof source === "string" ? source : undefined },
+  );
 }
 
 function specUrlBlocked(
