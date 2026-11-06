@@ -40,6 +40,7 @@ import {
   runUninstallHooks,
 } from "./plugin-hooks.js";
 import {
+  failedPipelineContext,
   recoverGeneratorError,
   runPluginBeforeRequest,
   runPluginPipeline,
@@ -766,13 +767,20 @@ export class CallableMockInstance {
     };
     scope.context = pluginContext;
 
-    const preflight = await runPluginBeforeRequest(
-      scope.admission.plugins,
-      pluginContext,
-      this.logger,
-      signal,
-      this.#abandonedHookTracker(scope),
-    );
+    let preflight: Awaited<ReturnType<typeof runPluginBeforeRequest>>;
+    try {
+      preflight = await runPluginBeforeRequest(
+        scope.admission.plugins,
+        pluginContext,
+        this.logger,
+        signal,
+        this.#abandonedHookTracker(scope),
+      );
+    } catch (error) {
+      // The 500 is delayed and settled with what the earlier guards returned.
+      scope.context = failedPipelineContext(error) ?? scope.context;
+      throw error;
+    }
     throwIfAborted(signal);
     const context =
       preflight.requestShortCircuited === true
@@ -888,6 +896,8 @@ export class CallableMockInstance {
         result = pipelineResult.response;
       }
     } catch (error) {
+      // The 500 is delayed and settled with what the earlier plugins returned.
+      scope.context = failedPipelineContext(error) ?? scope.context;
       this.logger.log(
         "error",
         `[${scope.requestId}] Plugin pipeline error: ${errorMessage(error)}`,

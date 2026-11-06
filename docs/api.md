@@ -682,7 +682,8 @@ class instances are passed by reference. `context.route` is a shallow copy, so
 custom route data nested inside it is shared. A hook may also return a context
 whose `route` is a new object: core answers with the route on the latest
 context, so its `contentType` and `delay` apply exactly as an in-place edit
-would.
+would. That holds for the 500 a later plugin's throw produces too: it is
+delayed with that route, and `afterResponse` gets that context.
 
 `onExchange` observes what a fetch caller finally received. Core calls it once
 for each request the mock settled through `mock.intercept()` (answered, failed,

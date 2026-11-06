@@ -114,6 +114,33 @@ describe("Plugin.afterResponse", () => {
       expect(store.rows).toEqual([]);
     });
 
+    it("gets the context an earlier plugin returned when a later plugin throws", async () => {
+      const seen: unknown[] = [];
+      const mock = schmock();
+      mock("GET /tagged", { ok: true })
+        .pipe({
+          name: "tagger",
+          process: (context, response) => ({
+            context: { ...context, tag: "A" },
+            response,
+          }),
+          afterResponse: (context) => {
+            seen.push(context.tag);
+          },
+        })
+        .pipe({
+          name: "thrower",
+          process: () => {
+            throw new Error("plugin failed");
+          },
+        });
+
+      const answer = await mock.handle("GET", "/tagged");
+
+      expect(answer.status).toBe(500);
+      expect(seen).toEqual(["A"]);
+    });
+
     it("commits through the fetch interceptor before the fetch resolves", async () => {
       const originalFetch = globalThis.fetch;
       globalThis.fetch = vi.fn().mockResolvedValue(new Response("network"));

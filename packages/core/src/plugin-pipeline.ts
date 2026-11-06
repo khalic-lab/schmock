@@ -53,6 +53,33 @@ function toPluginError(pluginName: string, error: Error): PluginError {
     : new PluginError(pluginName, error);
 }
 
+/** The context a pipeline had reached when a plugin failed without recovery. */
+const failedPipelineContexts = new WeakMap<object, Schmock.PluginContext>();
+
+/**
+ * The plugin context a failed `beforeRequest` or `process` pipeline had built
+ * up when the error escaped, so the 500 is delayed and settled with the route
+ * and context the earlier plugins returned. `undefined` for any other error.
+ */
+export function failedPipelineContext(
+  error: unknown,
+): Schmock.PluginContext | undefined {
+  return typeof error === "object" && error !== null
+    ? failedPipelineContexts.get(error)
+    : undefined;
+}
+
+/** {@link toPluginError}, remembering the context the pipeline reached. */
+function pipelineFailure(
+  pluginName: string,
+  error: Error,
+  context: Schmock.PluginContext,
+): PluginError {
+  const failure = toPluginError(pluginName, error);
+  failedPipelineContexts.set(failure, context);
+  return failure;
+}
+
 function preserveRequestSignal(
   context: Schmock.PluginContext,
   signal: AbortSignal | undefined,
@@ -166,7 +193,7 @@ export async function runPluginBeforeRequest(
           requestShortCircuited: true,
         };
       }
-      throw toPluginError(plugin.name, recovery.error);
+      throw pipelineFailure(plugin.name, recovery.error, currentContext);
     }
   }
 
@@ -277,7 +304,7 @@ export async function runPluginPipeline(
           recoveredFromError: true,
         };
       }
-      throw toPluginError(plugin.name, recovery.error);
+      throw pipelineFailure(plugin.name, recovery.error, currentContext);
     }
   }
 

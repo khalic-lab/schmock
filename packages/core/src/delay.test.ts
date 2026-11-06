@@ -347,6 +347,61 @@ describe("response delay functionality", () => {
     );
   });
 
+  it.each([
+    ["beforeRequest", "beforeRequest"],
+    ["process", "process"],
+  ] as const)(
+    "applies the delay of a route object a plugin's %s returned when a later plugin throws",
+    async (_label, hook) => {
+      const mock = schmock();
+      const replaceRoute = (context: Schmock.PluginContext) => ({
+        ...context,
+        route: { ...context.route, delay: 40 },
+      });
+      const replacer: Schmock.Plugin =
+        hook === "beforeRequest"
+          ? {
+              name: "route-replacer",
+              beforeRequest: (context) => ({ context: replaceRoute(context) }),
+              process: (context, response) => ({ context, response }),
+            }
+          : {
+              name: "route-replacer",
+              process: (context, response) => ({
+                context: replaceRoute(context),
+                response,
+              }),
+            };
+      const thrower: Schmock.Plugin =
+        hook === "beforeRequest"
+          ? {
+              name: "thrower",
+              beforeRequest: () => {
+                throw new Error("guard failed");
+              },
+              process: (context, response) => ({ context, response }),
+            }
+          : {
+              name: "thrower",
+              process: () => {
+                throw new Error("plugin failed");
+              },
+            };
+      mock("GET /slow", { ok: true }, { delay: 300 })
+        .pipe(replacer)
+        .pipe(thrower);
+
+      const { response: answer, delays } = await handleWithScheduledDelays(
+        mock,
+        "GET",
+        "/slow",
+      );
+
+      expect(answer.status).toBe(500);
+      expect(delays).toEqual([40]);
+    },
+  );
+
   describe("no delay configuration", () => {
     it("doesn't apply delay when not configured", async () => {
       const mock = schmock();
