@@ -43,12 +43,12 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "@amiceli/vitest-cucumber": "^7.0.0",
+    "@amiceli/vitest-cucumber": "^8.0.0",
     "@types/express": "^5.0.6",
     "@types/node": "^26.1.0",
     "express": "^5.2.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
+    "vitest": "^5.0.5"
   },
   "peerDependencies": {
     "@schmock/core": "^2.6.0",
