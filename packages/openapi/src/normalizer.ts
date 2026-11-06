@@ -1,6 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import { applyExampleValues, type ExampleValue } from "./example-values.js";
-import { isRecord, toJsonSchema } from "./utils.js";
+import { defineOwn, isRecord, toJsonSchema } from "./utils.js";
 
 /**
  * Where the parser records the explicit mapping key or implicit component name
@@ -479,7 +479,7 @@ function normalizeNode(
 
     for (const [propName, propSchema] of Object.entries(node.properties)) {
       if (!isRecord(propSchema)) {
-        props[propName] = propSchema;
+        defineOwn(props, propName, propSchema);
         continue;
       }
 
@@ -507,7 +507,7 @@ function normalizeNode(
         continue;
       }
 
-      props[propName] = normalizeNode(propSchema, pass);
+      defineOwn(props, propName, normalizeNode(propSchema, pass));
     }
     node.properties = props;
 
@@ -625,7 +625,11 @@ function normalizeNode(
   if (isRecord(node.patternProperties)) {
     const pp: Record<string, unknown> = {};
     for (const [pattern, schema] of Object.entries(node.patternProperties)) {
-      pp[pattern] = isRecord(schema) ? normalizeNode(schema, pass) : schema;
+      defineOwn(
+        pp,
+        pattern,
+        isRecord(schema) ? normalizeNode(schema, pass) : schema,
+      );
     }
     node.patternProperties = pp;
   }

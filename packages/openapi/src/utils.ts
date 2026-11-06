@@ -30,3 +30,21 @@ export function normalizeMediaType(value: string): string {
 export function toJsonSchema(node: Record<string, unknown>): JSONSchema7 {
   return Object.assign<JSONSchema7, Record<string, unknown>>({}, node);
 }
+
+/**
+ * Create an own, enumerable data property. Plain assignment runs the
+ * `__proto__` accessor instead when `key` is `"__proto__"` — and a spec, which
+ * is untrusted input, chooses the key.
+ */
+export function defineOwn(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}

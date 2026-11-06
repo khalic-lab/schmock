@@ -1618,6 +1618,74 @@ describe("normalizeSchema", () => {
     });
   });
 
+  describe("a property named __proto__", () => {
+    // JSON.parse makes `__proto__` an own key; an object literal would not.
+    const parsed = (text: string) => JSON.parse(text) as Record<string, any>;
+
+    it("stays an own property and leaves the prototype alone", () => {
+      const result = normalizeSchema(
+        parsed(
+          '{"type":"object","properties":{"__proto__":{"type":"string"},"name":{"type":"string"}},' +
+            '"patternProperties":{"__proto__":{"type":"number"}}}',
+        ),
+        "request",
+      );
+      const props = result.properties as Record<string, unknown>;
+      const patterns = result.patternProperties as Record<string, unknown>;
+
+      expect(Object.keys(props)).toEqual(["__proto__", "name"]);
+      expect(Object.getPrototypeOf(props)).toBe(Object.prototype);
+      expect(Object.keys(patterns)).toEqual(["__proto__"]);
+      expect(Object.getPrototypeOf(patterns)).toBe(Object.prototype);
+    });
+
+    it("keeps a boolean __proto__ property schema an own key", () => {
+      const result = normalizeSchema(
+        parsed(
+          '{"type":"object","properties":{"__proto__":true,"name":{"type":"string"}}}',
+        ),
+        "request",
+      );
+      const props = result.properties as Record<string, unknown>;
+
+      expect(Object.keys(props)).toEqual(["__proto__", "name"]);
+      expect(Object.getOwnPropertyDescriptor(props, "__proto__")?.value).toBe(
+        true,
+      );
+      expect(Object.getPrototypeOf(props)).toBe(Object.prototype);
+    });
+
+    it("keeps a validated request body compilable", async () => {
+      const mock = await mockFor(
+        parsed(
+          JSON.stringify(
+            specWith({
+              "/items": {
+                post: {
+                  requestBody: {
+                    required: true,
+                    content: json({
+                      type: "object",
+                      properties: { PROTO: { type: "string" }, name: {} },
+                      required: ["name"],
+                    }),
+                  },
+                  responses: { "201": { description: "ok" } },
+                },
+              },
+            }),
+          ).replace('"PROTO"', '"__proto__"'),
+        ),
+        { validateRequests: true },
+      );
+
+      const created = await mock.handle("POST", "/items", {
+        body: { name: "x" },
+      });
+      expect(created.status).toBe(201);
+    });
+  });
+
   describe("deep recursion", () => {
     it("normalizes nested properties → items → oneOf", () => {
       const result = normalizeSchema(

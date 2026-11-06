@@ -51,7 +51,7 @@ import {
   isStatusInRange,
 } from "./response-status.js";
 import { collectionStateKey, counterStateKey } from "./state-keys.js";
-import { isRecord, toJsonSchema } from "./utils.js";
+import { defineOwn, isRecord, toJsonSchema } from "./utils.js";
 
 /**
  * Wrap a generation failure in a structured, coded error.
@@ -429,24 +429,6 @@ async function generateDeclaredBody(
     );
     return undefined;
   }
-}
-
-/**
- * Create an own, enumerable data property. Plain assignment runs the
- * `__proto__` accessor instead when `key` is `"__proto__"` — and a spec, which
- * is untrusted input, chooses the key.
- */
-function defineOwn(
-  target: Record<string, unknown>,
-  key: string,
-  value: unknown,
-): void {
-  Object.defineProperty(target, key, {
-    value,
-    enumerable: true,
-    writable: true,
-    configurable: true,
-  });
 }
 
 /**
