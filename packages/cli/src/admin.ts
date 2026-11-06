@@ -146,11 +146,15 @@ function redactEntries(
   isSensitive: (name: string) => boolean,
 ): Record<string, unknown> {
   if (!isObjectLike(entries)) return {};
-  const redacted: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(entries)) {
-    redacted[name] = isSensitive(name) ? REDACTED : value;
-  }
-  return redacted;
+  // `Object.fromEntries` defines each key, so one named `__proto__` (which
+  // core records as an own entry) stays an entry instead of hitting the
+  // prototype setter and vanishing.
+  return Object.fromEntries(
+    Object.entries(entries).map(([name, value]) => [
+      name,
+      isSensitive(name) ? REDACTED : value,
+    ]),
+  );
 }
 
 /**

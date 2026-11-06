@@ -581,6 +581,37 @@ describe("admin history redaction", () => {
       },
     ]);
   });
+  it("keeps a query key and a header named __proto__ in the projection", async () => {
+    const mock = schmock();
+    mock("GET /pets", () => []);
+    await mock.handle("GET", "/pets", {
+      query: Object.fromEntries(new URLSearchParams("__proto__=value&limit=2")),
+      headers: Object.fromEntries([
+        ["__proto__", "h"],
+        ["x-a", "1"],
+      ]),
+    });
+
+    const response = answerAdminRequest({
+      req: { headers: { authorization: "Bearer t0k" } },
+      method: "GET",
+      path: "/schmock-admin/history",
+      mock,
+      adminToken: "t0k",
+    });
+
+    const records: Array<{ query: object; headers: object }> = JSON.parse(
+      String(response.body),
+    );
+    expect(Object.entries(records[0]?.query ?? {})).toEqual([
+      ["__proto__", "value"],
+      ["limit", "2"],
+    ]);
+    expect(Object.entries(records[0]?.headers ?? {})).toEqual([
+      ["__proto__", "h"],
+      ["x-a", "1"],
+    ]);
+  });
 });
 
 describe("CLI errors carry SchmockError codes", () => {
