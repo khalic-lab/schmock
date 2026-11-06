@@ -147,7 +147,9 @@ may itself contain other encoded characters: `:aé:b` on `x%C3%A0%C3%A9y` gives
 
 `getRoutes()` reports a route with parameters in its escaped spelling
 (`/jobs/:job\:cancel`) and a route without parameters as its literal path
-(`/jobs:batchGet`).
+(`/jobs:batchGet`). So `GET /files/\:latest` and `GET /files/:latest` are both
+listed as `/files/:latest`, told apart by `hasParams`. They are not
+duplicates: the first serves only `/files/:latest`, the second any segment.
 
 #### `.handle(method, path, options?)`
 

@@ -186,6 +186,28 @@ describe("route grammar review", () => {
       expect(route.path).toBe("/v1/jobs:batchGet");
     });
 
+    it.each([
+      ["static first", ["GET /files/\\:latest", "GET /files/:latest"]],
+      ["parameter first", ["GET /files/:latest", "GET /files/\\:latest"]],
+    ] as const)(
+      "keeps an escaped-colon static route apart from the parameter route spelled the same (%s)",
+      async (_label, keys) => {
+        const mock = schmock();
+        for (const key of keys) {
+          if (key.includes("\\")) mock(key, "literal");
+          else mock(key, ({ params }) => ({ latest: params.latest }));
+        }
+
+        expect(mock.getRoutes()).toHaveLength(2);
+        expect((await mock.handle("GET", "/files/:latest")).body).toBe(
+          "literal",
+        );
+        expect((await mock.handle("GET", "/files/abc")).body).toEqual({
+          latest: "abc",
+        });
+      },
+    );
+
     it("leaves a backslash that does not precede a colon alone", () => {
       const route = parseRouteKey("GET /a\\b/:id");
       expect(route.path).toBe("/a\\b/:id");

@@ -164,7 +164,12 @@ export class RouteTable {
     // requests, so the later one would be unreachable: it is a duplicate too.
     // Keyed lookups, not a scan of every route: comparing with each earlier
     // route made registering a large spec quadratic.
-    const pathKey = `${parsed.method} ${parsed.path}`;
+    // A static route is spelled as its literal path, so `GET /files/\:latest`
+    // and `GET /files/:latest` share a spelling but match different requests:
+    // the duplicate key says which kind of route it names.
+    const routeKey = `${parsed.method} ${parsed.path}`;
+    const hasParams = parsed.params.length > 0;
+    const pathKey = `${hasParams ? "param" : "static"} ${routeKey}`;
     const patternKey = `${parsed.method} ${parsed.pattern.source}`;
     const samePath = this.#duplicates.byPath.get(pathKey);
     const existing = this.#earlierRoute(
@@ -197,14 +202,14 @@ export class RouteTable {
     this.#duplicates.byPattern.set(patternKey, compiledRoute);
 
     // Store static routes (no params) in Map for O(1) lookup
-    if (parsed.params.length === 0) {
-      this.#staticRoutes.set(pathKey, compiledRoute);
+    if (!hasParams) {
+      this.#staticRoutes.set(routeKey, compiledRoute);
     }
 
     logger.log("route", `Route defined: ${route}`, {
       contentType: routeConfig.contentType,
       generatorType: typeof generator,
-      hasParams: parsed.params.length > 0,
+      hasParams,
     });
   }
 
