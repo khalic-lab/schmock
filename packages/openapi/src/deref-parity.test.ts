@@ -160,6 +160,47 @@ describe("internal dereference parity with swagger-parser", () => {
     );
   });
 
+  it("keeps a self-reference's own pointer when another $ref reaches it first", async () => {
+    // The response reaches `D` before `components` is crawled, so `D.items`
+    // is first met under the response's path. It still names its own
+    // location there, and ref-parser leaves it untouched.
+    await expectParity(
+      specWith(
+        {
+          D: { type: "array", items: { $ref: "#/components/schemas/D/items" } },
+        },
+        {
+          "/x": {
+            get: {
+              responses: {
+                "200": {
+                  description: "ok",
+                  content: {
+                    "application/json": {
+                      schema: { $ref: "#/components/schemas/D" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ),
+    );
+  });
+
+  it("rewrites a self-reference reached from another location to that location", async () => {
+    await expectParity(
+      specWith({
+        Self: { $ref: "#/components/schemas/Self" },
+        Alias: {
+          type: "object",
+          properties: { s: { $ref: "#/components/schemas/Self" } },
+        },
+      }),
+    );
+  });
+
   it("builds a real object cycle for an indirect self-reference", async () => {
     await expectParity(
       specWith({

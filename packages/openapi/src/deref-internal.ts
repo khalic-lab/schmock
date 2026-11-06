@@ -250,7 +250,9 @@ function rejoinedKey(
  * Walk one pointer to its target, following any `$ref` met on the way.
  *
  * A `$ref` naming its own location ends the walk and reports `circular`
- * rather than looping.
+ * rather than looping. `site` is the location of the `$ref` being resolved:
+ * when the target is a `$ref` back to `site` itself, ref-parser leaves it
+ * unfollowed and does not report it as circular, so neither does this.
  */
 function resolvePointer(
   document: unknown,
@@ -260,6 +262,7 @@ function resolvePointer(
     preflight: false,
     slashKeys: new WeakMap(),
   },
+  site?: string,
 ): Resolved {
   const tokens = parseTokens(refPath);
   let value: unknown = document;
@@ -287,7 +290,7 @@ function resolvePointer(
         circular = true;
         return moved;
       }
-      const next = resolvePointer(document, target, walk);
+      const next = resolvePointer(document, target, walk, path);
       if (isExtendedRef(value)) {
         // The siblings derive a new object, so the path does NOT move: only
         // the value changes.
@@ -352,7 +355,9 @@ function resolvePointer(
     throw missingToken(refPath, token);
   }
 
-  followRefs(tokens.length === 0);
+  if (!(isInternalRef(value) && value.$ref === site)) {
+    followRefs(tokens.length === 0);
+  }
   return {
     value: value === NULL_TARGET ? null : value,
     path,
@@ -370,9 +375,11 @@ function resolvePointer(
  *   `collectUnresolvedRefs` walks with a `WeakSet` for the same reason, so a
  *   dereferencer that cloned per ref-site rather than sharing one object would
  *   defeat both and recurse forever.
- * - A `$ref` naming its own location is LEFT in the document, rewritten to its
- *   path from the root. Inlining it would change what `normalizeSchema`, AJV
- *   and the faker generator have always been handed.
+ * - A `$ref` naming its own location is LEFT in the document. Reached through
+ *   a `$ref` from another location, it is rewritten to that location's path
+ *   from the root; reached at its own location, it keeps its pointer. Both
+ *   are ref-parser's behaviour. Inlining it would change what
+ *   `normalizeSchema`, AJV and the faker generator have always been handed.
  */
 export function dereferenceInternal<T>(document: T): T {
   /** Objects on the current crawl stack, which is how a cycle is recognised. */
@@ -386,7 +393,11 @@ export function dereferenceInternal<T>(document: T): T {
   const cache = new Map<string, Dereferenced>();
   const slashKeys = new WeakMap<object, number>();
 
-  const expandRef = (ref: RefObject, pathFromRoot: string): Dereferenced => {
+  const expandRef = (
+    ref: RefObject,
+    path: string,
+    pathFromRoot: string,
+  ): Dereferenced => {
     const refPath = ref.$ref;
     const cached = cache.get(refPath);
     if (cached !== undefined) {
@@ -408,11 +419,12 @@ export function dereferenceInternal<T>(document: T): T {
       };
     }
 
-    const pointer = resolvePointer(document, refPath, {
-      hops: 0,
-      preflight: false,
-      slashKeys,
-    });
+    const pointer = resolvePointer(
+      document,
+      refPath,
+      { hops: 0, preflight: false, slashKeys },
+      path,
+    );
     const directCircular = pointer.circular;
     const pointerValue = isWalkable(pointer.value) ? pointer.value : undefined;
     let circular =
@@ -452,7 +464,7 @@ export function dereferenceInternal<T>(document: T): T {
     processed.add(node);
 
     if (isInternalRef(node)) {
-      const dereferenced = expandRef(node, pathFromRoot);
+      const dereferenced = expandRef(node, path, pathFromRoot);
       result.value = dereferenced.value;
       result.circular = dereferenced.circular;
     } else {
@@ -463,6 +475,7 @@ export function dereferenceInternal<T>(document: T): T {
         if (isInternalRef(child)) {
           const dereferenced = expandRef(
             child,
+            joinPointer(path, [key]),
             joinPointer(pathFromRoot, [key]),
           );
           circular = dereferenced.circular;
