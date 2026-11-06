@@ -219,7 +219,9 @@ mount).
   receives the `SchmockError`.
 - If the client disconnects, pending adapter-hook awaits settle early and core
   plugins, delays, and route generators receive an aborted signal. Adapter
-  hooks do not receive the signal directly, and no response is written.
+  hooks do not receive the signal directly, and no response is written. A
+  client that left while earlier middleware was still running is noticed too:
+  the request starts aborted and the mock does not run.
 
 ## OpenAPI with Express
 

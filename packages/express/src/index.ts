@@ -365,6 +365,14 @@ export function toExpress(
     const observesResponseClose = typeof res.once === "function";
     if (observesRequestAbort) req.once("aborted", abortRequest);
     if (observesResponseClose) res.once("close", abortPrematureResponse);
+    // Both events fire once: a client that left while earlier middleware was
+    // still awaiting is already gone, so start aborted. `req.destroyed` is no
+    // evidence, since a fully consumed body destroys the request on a live
+    // socket.
+    if (req.aborted === true) abortRequest();
+    else if (res.destroyed === true || res.closed === true) {
+      abortPrematureResponse();
+    }
     // Admission acquisition and method sniffing run INSIDE the try: a mock
     // with a malformed request-admission hook, or a request without a usable
     // `method`, would otherwise reject the returned promise (unhandled in
@@ -442,6 +450,11 @@ export function toExpress(
       // pending hook work, while a premature close does. The `finally` below
       // still releases admission and unregisters the abort listeners.
       if (res.headersSent || res.writableEnded) return;
+
+      // A client already gone needs no mock call. `awaitWithAbort` rejects
+      // at once on an aborted signal without observing the promise it is
+      // given, so the mock's own abort rejection would go unhandled.
+      if (abortController.signal.aborted) return;
 
       // Handle request with Schmock
       let schmockResponse = await awaitWithAbort(

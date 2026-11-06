@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import type { Server } from "node:http";
+import { type AddressInfo, connect } from "node:net";
 import type { CallableMockInstance } from "@schmock/core";
 import { ROUTE_NOT_FOUND_CODE, SchmockError, schmock } from "@schmock/core";
 import type {
@@ -1153,6 +1155,106 @@ describe("toExpress", () => {
       ).resolves.toBeUndefined();
       expect(mock.handle).not.toHaveBeenCalled();
       expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["req.aborted", { aborted: true }, {}],
+      ["res.closed", {}, { closed: true }],
+      ["res.destroyed", {}, { destroyed: true }],
+    ])(
+      "starts aborted when %s is already set as the middleware runs",
+      async (_flag, requestState, responseState) => {
+        // The 'aborted' and 'close' events already fired upstream, so only
+        // the flags tell the middleware the client is gone.
+        const realMock = schmock();
+        const generator = vi.fn(() => ({ late: true }));
+        realMock("GET /slow", generator);
+        const req = Object.assign(createReq({ path: "/slow" }), requestState);
+        const res = Object.assign(createRes(), responseState);
+
+        await toExpress(realMock)(req, res, vi.fn() as NextFunction);
+
+        expect(generator).not.toHaveBeenCalled();
+        expect(res.end).not.toHaveBeenCalled();
+      },
+    );
+
+    it("does not call the mock for a client that is already gone", async () => {
+      // A mock called with an aborted signal rejects, and nothing would
+      // observe that rejection.
+      const mock = createMock(() =>
+        Promise.reject(new DOMException("aborted", "AbortError")),
+      );
+      const req = Object.assign(createReq(), { aborted: true });
+      const res = createRes();
+
+      await toExpress(mock)(req, res, vi.fn() as NextFunction);
+
+      expect(mock.handle).not.toHaveBeenCalled();
+      expect(res.end).not.toHaveBeenCalled();
+    });
+
+    it("runs the route when only req.destroyed is set", async () => {
+      // A fully consumed body destroys the request on a live socket.
+      const realMock = schmock();
+      realMock("GET /slow", { live: true });
+      const req = Object.assign(createReq({ path: "/slow" }), {
+        destroyed: true,
+      });
+      const res = createRes();
+
+      await toExpress(realMock)(req, res, vi.fn() as NextFunction);
+
+      expect(endedJson(res)).toEqual({ live: true });
+    });
+
+    it("starts aborted when the client disconnected during earlier middleware", async () => {
+      // Node emits 'aborted' and 'close' once; a client that leaves while an
+      // upstream middleware is still awaiting is gone before toExpress runs.
+      const realMock = schmock();
+      const generator = vi.fn(() => ({ late: true }));
+      realMock("GET /slow", generator);
+      const middleware = toExpress(realMock);
+      let announceArrival = () => {};
+      const arrived = new Promise<void>((resolve) => {
+        announceArrival = resolve;
+      });
+      let settled: Promise<void> | undefined;
+      let wrote = false;
+      const app = express();
+      app.use((_req, res, next) => {
+        res.once("close", () => next());
+        announceArrival();
+      });
+      app.use((req, res, next) => {
+        const end = res.end.bind(res);
+        res.end = ((...args: Parameters<typeof end>) => {
+          wrote = true;
+          return end(...args);
+        }) as typeof res.end;
+        settled = middleware(req, res, next) as Promise<void>;
+      });
+      const server = await new Promise<Server>((resolve) => {
+        const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
+      });
+      try {
+        const { port } = server.address() as AddressInfo;
+        const socket = connect(port, "127.0.0.1", () => {
+          socket.write("GET /slow HTTP/1.1\r\nHost: h\r\n\r\n");
+        });
+        socket.on("error", () => {});
+        await arrived;
+        socket.destroy();
+        await vi.waitFor(() => expect(settled).toBeDefined(), {
+          timeout: 2_000,
+        });
+        await settled;
+
+        expect(generator).not.toHaveBeenCalled();
+        expect(wrote).toBe(false);
+      } finally {
+        server.close();
+      }
     });
 
     it("settles without late work when the response closes prematurely", async () => {
