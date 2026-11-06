@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -483,4 +484,21 @@ test("check-release-candidate.sh runs the meta-only consumer", () => {
     stage,
     /^\s*TSC_BIN="\$ROOT_DIR\/node_modules\/\.bin\/tsc" node \.\/meta-consumer\.mjs$/m,
   );
+});
+
+// macOS still ships Bash 3.2 as /bin/bash, and the release scripts run under
+// whichever bash comes first on PATH. Before 4.4, `set -u` treats "${arr[@]}"
+// of an empty array as an unbound variable.
+const SYSTEM_BASH = "/bin/bash";
+
+test("check-release-candidate.sh runs under the system Bash", {
+  skip: !existsSync(SYSTEM_BASH) && `${SYSTEM_BASH} is absent`,
+}, () => {
+  const dryRun = spawnSync(
+    SYSTEM_BASH,
+    [RELEASE_CANDIDATE_SCRIPT, "--dry-run"],
+    { encoding: "utf8" },
+  );
+  assert.equal(dryRun.status, 0, dryRun.stderr);
+  assert.match(dryRun.stdout, /^Discovered \d+ release-candidate packages$/m);
 });

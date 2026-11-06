@@ -55,7 +55,10 @@ for manifest in "${MANIFESTS[@]}"; do
   package_name="$(read_manifest_field "$manifest" name)"
   package_version="$(read_manifest_field "$manifest" version)"
 
-  for existing_name in "${PACKAGE_NAMES[@]}"; do
+  # PACKAGE_NAMES starts empty. Bash before 4.4 (macOS /bin/bash is 3.2)
+  # treats "${arr[@]}" of an empty array as unbound under `set -u`, hence
+  # the ${arr[@]+...} guard here and below.
+  for existing_name in ${PACKAGE_NAMES[@]+"${PACKAGE_NAMES[@]}"}; do
     if [[ "$existing_name" == "$package_name" ]]; then
       echo "Duplicate workspace package name: $package_name" >&2
       exit 1
@@ -290,7 +293,7 @@ bun -e '
   "$FIXTURE_DIR/package.json" \
   "$CANDIDATES_FILE" \
   "$PACK_DIR" \
-  "${EXTRA_CONSUMER_DEPENDENCIES[@]}"
+  ${EXTRA_CONSUMER_DEPENDENCIES[@]+"${EXTRA_CONSUMER_DEPENDENCIES[@]}"}
 
 cp "$ROOT_DIR/scripts/release-candidate-consumer.js" "$FIXTURE_DIR/consumer.mjs"
 cp "$ROOT_DIR/scripts/release-candidate-types.js" "$FIXTURE_DIR/types-consumer.mjs"

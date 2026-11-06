@@ -190,8 +190,12 @@ esac`,
   );
 }
 
-function run(args: string[], extraEnv: Record<string, string> = {}): RunResult {
-  const result = spawnSync("bash", [SCRIPT, ...args], {
+function run(
+  args: string[],
+  extraEnv: Record<string, string> = {},
+  shell = "bash",
+): RunResult {
+  const result = spawnSync(shell, [SCRIPT, ...args], {
     cwd: fixtureRoot,
     encoding: "utf-8",
     env: {
@@ -412,6 +416,25 @@ describe("publish.sh", () => {
       `gh release create v2.2.3 --repo khalic-lab/schmock --target ${HEAD_SHA} --title v2.2.3 --notes Release v2.2.3 — all 12 @schmock/* packages.`,
     );
   });
+
+  // macOS still ships Bash 3.2 as /bin/bash. Before 4.4, `set -u` treats
+  // "${arr[@]}" of an empty array as unbound, and a resume run whose packages
+  // are all on npm leaves the publish queue empty.
+  it.skipIf(!existsSync("/bin/bash"))(
+    "finishes a resume run with nothing left to publish under the system Bash",
+    () => {
+      const result = run(
+        ["all", "--execute", "--confirm", `all@v2.2.3:${HEAD_SHA}`],
+        { SCHMOCK_TEST_PUBLISHED: PACKAGES.join(",") },
+        "/bin/bash",
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Plan complete: publish 0, skip 12.");
+      expect(commands()).not.toContain("npm publish ");
+      expect(commands()).toContain("git push origin main\n");
+      expect(commands()).toContain("gh release create v2.2.3");
+    },
+  );
 
   it("stops before any registry call when the dependency audit fails", () => {
     const result = run(

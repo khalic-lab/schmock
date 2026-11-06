@@ -529,7 +529,9 @@ echo "Plan complete: publish ${#PUBLISH_QUEUE[@]}, skip ${SKIPPED_COUNT}."
 echo ""
 echo "Publishing planned packages at ${VERSION}..."
 
-for pkg in "${PUBLISH_QUEUE[@]}"; do
+# The queue is empty when every package is already on npm. Bash before 4.4
+# treats "${arr[@]}" of an empty array as unbound under `set -u`.
+for pkg in ${PUBLISH_QUEUE[@]+"${PUBLISH_QUEUE[@]}"}; do
   publish_package "$pkg"
 done
 
