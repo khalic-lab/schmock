@@ -1185,6 +1185,29 @@ describe("loadDocument", () => {
       expect(loaded.discriminator[MARKER]).toEqual([["kitty"], ["doggo"]]);
     });
 
+    it("lists every mapping key naming a component-object branch in declaration order", async () => {
+      // `kitty` matches by bare name and `cat` by pointer, so they are found
+      // in different lookups; the marker still lists them as declared.
+      const cat = animal("meow");
+      const dog = animal("bark");
+      const spec = anyOfPetSpec(
+        {
+          anyOf: [cat, dog],
+          discriminator: {
+            propertyName: "petType",
+            mapping: {
+              kitty: "Cat",
+              dog: "#/components/schemas/Dog",
+              cat: "#/components/schemas/Cat",
+            },
+          },
+        },
+        { Cat: cat, Dog: dog },
+      );
+
+      expect(await markerOf(spec)).toEqual([["kitty", "cat"], ["dog"]]);
+    });
+
     it("names thousands of component-object branches in linear time", async () => {
       // Each branch used to filter the whole mapping, resolving every target
       // as a URL again: 2,000 branches took seconds.
