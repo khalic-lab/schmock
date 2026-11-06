@@ -1283,7 +1283,8 @@ function closeLoneNumericBound(
   } else if (
     upper !== undefined &&
     lower === undefined &&
-    upper <= -JSF_DEFAULT_NUMBER_BOUND
+    (upper <= -JSF_DEFAULT_NUMBER_BOUND ||
+      highestMultiple(normalized, upper) < -JSF_DEFAULT_NUMBER_BOUND)
   ) {
     const lowest = branches.reduce(
       (bound, branch) =>
@@ -1296,6 +1297,21 @@ function closeLoneNumericBound(
     );
     normalized.minimum = lowest - span;
   }
+}
+
+/**
+ * The largest multiple of `normalized`'s `multipleOf` within its upper bound
+ * `upper`; `Infinity` without a step. json-schema-faker's `multipleOf` path
+ * draws from [-1000, upper] and rounds up, so when this lies below -1000 it
+ * lands above the bound unless the node has a lower partner.
+ */
+function highestMultiple(normalized: JsfObjectSchema, upper: number): number {
+  const step = normalized.multipleOf;
+  if (typeof step !== "number" || !(step > 0)) return Number.POSITIVE_INFINITY;
+  const multiple = Math.floor(upper / step) * step;
+  return multiple === upper && normalized.exclusiveMaximum === upper
+    ? multiple - step
+    : multiple;
 }
 
 /**

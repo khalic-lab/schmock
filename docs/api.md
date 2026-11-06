@@ -1638,7 +1638,9 @@ register them the same way:
 - A lone `minimum`/`exclusiveMinimum` of 1000 or more, or a lone
   `maximum`/`exclusiveMaximum` of -1000 or less, generates in range, with or
   without `multipleOf`, and so does a `oneOf`/`anyOf` branch or `then`/`else`
-  with a tighter bound on the same side. Bounds that meet on one node, or
+  with a tighter bound on the same side. So does a lone upper bound above
+  -1000 whose `multipleOf` has no multiple between -1000 and the bound, as in
+  `{ maximum: -1, multipleOf: 1500 }`. Bounds that meet on one node, or
   through `allOf` (the node, its entries inline or behind a `$ref` or a chain
   of them at any depth, and the declarations of a property several of them declare, inline
   or by `$ref`), are reconciled: the tightest bound of each side applies,

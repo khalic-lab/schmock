@@ -430,6 +430,30 @@ describe("numeric bounds with multipleOf or both exclusivities (faker-8)", () =>
     }
   });
 
+  it("honours a lone maximum whose multiples all lie below the default range", async () => {
+    for (const [schema, below] of [
+      [
+        { type: "integer", maximum: -1, multipleOf: 1500 },
+        (v: number) => v <= -1,
+      ],
+      [
+        { type: "integer", exclusiveMaximum: 0, multipleOf: 2000 },
+        (v: number) => v < 0,
+      ],
+      [
+        { type: "integer", maximum: -995, multipleOf: 7 },
+        (v: number) => v <= -995,
+      ],
+    ] satisfies [JSONSchema7, (value: number) => boolean][]) {
+      for (const value of await numbersFrom(schema)) {
+        expect(below(value), `${value} under ${JSON.stringify(schema)}`).toBe(
+          true,
+        );
+        expect(isMultiple(value, Number(schema.multipleOf))).toBe(true);
+      }
+    }
+  });
+
   it("draws a lone minimum beside multipleOf from a range, not one constant", async () => {
     const values = await numbersFrom({
       type: "integer",
