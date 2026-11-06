@@ -68,11 +68,12 @@ function canonicalHost(entry: string): string {
  *
  * Checked here, before any request: `AbortSignal.timeout` throws on a value
  * outside `[0, 2^53 - 1]`, and it threw outside every diagnostic, so the
- * caller saw only ref-parser's bare `Error reading file`.
+ * caller saw only ref-parser's bare `Error reading file`. `NaN` makes every
+ * comparison against `redirects` or `maxBytes` false, which removed the limit.
  */
 function limitOption(
   value: number | undefined,
-  field: "timeoutMs",
+  field: "timeoutMs" | "redirects" | "maxBytes",
   fallback: number,
 ): number {
   if (value === undefined) return fallback;
@@ -100,8 +101,8 @@ export function resolveRefPolicy(policy?: RefPolicy): ResolvedRefPolicy {
     // a host the operator explicitly allowed. Compare like with like.
     allowedHosts: (policy?.allowedHosts ?? []).map(canonicalHost),
     timeoutMs: limitOption(policy?.timeoutMs, "timeoutMs", DEFAULT_TIMEOUT_MS),
-    redirects: policy?.redirects ?? DEFAULT_REDIRECTS,
-    maxBytes: policy?.maxBytes ?? DEFAULT_MAX_BYTES,
+    redirects: limitOption(policy?.redirects, "redirects", DEFAULT_REDIRECTS),
+    maxBytes: limitOption(policy?.maxBytes, "maxBytes", DEFAULT_MAX_BYTES),
   };
 }
 

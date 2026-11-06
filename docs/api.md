@@ -2150,7 +2150,7 @@ object (`OPENAPI_INVALID_SPEC`, context `{ spec: undefined }`):
 | `OPENAPI_INVALID_OPTION` | `seed` is not an object, or an entry is not an array, a file path or `{ count }` | `{ option: 'seed', resource? }` |
 | `OPENAPI_INVALID_OPTION` | while loading: a seed file that is not valid JSON or not a JSON array, a `{ count }` that is not a non-negative integer, or a `{ count }` for a resource with no schema | `{ option: 'seed', resource, file?, reason? }` |
 | `OPENAPI_INVALID_OPTION` | while loading: a seed path that is not a regular file (a directory, a FIFO or a device) | `{ option: 'seed', file }` |
-| `OPENAPI_INVALID_OPTION` | `refs.timeoutMs` is not a finite number of 0 or more | `{ option: 'refs', field }` |
+| `OPENAPI_INVALID_OPTION` | `refs.timeoutMs`, `refs.redirects` or `refs.maxBytes` is not a finite number of 0 or more | `{ option: 'refs', field }` |
 
 The loading failures are thrown after the key and shape checks. `file` is set
 for the seed-file cases. For a file that is not valid JSON, `reason` holds the

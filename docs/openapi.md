@@ -107,9 +107,10 @@ await openapi({
 | `redirects` | `0` | Redirects to follow (`0` refuses them) |
 | `maxBytes` | `1000000` | Maximum size of one fetched ref document, after decompression |
 
-`timeoutMs` must be a finite number of 0 or more. Any other value, such as
-`Infinity`, `-1` or `NaN`, fails at construction with `OPENAPI_INVALID_OPTION`
-and context `{ option: 'refs', field }`, before any request is sent.
+`timeoutMs`, `redirects` and `maxBytes` must each be a finite number of 0 or
+more. Any other value, such as `Infinity`, `-1` or `NaN`, fails at
+construction with `OPENAPI_INVALID_OPTION` and context
+`{ option: 'refs', field }`, before any request is sent.
 
 `timeoutMs`, `redirects` and `maxBytes` apply to one document at a time. One
 spec load reads at most 500 http documents, the spec URL included, so a host

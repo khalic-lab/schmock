@@ -1229,10 +1229,15 @@ declare namespace Schmock {
      *
      * Every hop is checked against `allowHttp` and `allowedHosts` before it
      * is followed. `0` refuses the first redirect; `n` follows up to `n` hops
-     * and refuses the next one.
+     * and refuses the next one. A value that is not a finite number of 0 or
+     * more throws `OPENAPI_INVALID_OPTION`.
      */
     redirects?: number;
-    /** Maximum size of a single http `$ref` document, in bytes. Default 1 MB. */
+    /**
+     * Maximum size of a single http `$ref` document, in bytes. Default 1 MB.
+     * A value that is not a finite number of 0 or more throws
+     * `OPENAPI_INVALID_OPTION`.
+     */
     maxBytes?: number;
   }
 

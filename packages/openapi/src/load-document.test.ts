@@ -298,6 +298,30 @@ describe("loadDocument", () => {
       });
     }
 
+    // NaN makes every `>`/`>=` against the limit false, so the size and
+    // redirect limits silently vanished.
+    for (const field of ["redirects", "maxBytes"] as const) {
+      for (const value of [Number.NaN, -1, Number.POSITIVE_INFINITY]) {
+        it(`refuses ${field} ${value} as an invalid option before any request`, async () => {
+          const fetchRef = stubTransport(SPEC_BODY);
+
+          const error = await failureOf(
+            loadDocument(SPEC_URL, {
+              refs: { external: true, allowHttp: true, [field]: value },
+              fetchRef,
+            }),
+          );
+
+          expect(codeOf(error)).toBe("OPENAPI_INVALID_OPTION");
+          expect((error as SchmockError).context).toEqual({
+            option: "refs",
+            field,
+          });
+          expect(fetchRef).not.toHaveBeenCalled();
+        });
+      }
+    }
+
     it("is held to maxBytes, and the error names the limit", async () => {
       const fetchRef = stubTransport(SPEC_BODY);
 
