@@ -1,6 +1,6 @@
 import type * as Schmock from "@schmock/core";
 import { getResponseParts, SchmockError } from "@schmock/core";
-import Ajv, { type ValidateFunction } from "ajv";
+import Ajv, { type SchemaValidateFunction, type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
 import { version as packageVersion } from "../package.json";
@@ -91,6 +91,42 @@ interface AjvOptions {
  */
 const MULTIPLE_OF_PRECISION = 6;
 
+/**
+ * The keyword a binary file slot carries in the multipart copy of
+ * `request.body`. Ajv applies `maxLength`/`minLength` to strings only, so a
+ * file part's byte size is held to them through this keyword instead.
+ */
+const FILE_LENGTH_KEYWORD = "schmockFileLength";
+
+interface FileLengthRules {
+  minLength?: number;
+  maxLength?: number;
+}
+
+const validateFileLength: SchemaValidateFunction = (
+  rules: FileLengthRules,
+  data: unknown,
+) => {
+  if (typeof Blob === "undefined" || !(data instanceof Blob)) return true;
+  const errors: NonNullable<SchemaValidateFunction["errors"]> = [];
+  if (rules.maxLength !== undefined && data.size > rules.maxLength) {
+    errors.push({
+      keyword: "maxLength",
+      params: { limit: rules.maxLength },
+      message: `must NOT have more than ${rules.maxLength} bytes`,
+    });
+  }
+  if (rules.minLength !== undefined && data.size < rules.minLength) {
+    errors.push({
+      keyword: "minLength",
+      params: { limit: rules.minLength },
+      message: `must NOT have fewer than ${rules.minLength} bytes`,
+    });
+  }
+  validateFileLength.errors = errors;
+  return errors.length === 0;
+};
+
 function createAjv(
   { coerceTypes, quiet = false }: AjvOptions = { coerceTypes: false },
 ): Ajv {
@@ -110,6 +146,13 @@ function createAjv(
   // Draft-07 Ajv defaults to strictSchema:true and would throw
   // "strict mode: unknown keyword" at compile time on any of them.
   ajv.addVocabulary(["faker", "schmockNullable", "schmockTrueProbability"]);
+  ajv.addKeyword({
+    keyword: FILE_LENGTH_KEYWORD,
+    type: "object",
+    schemaType: "object",
+    errors: true,
+    validate: validateFileLength,
+  });
   addFormats(ajv);
   return ajv;
 }
@@ -764,6 +807,7 @@ function formRecord(body: unknown): Record<string, unknown> | undefined {
  * idiom `type: 'string', format: 'binary'` would reject as "must be string".
  * The form validator's own copy of the schema drops that type and format, so
  * a file or a text value satisfies the slot while its other rules still apply.
+ * Its `maxLength`/`minLength` also bound a file part's byte size.
  */
 function acceptFileParts(schema: JSONSchema7): JSONSchema7 {
   const visited = new WeakSet<object>();
@@ -773,15 +817,24 @@ function acceptFileParts(schema: JSONSchema7): JSONSchema7 {
     if (!current || visited.has(current)) continue;
     visited.add(current);
     if (current.format === "binary") {
+      let accepted = false;
       if (current.type === "string") {
         delete current.type;
-        delete current.format;
+        accepted = true;
       } else if (
         Array.isArray(current.type) &&
         current.type.includes("string")
       ) {
         if (!current.type.includes("object")) current.type.push("object");
+        accepted = true;
+      }
+      if (accepted) {
         delete current.format;
+        const { minLength, maxLength } = current;
+        if (minLength !== undefined || maxLength !== undefined) {
+          const rules: FileLengthRules = { minLength, maxLength };
+          Reflect.set(current, FILE_LENGTH_KEYWORD, rules);
+        }
       }
     }
     pending.push(...childSchemas(current));

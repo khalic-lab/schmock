@@ -1799,7 +1799,9 @@ types under the same rules as query and header values, described next, and
 holds each value of a repeated name to them too: `age=42` satisfies
 `type: 'integer'`. A file part satisfies OpenAPI's upload
 idiom `type: 'string', format: 'binary'`, alone or as `items` of an array, as
-well as `type: 'object'` and `{}`. The coercion happens on a copy, so the
+well as `type: 'object'` and `{}`. On such a binary slot, `maxLength` and
+`minLength` bound a file part's size in bytes (as `@schmock/openapi` does),
+while `pattern` applies only to a text value. The coercion happens on a copy, so the
 route still receives the original `FormData`.
 
 Query and header values always arrive as strings, so their schemas coerce

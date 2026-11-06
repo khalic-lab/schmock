@@ -812,6 +812,100 @@ describe("validationPlugin multipart bodies", () => {
     expect(viaRef.response).toBeUndefined();
   });
 
+  it("bounds a binary file part's byte size by maxLength and minLength", async () => {
+    const schema = {
+      type: "object" as const,
+      properties: {
+        f: {
+          type: "string" as const,
+          format: "binary",
+          minLength: 2,
+          maxLength: 10,
+        },
+        files: {
+          type: "array" as const,
+          items: { type: "string" as const, format: "binary", maxLength: 10 },
+        },
+      },
+    };
+    const tooLarge = await validateForm(
+      schema,
+      form([["f", new File(["x".repeat(50)], "a.bin")]]),
+    );
+    const tooSmall = await validateForm(
+      schema,
+      form([["f", new File(["x"], "a.bin")]]),
+    );
+    const oneOfManyTooLarge = await validateForm(
+      schema,
+      form([
+        ["files", new Blob(["ok"])],
+        ["files", new Blob(["x".repeat(11)])],
+      ]),
+    );
+    const fits = await validateForm(
+      schema,
+      form([["f", new File(["x".repeat(10)], "a.bin")]]),
+    );
+    const longText = await validateForm(schema, form([["f", "x".repeat(50)]]));
+
+    expect(tooLarge.response).toMatchObject({
+      status: 400,
+      body: { details: [{ instancePath: "/f", keyword: "maxLength" }] },
+    });
+    expect(tooSmall.response).toMatchObject({
+      status: 400,
+      body: { details: [{ instancePath: "/f", keyword: "minLength" }] },
+    });
+    expect(oneOfManyTooLarge.response).toMatchObject({
+      status: 400,
+      body: { details: [{ instancePath: "/files/1", keyword: "maxLength" }] },
+    });
+    expect(fits.response).toBeUndefined();
+    expect(longText.response).toMatchObject({
+      status: 400,
+      body: { details: [{ instancePath: "/f", keyword: "maxLength" }] },
+    });
+  });
+
+  it("accepts and bounds a file part in a union-typed binary slot", async () => {
+    const schema = {
+      type: "object" as const,
+      properties: {
+        f: {
+          type: ["string" as const, "null" as const],
+          format: "binary",
+          minLength: 2,
+          maxLength: 10,
+        },
+      },
+    };
+    const fits = await validateForm(
+      schema,
+      form([["f", new File(["x".repeat(10)], "a.bin")]]),
+    );
+    const tooLarge = await validateForm(
+      schema,
+      form([["f", new File(["x".repeat(11)], "a.bin")]]),
+    );
+    const tooSmall = await validateForm(
+      schema,
+      form([["f", new File(["x"], "a.bin")]]),
+    );
+    const text = await validateForm(schema, form([["f", "some text"]]));
+
+    expect(fits.response).toBeUndefined();
+    expect(text.response).toBeUndefined();
+    expect(tooLarge.response).toMatchObject({
+      status: 400,
+      body: { details: [{ instancePath: "/f", keyword: "maxLength" }] },
+    });
+    expect(tooSmall.response).toMatchObject({
+      status: 400,
+      body: { details: [{ instancePath: "/f", keyword: "minLength" }] },
+    });
+  });
+
   it("still requires a binary file part to be present", async () => {
     const result = await validateForm(
       {
