@@ -1531,6 +1531,103 @@ describe("mock.intercept()", () => {
     }
   });
 
+  describe("an async errorFormatter", () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    beforeEach(() => {
+      unhandled.length = 0;
+      process.on("unhandledRejection", onUnhandled);
+    });
+    afterEach(() => {
+      process.off("unhandledRejection", onUnhandled);
+    });
+    const settleUnhandled = () =>
+      new Promise((resolve) => setTimeout(resolve, 20));
+
+    it("is awaited on a route's throw", async () => {
+      mock("GET /api/boom", () => {
+        throw new Error("route boom");
+      });
+      const handle = mock.intercept({
+        passthrough: false,
+        errorFormatter: async (error) => ({ message: error.message }),
+      });
+
+      try {
+        const response = await fetch("http://localhost/api/boom");
+        expect(response.status).toBe(500);
+        expect(await response.json()).toEqual({ message: "route boom" });
+      } finally {
+        handle.restore();
+      }
+    });
+
+    it("is awaited on a hook's throw", async () => {
+      mock("GET /api/users", [{ id: 1 }]);
+      const handle = mock.intercept({
+        beforeRequest: () => {
+          throw new Error("hook boom");
+        },
+        errorFormatter: async (error) => ({ message: error.message }),
+      });
+
+      try {
+        const response = await fetch("http://localhost/api/users");
+        expect(response.status).toBe(500);
+        expect(await response.json()).toEqual({ message: "hook boom" });
+      } finally {
+        handle.restore();
+      }
+    });
+
+    it("falls back to INTERNAL_ERROR when it rejects on a route's throw", async () => {
+      mock("GET /api/boom", () => {
+        throw new Error("route boom");
+      });
+      const errorFormatter = vi.fn(async () => {
+        throw new Error("formatter rejects");
+      });
+      const handle = mock.intercept({ passthrough: false, errorFormatter });
+
+      try {
+        const response = await fetch("http://localhost/api/boom");
+        expect(response.status).toBe(500);
+        expect(await response.json()).toEqual({
+          error: "Internal Server Error",
+          code: "INTERNAL_ERROR",
+        });
+        expect(errorFormatter).toHaveBeenCalledTimes(1);
+        await settleUnhandled();
+        expect(unhandled).toEqual([]);
+      } finally {
+        handle.restore();
+      }
+    });
+
+    it("rejects the fetch, as a throwing one does, when it rejects on a hook's throw", async () => {
+      mock("GET /api/users", [{ id: 1 }]);
+      const formatterError = new Error("formatter rejects");
+      const handle = mock.intercept({
+        beforeRequest: () => {
+          throw new Error("hook boom");
+        },
+        errorFormatter: async () => {
+          throw formatterError;
+        },
+      });
+
+      try {
+        await expect(fetch("http://localhost/api/users")).rejects.toBe(
+          formatterError,
+        );
+        await settleUnhandled();
+        expect(unhandled).toEqual([]);
+      } finally {
+        handle.restore();
+      }
+    });
+  });
+
   it("falls back without re-invoking a formatter whose body is unserializable", async () => {
     mock("GET /api/boom", () => {
       throw new Error("kaboom");

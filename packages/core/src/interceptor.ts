@@ -10,6 +10,7 @@ import {
   parsePathPrefix,
 } from "./constants.js";
 import { toError } from "./errors.js";
+import { isThenable } from "./plugin-hooks.js";
 import {
   decodeFormBody,
   HttpIngressError,
@@ -737,6 +738,23 @@ function formattedErrorResponse(input: {
   );
 }
 
+/**
+ * Run an errorFormatter, awaiting a promise it returns, and hand back a
+ * formatter for {@link buildFormattedErrorResponse} that replays the outcome:
+ * the settled value, or the throw or rejection, so the builder falls back as
+ * it does for a synchronous throw. Never rejects, and the hook runs once.
+ */
+async function settleFormatter(run: () => unknown): Promise<() => unknown> {
+  try {
+    const value = await run();
+    return () => value;
+  } catch (failure) {
+    return () => {
+      throw failure;
+    };
+  }
+}
+
 /** Fetch reports the request URL without its fragment. */
 function responseUrlOf(url: URL): string {
   const responseUrl = new URL(url.href);
@@ -990,8 +1008,13 @@ export function createFetchLease(
         // a 200 is honoured instead of being forced back to a formatted 500.
         if (errorFormatter && internalError && response.status === 500) {
           const seenRequest = adapterRequest;
+          const formatter = await awaitWithAbort(
+            settleFormatter(() => errorFormatter(internalError, seenRequest)),
+            request.signal,
+          );
+          throwIfAborted(request.signal);
           return formattedErrorResponse({
-            formatter: (error) => errorFormatter(error, seenRequest),
+            formatter,
             error: internalError,
             responseHeaders: response.headers,
             context,
@@ -1016,13 +1039,14 @@ export function createFetchLease(
         // any other and goes to errorFormatter, as in Express and Angular.
         throwIfAborted(request.signal);
         if (errorFormatter) {
-          // A formatter that throws here propagates and rejects the fetch; a
-          // body it returns that cannot be serialized falls back to the same
-          // INTERNAL_ERROR body the core-marked path uses.
+          // A formatter that throws here, or returns a promise that rejects,
+          // propagates and rejects the fetch; a body it returns that cannot be
+          // serialized falls back to the same INTERNAL_ERROR body the
+          // core-marked path uses.
           // Described as a route's throw is, with the thrown value as cause.
           const failure = toError(error);
           // No request was built when the body itself could not be read.
-          const formatted = errorFormatter(
+          let formatted: unknown = errorFormatter(
             failure,
             formatterRequest ?? {
               method: request.method,
@@ -1031,9 +1055,13 @@ export function createFetchLease(
               query: extractQuery(url),
             },
           );
+          if (isThenable(formatted)) {
+            formatted = await awaitWithAbort(formatted, request.signal);
+          }
           throwIfAborted(request.signal);
+          const settled = formatted;
           return formattedErrorResponse({
-            formatter: () => formatted,
+            formatter: () => settled,
             error: failure,
             context,
           });

@@ -769,6 +769,8 @@ declare namespace Schmock {
      * theirs: the request as routed, after `beforeRequest` once that hook has
      * returned. When the request body itself could not be read, it is the
      * incoming request without a body.
+     *
+     * A promise it returns is awaited, and a rejection counts as a throw.
      */
     errorFormatter?: (error: Error, request: AdapterRequest) => unknown;
   }

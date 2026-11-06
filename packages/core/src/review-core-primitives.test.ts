@@ -974,6 +974,29 @@ describe("buildFormattedErrorResponse", () => {
     expect(unserializable).toEqual(minimal);
   });
 
+  it("falls back without an unhandled rejection when the formatter returns a rejecting promise", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const response = buildFormattedErrorResponse({
+        formatter: async () => {
+          throw new Error("formatter rejects");
+        },
+        error,
+        method: "GET",
+      });
+      expect(response.body).toEqual({
+        error: "Internal Server Error",
+        code: "INTERNAL_ERROR",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("drops the body for HEAD", () => {
     const response = buildFormattedErrorResponse({
       formatter: () => ({ formatted: true }),

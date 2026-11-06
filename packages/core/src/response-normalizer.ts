@@ -1,6 +1,7 @@
 import { isBinaryBody } from "./binary.js";
 import { errorMessage, InvalidResponseError } from "./errors.js";
 import { hasHeader } from "./headers.js";
+import { isThenable } from "./plugin-hooks.js";
 
 const BODY_FORBIDDEN_STATUSES = new Set([204, 205, 304]);
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
@@ -551,6 +552,11 @@ export function buildFormattedErrorResponse(
     formatted = formatter(error);
   } catch {
     return internalErrorResponse(method);
+  }
+  // A promise cannot be sent and is answered with the fallback below. Its
+  // rejection is observed here, so it never surfaces as an unhandled one.
+  if (isThenable(formatted)) {
+    Promise.resolve(formatted).catch(() => {});
   }
   try {
     return normalizeResponse(

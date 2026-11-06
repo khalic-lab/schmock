@@ -391,6 +391,9 @@ failure there still rejects or goes to `errorFormatter`.
 `AdapterRequest` after `beforeRequest` once that hook has returned, the
 pre-hook request when the hook threw, and the incoming request without a body
 when the body itself could not be read. One-argument formatters still work.
+The formatter may be `async`: the interceptor awaits the promise it returns
+and sends the value it resolves to. A rejection is treated like a throw from a
+synchronous formatter.
 
 `error` is always an `Error` with a string `message`. A value that is not one,
 thrown by a route, a plugin or an adapter hook, arrives wrapped the same way
@@ -1122,6 +1125,9 @@ cannot be sent (a non-string value, a control character, a case-duplicate
 name), it keeps the formatted body and sends only the JSON content type. When
 the formatter throws or its result cannot be serialized, it sends
 `{ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }`. It never throws.
+It is synchronous, so a promise the formatter returns cannot be sent and gets
+that fallback too; its rejection is caught rather than left unhandled. Await an
+`async` formatter first and pass a formatter that returns the settled value.
 
 ```typescript
 import { buildFormattedErrorResponse } from '@schmock/core'
