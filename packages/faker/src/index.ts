@@ -106,8 +106,12 @@ export function fakerPlugin(options: FakerPluginOptions): Schmock.Plugin {
     version: packageVersion,
 
     async process(context: Schmock.PluginContext, response?: unknown) {
-      // If response already exists, pass it through
-      if (response !== undefined && response !== null) {
+      // Pass through a response that already exists, and any response a
+      // beforeRequest hook returned, an empty one included.
+      if (
+        (response !== undefined && response !== null) ||
+        context.requestShortCircuited === true
+      ) {
         return { context, response };
       }
 

@@ -627,5 +627,33 @@ describe("Schema Generator Integration Tests", () => {
       expect(response.body.userName).toBe("Test User");
       expect(response.body.theme).toBe("dark");
     });
+
+    it("keeps the empty response a beforeRequest guard returns", async () => {
+      const guard: Schmock.Plugin = {
+        name: "guard",
+        beforeRequest(context) {
+          return { context, response: null };
+        },
+        process(context, incoming) {
+          return { context, response: incoming };
+        },
+      };
+      const mock = schmock();
+      mock.pipe(guard).pipe(
+        fakerPlugin({
+          schema: {
+            type: "object",
+            properties: { a: { type: "string" } },
+            required: ["a"],
+          },
+        }),
+      );
+      mock("GET /x", () => ({ real: 1 }));
+
+      const response = await mock.handle("GET", "/x");
+
+      expect(response.status).toBe(204);
+      expect(response.body).toBeUndefined();
+    });
   });
 });
