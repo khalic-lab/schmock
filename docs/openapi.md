@@ -205,8 +205,9 @@ not in the browser build.
   resolved and the ref policy does not check it. Literal data is an `example`
   or `default` value, a JSON Schema `examples` array, the `value` of an OAS 3
   Example Object, Swagger 2 response `examples`, and any `x-*` vendor extension
-  (for example Redocly's `x-codeSamples`). An `examples` entry that is itself a
-  Reference Object still resolves.
+  (for example Redocly's `x-codeSamples`). That holds in every document a
+  split spec references, not only the root. An `examples` entry that is itself
+  a Reference Object still resolves.
 - **OpenAPI 3.1 and later combine siblings with the target.** A `$ref` next to
   schema constraints (`properties`, `required`, `items`, `type`, `allOf`,
   `minimum` and the like) is combined with its target as an `allOf`, as JSON

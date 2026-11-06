@@ -103,9 +103,14 @@ export interface LiteralRefs {
  * schema it named. Hiding rather than skipping keeps every resolver, the
  * policy pre-scan and the residual scan in agreement without each needing the
  * same exclusion rule.
+ *
+ * `swagger2` says which version's `examples` rules apply; a document another
+ * one references carries no version of its own, so it takes the root's.
  */
-export function hideLiteralRefs(document: object): LiteralRefs {
-  const swagger2 = "swagger" in document;
+export function hideLiteralRefs(
+  document: object,
+  swagger2: boolean = "swagger" in document,
+): LiteralRefs {
   const hidden: Array<Record<string, unknown>> = [];
   const visited = new WeakSet<object>();
 

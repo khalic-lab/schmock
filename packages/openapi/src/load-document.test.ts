@@ -716,6 +716,68 @@ describe("loadDocument", () => {
     });
   });
 
+  describe("literal data in another document", () => {
+    let dir: string;
+
+    beforeAll(() => {
+      dir = mkdtempSync(join(tmpdir(), "schmock-literal-"));
+      const literal = { doc: { $ref: "#/definitions/Whatever" } };
+      writeFileSync(
+        join(dir, "openapi.json"),
+        JSON.stringify({
+          openapi: "3.0.3",
+          info: { title: "Split", version: "1.0.0" },
+          paths: { "/pets": { $ref: "./pets.json#/PetsPath" } },
+        }),
+      );
+      writeFileSync(
+        join(dir, "pets.json"),
+        JSON.stringify({
+          PetsPath: {
+            get: {
+              "x-codeSamples": [
+                { lang: "js", source: { $ref: "./missing-sample.js" } },
+              ],
+              responses: {
+                "200": {
+                  description: "ok",
+                  content: {
+                    "application/json": {
+                      schema: { type: "object", default: literal },
+                      example: literal,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        }),
+      );
+    });
+
+    afterAll(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("keeps a $ref-shaped example, default and x-* value as data", async () => {
+      const api = (await loadDocument(join(dir, "openapi.json"), {
+        refs: { external: true },
+      })) as unknown as { paths: Record<string, any> };
+
+      const get = api.paths["/pets"].get;
+      const media = get.responses["200"].content["application/json"];
+      expect(media.example).toEqual({
+        doc: { $ref: "#/definitions/Whatever" },
+      });
+      expect(media.schema.default).toEqual({
+        doc: { $ref: "#/definitions/Whatever" },
+      });
+      expect(get["x-codeSamples"][0].source).toEqual({
+        $ref: "./missing-sample.js",
+      });
+    });
+  });
+
   describe("pointer length", () => {
     it("refuses a pointer of more than 64 tokens before either resolver runs", async () => {
       // ref-parser re-joins slash-split keys by trying every run of tokens

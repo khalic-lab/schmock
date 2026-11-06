@@ -15,7 +15,11 @@ import {
   resolveRefPolicy,
 } from "./ref-policy.js";
 import { createResolver, type SpecResolver } from "./resolver.js";
-import { combineRefSiblings, hideLiteralRefs } from "./spec-refs.js";
+import {
+  combineRefSiblings,
+  hideLiteralRefs,
+  type LiteralRefs,
+} from "./spec-refs.js";
 import { isRecord } from "./utils.js";
 
 /*
@@ -187,6 +191,10 @@ export async function loadDocument(
   combineRefSiblings(raw);
   assertInternalRefs(raw);
 
+  // Every other document is hidden as resolution reads it, before ref-parser
+  // follows anything in it, and takes the root's version.
+  const nestedLiteralRefs: LiteralRefs[] = [];
+  const swagger2 = "swagger" in raw;
   const api = await dereferenceDocument({
     resolver,
     baseUrl,
@@ -195,6 +203,9 @@ export async function loadDocument(
     strict,
     source,
     diagnostics: refDiagnostics,
+    onDocument: (document) => {
+      nestedLiteralRefs.push(hideLiteralRefs(document, swagger2));
+    },
     policy,
   });
   // `assertInternalRefs` keeps the root document's pointers on keys the
@@ -217,6 +228,7 @@ export async function loadDocument(
   // Dereferencing mutates in place, so the hidden objects are still the ones
   // in `api` — a merged `$ref` target shares them by identity.
   literalRefs.restore();
+  for (const nested of nestedLiteralRefs) nested.restore();
   return api;
 }
 
@@ -652,6 +664,7 @@ interface DereferenceDocumentArgs {
   strict: boolean;
   source: string | object;
   diagnostics: Map<string, string>;
+  onDocument: (document: object) => void;
   policy: ReturnType<typeof resolveRefPolicy>;
 }
 
@@ -676,6 +689,7 @@ async function dereferenceDocument({
   strict,
   source,
   diagnostics,
+  onDocument,
   policy,
 }: DereferenceDocumentArgs): Promise<OpenAPI.Document> {
   // Ref-free object sources keep their fast path: no resolver, no clone, no
@@ -690,6 +704,7 @@ async function dereferenceDocument({
       baseUrl,
       options: refOptions,
       strict,
+      onDocument,
     });
   } catch (rawError) {
     // A browser build refusing a Node-only option is answering the caller's

@@ -45,6 +45,12 @@ export interface DereferenceRequest {
   options: RefParserOptions;
   /** Validate the document against the OpenAPI schema and specification. */
   strict: boolean;
+  /**
+   * Called with every other document resolution reads, once it is parsed and
+   * before any `$ref` in it is followed, so literal data in it can be hidden
+   * the way `loadDocument` hides it in the root.
+   */
+  onDocument?: (document: object) => void;
 }
 
 export interface SpecResolver {
@@ -255,10 +261,18 @@ function localFileBlocked(url: string): SchmockError {
  * Throwing, rather than returning false, gives a coded error: ref-parser calls
  * `canRead` outside the resolver loop, so the error propagates as thrown.
  */
-function fileResolverGuard(parser: SwaggerParser, httpEnabled: boolean) {
+function fileResolverGuard(
+  parser: SwaggerParser,
+  httpEnabled: boolean,
+  onDocument: ((document: object) => void) | undefined,
+) {
   const targetsByDocument = new WeakMap<object, Set<string>>();
   return {
     canRead: (file: { url: string }): boolean => {
+      // ref-parser asks every resolver, so this sees http reads as well.
+      if (onDocument !== undefined) {
+        announceOnArrival(parser.$refs, file.url, onDocument);
+      }
       if (!isLocalLocation(file.url)) return false;
       if (!httpEnabled) return true;
 
@@ -278,15 +292,51 @@ function fileResolverGuard(parser: SwaggerParser, httpEnabled: boolean) {
   };
 }
 
+/**
+ * Hand the document about to be read from `url` to `onDocument` the moment
+ * ref-parser stores it, before it crawls it for `$ref`s to follow.
+ *
+ * ref-parser registers a document in its `$refs` registry before reading it
+ * and assigns the parsed value to that entry right after, then crawls that
+ * value. Its plugin interface offers no hook between parsing and crawling, so
+ * the entry's `value` becomes an accessor. Like {@link liveDocuments}, an
+ * entry of a shape this code does not recognise is left alone.
+ */
+function announceOnArrival(
+  refs: unknown,
+  url: string,
+  onDocument: (document: object) => void,
+): void {
+  if (!isRecord(refs) || !isRecord(refs._$refs)) return;
+  const entry = refs._$refs[url];
+  if (!isRecord(entry) || Object.hasOwn(entry, "value")) return;
+  let value: unknown;
+  Object.defineProperty(entry, "value", {
+    configurable: true,
+    enumerable: true,
+    get: () => value,
+    set: (next: unknown) => {
+      if (typeof next === "object" && next !== null && !(next instanceof Error))
+        onDocument(next);
+      value = next;
+    },
+  });
+}
+
 function withLocalFiles(
   parser: SwaggerParser,
   options: RefParserOptions,
+  onDocument?: (document: object) => void,
 ): SwaggerParser.Options {
   return {
     ...options,
     resolve: {
       ...options.resolve,
-      file: fileResolverGuard(parser, typeof options.resolve.http === "object"),
+      file: fileResolverGuard(
+        parser,
+        typeof options.resolve.http === "object",
+        onDocument,
+      ),
     },
   };
 }
@@ -385,12 +435,12 @@ export function createResolver(): SpecResolver {
       }
     },
 
-    dereference: async ({ document, baseUrl, options, strict }) => {
+    dereference: async ({ document, baseUrl, options, strict, onDocument }) => {
       // `validate()` dereferences first and only then runs the validators,
       // which are disabled unless strict. The 3-argument form is what retains
       // the source URI.
       const derefOptions: SwaggerParser.Options = {
-        ...withLocalFiles(parser, options),
+        ...withLocalFiles(parser, options, onDocument),
         dereference: {
           onDereference: siblingsWin(parser, extendedRefsByParent(document)),
         },
