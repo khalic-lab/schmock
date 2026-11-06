@@ -157,8 +157,10 @@ export async function parseSpec(
   // Built once and handed to every extractor: the dialect decides where each
   // one looks, and Swagger 2.0's root media types are inherited per operation.
   const rootDocument: Record<string, unknown> = isRecord(api) ? api : {};
+  // A `swagger` key marks Swagger 2.0 whatever its value: unquoted YAML
+  // `swagger: 2.0` arrives as the number 2, and is still not OpenAPI 3.
   const dialect: ParseContext["dialect"] =
-    "swagger" in api && typeof api.swagger === "string" ? "swagger2" : "oas3";
+    "swagger" in api ? "swagger2" : "oas3";
   const ctx: ParseContext = {
     dialect,
     normalize: createSchemaNormalizer(),

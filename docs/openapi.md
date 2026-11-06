@@ -312,7 +312,9 @@ opt-in because it is both stricter and measurably slower on large specs.
 
 Swagger 2.0 and OpenAPI 3.0.x/3.1.x are supported. Without `strict`, an object
 spec with another version (for example `openapi: 3.2.0`) loads the same way
-with or without `$ref`s and on both builds. With `strict: true`, any other
+with or without `$ref`s and on both builds; a `swagger` field marks Swagger 2.0
+whatever its value, so an unquoted YAML `swagger: 2.0`, which a YAML loader
+reads as the number 2, still loads as Swagger 2.0. With `strict: true`, any other
 version fails with `OPENAPI_INVALID_SPEC`. A spec **file** with an unsupported
 version fails with `OPENAPI_INVALID_SPEC` in either mode, because swagger-parser
 refuses to read it; pass such a spec as an object instead.

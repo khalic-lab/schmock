@@ -87,6 +87,39 @@ describe("parseSpec", () => {
       );
       expect(getPet).toBeDefined();
     });
+
+    it("reads a numeric `swagger: 2` (unquoted YAML 2.0) as Swagger 2.0", async () => {
+      const spec = await parseSpec({
+        swagger: 2,
+        info: { title: "t", version: "1" },
+        securityDefinitions: {
+          k: { type: "apiKey", name: "X", in: "header" },
+        },
+        paths: {
+          "/p": {
+            post: {
+              parameters: [
+                { name: "q", in: "query", type: "integer" },
+                {
+                  name: "b",
+                  in: "body",
+                  schema: { type: "object", properties: { a: {} } },
+                },
+              ],
+              responses: {
+                "200": { description: "ok", schema: { type: "integer" } },
+              },
+            },
+          },
+        },
+      });
+      const [post] = spec.paths;
+
+      expect(post.requestBody?.type).toBe("object");
+      expect(post.parameters[0].schema).toEqual({ type: "integer" });
+      expect(spec.securitySchemes?.has("k")).toBe(true);
+      expect(post.responses.get(200)?.schema).toEqual({ type: "integer" });
+    });
   });
 
   describe("OpenAPI 3.0", () => {
