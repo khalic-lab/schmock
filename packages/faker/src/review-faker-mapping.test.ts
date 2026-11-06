@@ -164,6 +164,38 @@ describe("#70 native nullable unions roll null at ~5%", () => {
     }
   });
 
+  it("never rolls null when the union's own type, enum or const rejects it", async () => {
+    const items = await sampleObjects(
+      {
+        typed: {
+          type: "string",
+          oneOf: [{ type: "null" }, { minLength: 3 }],
+        },
+        listed: {
+          enum: ["abc", "defg"],
+          anyOf: [{ type: "null" }, { minLength: 3 }],
+        },
+        fixed: { const: "abc", anyOf: [{ minLength: 3 }, { type: "null" }] },
+        plural: {
+          type: ["string", "boolean"],
+          oneOf: [{ type: "null" }, { minLength: 3 }],
+        },
+        bare: { oneOf: [{ type: "null" }, { type: "string", minLength: 3 }] },
+        open: {
+          type: ["string", "null"],
+          oneOf: [{ type: "null" }, { minLength: 3 }],
+        },
+      },
+      400,
+    );
+
+    for (const key of ["typed", "listed", "fixed", "plural"]) {
+      expect(items.filter((item) => item[key] === null)).toEqual([]);
+    }
+    expect(items.some((item) => item.open === null)).toBe(true);
+    expect(items.some((item) => item.bare === null)).toBe(true);
+  });
+
   it("leaves an explicit schmockNullable: false union to json-schema-faker", async () => {
     const items = await sampleObjects(
       {

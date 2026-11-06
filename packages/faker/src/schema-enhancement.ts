@@ -93,6 +93,12 @@ function unwrapNullUnion(
     ) {
       return undefined;
     }
+    // The wrapper's own type, enum and const are conjuncts beside the union,
+    // so one that rejects null leaves only the non-null branch.
+    if (!wrapperAdmitsNull(wrapper)) {
+      const { schmockNullable: _marker, ...merged } = { ...rest, ...wrapper };
+      return merged;
+    }
     return {
       ...rest,
       ...wrapper,
@@ -101,6 +107,18 @@ function unwrapNullUnion(
     };
   }
   return undefined;
+}
+
+/** Whether a union wrapper's own type, enum and const all accept null. */
+function wrapperAdmitsNull(wrapper: FakerSchema): boolean {
+  if (wrapper.const !== undefined && wrapper.const !== null) return false;
+  if (Array.isArray(wrapper.enum) && !wrapper.enum.includes(null)) {
+    return false;
+  }
+  if (wrapper.type === undefined) return true;
+  return Array.isArray(wrapper.type)
+    ? wrapper.type.includes("null")
+    : wrapper.type === "null";
 }
 
 /**

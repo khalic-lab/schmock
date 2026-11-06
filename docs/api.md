@@ -1574,7 +1574,10 @@ type choice.
 
 Native nullability gets the same ~5% null roll without the marker:
 `type: [T, 'null']`, or a two-branch `anyOf`/`oneOf` with a bare
-`{ type: 'null' }` branch in either order. Set `schmockNullable: false` on a
+`{ type: 'null' }` branch in either order. Such a union rolls no null when the
+node's own `type`, `enum` or `const` beside it rejects null:
+`{ type: 'string', oneOf: [{ type: 'null' }, { minLength: 3 }] }` is always a
+string. Set `schmockNullable: false` on a
 node to opt out; json-schema-faker then picks between the union's types as
 written.
 
