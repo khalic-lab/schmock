@@ -1082,11 +1082,18 @@ export function validationPlugin(
         // of silently hitting `Object.prototype`'s setter — plain assignment
         // would drop it and let it escape `additionalProperties: false`. The
         // prototype is retained to match how core builds `context.headers`.
+        // A header sent in two spellings keeps its first value, the one
+        // core's `getHeader` hands the route.
+        const firstValues = new Map<string, string>();
+        for (const [key, value] of Object.entries(context.headers)) {
+          const folded = key.toLowerCase();
+          if (!firstValues.has(folded)) firstValues.set(folded, value);
+        }
         const normalizedHeaders: Record<string, string> = Object.fromEntries(
-          Object.entries(context.headers).map(([key, value]) => {
-            const folded = key.toLowerCase();
-            return [headerSpellings.get(folded) ?? folded, value];
-          }),
+          Array.from(firstValues, ([folded, value]) => [
+            headerSpellings.get(folded) ?? folded,
+            value,
+          ]),
         );
         const coercedHeaders: Record<string, unknown> = {
           ...normalizedHeaders,

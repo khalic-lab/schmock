@@ -1,4 +1,4 @@
-import { schmock } from "@schmock/core";
+import { getHeader, schmock } from "@schmock/core";
 import { describe, expect, it, vi } from "vitest";
 import { type ValidationPluginOptions, validationPlugin } from "./index";
 
@@ -123,6 +123,35 @@ describe("validationPlugin response.statuses", () => {
 });
 
 describe("validationPlugin header name case", () => {
+  it("validates the value the route reads when a header comes in two spellings", async () => {
+    const mock = schmock();
+    mock("GET /x", ({ headers }) => ({
+      seen: getHeader(headers, "x-api-key"),
+    })).pipe(
+      validationPlugin({
+        request: {
+          headers: {
+            type: "object",
+            required: ["x-api-key"],
+            properties: { "x-api-key": { const: "secret" } },
+          },
+        },
+      }),
+    );
+
+    const wrongFirst = await mock.handle("GET", "/x", {
+      headers: { "X-Api-Key": "wrong", "x-api-key": "secret" },
+    });
+    const secretFirst = await mock.handle("GET", "/x", {
+      headers: { "X-Api-Key": "secret", "x-api-key": "wrong" },
+    });
+
+    expect(wrongFirst.status).toBe(400);
+    expect(wrongFirst.body).toMatchObject({ code: "HEADER_VALIDATION_ERROR" });
+    expect(secretFirst.status).toBe(200);
+    expect(secretFirst.body).toEqual({ seen: "secret" });
+  });
+
   it("applies a capitalized dependencies entry to the lowercased header", async () => {
     const plugin = validationPlugin({
       request: {

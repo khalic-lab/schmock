@@ -1838,7 +1838,9 @@ names that differ only by case (`'X-Api-Key'` and `'x-api-key'`, or a property
 creation time. Headers the schema names this way reach `patternProperties` and
 `propertyNames` in the schema's own spelling (`X-Api-Key`); every other header
 arrives lowercased. Write those patterns to match both, for example `^[Xx]-`
-or `^[A-Za-z0-9-]+$`.
+or `^[A-Za-z0-9-]+$`. When a `handle()` call passes one header in two
+spellings (`'X-Api-Key'` and `'x-api-key'`), the first one is validated, the
+same value `getHeader()` returns to the route.
 
 Error response format:
 
