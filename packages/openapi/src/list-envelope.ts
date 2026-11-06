@@ -336,7 +336,11 @@ function collectArrayCandidates(schema: JSONSchema7): ArrayCandidate[] {
       continue;
     }
     if (!isObjectShaped(prop)) continue;
-    for (const [inner, innerProp] of propertyDeclarations(prop)) {
+    // A nullable composed level (`allOf: [Page], nullable: true`) arrives as
+    // the normalizer's anyOf wrapper; its properties are the wrapped node's.
+    for (const [inner, innerProp] of propertyDeclarations(
+      unwrapNullable(prop),
+    )) {
       if (PROTOTYPE_KEYS.has(inner)) continue;
       const innerArray = declaredArray(innerProp);
       if (innerArray) {

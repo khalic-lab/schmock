@@ -1182,3 +1182,81 @@ describe("nullable composed list envelope key order (hunt openapi-1-G39)", () =>
     expect(Object(body.page).items).toEqual([{ id: 1, name: "rex" }]);
   });
 });
+
+describe("a nested list envelope marked nullable (hunt openapi-1-G17)", () => {
+  const petRef = { $ref: "#/components/schemas/Pet" };
+  const json = (schema: Record<string, unknown>) => ({
+    "application/json": { schema },
+  });
+
+  it("serves the stored rows in page.items of an allOf page marked nullable", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: {
+          openapi: "3.0.3",
+          info: { title: "Nullable nested page", version: "1.0.0" },
+          components: {
+            schemas: {
+              Pet: {
+                type: "object",
+                required: ["id", "name"],
+                properties: {
+                  id: { type: "integer" },
+                  name: { type: "string" },
+                },
+              },
+              Page: {
+                type: "object",
+                properties: { items: { type: "array", items: petRef } },
+              },
+            },
+          },
+          paths: {
+            "/pets": {
+              get: {
+                responses: {
+                  "200": {
+                    description: "list",
+                    content: json({
+                      type: "object",
+                      properties: {
+                        total: { type: "integer" },
+                        page: {
+                          allOf: [{ $ref: "#/components/schemas/Page" }],
+                          nullable: true,
+                        },
+                      },
+                    }),
+                  },
+                },
+              },
+              post: {
+                requestBody: { content: json(petRef) },
+                responses: {
+                  "201": { description: "c", content: json(petRef) },
+                },
+              },
+            },
+            "/pets/{id}": {
+              get: {
+                responses: {
+                  "200": { description: "p", content: json(petRef) },
+                },
+              },
+            },
+          },
+        },
+        fakerSeed: 1,
+      }),
+    );
+    await mock.handle("POST", "/pets", { body: { name: "rex" } });
+
+    const response = await mock.handle("GET", "/pets");
+
+    expect(response.status).toBe(200);
+    expect(Object(Object(response.body).page).items).toEqual([
+      { id: 1, name: "rex" },
+    ]);
+  });
+});
