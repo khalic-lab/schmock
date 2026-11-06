@@ -184,6 +184,16 @@ turns `filter[name]=rex` into `[object Object]`. The default ignores a
 sanitizer middleware, for example). Pass `transformQuery` to receive `req.query`
 as Express, or that middleware, left it; its return value replaces the default.
 
+### Request body
+
+The mock receives `req.body` as the body parsers left it. A request that
+carried no bytes (`content-length: 0`, or neither a length nor a transfer
+encoding) reaches the mock with no body, as under `mock.listen()` and the CLI,
+even though `express.json()` and friends leave `{}`, `""` or an empty Buffer in
+`req.body` for it. An operation whose OpenAPI `requestBody` is `required`
+therefore rejects an empty POST here too. A non-empty `req.body` that
+middleware assigned is passed as it is.
+
 ### Routed path
 
 The mock routes the path of `req.url` (the URL `req.path` comes from, so a

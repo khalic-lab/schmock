@@ -819,6 +819,129 @@ describe("toExpress", () => {
     });
   });
 
+  describe("request bodies", () => {
+    /** Send a raw request and resolve the response body text. */
+    async function rawExchange(app: express.Express, head: string) {
+      const server = await new Promise<Server>((resolve) => {
+        const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
+      });
+      try {
+        const { port } = server.address() as AddressInfo;
+        return await new Promise<string>((resolve, reject) => {
+          let raw = "";
+          const socket = connect(port, "127.0.0.1", () => socket.write(head));
+          socket.setEncoding("utf8");
+          socket.on("data", (chunk: string) => {
+            raw += chunk;
+          });
+          socket.on("end", () => resolve(raw.split("\r\n\r\n")[1] ?? ""));
+          socket.on("error", reject);
+        });
+      } finally {
+        server.close();
+      }
+    }
+
+    it.each([
+      ["application/json", express.json()],
+      ["application/x-www-form-urlencoded", express.urlencoded()],
+      ["text/plain", express.text()],
+    ])(
+      "hands the mock no body for a zero-length %s request, as mock.listen() does",
+      async (contentType, parser) => {
+        const realMock = schmock();
+        realMock("POST /items", ({ body }) => ({
+          absent: body === undefined,
+        }));
+        const app = express();
+        app.use(parser);
+        app.use(toExpress(realMock));
+
+        const text = await rawExchange(
+          app,
+          `POST /items HTTP/1.1\r\nHost: h\r\nContent-Type: ${contentType}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
+        );
+
+        expect(JSON.parse(text)).toEqual({ absent: true });
+      },
+    );
+
+    it("drops the {} placeholder of a request that carries no body", async () => {
+      // Express 4's body-parser sets `req.body = {}` even for a bodiless GET.
+      const realMock = schmock();
+      realMock("GET /items", ({ body }) => ({ absent: body === undefined }));
+      const res = createRes();
+
+      await toExpress(realMock)(
+        createReq({ path: "/items", headers: { host: "h" }, body: {} }),
+        res,
+        vi.fn() as NextFunction,
+      );
+
+      expect(endedJson(res)).toEqual({ absent: true });
+    });
+
+    it("keeps a body that middleware assigned to a bodiless request", async () => {
+      const realMock = schmock();
+      realMock("GET /items", ({ body }) => ({ body: body ?? null }));
+      const res = createRes();
+
+      await toExpress(realMock)(
+        createReq({ path: "/items", headers: {}, body: { injected: true } }),
+        res,
+        vi.fn() as NextFunction,
+      );
+
+      expect(endedJson(res)).toEqual({ body: { injected: true } });
+    });
+
+    it.each([
+      ["content-length: 0", { "content-length": "0" }, true],
+      ["content-length: ' 0 '", { "content-length": " 0 " }, true],
+      ["content-length: 2", { "content-length": "2" }, false],
+      [
+        "a chunked transfer encoding",
+        { "transfer-encoding": "chunked" },
+        false,
+      ],
+      [
+        "a chunked transfer encoding and content-length: 0",
+        { "transfer-encoding": "chunked", "content-length": "0" },
+        false,
+      ],
+    ])(
+      "reads an empty parsed body under %s by the framing headers",
+      async (_framing, headers, absent) => {
+        const realMock = schmock();
+        realMock("POST /items", ({ body }) => ({ body: body ?? null }));
+        const res = createRes();
+
+        await toExpress(realMock)(
+          createReq({ method: "POST", path: "/items", headers, body: {} }),
+          res,
+          vi.fn() as NextFunction,
+        );
+
+        expect(endedJson(res)).toEqual({ body: absent ? null : {} });
+      },
+    );
+
+    it("keeps an explicit empty JSON object body", async () => {
+      const realMock = schmock();
+      realMock("POST /items", ({ body }) => ({ body: body ?? null }));
+      const app = express();
+      app.use(express.json());
+      app.use(toExpress(realMock));
+
+      const text = await rawExchange(
+        app,
+        "POST /items HTTP/1.1\r\nHost: h\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+      );
+
+      expect(JSON.parse(text)).toEqual({ body: {} });
+    });
+  });
+
   describe("edge cases", () => {
     it("rejects status 0 before writing an Express response", async () => {
       const mock = createMock(() =>

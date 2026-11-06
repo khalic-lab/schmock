@@ -339,6 +339,37 @@ function routedPath(req: Request): string | undefined {
   return req.path;
 }
 
+/** Whether a parsed body is the empty value a body parser makes of no bytes. */
+function isEmptyParsedBody(body: unknown): boolean {
+  if (body === "") return true;
+  if (ArrayBuffer.isView(body)) return body.byteLength === 0;
+  if (body instanceof ArrayBuffer) return body.byteLength === 0;
+  if (typeof body !== "object" || body === null) return false;
+  const prototype: unknown = Object.getPrototypeOf(body);
+  return (
+    (prototype === Object.prototype || prototype === null) &&
+    Reflect.ownKeys(body).length === 0
+  );
+}
+
+/**
+ * The body the mock sees. A request that declares `content-length: 0`, or
+ * neither a length nor a transfer encoding, carried no bytes, yet body-parser
+ * can still leave `{}` (or `""`, or an empty Buffer) in `req.body`: for a
+ * zero length when the content type matches, and for any request under
+ * Express 4. `mock.listen()` and the CLI hand the mock no body for it, so a
+ * required-body check rejects it the same way. A non-empty value that
+ * middleware assigned is kept.
+ */
+function requestBody(req: Request): unknown {
+  const body: unknown = req.body;
+  if (!isEmptyParsedBody(body)) return body;
+  const headers: Request["headers"] = req.headers ?? {};
+  if (headers["transfer-encoding"] !== undefined) return body;
+  const length = headers["content-length"];
+  return length === undefined || length.trim() === "0" ? undefined : body;
+}
+
 /**
  * Convert a Schmock mock instance to Express middleware
  */
@@ -407,7 +438,7 @@ export function toExpress(
         method,
         path,
         headers: transformHeaders(req.headers),
-        body: req.body,
+        body: requestBody(req),
         query: transformQuery ? transformQuery(req.query) : defaultQuery(req),
       };
 
