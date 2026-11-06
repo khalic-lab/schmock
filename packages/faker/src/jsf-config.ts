@@ -631,9 +631,17 @@ function listMembers(
   return list.flatMap((entry, index) => {
     const schema = resolve(entry);
     if (!schema) return [];
+    // A `$ref` entry is replaced by its target, so the keywords beside the
+    // `$ref` go over the replacement, replacing the target's (D58).
+    const siblings: JsfObjectSchema = {};
+    if (schema !== entry && isJsfObject(entry)) {
+      const { $ref: _ref, ...rest } = entry;
+      Object.assign(siblings, rest);
+    }
     const replace = (next: JsfObjectSchema) => {
       const current = copy[keyword];
-      if (Array.isArray(current)) current[index] = next;
+      if (Array.isArray(current))
+        current[index] = Object.assign(next, siblings);
     };
     return [{ schema, replace }];
   });
