@@ -421,6 +421,29 @@ function removeDotSegments(path: string): string {
   return `/${output.join("/")}`;
 }
 
+/** Used when there is no page to resolve against (SSR, a test runner). */
+const FALLBACK_PAGE_URL = "http://localhost/";
+
+/**
+ * The URL Angular's backends resolve a request URL against: the document's
+ * base URL, else the page's location, as the browser resolves it.
+ */
+function pageBaseUrl(): string {
+  const candidates = [
+    typeof document === "undefined" ? undefined : document.baseURI,
+    typeof location === "undefined" ? undefined : location.href,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      return new URL(candidate).href;
+    } catch {
+      // An unusable environment global: try the next one.
+    }
+  }
+  return FALLBACK_PAGE_URL;
+}
+
 /**
  * Split an Angular request URL into its origin (null for a relative URL) and
  * its pathname, dropping the query and the fragment and resolving dot
@@ -431,8 +454,13 @@ function removeDotSegments(path: string): string {
  * - "/api/../users" → origin null, "/users"
  * - "api/users" → origin null, "/api/users"
  *
+ * - "//api.example.com/users" → origin "https://api.example.com" on an https
+ *   page, "/users"
+ *
  * The query is dropped before looking for "://", so a relative URL carrying an
- * absolute one in its query (`/r?to=https://x`) stays relative.
+ * absolute one in its query (`/r?to=https://x`) stays relative. A
+ * protocol-relative URL ("//host/path") names a host, as the browser reads
+ * it, so it is resolved against the page like an absolute one.
  */
 function splitRequestUrl(url: string): { origin: string | null; path: string } {
   const target = withoutFragment(url);
@@ -440,9 +468,9 @@ function splitRequestUrl(url: string): { origin: string | null; path: string } {
   const urlWithoutQuery =
     queryStart === -1 ? target : target.slice(0, queryStart);
 
-  if (urlWithoutQuery.includes("://")) {
+  if (urlWithoutQuery.includes("://") || urlWithoutQuery.startsWith("//")) {
     try {
-      const parsed = new URL(urlWithoutQuery);
+      const parsed = new URL(urlWithoutQuery, pageBaseUrl());
       return { origin: parsed.origin, path: parsed.pathname };
     } catch {
       // Not a URL after all: read it as a relative path below.

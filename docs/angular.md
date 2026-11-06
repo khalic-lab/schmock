@@ -523,6 +523,10 @@ describe('UserService', () => {
   `/api/v1/../users` is routed as `/api/users`, `%2e%2e` included. In a
   relative URL the rest of the path keeps the spelling the request used; an
   absolute URL is read with `new URL()`, as before
+- A protocol-relative URL (`//api.example.com/users`) names a host, as the
+  browser reads it: it is resolved against the page (`document.baseURI`, then
+  `location.href`), so it is routed as `/users` and matches an origin-form
+  `baseUrl` of `https://api.example.com` on an https page
 
 `errorFormatter` formats core-marked internal exceptions and thrown handling
 errors. It does not reinterpret an ordinary route response such as

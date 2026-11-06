@@ -16,7 +16,7 @@ import type * as Schmock from "@schmock/core";
 import type { CallableMockInstance } from "@schmock/core";
 import { schmock } from "@schmock/core";
 import { lastValueFrom, of } from "rxjs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSchmockInterceptor, provideSchmockInterceptor } from "./index";
 
 /** The Accept header Angular's backends add when the caller set none. */
@@ -819,8 +819,48 @@ describe("Angular Adapter", () => {
 
     it("keeps the spelling and the '//' of a relative path otherwise", async () => {
       expect((await routed("/a/../café")).path).toBe("/café");
-      expect((await routed("//users")).path).toBe("//users");
+      expect((await routed("/a//users")).path).toBe("/a//users");
       expect((await routed("/a/..b/c")).path).toBe("/a/..b/c");
+    });
+
+    describe("a protocol-relative URL", () => {
+      afterEach(() => {
+        vi.unstubAllGlobals();
+      });
+
+      it("is routed by the path the browser resolves it to", async () => {
+        expect((await routed("//api.example.com/users?a=1")).path).toBe(
+          "/users",
+        );
+        expect((await routed("//users")).path).toBe("/");
+      });
+
+      it("takes the page's scheme to match an origin-form baseUrl", async () => {
+        vi.stubGlobal("location", { href: "https://app.example.com/page" });
+        mockInstance.handle = vi
+          .fn()
+          .mockResolvedValue({ status: 200, body: "ok", headers: {} });
+        const InterceptorClass = createSchmockInterceptor(mockInstance, {
+          baseUrl: "https://api.example.com/v1",
+        });
+        const backend: HttpHandler = {
+          handle: vi.fn(() => of(new HttpResponse({ body: "real" }))),
+        };
+        const response = await lastValueFrom(
+          new InterceptorClass().intercept(
+            new HttpRequest("GET", "//api.example.com/v1/users"),
+            backend,
+          ),
+        );
+
+        expect(backend.handle).not.toHaveBeenCalled();
+        expect(response).toMatchObject({ body: "ok" });
+        expect(mockInstance.handle).toHaveBeenCalledWith(
+          "GET",
+          "/users",
+          expect.anything(),
+        );
+      });
     });
 
     it("joins HttpParams to a URL that carries a fragment", async () => {
