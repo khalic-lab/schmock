@@ -29,7 +29,7 @@ function App() {
 }
 ```
 
-`SchmockProvider` patches `globalThis.fetch` while it renders and restores it on unmount. Any client that uses `globalThis.fetch` — including React Query or SWR when configured with fetch — is intercepted automatically. Clients using another transport are not intercepted. The installer commits before descendant layout effects, so a child may safely fetch from `useLayoutEffect` on its first mount. Rendering on the server installs nothing: without a DOM the provider only supplies the mock through context.
+`SchmockProvider` patches `globalThis.fetch` while it renders and restores it on unmount. Any client that uses `globalThis.fetch` — including React Query or SWR when configured with fetch — is intercepted automatically. Clients using another transport are not intercepted. The installer commits before descendant layout effects, so a child may safely fetch from `useLayoutEffect` on its first mount. On unmount, fetch is restored after the descendants' `useEffect` and `useLayoutEffect` cleanups run, so a logout or analytics call made from one is still intercepted. Rendering on the server installs nothing: without a DOM the provider only supplies the mock through context.
 
 The DOM check runs when the provider renders and commits, not when the module
 is imported. A test that registers jsdom or happy-dom after its hoisted imports

@@ -1,8 +1,14 @@
 /// <reference path="../../core/schmock.d.ts" />
 
 import { schmock } from "@schmock/core";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { StrictMode, useEffect, useLayoutEffect, useState } from "react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  Activity,
+  StrictMode,
+  useEffect,
+  useLayoutEffect,
+  useState,
+} from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SchmockProvider, useSchmock } from "./index.js";
 import { renderWithSchmock } from "./testing.js";
@@ -201,6 +207,146 @@ describe("SchmockProvider", () => {
 
     unmount();
     expect(globalThis.fetch).toBe(savedFetch);
+  });
+
+  it("intercepts fetches from descendants' unmount cleanups", async () => {
+    const mock = schmock();
+    mock("POST /api/logout", () => ({ ok: true }));
+    const realFetch = vi.fn<typeof globalThis.fetch>(
+      async () => new Response("real"),
+    );
+    globalThis.fetch = realFetch;
+    const sent: Array<Promise<string>> = [];
+    const logout = (label: string) => {
+      sent.push(
+        fetch("http://localhost/api/logout", { method: "POST" })
+          .then((response) => response.text())
+          .then((body) => `${label}:${body}`),
+      );
+    };
+
+    function Child() {
+      useEffect(() => () => logout("effect"), []);
+      useLayoutEffect(() => () => logout("layout"), []);
+      return null;
+    }
+
+    const { unmount } = render(
+      <SchmockProvider mock={mock}>
+        <Child />
+      </SchmockProvider>,
+    );
+    unmount();
+
+    expect((await Promise.all(sent)).sort()).toEqual([
+      'effect:{"ok":true}',
+      'layout:{"ok":true}',
+    ]);
+    expect(realFetch).not.toHaveBeenCalled();
+    expect(globalThis.fetch).toBe(realFetch);
+  });
+
+  it("releases the old mock's lease when the mock prop changes", async () => {
+    const first = schmock();
+    first("POST /api/logout", () => ({ who: "first" }));
+    const second = schmock();
+    second("POST /api/logout", () => ({ who: "second" }));
+    const firstIntercept = vi.spyOn(first, "intercept");
+    const secondIntercept = vi.spyOn(second, "intercept");
+    const realFetch = vi.fn<typeof globalThis.fetch>(
+      async () => new Response("real"),
+    );
+    globalThis.fetch = realFetch;
+    const sent: Array<Promise<string>> = [];
+
+    function Child() {
+      useEffect(
+        () => () => {
+          sent.push(
+            fetch("http://localhost/api/logout", { method: "POST" }).then(
+              (response) => response.text(),
+            ),
+          );
+        },
+        [],
+      );
+      return null;
+    }
+
+    const { rerender, unmount } = render(
+      <SchmockProvider mock={first}>
+        <Child />
+      </SchmockProvider>,
+    );
+    rerender(
+      <SchmockProvider mock={second}>
+        <Child />
+      </SchmockProvider>,
+    );
+
+    // The switch gives the first mock's lease back once it commits.
+    const handles = (spy: typeof firstIntercept) =>
+      spy.mock.results.map(
+        (result) => (result.value as Schmock.InterceptHandle).active,
+      );
+    expect(handles(firstIntercept)).not.toContain(true);
+    expect(handles(secondIntercept)).toContain(true);
+
+    unmount();
+
+    expect(await Promise.all(sent)).toEqual(['{"who":"second"}']);
+    expect(realFetch).not.toHaveBeenCalled();
+    expect(handles(secondIntercept)).not.toContain(true);
+    expect(globalThis.fetch).toBe(realFetch);
+  });
+
+  it("intercepts render-time fetches when a hidden Activity is shown again", async () => {
+    const mock = schmock();
+    mock("GET /api/who", () => ({ who: "mock" }));
+    const realFetch = vi.fn<typeof globalThis.fetch>(async () =>
+      Response.json({ who: "network" }),
+    );
+    globalThis.fetch = realFetch;
+    const sent: Array<Promise<unknown>> = [];
+
+    // Fetches while rendering, as Suspense data fetching does.
+    function RenderFetcher({ fetchNow }: { fetchNow: boolean }) {
+      if (fetchNow) {
+        sent.push(
+          fetch("http://localhost/api/who").then((response) => response.json()),
+        );
+      }
+      return null;
+    }
+
+    function App({ visible }: { visible: boolean }) {
+      return (
+        <Activity mode={visible ? "visible" : "hidden"}>
+          <SchmockProvider mock={mock}>
+            <RenderFetcher fetchNow={visible} />
+          </SchmockProvider>
+        </Activity>
+      );
+    }
+
+    const { rerender } = render(<App visible={false} />);
+    rerender(<App visible={true} />);
+    sent.length = 0;
+
+    // Hiding releases the lease; let any render-time lease lapse.
+    rerender(<App visible={false} />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(globalThis.fetch).toBe(realFetch);
+
+    rerender(<App visible={true} />);
+
+    expect(sent.length).toBeGreaterThan(0);
+    for (const body of await Promise.all(sent)) {
+      expect(body).toEqual({ who: "mock" });
+    }
+    expect(realFetch).not.toHaveBeenCalled();
   });
 
   it("restores fetch when provider rendering is abandoned", async () => {

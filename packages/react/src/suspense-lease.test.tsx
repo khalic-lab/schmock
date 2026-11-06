@@ -169,6 +169,56 @@ describe("SchmockProvider under a Suspense boundary that re-suspends", () => {
     expect(globalThis.fetch).toBe(networkFetch);
   });
 
+  it("releases a lease retaken at the reveal when the provider unmounts", async () => {
+    const mock = mockAnswering("inner");
+    const other = mockAnswering("other");
+    const intercept = vi.spyOn(mock, "intercept");
+    const { Gate, suspend } = createGate();
+    const gate = deferred();
+    const tree = (current: Schmock.CallableMockInstance) => (
+      <Suspense fallback={<p>fallback</p>}>
+        <SchmockProvider mock={current}>
+          <Gate />
+        </SchmockProvider>
+      </Suspense>
+    );
+
+    let rerender: (ui: ReturnType<typeof tree>) => void = () => {};
+    let unmount: () => void = () => {};
+    await act(async () => {
+      ({ rerender, unmount } = render(tree(mock)));
+    });
+    act(() => suspend(gate.promise));
+    expect(screen.getByText("fallback")).toBeTruthy();
+
+    // While hidden the provider renders another mock and then its own again,
+    // so the reveal re-runs its commit effect but not its passive ones.
+    act(() => rerender(tree(other)));
+    act(() => rerender(tree(mock)));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // Not a normal consumer path: the lease is released out from under the
+    // hidden provider, so the reveal takes a new one for the same mock.
+    for (const result of intercept.mock.results) {
+      (result.value as Schmock.InterceptHandle).restore();
+    }
+    expect(globalThis.fetch).toBe(networkFetch);
+
+    await act(async () => {
+      gate.resolve();
+      await gate.promise;
+    });
+    expect(screen.getByText("shown")).toBeTruthy();
+    expect(activeLeases(intercept)).toBe(1);
+    expect(await who()).toEqual({ who: "inner" });
+
+    unmount();
+    expect(activeLeases(intercept)).toBe(0);
+    expect(globalThis.fetch).toBe(networkFetch);
+  });
+
   it("releases the lease when the hidden provider unmounts", async () => {
     const mock = mockAnswering("inner");
     const intercept = vi.spyOn(mock, "intercept");
