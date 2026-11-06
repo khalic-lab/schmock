@@ -861,7 +861,7 @@ so the response body and `Content-Type` cannot silently diverge:
 const res = await mock.handle('GET', '/users', {
   headers: { accept: 'text/xml' },
 })
-// → { status: 406, body: { error: 'Not Acceptable', acceptable: ['application/json'] } }
+// → { status: 406, body: { error: 'Not Acceptable', code: 'NOT_ACCEPTABLE', acceptable: ['application/json'] } }
 ```
 
 Swagger 2.0 `produces` supplies those content types, operation level overriding
@@ -1021,15 +1021,21 @@ instead, like any field the request omits.
 ### Per-media-type request schemas and 415
 
 Each media type an operation declares keeps its own schema, and the request's
-`Content-Type` selects which one applies. Declaring a type the operation does
-not accept is answered with 415:
+`Content-Type` selects which one applies. With `validateRequests: true`,
+declaring a type the operation does not accept is answered with 415:
 
 ```typescript
+mock.pipe(await openapi({ spec: './api.yaml', validateRequests: true }))
+
 const res = await mock.handle('POST', '/users', {
   body: { name: 'Ada' },
   headers: { 'content-type': 'text/csv' },
 })
-// → { status: 415, body: { code: 'UNSUPPORTED_MEDIA_TYPE', supported: ['application/json', 'application/xml'] } }
+// → { status: 415, body: {
+//     error: 'Unsupported Media Type',
+//     code: 'UNSUPPORTED_MEDIA_TYPE',
+//     supported: ['application/json', 'application/xml'],
+//   } }
 ```
 
 Wildcard keys (`application/*`, `*/*`) are honored and media type parameters

@@ -1178,3 +1178,76 @@ describe("response schema compilation", () => {
     ]);
   });
 });
+
+describe("the 406 and 415 bodies docs/openapi.md shows", () => {
+  const user = { type: "object", properties: { name: { type: "string" } } };
+  const usersSpec = {
+    openapi: "3.0.3",
+    info: { title: "users", version: "1.0.0" },
+    paths: {
+      "/users": {
+        get: {
+          responses: {
+            "200": {
+              description: "list",
+              content: {
+                "application/json": { schema: { type: "array", items: user } },
+              },
+            },
+          },
+        },
+        post: {
+          requestBody: {
+            content: {
+              "application/json": { schema: user },
+              "application/xml": { schema: user },
+            },
+          },
+          responses: {
+            "201": {
+              description: "created",
+              content: { "application/json": { schema: user } },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  it("answers an unacceptable Accept with the documented 406 body", async () => {
+    const mock = schmock();
+    mock.pipe(await openapi({ spec: usersSpec }));
+
+    const res = await mock.handle("GET", "/users", {
+      headers: { accept: "text/xml" },
+    });
+
+    expect({ status: res.status, body: res.body }).toEqual({
+      status: 406,
+      body: {
+        error: "Not Acceptable",
+        code: "NOT_ACCEPTABLE",
+        acceptable: ["application/json"],
+      },
+    });
+  });
+
+  it("answers an undeclared Content-Type with the documented 415 body", async () => {
+    const mock = schmock();
+    mock.pipe(await openapi({ spec: usersSpec, validateRequests: true }));
+
+    const res = await mock.handle("POST", "/users", {
+      body: { name: "Ada" },
+      headers: { "content-type": "text/csv" },
+    });
+
+    expect({ status: res.status, body: res.body }).toEqual({
+      status: 415,
+      body: {
+        error: "Unsupported Media Type",
+        code: "UNSUPPORTED_MEDIA_TYPE",
+        supported: ["application/json", "application/xml"],
+      },
+    });
+  });
+});
