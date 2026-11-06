@@ -240,6 +240,40 @@ describe("request body validation", () => {
       ).toEqual({ attachments: [expect.any(Blob)] });
     });
 
+    it("wraps a lone value in an array only for a file under an array-only schema", () => {
+      const normalize = (body: unknown, schema: Record<string, unknown>) =>
+        normalizeRequestBody(
+          body,
+          body instanceof FormData
+            ? "multipart/form-data; boundary=x"
+            : "application/x-www-form-urlencoded",
+          {
+            type: "object",
+            properties: { field: schema },
+          } as Parameters<typeof normalizeRequestBody>[2],
+        );
+      const binaryItems = { type: "string", format: "binary" };
+      const lone = file();
+      // A property that also admits a string takes the file as that string.
+      expect(
+        normalize(upload([["field", lone]]), {
+          type: ["array", "string"],
+          items: binaryItems,
+        }),
+      ).toEqual({ field: expect.any(Blob) });
+      // A property that admits no array keeps the file as sent.
+      expect(normalize(upload([["field", lone]]), { type: "integer" })).toEqual(
+        { field: expect.any(Blob) },
+      );
+      // A value that is no file stays as sent under an array of files.
+      const arrayOfFiles = { type: "array", items: binaryItems };
+      expect(normalize({ field: 5 }, arrayOfFiles)).toEqual({ field: 5 });
+      expect(normalize({ field: null }, arrayOfFiles)).toEqual({ field: null });
+      expect(normalize({ field: { a: "b" } }, arrayOfFiles)).toEqual({
+        field: { a: "b" },
+      });
+    });
+
     it("still rejects a file sent for a field that is not binary", async () => {
       const mock = await validatingMock(multipart);
 
