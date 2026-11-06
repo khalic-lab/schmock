@@ -1025,6 +1025,31 @@ describe("loadDocument", () => {
       expect(await markerOf(spec)).toEqual([["Cat"], ["Dog"]]);
     });
 
+    it("names component-object branches of an inline owner by its mapping", async () => {
+      // The owner sits inline in a response, so it has no name of its own to
+      // resolve the mapping against; the mapping still holds.
+      const cat = animal("meow");
+      const dog = animal("bark");
+      const owner = {
+        anyOf: [cat, dog],
+        discriminator: {
+          propertyName: "petType",
+          mapping: {
+            dog: "#/components/schemas/Dog",
+            cat: "#/components/schemas/Cat",
+          },
+        },
+      };
+      const spec = specWithResponseSchema(owner, { Cat: cat, Dog: dog });
+
+      const api = (await loadDocument(spec, {})) as unknown as {
+        paths: Record<string, any>;
+      };
+      const loaded =
+        api.paths["/x"].get.responses["200"].content["application/json"].schema;
+      expect(loaded.discriminator[MARKER]).toEqual([["cat"], ["dog"]]);
+    });
+
     it("aligns the marker with oneOf when a node declares both", async () => {
       const spec = anyOfPetSpec(
         {

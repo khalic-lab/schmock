@@ -554,16 +554,23 @@ function mappingTargetsBranch(
   );
 }
 
+/**
+ * `rootIdentities` stand in for an owner with no identity of its own: one
+ * inline in a response or request body, whose mapping targets resolve against
+ * the document it sits in. Without them no target could match, and every
+ * branch fell back to its component name whatever the mapping said.
+ */
 function valuesForDereferencedBranch(
   mapping: Record<string, unknown>,
   owner: Record<string, unknown>,
   branch: unknown,
   identities: WeakMap<object, SchemaIdentity[]>,
+  rootIdentities: SchemaIdentity[],
 ): string[] | null {
   if (!isRecord(branch)) return null;
   const branchIdentities = identities.get(branch) ?? [];
   if (branchIdentities.length === 0) return null;
-  const ownerIdentities = identities.get(owner) ?? [];
+  const ownerIdentities = identities.get(owner) ?? rootIdentities;
 
   const explicit = Object.entries(mapping)
     .filter(([, target]) =>
@@ -621,6 +628,8 @@ function markDereferencedDiscriminatorValues(
     }
   }
 
+  const rootIdentities = isRecord(root) ? (identities.get(root) ?? []) : [];
+
   const seen = new WeakSet<object>();
   const stack: unknown[] = [root];
   while (stack.length > 0) {
@@ -645,7 +654,13 @@ function markDereferencedDiscriminatorValues(
         const marked = existing[index];
         return Array.isArray(marked) && marked.length > 0
           ? marked
-          : valuesForDereferencedBranch(mapping, node, branch, identities);
+          : valuesForDereferencedBranch(
+              mapping,
+              node,
+              branch,
+              identities,
+              rootIdentities,
+            );
       });
       if (values.some((value) => value !== null)) {
         disc[DISCRIMINATOR_VALUES_MARKER] = values;
