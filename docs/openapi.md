@@ -940,7 +940,9 @@ reads the body as the object its schema describes:
   array of its values. A file part satisfies `type: string, format: binary`,
   and fails any schema that does not accept a string. Its size in bytes counts
   as its length, so `minLength` and `maxLength` bound the upload (sizes past
-  64 MiB count as 64 MiB).
+  64 MiB count as 64 MiB). A single file sent for a property declared as an
+  array, and not as a string, is a one-element array: one file chosen in a
+  `multiple` file input passes `type: array` with binary string `items`.
 - A string field is read as the type its property declares: a plain decimal
   (`3`, `-1.5`; not `1e3`, `0x10` or ` 7 `) for `integer` and `number`,
   `true` or `false` for `boolean`, an empty value as `null` for a nullable

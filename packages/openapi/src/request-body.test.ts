@@ -219,6 +219,27 @@ describe("request body validation", () => {
       expect(result.status).toBe(201);
     });
 
+    it("reads a single file for an array of files as a one-element array", async () => {
+      const mock = await validatingMock(multipart);
+
+      const result = await interceptedPost(mock, {
+        body: upload([
+          ["name", "Rex"],
+          ["file", file()],
+          ["attachments", file()],
+        ]),
+      });
+
+      expect(result.status).toBe(201);
+      expect(
+        normalizeRequestBody(
+          upload([["attachments", file()]]),
+          "multipart/form-data; boundary=x",
+          uploadSchema as Parameters<typeof normalizeRequestBody>[2],
+        ),
+      ).toEqual({ attachments: [expect.any(Blob)] });
+    });
+
     it("still rejects a file sent for a field that is not binary", async () => {
       const mock = await validatingMock(multipart);
 

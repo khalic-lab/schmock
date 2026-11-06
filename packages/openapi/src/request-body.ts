@@ -703,6 +703,16 @@ function coerceField(value: unknown, schema: JSONSchema7 | undefined): unknown {
   if (isPlainRecord(value) && admitsObject(schema)) {
     return coerceObject(value, schema);
   }
+
+  // A file validates as a string (see toValidationInstance), so a lone file
+  // under an array of files is that array's one element, as a string is.
+  if (
+    isBinaryPayload(value) &&
+    admitsType(schema, "array") &&
+    !admitsType(schema, "string")
+  ) {
+    return [coerceField(value, itemSchema(schema))];
+  }
   return value;
 }
 
