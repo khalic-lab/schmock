@@ -1808,7 +1808,9 @@ schema replaces the pattern, so it is never built and not checked.
 
 Limits inside `not`, an `if` with no sibling `then`, and unreferenced
 `$defs`/`definitions` do not reject a schema, because nothing is generated from
-them. `then`/`else` and definitions reached through `$ref` still count. So does
+them. `then`/`else` and definitions reached through `$ref` still count, each
+charged with the keywords written beside its `$ref` merged over it, as
+generation merges them. So does
 an `if` beside a `then`, which json-schema-faker merges into what it generates:
 its own size keywords are charged, each held to the smallest matching maximum
 (`maxItems`, `maxLength`, `maxProperties`) that the parent or the `then`

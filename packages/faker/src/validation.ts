@@ -92,6 +92,8 @@ interface WalkState {
   edges: Map<JSONSchema7, SchemaEdge[]>;
   postOrder: JSONSchema7[];
   refs: LocalRefResolver;
+  /** The merged view generation reads for a node holding a reference. */
+  views: (schema: JSONSchema7) => JSONSchema7;
   /** A generating `$dynamicRef` that resolves to nothing. */
   unresolvedReference?: GeneratingIssue;
   /** A generating `not` json-schema-faker would not honour. */
@@ -139,12 +141,14 @@ export function validateSchema(
     );
   }
 
+  const refs = createLocalRefResolver(schema);
   const state: WalkState = {
     visited: 0,
     circular: false,
     edges: new Map(),
     postOrder: [],
-    refs: createLocalRefResolver(schema),
+    refs,
+    views: createReferenceViews(refs),
   };
 
   inspectSchemaGraph(schema, path, state);
@@ -161,7 +165,7 @@ export function validateSchema(
     schema,
     path,
     (node) => state.edges.get(node) ?? [],
-    createReferenceViews(state.refs),
+    state.views,
   );
 
   if (state.unresolvedReference) {
@@ -472,8 +476,10 @@ function estimateSchemas(
   const estimates = new Map<JSONSchema7, Estimate>();
   // Generation sizes the array a root `$ref`, wrapper-only `allOf` or null
   // union stands for as the root array, `count` included, so it is charged
-  // as one too.
-  const sized = countedArray(root, state.refs);
+  // as one too, and so is every node on the way to it: a `$ref` holder there
+  // is charged as the view it merges.
+  const chain = new Set<JSONSchema7>();
+  const sized = countedArray(root, state.refs, chain);
   for (const schema of state.postOrder) {
     estimates.set(
       schema,
@@ -481,7 +487,9 @@ function estimateSchemas(
         schema,
         estimates,
         state,
-        schema === sized ? { explicitCount } : undefined,
+        sized !== undefined && chain.has(schema)
+          ? { explicitCount }
+          : undefined,
       ),
     );
   }
@@ -532,7 +540,13 @@ function estimateSchema(
       ? schema.$ref
       : Reflect.get(schema, "$dynamicRef");
   if (typeof reference === "string") {
-    return estimateDefinition(state.refs.resolve(schema, reference), estimates);
+    // Generation merges the target under the holder's own keywords, so the
+    // holder is charged as that merged view. A reference the index cannot
+    // resolve leaves the node as it is, and json-schema-faker fails on it.
+    const view = state.views(schema);
+    return view === schema
+      ? LEAF
+      : estimateSchema(view, estimates, state, root);
   }
 
   let height = 0;
@@ -678,7 +692,10 @@ function estimateSchema(
   // `dependencies`, an array or object keyword the declared type leaves out
   // above) is charged in full, so a keyword added to SCHEMA_KEYWORDS counts
   // against the node budget before anyone writes a rule for it.
-  for (const edge of state.edges.get(schema) ?? []) {
+  // A merged view was never walked, so its edges are read off it here.
+  const edges =
+    state.edges.get(schema) ?? collectContainedSchemaEdges(schema, "$");
+  for (const edge of edges) {
     if (!edge.generates || handled.has(edge.keyword)) continue;
     const nested = edge.depthCost === 1;
     const estimate = nested ? value(edge.schema) : sibling(edge.schema);
@@ -993,16 +1010,21 @@ function effectiveArrayCount(schema: JSONSchema7): number {
 function countedArray(
   root: JSONSchema7,
   refs: LocalRefResolver,
+  chain?: Set<JSONSchema7>,
 ): JSONSchema7 | undefined {
   return findRootArray(root, {
     resolve: (schema) => {
+      chain?.add(schema);
       const target =
         typeof schema.$ref === "string"
           ? refs.resolve(schema, schema.$ref)
           : undefined;
       return isJSONSchema7(target) ? target : undefined;
     },
-    isArray: isArrayLike,
+    isArray: (schema) => {
+      chain?.add(schema);
+      return isArrayLike(schema);
+    },
     throughNullUnions: true,
   });
 }

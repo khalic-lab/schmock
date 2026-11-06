@@ -1389,4 +1389,102 @@ describe("validateSchema", () => {
       expect(generated).not.toHaveProperty("gone");
     });
   });
+
+  describe("keywords beside a $ref", () => {
+    const grid = (size: number): JSONSchema7 => ({
+      type: "array",
+      minItems: size,
+      maxItems: size,
+      items: {
+        type: "array",
+        minItems: size,
+        maxItems: size,
+        items: { type: "integer" },
+      },
+    });
+
+    it("charges the sibling keywords generation merges over the target", () => {
+      const inline: JSONSchema7 = {
+        type: "object",
+        properties: { list: grid(2000) },
+        required: ["list"],
+      };
+      const beside: JSONSchema7 = {
+        type: "object",
+        $defs: {
+          small: { type: "array", items: { type: "integer" }, maxItems: 1 },
+        },
+        properties: { list: { $ref: "#/$defs/small", ...grid(2000) } },
+        required: ["list"],
+      };
+
+      expectResource(
+        captureFailure(() => validateSchema(inline)),
+        { resource: "generated_nodes" },
+      );
+      expectResource(
+        captureFailure(() => validateSchema(beside)),
+        { resource: "generated_nodes" },
+      );
+    });
+
+    it("charges count through a root $ref that carries minItems", () => {
+      const $defs: JSONSchema7["$defs"] = {
+        L: {
+          type: "array",
+          items: { type: "string", minLength: 2000, maxLength: 2000 },
+        },
+      };
+      for (const schema of [
+        { $defs, $ref: "#/$defs/L" },
+        { $defs, $ref: "#/$defs/L", minItems: 1 },
+        // A wrapper-only allOf whose entry is the $ref holder.
+        { $defs, allOf: [{ $ref: "#/$defs/L", minItems: 1 }] },
+        // Two wrappers deep: the outer entry's view merges nothing that
+        // declares an array, so only the entry itself carries the count.
+        {
+          $defs: {
+            ...$defs,
+            W: { allOf: [{ $ref: "#/$defs/L", minItems: 1 }] },
+          },
+          allOf: [{ $ref: "#/$defs/W" }],
+        },
+      ] satisfies JSONSchema7[]) {
+        expectResource(
+          captureFailure(() => validateSchema(schema, "$", 9000)),
+          { resource: "generated_chars" },
+        );
+      }
+    });
+
+    it("charges a generating keyword beside a $ref that no rule handles", () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        $defs: { plain: { type: "object" } },
+        properties: {
+          wrapped: withKeywords(
+            { $ref: "#/$defs/plain" },
+            { dependentSchemas: { x: grid(2000) } },
+          ),
+        },
+        required: ["wrapped"],
+      };
+      expectResource(
+        captureFailure(() => validateSchema(schema)),
+        { resource: "generated_nodes" },
+      );
+    });
+
+    it("still charges a bare $ref as its target", () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        $defs: { big: grid(2000) },
+        properties: { list: { $ref: "#/$defs/big" } },
+      };
+      expectResource(
+        captureFailure(() => validateSchema(schema)),
+        { resource: "generated_nodes" },
+      );
+    });
+  });
 });
