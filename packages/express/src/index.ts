@@ -213,6 +213,22 @@ function mergeHeaders(
 }
 
 /**
+ * Merge a beforeRequest override's query onto the request's own. As with
+ * headers, an override entry whose value is `undefined` is skipped.
+ */
+function mergeQuery(
+  query: Record<string, string>,
+  override: Record<string, string>,
+): Record<string, string> {
+  return {
+    ...query,
+    ...Object.fromEntries(
+      Object.entries(override).filter(([, value]) => value !== undefined),
+    ),
+  };
+}
+
+/**
  * Default header transformer
  */
 function defaultTransformHeaders(
@@ -472,7 +488,7 @@ export function toExpress(
               ? mergeHeaders(requestData.headers, intercepted.headers)
               : requestData.headers,
             query: intercepted.query
-              ? { ...requestData.query, ...intercepted.query }
+              ? mergeQuery(requestData.query, intercepted.query)
               : requestData.query,
           };
           responseMethod = requestData.method;

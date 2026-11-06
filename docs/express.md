@@ -66,8 +66,8 @@ Modify request data before Schmock processes it. Return an object with any subse
 `headers` and `query` are merged onto the request's own, so returning one
 header adds it and keeps the rest (`authorization` included); a header the
 override names replaces the request's header of that name in any case.
-An override header whose value is `undefined` is skipped, so the request's
-header of that name, if any, is kept.
+An override header or query value that is `undefined` is skipped, so the
+request's own entry of that name, if any, is kept.
 `method`, `path` and `body` replace the request's; a `method` or `path` that is
 `undefined` keeps the request's. Because of the merge, an
 override cannot remove a header or a query key; to drop one (`authorization`,

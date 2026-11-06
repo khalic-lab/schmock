@@ -402,6 +402,65 @@ describe("toExpress", () => {
       });
     });
 
+    it("skips an override query value that is undefined", async () => {
+      const realMock = schmock();
+      realMock("GET /keys", ({ query }) => ({
+        keys: Object.keys(query).sort(),
+        page: query.page ?? null,
+      }));
+      const res = createRes();
+      const req = Object.assign(
+        createReq({ path: "/keys", query: { page: "2" } }),
+        { params: {} as Record<string, string> },
+      );
+
+      await toExpress(realMock, {
+        beforeRequest: (incoming) => ({
+          query: { tenant: incoming.params.tenant, page: incoming.params.page },
+        }),
+      })(req, res, vi.fn() as NextFunction);
+
+      expect(endedJson(res)).toEqual({ keys: ["page"], page: "2" });
+    });
+
+    it("lets a defined override query value replace the request's own", async () => {
+      const realMock = schmock();
+      realMock("GET /keys", ({ query }) => ({ page: query.page ?? null }));
+      const res = createRes();
+
+      await toExpress(realMock, {
+        beforeRequest: () => ({ query: { page: "3" } }),
+      })(
+        createReq({ path: "/keys", query: { page: "2" } }),
+        res,
+        vi.fn() as NextFunction,
+      );
+
+      expect(endedJson(res)).toEqual({ page: "3" });
+    });
+
+    it("skips only undefined override query values, keeping a null one", async () => {
+      const realMock = schmock();
+      realMock("GET /keys", ({ query }) => ({
+        keys: Object.keys(query).sort(),
+        page: query.page === undefined ? "absent" : query.page,
+      }));
+      const res = createRes();
+
+      await toExpress(realMock, {
+        // An untyped JS hook can hand back null; only undefined is skipped.
+        beforeRequest: () => ({
+          query: { page: null as unknown as string },
+        }),
+      })(
+        createReq({ path: "/keys", query: { page: "2" } }),
+        res,
+        vi.fn() as NextFunction,
+      );
+
+      expect(endedJson(res)).toEqual({ keys: ["page"], page: null });
+    });
+
     it("merges an override's query onto the request's own", async () => {
       const mock = createMock(() =>
         Promise.resolve({ status: 200, body: "ok", headers: {} }),
