@@ -82,6 +82,27 @@ test("commit-msg judges the subject, not a later line", () => {
   }
 });
 
+test("commit-msg accepts autosquash subjects over a conventional subject", () => {
+  // `git commit --fixup=amend:<sha>` and `--fixup=reword:<sha>` write
+  // "amend! <original subject>" followed by the original message;
+  // `--fixup` and `--squash` write "fixup! " and "squash! " subjects.
+  for (const message of [
+    "amend! fix(core): keep the route table intact\n\nfix(core): keep the route table intact\n",
+    "fixup! fix(core): keep the route table intact\n",
+    "squash! feat: add a subject without a scope\n\nMore detail.\n",
+    "fixup! amend! fix(core): keep the route table intact\n",
+  ]) {
+    assert.equal(commitMsgStatus(message), 0, JSON.stringify(message));
+  }
+  for (const message of [
+    "fixup! updated stuff\n",
+    "amend! WIP\n\nfix(core): keep the route table intact\n",
+    "fixup!fix: no space after the marker\n",
+  ]) {
+    assert.equal(commitMsgStatus(message), 1, JSON.stringify(message));
+  }
+});
+
 test("commit-msg skips comments in the configured comment character", () => {
   const semicolon = { "core.commentChar": ";" };
   assert.equal(commitMsgStatus("; a comment\nfix: subject\n", semicolon), 0);

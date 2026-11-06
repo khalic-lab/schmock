@@ -37,6 +37,17 @@ subject=$(awk -v c="$comment" -v auto="$auto" '
     { print; exit }
 ' "$1")
 
+# `git commit --fixup`, `--squash` and `--fixup=amend:`/`reword:` prefix the
+# target's subject with "fixup! ", "squash! " or "amend! " (stacked when the
+# target is itself one), and `rebase --autosquash` drops the prefix. Judge the
+# subject that will remain.
+while :; do
+    case "$subject" in
+        "fixup! "* | "squash! "* | "amend! "*) subject=${subject#*! } ;;
+        *) break ;;
+    esac
+done
+
 if ! printf '%s\n' "$subject" | grep -qE "$commit_regex" &&
     ! printf '%s\n' "$subject" | grep -qE "$merge_regex"; then
     echo "$error_msg" >&2
