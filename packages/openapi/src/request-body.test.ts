@@ -648,6 +648,32 @@ describe("normalizeRequestBody", () => {
     });
   });
 
+  it("reads a FormData of many fields in one pass over it", () => {
+    // getAll() scans the whole form, so calling it per name is quadratic.
+    class OnePassForm extends FormData {
+      override getAll(): FormDataEntryValue[] {
+        throw new Error("getAll() scans the whole form");
+      }
+    }
+    const count = 40_000;
+    const form = new OnePassForm();
+    for (let i = 0; i < count; i++) form.append(`f${i}`, "x");
+    form.append("tags", "a");
+    form.append("tags", "b");
+
+    const started = performance.now();
+    const normalized = normalizeRequestBody(
+      form,
+      "multipart/form-data; boundary=x",
+      schema,
+    ) as Record<string, unknown>;
+
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(normalized.tags).toEqual(["a", "b"]);
+    expect(Object.keys(normalized)).toHaveLength(count + 1);
+    expect(normalized.f39999).toBe("x");
+  });
+
   it("copies an urlencoded record instead of changing it", () => {
     const body = { count: "2", tags: "a" };
 

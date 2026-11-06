@@ -200,7 +200,7 @@ function hasTag(value: unknown, tag: string): boolean {
 }
 
 interface MultiValueFields {
-  keys(): IterableIterator<string>;
+  [Symbol.iterator](): Iterator<[string, unknown]>;
   getAll(name: string): unknown[];
 }
 
@@ -213,7 +213,7 @@ function isMultiValueFields(value: unknown): value is MultiValueFields {
   return (
     isRecord(value) &&
     typeof value.getAll === "function" &&
-    typeof value.keys === "function"
+    typeof (value as Partial<Iterable<unknown>>)[Symbol.iterator] === "function"
   );
 }
 
@@ -228,9 +228,16 @@ function formFields(
   contentType: string | undefined,
 ): Record<string, unknown> | undefined {
   if (isMultiValueFields(body)) {
+    // One pass over the entries: `getAll()` per name scans the whole form
+    // each time, so a body of many fields would take quadratic time.
+    const groups = new Map<string, unknown[]>();
+    for (const [name, value] of body) {
+      const values = groups.get(name);
+      if (values === undefined) groups.set(name, [value]);
+      else values.push(value);
+    }
     const fields: Record<string, unknown> = {};
-    for (const name of new Set(body.keys())) {
-      const values = body.getAll(name);
+    for (const [name, values] of groups) {
       defineField(fields, name, values.length === 1 ? values[0] : values);
     }
     return fields;
