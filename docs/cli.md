@@ -156,6 +156,13 @@ raises them, so download a larger spec and pass the file. The same goes for a
 spec URL on loopback or a private address (`http://localhost:8080/openapi.json`),
 which is always refused.
 
+The startup banner's `Spec:` line masks a spec URL's credentials: the password
+in its userinfo and any query parameter named like a credential (the rule the
+admin history masks query parameters by) print as `[redacted]`, so
+`https://ci:pw@specs.example.com/api.json?api_key=K` prints as
+`Spec: https://ci:[redacted]@specs.example.com/api.json?api_key=[redacted]`.
+The spec is still read from the URL as given.
+
 `--strict` rejects a spec that fails OpenAPI schema validation instead of
 skipping the parts that do not parse. It is off by default because it is both
 stricter and noticeably slower on large specs.

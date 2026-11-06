@@ -5,6 +5,7 @@
  */
 import { resolveAdminToken } from "./admin.js";
 import { isLoopbackHost, parseCliArgs, USAGE } from "./args.js";
+import { redactSpecForDisplay } from "./redact-url.js";
 import { createCliServer, SHUTDOWN_GRACE_MS, serverUrl } from "./server.js";
 
 export { isLoopbackHost, parseCliArgs } from "./args.js";
@@ -43,7 +44,9 @@ export async function run(args: string[]): Promise<void> {
   const cliServer = await createCliServer(options);
 
   process.stderr.write(`Schmock server running on ${serverUrl(cliServer)}\n`);
-  process.stderr.write(`Spec: ${options.spec}\n`);
+  // A spec URL can carry a password or an access token; stderr is often
+  // collected, so the banner masks them as it does a supplied admin token.
+  process.stderr.write(`Spec: ${redactSpecForDisplay(options.spec)}\n`);
   if (options.cors) {
     process.stderr.write("CORS: enabled\n");
   }
