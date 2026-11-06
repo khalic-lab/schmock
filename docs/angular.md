@@ -472,7 +472,9 @@ describe('UserService', () => {
 - Handlers receive the request as Angular's backends send it, although an
   interceptor runs before them: the `Accept` header
   (`application/json, text/plain, */*`) and the detected `Content-Type` the
-  backends add when the caller set none are added, and the body is serialized
+  backends add when the caller set none are added (`multipart/form-data` for a
+  `FormData` body, which the browser labels itself; no boundary is invented,
+  since the body arrives as the `FormData`), and the body is serialized
   with `HttpRequest.serializeBody()`, then decoded by its content type as
   `mock.listen()` and the fetch interceptor decode it, with the same table and
   JSON parser from `@schmock/core/adapter`. JSON is parsed, a urlencoded form

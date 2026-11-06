@@ -552,10 +552,19 @@ function headersToObject(
 const DEFAULT_ACCEPT = "application/json, text/plain, */*";
 
 /**
+ * The type the platform labels a `FormData` body with. Angular detects none
+ * for it, because XHR and fetch write `multipart/form-data; boundary=...`
+ * themselves. The body reaches the mock as the `FormData`, never as bytes, so
+ * no boundary is invented for it.
+ */
+const FORM_DATA_CONTENT_TYPE = "multipart/form-data";
+
+/**
  * The request headers as Angular's backends put them on the wire: the
  * caller's own, plus the `Accept` and the detected `Content-Type` that
- * HttpXhrBackend and FetchBackend add when the caller set none. An
- * interceptor runs before the backend, so it has to add them itself.
+ * HttpXhrBackend and FetchBackend add when the caller set none, and the
+ * multipart type the platform gives a `FormData` body. An interceptor runs
+ * before the backend, so it has to add them itself.
  */
 function wireHeaders(request: HttpRequest<unknown>): Record<string, string> {
   const headers = headersToObject(request);
@@ -564,7 +573,14 @@ function wireHeaders(request: HttpRequest<unknown>): Record<string, string> {
   }
   if (!request.headers.has("Content-Type")) {
     const detected = request.detectContentTypeHeader();
-    if (detected !== null) headers["content-type"] = detected;
+    if (detected !== null) {
+      headers["content-type"] = detected;
+    } else if (
+      typeof FormData === "function" &&
+      request.body instanceof FormData
+    ) {
+      headers["content-type"] = FORM_DATA_CONTENT_TYPE;
+    }
   }
   return headers;
 }

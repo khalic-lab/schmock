@@ -193,6 +193,23 @@ describe("Angular request bodies reach handlers as the backend sends them", () =
       expect(body).toBeInstanceOf(FormData);
       expect((body as FormData).get("name")).toBe("Rex");
     });
+
+    it("labels FormData multipart/form-data, as the browser sends it", async () => {
+      const form = new FormData();
+      form.set("name", "Rex");
+      expect(
+        await received(new HttpRequest("POST", "/echo", form)),
+      ).toMatchObject({ contentType: "multipart/form-data" });
+    });
+
+    it("keeps the caller's Content-Type on FormData", async () => {
+      const request = new HttpRequest("POST", "/echo", new FormData(), {
+        headers: new HttpHeaders({ "Content-Type": "multipart/mixed" }),
+      });
+      expect(await received(request)).toMatchObject({
+        contentType: "multipart/mixed",
+      });
+    });
   });
 
   describe("headers the caller set", () => {
