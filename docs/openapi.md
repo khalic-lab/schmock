@@ -107,6 +107,10 @@ await openapi({
 | `redirects` | `0` | Redirects to follow (`0` refuses them) |
 | `maxBytes` | `1000000` | Maximum size of one fetched ref document, after decompression |
 
+`timeoutMs` must be a finite number of 0 or more. Any other value, such as
+`Infinity`, `-1` or `NaN`, fails at construction with `OPENAPI_INVALID_OPTION`
+and context `{ option: 'refs', field }`, before any request is sent.
+
 Loopback, link-local, private and reserved addresses are always refused, even
 when they appear in `allowedHosts`. The check applies to every address a
 hostname resolves to at connect time, not only to IP literals: a name such as

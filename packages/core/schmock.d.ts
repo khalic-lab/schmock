@@ -1219,7 +1219,10 @@ declare namespace Schmock {
      * name that resolves to one is refused too.
      */
     allowedHosts?: string[];
-    /** Per-request timeout for http `$ref`s, in ms. Default 5000. */
+    /**
+     * Per-request timeout for http `$ref`s, in ms. Default 5000. A value that
+     * is not a finite number of 0 or more throws `OPENAPI_INVALID_OPTION`.
+     */
     timeoutMs?: number;
     /**
      * Maximum redirect hops to follow for an http `$ref`. Default 0.

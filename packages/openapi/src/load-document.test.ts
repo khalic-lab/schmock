@@ -267,6 +267,28 @@ describe("loadDocument", () => {
       });
     }
 
+    // 1e300 is finite, but above the 2^53 - 1 AbortSignal.timeout accepts.
+    for (const timeoutMs of [Number.POSITIVE_INFINITY, -1, Number.NaN, 1e300]) {
+      it(`refuses timeoutMs ${timeoutMs} as an invalid option before any request`, async () => {
+        const fetchRef = stubTransport(SPEC_BODY);
+
+        const error = await failureOf(
+          loadDocument(SPEC_URL, {
+            refs: { external: true, allowHttp: true, timeoutMs },
+            fetchRef,
+          }),
+        );
+
+        expect(codeOf(error)).toBe("OPENAPI_INVALID_OPTION");
+        expect((error as SchmockError).context).toEqual({
+          option: "refs",
+          field: "timeoutMs",
+        });
+        expect((error as Error).message).toContain("refs.timeoutMs");
+        expect(fetchRef).not.toHaveBeenCalled();
+      });
+    }
+
     it("is held to maxBytes, and the error names the limit", async () => {
       const fetchRef = stubTransport(SPEC_BODY);
 

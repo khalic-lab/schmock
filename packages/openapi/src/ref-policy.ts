@@ -1,4 +1,5 @@
 import type * as Schmock from "@schmock/core";
+import { SchmockError } from "@schmock/core";
 import { toError } from "@schmock/core/adapter";
 import { isRecord } from "./utils.js";
 
@@ -61,6 +62,34 @@ function canonicalHost(entry: string): string {
   }
 }
 
+/**
+ * A limit from `refs`, or `fallback` when it is omitted.
+ *
+ * Checked here, before any request: `AbortSignal.timeout` throws on a value
+ * outside `[0, 2^53 - 1]`, and it threw outside every diagnostic, so the
+ * caller saw only ref-parser's bare `Error reading file`.
+ */
+function limitOption(
+  value: number | undefined,
+  field: "timeoutMs",
+  fallback: number,
+): number {
+  if (value === undefined) return fallback;
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > Number.MAX_SAFE_INTEGER
+  ) {
+    throw new SchmockError(
+      `refs.${field} must be a finite number of 0 or more, got ${String(value)}`,
+      "OPENAPI_INVALID_OPTION",
+      { option: "refs", field },
+    );
+  }
+  return value;
+}
+
 export function resolveRefPolicy(policy?: RefPolicy): ResolvedRefPolicy {
   return {
     external: policy?.external === true,
@@ -69,7 +98,7 @@ export function resolveRefPolicy(policy?: RefPolicy): ResolvedRefPolicy {
     // entry spelled any other way would never match and would silently block
     // a host the operator explicitly allowed. Compare like with like.
     allowedHosts: (policy?.allowedHosts ?? []).map(canonicalHost),
-    timeoutMs: policy?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    timeoutMs: limitOption(policy?.timeoutMs, "timeoutMs", DEFAULT_TIMEOUT_MS),
     redirects: policy?.redirects ?? DEFAULT_REDIRECTS,
     maxBytes: policy?.maxBytes ?? DEFAULT_MAX_BYTES,
   };
