@@ -1730,7 +1730,12 @@ function addPatternPropertyKeys(request: PatternKeyRequest): void {
     const regex = compilePattern(source);
     return regex ? [{ source, regex }] : [];
   });
-  if (patterns.length === 0) return;
+  // A pattern whose schema is `false` forbids its keys: none is invented for
+  // it, and a key it matches is never used for another pattern.
+  const sources = patterns.filter(
+    ({ source }) => patternProperties[source] !== false,
+  );
+  if (sources.length === 0) return;
 
   const properties: Record<string, JsonSchema> = {
     ...(isJSONSchema7(normalized.properties) ? normalized.properties : {}),
@@ -1745,7 +1750,7 @@ function addPatternPropertyKeys(request: PatternKeyRequest): void {
 
   const added: string[] = [];
   for (let slot = 0; slot < target; slot += 1) {
-    const { source } = patterns[slot % patterns.length];
+    const { source } = sources[slot % sources.length];
     for (let attempt = 0; attempt < PATTERN_KEY_ATTEMPTS; attempt += 1) {
       context.patternKeyCount += 1;
       const generated = generatePatternKey(

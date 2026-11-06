@@ -1628,3 +1628,22 @@ describe("numeric bounds that meet through allOf (faker-8)", () => {
     ]);
   });
 });
+
+describe("invented pattern property keys", () => {
+  it("invents no key for a pattern whose schema is false", async () => {
+    for (const schema of [
+      {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+        patternProperties: { "^x-": false },
+      },
+      { type: "object", patternProperties: { "^x-": false } },
+    ] satisfies JSONSchema7[]) {
+      for (const value of await generateSeeds(schema, 5)) {
+        const keys = Object.keys(objectOf(value));
+        expect(keys.filter((key) => key.startsWith("x-"))).toEqual([]);
+      }
+    }
+  });
+});
