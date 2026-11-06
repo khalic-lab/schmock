@@ -193,13 +193,14 @@ for ((index = 0; index < TOTAL; index += 1)); do
   # the subpath resolves under TypeScript's pre-`exports`
   # `moduleResolution: "node"` — and listing a directory alone would let
   # anything else inside it travel too. scripts/check-manifests.mjs pins
-  # which package ships which.
+  # which package ships which. Every name except `dist/` is anchored, so
+  # `LICENSE.orig` or `README.md.bak` does not pass for the file it extends.
   declare -a FORBIDDEN_ENTRIES=()
   while IFS= read -r entry; do
     [[ -n "$entry" ]] && FORBIDDEN_ENTRIES+=("$entry")
   done < <(
     tar -tf "$tarball" \
-      | grep -vE '^package/(package\.json|README\.md|LICENSE|dist/|(adapter|browser|testing)/(package\.json|README\.md)$)' \
+      | grep -vE '^package/((package\.json|README\.md|LICENSE)$|dist/|(adapter|browser|testing)/(package\.json|README\.md)$)' \
       || true
   )
 

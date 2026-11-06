@@ -502,3 +502,97 @@ test("check-release-candidate.sh runs under the system Bash", {
   assert.equal(dryRun.status, 0, dryRun.stderr);
   assert.match(dryRun.stdout, /^Discovered \d+ release-candidate packages$/m);
 });
+
+// ── Tarball allowlist ───────────────────────────────────────────────────────
+
+/**
+ * Runs a copy of check-release-candidate.sh against a one-package workspace
+ * whose `bun pm pack` (a stub) packs exactly `entries` under package/. The
+ * publint stub stops the run, so a tarball that passes the allowlist reports
+ * "publint reached" and goes no further.
+ */
+function packAllowlistRun(entries) {
+  const root = mkdtempSync(join(tmpdir(), "schmock-pack-allowlist-"));
+  try {
+    mkdirSync(join(root, "scripts"));
+    copyFileSync(
+      RELEASE_CANDIDATE_SCRIPT,
+      join(root, "scripts/check-release-candidate.sh"),
+    );
+    writePackage(
+      join(root, "packages/fixture"),
+      { name: "@schmock/fixture", version: "9.9.9" },
+      {},
+    );
+    const stub = (path, body) => {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    };
+    stub(
+      join(root, "node_modules/.bin/publint"),
+      'echo "publint reached"; exit 3',
+    );
+    stub(join(root, "node_modules/.bin/attw"), "exit 3");
+    stub(join(root, "packages/openapi/node_modules/.bin/esbuild"), "exit 3");
+    const bin = join(root, "bin");
+    stub(
+      join(bin, "bun"),
+      `[ "$1 $2 $3" = "pm pack --destination" ] || exit 3
+stage=$(mktemp -d)
+cd "$stage" || exit 3
+for entry in $SCHMOCK_TEST_PACK_ENTRIES; do
+  mkdir -p "$(dirname "$entry")"
+  echo '{}' > "$entry"
+done
+tar -czf "$4/schmock-fixture-9.9.9.tgz" $SCHMOCK_TEST_PACK_ENTRIES`,
+    );
+    const result = spawnSync(
+      "bash",
+      [join(root, "scripts/check-release-candidate.sh")],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          TMPDIR: root,
+          SCHMOCK_TEST_PACK_ENTRIES: entries.join(" "),
+        },
+      },
+    );
+    return `${result.stdout}${result.stderr}`;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("the tarball allowlist passes metadata, dist and stub manifests", () => {
+  const output = packAllowlistRun([
+    "package/package.json",
+    "package/README.md",
+    "package/LICENSE",
+    "package/dist/index.js",
+    "package/adapter/package.json",
+    "package/adapter/README.md",
+  ]);
+  assert.doesNotMatch(output, /non-distributable/);
+  assert.match(output, /publint reached/);
+});
+
+test("the tarball allowlist rejects names that only start with an allowed file", () => {
+  const forbidden = [
+    "package/LICENSE.orig",
+    "package/README.md.bak",
+    "package/package.json.tmp",
+    "package/LICENSEsrc/secret.ts",
+    "package/adapter/package.json.bak",
+  ];
+  const output = packAllowlistRun(["package/package.json", ...forbidden]);
+  assert.match(output, /included non-distributable files/);
+  for (const entry of forbidden) {
+    assert.ok(
+      output.includes(`  - ${entry}\n`),
+      `${entry} not flagged:\n${output}`,
+    );
+  }
+  assert.doesNotMatch(output, /publint reached/);
+});
