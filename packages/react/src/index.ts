@@ -51,9 +51,12 @@ interface InterceptionLease {
  * render (Suspense data fetching, `use()` over a promise created in render)
  * is already intercepted. React may throw such a render away without ever
  * committing it (a suspended first mount, StrictMode's discarded double
- * render), and then no cleanup would run: the lease releases itself at the
- * next microtask unless a commit has claimed it by then. Fetches issued in the
- * meantime were already dispatched through it.
+ * render), and then no cleanup would run: the lease releases itself a task
+ * later unless a commit has claimed it by then. Fetches issued in the
+ * meantime were already dispatched through it. A task rather than a microtask,
+ * so a render-created promise that awaits one mocked response and then fetches
+ * again (a token, then the data) is still intercepted while a Suspense
+ * boundary above the provider shows its fallback.
  */
 function acquireRenderLease(
   mock: Schmock.CallableMockInstance,
@@ -64,9 +67,9 @@ function acquireRenderLease(
     handle: mock.intercept(options),
     committed: false,
   };
-  queueMicrotask(() => {
+  setTimeout(() => {
     if (!lease.committed) lease.handle.restore();
-  });
+  }, 0);
   return lease;
 }
 

@@ -80,10 +80,18 @@ started during render is intercepted on the first mount. This covers Suspense
 data fetching (TanStack `useSuspenseQuery`, SWR with `suspense`, `use()` over a
 promise created in render), and `renderWithSchmock` gets the same guarantee.
 
-> **Strict Mode:** The provider holds exactly one lease under `StrictMode`. A render that React discards without committing (a suspended first mount, a render that throws) releases its lease at the next microtask.
+> **Strict Mode:** The provider holds exactly one lease under `StrictMode`. A render that React discards without committing (a suspended first mount, a render that throws) releases its lease one task later, through `setTimeout(0)`.
 
-One gap remains. In a time-sliced (transition) render, a fetch started in a
-later render slice, before the provider commits, can be missed. If you depend
+A Suspense boundary above the provider keeps it from committing until the
+render's promise settles. The render's lease still covers a promise chain that
+awaits mocked responses and fetches again (a token, then the data), as long as
+the chain finishes within that task. A fetch issued after a timer or another
+task boundary (a route `delay`, a retry back-off) can be missed. Put the
+Suspense boundary inside the provider, or call `mock.intercept()` before the
+first render, if you depend on that case.
+
+One more gap remains. In a time-sliced (transition) render, a fetch started in
+a later render slice, before the provider commits, can be missed. If you depend
 on that case, call `mock.intercept()` before the first render.
 
 ## Options

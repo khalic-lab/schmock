@@ -219,8 +219,8 @@ describe("SchmockProvider", () => {
       ),
     ).toThrow("render failed");
     // The lease is taken while rendering, so render-phase fetches are
-    // intercepted; a render that never commits releases it a microtask later.
-    await Promise.resolve();
+    // intercepted; a render that never commits releases it a task later.
+    await new Promise((settle) => setTimeout(settle, 0));
     expect(globalThis.fetch).toBe(savedFetch);
   });
 });

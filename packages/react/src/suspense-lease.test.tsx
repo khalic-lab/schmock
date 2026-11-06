@@ -190,3 +190,53 @@ describe("SchmockProvider under a Suspense boundary that re-suspends", () => {
     expect(globalThis.fetch).toBe(networkFetch);
   });
 });
+
+describe("SchmockProvider under a Suspense boundary on its first mount", () => {
+  let baselineFetch: typeof globalThis.fetch;
+  let networkFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    baselineFetch = globalThis.fetch;
+    networkFetch = vi.fn<typeof globalThis.fetch>(async () =>
+      Response.json({ src: "NETWORK" }),
+    );
+    globalThis.fetch = networkFetch;
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.fetch = baselineFetch;
+  });
+
+  it("intercepts a fetch chained after an await in a render-created promise", async () => {
+    const mock = schmock();
+    mock("GET /api/token", { token: 1 });
+    mock("GET /api/users", { src: "MOCK" });
+
+    let pending: Promise<{ src: string }> | undefined;
+    function Users() {
+      pending ??= fetch("http://localhost/api/token")
+        .then((response) => response.json())
+        .then(() => fetch("http://localhost/api/users"))
+        .then((response) => response.json());
+      const data = use(pending);
+      return <p>{`source:${data.src}`}</p>;
+    }
+
+    await act(async () => {
+      render(
+        <Suspense fallback={<p>loading</p>}>
+          <SchmockProvider mock={mock}>
+            <Users />
+          </SchmockProvider>
+        </Suspense>,
+      );
+    });
+    await act(async () => {
+      await new Promise((settle) => setTimeout(settle, 20));
+    });
+
+    expect(screen.getByText("source:MOCK")).toBeTruthy();
+    expect(networkFetch).not.toHaveBeenCalled();
+  });
+});
