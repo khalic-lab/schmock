@@ -587,6 +587,176 @@ describe("identifier resolution", () => {
     expect(resource.idKind).toBe("uuid");
   });
 
+  it("reads the type of an id property composed through allOf", () => {
+    const resource = detectOne("/pets", "petId", {
+      type: "object",
+      properties: {
+        id: {
+          allOf: [{ type: "string", format: "uuid" }],
+          description: "id",
+        },
+      },
+    });
+
+    expect(resource.idProperty).toBe("id");
+    expect(resource.idKind).toBe("uuid");
+  });
+
+  it("mints integers when one union branch leaves its id untyped", () => {
+    const resource = detectOne("/pets", "petId", {
+      anyOf: [
+        { type: "object", properties: { id: { type: "string" } } },
+        { type: "object", properties: { id: { description: "any" } } },
+      ],
+    });
+
+    expect(resource.idProperty).toBe("id");
+    expect(resource.idKind).toBe("integer");
+  });
+
+  it("reads a schema shared by two id branches in both", () => {
+    const uuid = { type: "string", format: "uuid" };
+    const resource = detectOne("/pets", "petId", {
+      type: "object",
+      properties: {
+        id: { oneOf: [{ allOf: [uuid] }, { allOf: [uuid], minLength: 36 }] },
+      },
+    });
+
+    expect(resource.idProperty).toBe("id");
+    expect(resource.idKind).toBe("uuid");
+  });
+
+  it("reads the type of an id property behind the nullable wrapper", () => {
+    const resource = detectOne("/pets", "petId", {
+      type: "object",
+      properties: {
+        id: {
+          anyOf: [{ type: "null" }, { allOf: [{ type: "string" }] }],
+          schmockNullable: true,
+        },
+      },
+    });
+
+    expect(resource.idProperty).toBe("id");
+    expect(resource.idKind).toBe("string");
+  });
+
+  it("keeps an id's own type over constraint-only union branches", () => {
+    const resource = detectOne("/pets", "petId", {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          oneOf: [{ minLength: 10 }, { pattern: "^pet-" }],
+        },
+      },
+    });
+
+    expect(resource.idProperty).toBe("id");
+    expect(resource.idKind).toBe("string");
+  });
+
+  it("reads a self-referential id declaration without recursing forever", () => {
+    const id: Record<string, unknown> = { type: "string", format: "uuid" };
+    id.allOf = [id];
+    id.anyOf = [{ type: "null" }, id];
+
+    const resource = detectOne("/pets", "petId", {
+      type: "object",
+      properties: { id },
+    });
+
+    expect(resource.idProperty).toBe("id");
+    expect(resource.idKind).toBe("uuid");
+  });
+
+  it("lends a wrapper's format to union branches that only declare the type", () => {
+    const resource = detectOne("/pets", "petId", {
+      type: "object",
+      properties: {
+        id: {
+          format: "uuid",
+          anyOf: [{ type: "null" }, { type: "string" }],
+        },
+      },
+    });
+
+    expect(resource.idProperty).toBe("id");
+    expect(resource.idKind).toBe("uuid");
+  });
+
+  it("mints uuids for a 3.0 `allOf: [$ref], nullable: true` id", async () => {
+    const json = (schema: object) => ({ "application/json": { schema } });
+    const pet = { $ref: "#/components/schemas/Pet" };
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: {
+          openapi: "3.0.3",
+          info: { title: "Pets", version: "1.0.0" },
+          paths: {
+            "/pets": {
+              get: {
+                responses: {
+                  "200": {
+                    description: "ok",
+                    content: json({ type: "array", items: pet }),
+                  },
+                },
+              },
+              post: {
+                requestBody: { content: json(pet) },
+                responses: { "201": { description: "ok", content: json(pet) } },
+              },
+            },
+            "/pets/{petId}": {
+              get: {
+                parameters: [
+                  {
+                    name: "petId",
+                    in: "path",
+                    required: true,
+                    schema: { type: "string" },
+                  },
+                ],
+                responses: { "200": { description: "ok", content: json(pet) } },
+              },
+            },
+          },
+          components: {
+            schemas: {
+              Uuid: { type: "string", format: "uuid" },
+              Pet: {
+                type: "object",
+                required: ["id", "name"],
+                properties: {
+                  id: {
+                    allOf: [{ $ref: "#/components/schemas/Uuid" }],
+                    nullable: true,
+                  },
+                  name: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        seed: { pets: { count: 2 } },
+        validateResponses: true,
+      }),
+    );
+
+    const list = await mock.handle("GET", "/pets");
+    expect(list.status).toBe(200);
+    const created = await mock.handle("POST", "/pets", {
+      body: { name: "Rex" },
+    });
+    expect(created.status).toBe(201);
+    expect((created.body as Record<string, unknown>).id).toBe(
+      "00000000-0000-4000-8000-000000000003",
+    );
+  });
+
   describe("polymorphic item schemas", () => {
     const variant = (id: Record<string, unknown>, extra: string) => ({
       type: "object",

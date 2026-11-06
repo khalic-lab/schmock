@@ -480,17 +480,72 @@ function resolveIdentifier(
 
   // A union item schema (Stripe's `anyOf: [bank_account, card]`) mints
   // strings only when every branch declaring the id says string.
-  const declared = declarationsOf(schema, idProperty);
-  const types = declared.map((d) =>
-    Array.isArray(d.type) ? d.type.find((t) => t !== "null") : d.type,
+  const shapes = declarationsOf(schema, idProperty).flatMap((d) =>
+    idShapesOf(d),
   );
-  if (declared.length === 0 || types.some((type) => type !== "string")) {
+  if (shapes.length === 0 || shapes.some((s) => s.type !== "string")) {
     return { idProperty, idKind: "integer" };
   }
   return {
     idProperty,
-    idKind: declared.every((d) => d.format === "uuid") ? "uuid" : "string",
+    idKind: shapes.every((s) => s.format === "uuid") ? "uuid" : "string",
   };
+}
+
+interface IdShape {
+  type?: string;
+  format?: string;
+}
+
+/**
+ * The effective `type` and `format` of one id declaration, composition read
+ * through: `allOf` members fill what the declaration leaves out (the
+ * `allOf: [$ref]` with siblings idiom), and each non-null `anyOf`/`oneOf`
+ * branch is a shape of its own (the 3.0 nullable wrapper among them).
+ */
+function idShapesOf(
+  schema: JSONSchema7,
+  ancestors: Set<object> = new Set(),
+): IdShape[] {
+  if (ancestors.has(schema)) return [{}];
+  ancestors.add(schema);
+  try {
+    return composedIdShapes(schema, ancestors);
+  } finally {
+    ancestors.delete(schema);
+  }
+}
+
+function composedIdShapes(
+  schema: JSONSchema7,
+  ancestors: Set<object>,
+): IdShape[] {
+  const own: IdShape = {
+    type: Array.isArray(schema.type)
+      ? schema.type.find((t) => t !== "null")
+      : schema.type,
+    format: schema.format,
+  };
+  for (const member of schema.allOf ?? []) {
+    if (typeof member !== "object") continue;
+    for (const shape of idShapesOf(member, ancestors)) {
+      own.type ??= shape.type;
+      own.format ??= shape.format;
+    }
+  }
+  if (own.type !== undefined) return [own];
+
+  const branches = [...(schema.anyOf ?? []), ...(schema.oneOf ?? [])].filter(
+    (branch): branch is JSONSchema7 =>
+      typeof branch === "object" && branch.type !== "null",
+  );
+  if (branches.length === 0) return [own];
+  return branches.flatMap((branch) =>
+    idShapesOf(branch, ancestors).map((shape) => ({
+      type: shape.type,
+      format: shape.format ?? own.format,
+    })),
+  );
 }
 
 /**

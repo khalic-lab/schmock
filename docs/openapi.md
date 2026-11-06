@@ -393,7 +393,11 @@ A polymorphic item schema (`oneOf` or `anyOf`, such as Stripe's
 `anyOf: [bank_account, card]`) is read branch by branch: a property counts as
 declared when any branch declares it, and the minted value below is a string
 only when every branch declaring the id says `string`, a UUID only when every
-one says `format: uuid`.
+one says `format: uuid`. The id property itself is read through composition the
+same way: `allOf` members supply its `type` and `format` (`allOf: [$ref]` with a
+`description` beside it), and a nullable `anyOf`/`oneOf` wrapper, including the
+3.0 `allOf: [$ref], nullable: true` idiom, is looked through to its non-null
+branches.
 
 Routing is untouched: the lookup *value* always comes from the path parameter
 (`GET /bookings/{bookingId}` still reads `bookingId`), only the stored and
