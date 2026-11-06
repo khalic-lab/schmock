@@ -739,6 +739,60 @@ describe("loadDocument", () => {
     });
   });
 
+  describe("siblings beside an external $ref", () => {
+    let dir: string;
+    const name = { type: "string", maxLength: 50, description: "orig" };
+    const extended = (ref: string) => ({
+      $ref: ref,
+      maxLength: 3,
+      description: "over",
+    });
+    /** `first` names the target bare and comes before `second`. */
+    const pair = (ref: string) => ({
+      type: "object",
+      properties: { first: { $ref: ref }, second: extended(ref) },
+    });
+
+    beforeAll(() => {
+      dir = mkdtempSync(join(tmpdir(), "schmock-siblings-"));
+      writeFileSync(join(dir, "name.json"), JSON.stringify(name));
+      writeFileSync(
+        join(dir, "pair.json"),
+        JSON.stringify(pair("./name.json")),
+      );
+      writeFileSync(
+        join(dir, "root.json"),
+        JSON.stringify(specWithResponseSchema(pair("./name.json"))),
+      );
+      writeFileSync(
+        join(dir, "nested.json"),
+        JSON.stringify(specWithResponseSchema({ $ref: "./pair.json" })),
+      );
+    });
+
+    afterAll(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    for (const file of ["root.json", "nested.json"]) {
+      it(`lets them win after a bare $ref to the same file (${file})`, async () => {
+        const api = (await loadDocument(join(dir, file), {
+          refs: { external: true },
+        })) as unknown as { paths: Record<string, any> };
+
+        const schema =
+          api.paths["/x"].get.responses["200"].content["application/json"]
+            .schema;
+        expect(schema.properties.first).toEqual(name);
+        expect(schema.properties.second).toEqual({
+          type: "string",
+          maxLength: 3,
+          description: "over",
+        });
+      });
+    }
+  });
+
   describe("literal data in another document", () => {
     let dir: string;
 

@@ -270,10 +270,13 @@ function localFileBlocked(url: string): SchmockError {
  * Throwing, rather than returning false, gives a coded error: ref-parser calls
  * `canRead` outside the resolver loop, so the error propagates as thrown.
  */
+/** Called with each document resolution reads and the location it read. */
+type DocumentHook = (document: object, location: string) => void;
+
 function fileResolverGuard(
   parser: SwaggerParser,
   httpEnabled: boolean,
-  onDocument: ((document: object) => void) | undefined,
+  onDocument: DocumentHook | undefined,
 ) {
   const targetsByDocument = new WeakMap<object, Set<string>>();
   return {
@@ -314,7 +317,7 @@ function fileResolverGuard(
 function announceOnArrival(
   refs: unknown,
   url: string,
-  onDocument: (document: object) => void,
+  onDocument: DocumentHook,
 ): void {
   if (!isRecord(refs) || !isRecord(refs._$refs)) return;
   const entry = refs._$refs[url];
@@ -326,7 +329,7 @@ function announceOnArrival(
     get: () => value,
     set: (next: unknown) => {
       if (typeof next === "object" && next !== null && !(next instanceof Error))
-        onDocument(next);
+        onDocument(next, url);
       value = next;
     },
   });
@@ -335,7 +338,7 @@ function announceOnArrival(
 function withLocalFiles(
   parser: SwaggerParser,
   options: RefParserOptions,
-  onDocument?: (document: object) => void,
+  onDocument?: DocumentHook,
 ): SwaggerParser.Options {
   return {
     ...options,
@@ -350,17 +353,26 @@ function withLocalFiles(
   };
 }
 
-type ExtendedRefsByParent = WeakMap<
-  object,
-  Map<string, Record<string, unknown>>
->;
+interface ExtendedRef {
+  original: Record<string, unknown>;
+  /** The document it sits in, or `undefined` for the root. */
+  location: string | undefined;
+}
+
+type ExtendedRefsByParent = WeakMap<object, Map<string, ExtendedRef>>;
 
 /**
- * Every internal `$ref` that carries siblings, keyed by the object and key it
- * sits under — which is what ref-parser's `onDereference` reports.
+ * Record every `$ref` in `document` that carries siblings, internal or not,
+ * keyed by the object and key it sits under — which is what ref-parser's
+ * `onDereference` reports. The root is recorded before resolution starts and
+ * every other document as it is read, before ref-parser has replaced
+ * anything in it.
  */
-function extendedRefsByParent(document: unknown): ExtendedRefsByParent {
-  const byParent: ExtendedRefsByParent = new WeakMap();
+function recordExtendedRefs(
+  byParent: ExtendedRefsByParent,
+  document: unknown,
+  location: string | undefined,
+): void {
   const seen = new WeakSet<object>();
   const stack: unknown[] = [document];
   while (stack.length > 0) {
@@ -371,7 +383,6 @@ function extendedRefsByParent(document: unknown): ExtendedRefsByParent {
       if (
         isRecord(child) &&
         typeof child.$ref === "string" &&
-        child.$ref.startsWith("#") &&
         Object.keys(child).length > 1
       ) {
         let entries = byParent.get(node);
@@ -379,12 +390,11 @@ function extendedRefsByParent(document: unknown): ExtendedRefsByParent {
           entries = new Map();
           byParent.set(node, entries);
         }
-        entries.set(key, child);
+        entries.set(key, { original: child, location });
       }
       stack.push(child);
     }
   }
-  return byParent;
 }
 
 /**
@@ -408,11 +418,17 @@ function siblingsWin(parser: SwaggerParser, byParent: ExtendedRefsByParent) {
     if (typeof parent !== "object" || parent === null || key === undefined) {
       return;
     }
-    const original = byParent.get(parent)?.get(key);
-    if (original === undefined || !isRecord(value) || value === original)
-      return;
+    const entry = byParent.get(parent)?.get(key);
+    if (entry === undefined) return;
+    const { original, location } = entry;
+    if (!isRecord(value) || value === original) return;
     try {
-      if (parser.$refs.get(String(original.$ref)) === value) return;
+      // `$refs.get` resolves against the root; a `$ref` in another document
+      // is resolved against that document first, as ref-parser read it.
+      const ref = String(original.$ref);
+      const target =
+        location === undefined ? ref : resolveReference(location, ref);
+      if (parser.$refs.get(target) === value) return;
     } catch {
       return;
     }
@@ -451,11 +467,14 @@ export function createResolver(): SpecResolver {
       // `validate()` dereferences first and only then runs the validators,
       // which are disabled unless strict. The 3-argument form is what retains
       // the source URI.
+      const byParent: ExtendedRefsByParent = new WeakMap();
+      recordExtendedRefs(byParent, document, undefined);
       const derefOptions: SwaggerParser.Options = {
-        ...withLocalFiles(parser, options, onDocument),
-        dereference: {
-          onDereference: siblingsWin(parser, extendedRefsByParent(document)),
-        },
+        ...withLocalFiles(parser, options, (read, location) => {
+          onDocument?.(read);
+          recordExtendedRefs(byParent, read, location);
+        }),
+        dereference: { onDereference: siblingsWin(parser, byParent) },
         validate: { schema: strict, spec: strict },
       };
       const restoreVersion = strict
