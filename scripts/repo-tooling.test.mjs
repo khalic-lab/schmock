@@ -92,6 +92,8 @@ test("commit-msg accepts autosquash subjects over a conventional subject", () =>
     "fixup! fix(core): keep the route table intact\n",
     "squash! feat: add a subject without a scope\n\nMore detail.\n",
     "fixup! amend! fix(core): keep the route table intact\n",
+    // Only the leading marker goes: a "! " later in the subject stays.
+    "fixup! fix: wow! nice\n",
   ]) {
     assert.equal(commitMsgStatus(message), 0, JSON.stringify(message));
   }
@@ -99,6 +101,7 @@ test("commit-msg accepts autosquash subjects over a conventional subject", () =>
     "fixup! updated stuff\n",
     "amend! WIP\n\nfix(core): keep the route table intact\n",
     "fixup!fix: no space after the marker\n",
+    "fixup! WIP! fix: a conventional tail after a later bang\n",
   ]) {
     assert.equal(commitMsgStatus(message), 1, JSON.stringify(message));
   }
