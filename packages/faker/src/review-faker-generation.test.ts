@@ -327,6 +327,8 @@ describe("review: lone numeric bounds (finding 19)", () => {
       { type: "integer", minimum: 5_000, maximum: 6_000 },
       { type: "integer", minimum: 500 },
       { type: "integer", maximum: -500 },
+      // The highest multiple is -1000 itself, inside JSF's default range.
+      { type: "integer", maximum: -1, multipleOf: 1000 },
     ] satisfies JSONSchema7[]) {
       expect(normalizeSchemaForJsf(schema)).toEqual(schema);
     }
@@ -486,6 +488,10 @@ describe("numeric bounds with multipleOf or both exclusivities (faker-8)", () =>
       [
         { type: "integer", maximum: -995, multipleOf: 7 },
         (v: number) => v <= -995,
+      ],
+      [
+        { type: "integer", maximum: -1, multipleOf: 1000 },
+        (v: number) => v <= -1,
       ],
     ] satisfies [JSONSchema7, (value: number) => boolean][]) {
       for (const value of await numbersFrom(schema)) {
