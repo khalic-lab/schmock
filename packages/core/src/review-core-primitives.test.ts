@@ -577,6 +577,21 @@ describe("serveNodeRequest", () => {
     },
   );
 
+  it("answers 500 instead of accepting the body when maxBodySize is NaN", async () => {
+    const mock = schmock();
+    const handler = vi.fn(() => "stored");
+    mock("POST /upload", handler);
+    const port = await serve(mock, { maxBodySize: Number.NaN });
+    const response = await fetch(`http://127.0.0.1:${port}/upload`, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "x".repeat(2048),
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ code: "SERVER_ERROR" });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it("closes the connection when classifyError answers a handler error with 413", async () => {
     const port = await serve(schmock(), {
       handle: () => Promise.reject(new Error("quota exceeded")),

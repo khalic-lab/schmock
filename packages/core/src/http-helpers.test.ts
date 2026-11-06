@@ -99,6 +99,34 @@ describe("collectBody", () => {
       });
     });
 
+    it.each([Number.NaN, -1, "1kb" as unknown as number])(
+      "refuses a maxBodySize of %s instead of accepting any body",
+      async (limit) => {
+        const body = Buffer.alloc(2048, 97);
+        await expect(
+          collectBody(
+            bodyStream(body),
+            {
+              "content-length": String(body.length),
+              "content-type": "text/plain",
+            },
+            limit,
+          ),
+        ).rejects.toMatchObject({ code: "INVALID_CONFIG" });
+      },
+    );
+
+    it("treats a maxBodySize of Infinity as no limit", async () => {
+      const body = Buffer.from("12345");
+      await expect(
+        collectBody(
+          bodyStream(body),
+          { "content-type": "text/plain" },
+          Number.POSITIVE_INFINITY,
+        ),
+      ).resolves.toBe("12345");
+    });
+
     it("settles once without destroying the request after observed overflow", async () => {
       const request = new BodyEmitter();
       const result = collectBody(request, {}, 5);

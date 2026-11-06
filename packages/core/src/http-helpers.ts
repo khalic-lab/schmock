@@ -170,12 +170,37 @@ export function collectBody(
   );
 }
 
+/**
+ * Refuse a body size limit that cannot bound anything. Both size checks are
+ * `>` comparisons, which are always false against NaN or a non-number, so
+ * such a limit used to accept a body of any size. `Infinity` stays valid and
+ * means no limit.
+ */
+function assertValidMaxBodySize(maxBodySize: unknown): void {
+  if (
+    typeof maxBodySize !== "number" ||
+    Number.isNaN(maxBodySize) ||
+    maxBodySize < 0
+  ) {
+    throw new SchmockError(
+      `Invalid maxBodySize: ${String(maxBodySize)}. Expected a non-negative number of bytes.`,
+      "INVALID_CONFIG",
+      { maxBodySize },
+    );
+  }
+}
+
 /** `collectBody`, keeping an urlencoded body's complete form beside it. */
 function collectRequestBody(
   req: BodyReadable,
   headers: Record<string, string>,
   maxBodySize: number,
 ): Promise<CollectedBody> {
+  try {
+    assertValidMaxBodySize(maxBodySize);
+  } catch (error) {
+    return Promise.reject(error);
+  }
   const contentLength = getHeader(headers, "content-length");
   const declaredBodyTooLarge =
     contentLength !== undefined &&

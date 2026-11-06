@@ -922,6 +922,11 @@ It rejects with `HttpIngressError`, which carries `status` and `code`:
 `err instanceof SchmockError` does not catch it. `HttpIngressErrorCode` is
 exported as a type.
 
+`maxBodySize` must be a non-negative number of bytes; `Infinity` means no
+limit. Anything else (`NaN`, a negative number, a string such as `'1mb'`) makes
+`collectBody()` reject with a `SchmockError` whose code is `INVALID_CONFIG`
+before any byte is read, instead of accepting a body of any size.
+
 `writeRejectedSchmockResponse()` writes an error response while the client may
 still be uploading. It keeps the socket open until the upload ends, goes idle
 or runs out of grace time, so the client reads the response instead of a
@@ -1057,7 +1062,7 @@ Error answers are JSON `{ error: message, code }`:
 | 405 | `METHOD_NOT_ALLOWED` | a method outside `HTTP_METHODS`; the answer carries `allow` |
 | 400 | `MALFORMED_JSON`, `JSON_TOO_DEEP`, `MALFORMED_MULTIPART` | a body that does not parse |
 | 413 | `PAYLOAD_TOO_LARGE` | a body over `maxBodySize` |
-| 500 | `SERVER_ERROR` | `handle` rejected; the message is the error's |
+| 500 | `SERVER_ERROR` | `handle` rejected, or `maxBodySize` is not a non-negative number; the message is the error's |
 
 A body failure also sends `connection: close`, and a 413 is flushed while the
 client may still be uploading. A target starting with `//` is a path, never a
