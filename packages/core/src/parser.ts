@@ -25,9 +25,10 @@ export function parseRouteKey(routeKey: string): ParsedRoute {
   // adapters) delivers a leading-slash pathname, so a slash-less key such as
   // "GET users" compiles a route no request can ever reach. `.*` is kept
   // deliberately — hostile-but-reachable segments (spaces, tabs, unicode) must
-  // still parse.
+  // still parse. The `s` flag lets it cross line terminators too: U+2028 and
+  // U+2029 arrive percent-encoded in any URL, and handle() reaches CR and LF.
   const match = routeKey.match(
-    /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) (\/.*)$/,
+    /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) (\/.*)$/s,
   );
 
   if (!match) {

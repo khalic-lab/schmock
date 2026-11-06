@@ -54,6 +54,46 @@ describe("route matching", () => {
       expect(encoded.body).toBe("coffee");
     });
 
+    it.each([
+      ["U+2028", " ", "%E2%80%A8"],
+      ["U+2029", " ", "%E2%80%A9"],
+    ])(
+      "registers a route whose path holds %s",
+      async (_label, separator, encoded) => {
+        const mock = schmock();
+        mock(`GET /a${separator}b`, "separated");
+
+        const literal = await mock.handle("GET", `/a${separator}b`);
+        const viaUrl = await mock.handle(
+          "GET",
+          new URL(`http://x/a${separator}b`).pathname,
+        );
+
+        expect(new URL(`http://x/a${separator}b`).pathname).toBe(
+          `/a${encoded}b`,
+        );
+        expect(literal.body).toBe("separated");
+        expect(viaUrl.body).toBe("separated");
+      },
+    );
+
+    it.each([
+      ["LF", "\n"],
+      ["CR", "\r"],
+      ["CRLF", "\r\n"],
+    ])(
+      "registers a route whose path holds %s, which handle() reaches",
+      async (_label, terminator) => {
+        const mock = schmock();
+        mock(`GET /a${terminator}b`, "separated");
+
+        const response = await mock.handle("GET", `/a${terminator}b`);
+
+        expect(response.status).toBe(200);
+        expect(response.body).toBe("separated");
+      },
+    );
+
     it("reports the canonical path from getRoutes", () => {
       const mock = schmock();
       mock("GET /café/", "coffee");
