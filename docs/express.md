@@ -161,10 +161,11 @@ otherwise `INTERNAL_ERROR`.
 Exception provenance is captured before `beforeResponse` runs, so a hook that
 clones the response with `{ ...response }` does not suppress the formatter.
 The formatted response keeps the (post-hook) response headers — `retry-after`
-and friends survive — with `content-type` forced to `application/json`. A
-post-hook header that cannot be transported (a non-string value, a control
-character in the value, or a case-duplicate name) is dropped rather than
-discarding the formatted body. If
+and friends survive — with `content-type` forced to `application/json`. If any
+post-hook header cannot be transported (a non-string value, a control
+character in the value, or a case-duplicate name), the formatted body is kept
+but every inherited header is dropped, `retry-after` included: the 500 carries
+only `content-type: application/json`. If
 `beforeResponse` rewrites an exception to a non-500 status, that response is
 sent as-is and the formatter is not called.
 
