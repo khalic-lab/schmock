@@ -44,6 +44,33 @@ describe("string response header length", () => {
     expect(response.headers["X-Pad"]).toBe("xxx");
   });
 
+  it("rounds a fractional minLength up", async () => {
+    const mock = await mockWithPaddedHeader(2.5);
+
+    const response = await mock.handle("GET", "/x");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["X-Pad"]).toBe("xxx");
+  });
+
+  it("still pads to a minLength exactly at the string length limit", async () => {
+    const mock = await mockWithPaddedHeader(MAX_STRING_LENGTH);
+
+    const response = await mock.handle("GET", "/x");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["X-Pad"]).toHaveLength(MAX_STRING_LENGTH);
+  });
+
+  it("refuses a minLength one past the string length limit", async () => {
+    const mock = await mockWithPaddedHeader(MAX_STRING_LENGTH + 1);
+
+    const response = await mock.handle("GET", "/x");
+
+    expect(response.status).toBe(500);
+    expect(response.body).toMatchObject({ code: "RESOURCE_LIMIT_ERROR" });
+  });
+
   it("reads a negative minLength as no minimum", async () => {
     const mock = await mockWithPaddedHeader(-1);
 
