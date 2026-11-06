@@ -1744,41 +1744,48 @@ describe("settling a request once its response is final (#39)", () => {
     expect(stored(mock)).toEqual([]);
   });
 
-  it("commits nothing when openapi's own Prefer step throws and onError recovers", async () => {
-    const urls: string[] = [];
-    const preferSpec = spec({
-      "/pets": {
-        get: {
-          responses: {
-            "200": {
-              description: "list",
-              content: json({ type: "array", items: openPet }),
+  // @schmock/core ^2.6.0 is the peer range, and 2.6.0 never sets
+  // `recoveredFromError`: there openapi's own record that process() finished
+  // is the only guard, so the second case hides the flag from afterResponse.
+  it.each([
+    ["core marks the recovery", false],
+    ["core predates recoveredFromError", true],
+  ])(
+    "commits nothing when openapi's own Prefer step throws and onError recovers (%s)",
+    async (_host, hideRecovery) => {
+      const urls: string[] = [];
+      const preferSpec = spec({
+        "/pets": {
+          get: {
+            responses: {
+              "200": {
+                description: "list",
+                content: json({ type: "array", items: openPet }),
+              },
             },
           },
-        },
-        post: {
-          responses: {
-            "201": { description: "c", content: json(openPet) },
-            "400": {
-              description: "bad",
-              content: json({
-                type: "object",
-                properties: { err: { type: "string" } },
-              }),
+          post: {
+            responses: {
+              "201": { description: "c", content: json(openPet) },
+              "400": {
+                description: "bad",
+                content: json({
+                  type: "object",
+                  properties: { err: { type: "string" } },
+                }),
+              },
             },
+            callbacks: hook("https://hooks.example/created"),
           },
-          callbacks: hook("https://hooks.example/created"),
         },
-      },
-      "/pets/{petId}": {
-        get: {
-          responses: { "200": { description: "p", content: json(openPet) } },
+        "/pets/{petId}": {
+          get: {
+            responses: { "200": { description: "p", content: json(openPet) } },
+          },
         },
-      },
-    });
-    const mock = schmock({ state: {} });
-    mock.pipe(
-      await openapi({
+      });
+      const mock = schmock({ state: {} });
+      const plugin = await openapi({
         spec: preferSpec,
         callbacks: { dispatch: (request) => void urls.push(request.url) },
         // Throws only for the 400 body `Prefer: code=400` asks for, after the
@@ -1787,26 +1794,41 @@ describe("settling a request once its response is final (#39)", () => {
           if (schema.properties?.err) throw new Error("hook failed");
           return schema;
         },
-      }),
-    );
-    mock.pipe({
-      name: "recover",
-      process(context, response) {
-        return { context, response };
-      },
-      onError() {
-        return { status: 201, body: { recovered: true } };
-      },
-    });
+      });
+      const afterResponse = plugin.afterResponse;
+      mock.pipe(
+        hideRecovery && afterResponse
+          ? {
+              ...plugin,
+              afterResponse(context, response) {
+                const { recoveredFromError: _hidden, ...unmarked } = context;
+                return afterResponse.call(plugin, unmarked, response);
+              },
+            }
+          : plugin,
+      );
+      mock.pipe({
+        name: "recover",
+        process(context, response) {
+          return { context, response };
+        },
+        onError() {
+          return { status: 201, body: { recovered: true } };
+        },
+      });
 
-    const answered = await mock.handle("POST", "/pets", {
-      body: { name: "rex" },
-      headers: { prefer: "code=400" },
-    });
-    expect(answered).toMatchObject({ status: 201, body: { recovered: true } });
-    expect(urls).toEqual([]);
-    expect(stored(mock)).toEqual([]);
-  });
+      const answered = await mock.handle("POST", "/pets", {
+        body: { name: "rex" },
+        headers: { prefer: "code=400" },
+      });
+      expect(answered).toMatchObject({
+        status: 201,
+        body: { recovered: true },
+      });
+      expect(urls).toEqual([]);
+      expect(stored(mock)).toEqual([]);
+    },
+  );
 });
 
 describe("the errorSchema resource override", () => {
