@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import SwaggerParser from "@apidevtools/swagger-parser";
 import { describe, expect, it } from "vitest";
-import { dereferenceInternal } from "./deref-internal";
+import { assertInternalRefs, dereferenceInternal } from "./deref-internal";
 
 /**
  * `deref-internal.ts` exists only to reproduce what
@@ -198,6 +198,28 @@ describe("internal dereference parity with swagger-parser", () => {
           properties: { s: { $ref: "#/components/schemas/Self" } },
         },
       }),
+    );
+  });
+
+  it("leaves a $ref back to the pointer being walked unfollowed, as ref-parser does", async () => {
+    // Walking `C/x` follows `C` to `D`, whose `$ref` names `C/x` itself, the
+    // site being resolved. ref-parser leaves it unfollowed, so the merge with
+    // `C`'s sibling has no `x` and the walk misses. Following it instead
+    // loops back through `C` until the hop limit.
+    const spec = specWith({
+      A: { $ref: "#/components/schemas/C/x" },
+      C: { $ref: "#/components/schemas/D", description: "c" },
+      D: { $ref: "#/components/schemas/C/x" },
+    });
+
+    await expect(dereferenceWithSwaggerParser(spec)).rejects.toThrow(
+      'Token "x" does not exist',
+    );
+    expect(() => dereferenceInternal(structuredClone(spec))).toThrow(
+      '$ref "#/components/schemas/C/x" has no "x"',
+    );
+    expect(() => assertInternalRefs(structuredClone(spec))).toThrow(
+      '$ref "#/components/schemas/C/x" has no "x"',
     );
   });
 
