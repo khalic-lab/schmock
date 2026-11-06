@@ -714,6 +714,31 @@ describe("a property declared by several merged schemas (faker-4)", () => {
     }
   });
 
+  it("lets a keyword beside a $ref entry replace the target's (D58)", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      allOf: [
+        { $ref: "#/$defs/Base", maxProperties: 2 },
+        { properties: { name: { enum: ["x", "y"] } } },
+      ],
+      $defs: {
+        Base: {
+          type: "object",
+          maxProperties: 4,
+          properties: {
+            name: { type: "string" },
+            a: { type: "string" },
+            b: { type: "string" },
+            c: { type: "string" },
+          },
+        },
+      },
+    };
+    for (const value of await generateSeeds(schema, 10)) {
+      expect(Object.keys(objectOf(value)).length).toBeLessThanOrEqual(2);
+    }
+  });
+
   it("honours a pattern a then adds to a base property", async () => {
     const schema: JSONSchema7 = {
       type: "object",
