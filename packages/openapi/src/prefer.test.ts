@@ -182,6 +182,86 @@ describe("Prefer response headers", () => {
   );
 });
 
+describe("seeded Prefer response headers", () => {
+  const requestId = {
+    "X-Request-Id": { schema: { type: "string", format: "uuid" } },
+  };
+  const item = {
+    type: "object",
+    properties: { id: { type: "string" }, name: { type: "string" } },
+  };
+  const json = (schema: unknown) => ({
+    "application/json": { schema },
+  });
+  const seededSpec = {
+    openapi: "3.0.3",
+    info: { title: "seeded prefer headers", version: "1.0.0" },
+    paths: {
+      "/ping": {
+        get: {
+          responses: {
+            "200": {
+              description: "ok",
+              headers: requestId,
+              content: json({ type: "object" }),
+            },
+          },
+        },
+      },
+      "/items": {
+        post: {
+          requestBody: { content: json(item) },
+          responses: {
+            "201": {
+              description: "created",
+              headers: requestId,
+              content: json(item),
+            },
+          },
+        },
+      },
+      "/items/{id}": {
+        get: {
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          responses: { "200": { description: "one", content: json(item) } },
+        },
+      },
+    },
+  };
+
+  // The seeded header namespace (see response-headers.ts): a fixed prefix,
+  // then the seed and the request ordinal.
+  const seeded = /^00000000-0000-4000-9000-000042\d{6}$/;
+
+  it.each([
+    ["GET", "/ping", "dynamic=true", 200],
+    ["GET", "/ping", "code=200", 200],
+    ["POST", "/items", "dynamic=true", 201],
+    ["POST", "/items", "code=201", 201],
+  ] as const)(
+    "%s %s with Prefer: %s draws its headers from fakerSeed",
+    async (method, path, prefer, status) => {
+      const mock = schmock();
+      mock.pipe(await openapi({ spec: seededSpec, fakerSeed: 42 }));
+
+      const response = await mock.handle(method, path, {
+        body: method === "POST" ? { name: "a" } : undefined,
+        headers: { prefer },
+      });
+
+      expect(response.status).toBe(status);
+      expect(response.headers["X-Request-Id"]).toMatch(seeded);
+    },
+  );
+});
+
 describe("Prefer example under a default or range response", () => {
   const ok = {
     description: "ok",
