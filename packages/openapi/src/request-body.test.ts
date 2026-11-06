@@ -544,6 +544,18 @@ describe("request body validation", () => {
       expect(node).toEqual({ a: "x" });
     });
 
+    it("keeps a bracket key one segment past the depth limit literal", () => {
+      const key = `meta${"[a]".repeat(257)}`;
+
+      expect(
+        normalizeRequestBody(
+          new URLSearchParams({ [key]: "x" }),
+          "application/x-www-form-urlencoded",
+          { type: "object", properties: { meta: { type: "object" } } },
+        ),
+      ).toEqual({ [key]: "x" });
+    });
+
     it("accepts Stripe's deepObject metadata and integer fields", {
       timeout: 60_000,
     }, async () => {
