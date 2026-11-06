@@ -1716,6 +1716,35 @@ describe("invented pattern property keys", () => {
     }
   });
 
+  it("invents the names a propertyNames enum lists", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      minProperties: 2,
+      patternProperties: { "^[a-z]+$": { type: "integer" } },
+      propertyNames: { enum: ["ab", "cd"] },
+      additionalProperties: false,
+    };
+    for (const value of await generateSeeds(schema, 5)) {
+      expect(Object.keys(objectOf(value)).sort()).toEqual(["ab", "cd"]);
+    }
+  });
+
+  it("invents keys exactly as long as a propertyNames length bound", async () => {
+    for (const names of [{ minLength: 2 }, { maxLength: 2 }]) {
+      const schema: JSONSchema7 = {
+        type: "object",
+        patternProperties: { "^[a-z]{2}$": { type: "integer" } },
+        propertyNames: names,
+        additionalProperties: false,
+      };
+      for (const value of await generateSeeds(schema, 5)) {
+        const keys = Object.keys(objectOf(value));
+        expect(keys.length, JSON.stringify(names)).toBeGreaterThanOrEqual(1);
+        for (const key of keys) expect(key).toMatch(/^[a-z]{2}$/);
+      }
+    }
+  });
+
   it("invents only keys a propertyNames pattern or length accepts", async () => {
     for (const [names, source, accepts] of [
       [{ pattern: "^a" }, "^[ab][a-z]{0,3}$", (key: string) => /^a/.test(key)],
@@ -1742,14 +1771,19 @@ describe("invented pattern property keys", () => {
   });
 
   it("invents no key a propertyNames keyword it cannot check could reject", async () => {
-    const schema: JSONSchema7 = {
-      type: "object",
-      patternProperties: { "^ab$": { type: "integer" } },
-      propertyNames: { not: { const: "ab" } },
-      additionalProperties: false,
-    };
-    for (const value of await generateSeeds(schema, 5)) {
-      expect(Object.keys(objectOf(value))).toEqual([]);
+    for (const names of [
+      { not: { const: "ab" } },
+      { pattern: "^a", not: { const: "ab" } },
+    ] satisfies JSONSchema7[]) {
+      const schema: JSONSchema7 = {
+        type: "object",
+        patternProperties: { "^ab$": { type: "integer" } },
+        propertyNames: names,
+        additionalProperties: false,
+      };
+      for (const value of await generateSeeds(schema, 5)) {
+        expect(Object.keys(objectOf(value)), JSON.stringify(names)).toEqual([]);
+      }
     }
   });
 
