@@ -27,6 +27,31 @@ describe("mock.intercept()", () => {
     handle.restore();
   });
 
+  it.each([
+    { label: "no baseUrl", baseUrl: undefined },
+    { label: "baseUrl '/'", baseUrl: "/" },
+  ])(
+    "leaves data: and blob: fetches to real fetch with passthrough off and $label",
+    async ({ baseUrl }) => {
+      globalThis.fetch = originalFetch;
+      mock("GET /api/users", [{ id: 1 }]);
+      const handle = mock.intercept({ passthrough: false, baseUrl });
+      const blobUrl = URL.createObjectURL(new Blob(["blob-bytes"]));
+
+      try {
+        const data = await fetch("data:text/plain,hello");
+        expect(data.status).toBe(200);
+        expect(await data.text()).toBe("hello");
+        const blob = await fetch(blobUrl);
+        expect(blob.status).toBe(200);
+        expect(await blob.text()).toBe("blob-bytes");
+      } finally {
+        handle.restore();
+        URL.revokeObjectURL(blobUrl);
+      }
+    },
+  );
+
   it("keeps the request URL on clones of a mocked Response", async () => {
     mock("GET /api/users", [{ id: 1 }]);
     const handle = mock.intercept();

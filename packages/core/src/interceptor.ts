@@ -33,6 +33,8 @@ const FILTERED = Symbol("schmock.fetch.filtered");
 // asking again would only repeat the answer and its lifecycle events.
 const ALREADY_CONSULTED = Symbol("schmock.fetch.already-consulted");
 const RELATIVE_REQUEST_BASE = "http://schmock.invalid/";
+/** Schemes fetch resolves locally: nothing a mock could stand in for. */
+const LOCAL_FETCH_SCHEMES: ReadonlySet<string> = new Set(["data:", "blob:"]);
 
 /**
  * Marks an admission whose `handle()` already returns responses normalized
@@ -797,6 +799,9 @@ export function createFetchLease(
         beforeResponse,
         errorFormatter,
       } = currentOptions;
+      // A data: or blob: URL never reaches the network and names no route,
+      // so not even a passthrough:false lease claims it.
+      if (LOCAL_FETCH_SCHEMES.has(url.protocol)) return FILTERED;
       const path = canonicalizePath(url.pathname);
 
       // BaseUrl filter — non-matching requests go straight to real fetch.

@@ -423,6 +423,9 @@ A method outside `HTTP_METHODS` (`PROPFIND`, `PURGE`, …), including one a
 `beforeRequest` hook produces, is a route miss: it passes through when
 `passthrough` is `true` and gets 404 `ROUTE_NOT_FOUND` when it is `false`.
 
+A `data:` or `blob:` URL is never intercepted, whatever `baseUrl` and
+`passthrough` say: fetch resolves it locally, so it always goes to real fetch.
+
 A mocked `Response` reports `response.url` as the request URL without its
 fragment, and so does every `response.clone()`. `statusText` is `''`.
 
