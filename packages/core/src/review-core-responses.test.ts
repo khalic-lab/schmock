@@ -247,6 +247,22 @@ describe("@schmock/core/adapter error helpers", () => {
     });
   });
 
+  it("lets an extra content type in any letter case replace the JSON default", () => {
+    const built = adapterEntry.buildJsonErrorResponse({
+      status: 405,
+      error: "no",
+      code: "NOPE",
+      method: "GET",
+      headers: { "Content-Type": "application/problem+json", allow: "GET" },
+    });
+
+    expect(built).toEqual({
+      status: 405,
+      body: { error: "no", code: "NOPE" },
+      headers: { "Content-Type": "application/problem+json", allow: "GET" },
+    });
+  });
+
   it("exports toError", () => {
     const error = adapterEntry.toError("boom");
     expect(error.message).toBe("boom");

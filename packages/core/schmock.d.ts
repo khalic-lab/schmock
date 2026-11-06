@@ -894,7 +894,10 @@ declare namespace Schmock {
     code: string;
     /** Request method; a HEAD response carries no body. */
     method: string;
-    /** Headers added after the JSON content type, such as a 405's `allow`. */
+    /**
+     * Headers added after the JSON content type, such as a 405's `allow`. A
+     * content type here, in any letter case, replaces the JSON one.
+     */
     headers?: Readonly<Record<string, string>>;
   }
 

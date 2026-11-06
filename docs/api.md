@@ -1221,9 +1221,10 @@ interface JsonErrorResponseOptions {
 
 `buildJsonErrorResponse(options)` builds the `{ "error": error, "code": code }`
 envelope that `handle()`, `listen()` and `intercept()` answer a failure with,
-labelled `application/json` and normalized for `method`. A transport that
-writes its own failure answers uses it so its envelope cannot drift from
-core's.
+labelled `application/json` and normalized for `method`. A content type in
+`headers`, in any letter case, replaces that label instead of being sent beside
+it. A transport that writes its own failure answers uses it so its envelope
+cannot drift from core's.
 
 `isCredentialName(name)` tells whether a header or query parameter name looks
 like a credential: exactly `key`, `token`, `apikey`, `api_key`, `api-key`,

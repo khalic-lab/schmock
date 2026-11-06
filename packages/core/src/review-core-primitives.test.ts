@@ -592,6 +592,21 @@ describe("serveNodeRequest", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it("answers when classifyError names a content type in another letter case", async () => {
+    const port = await serve(schmock(), {
+      classifyError: () => ({
+        status: 405,
+        code: "NOPE",
+        message: "no",
+        headers: { "Content-Type": "application/problem+json" },
+      }),
+    });
+    const response = await sendRaw(port, rawRequest("PROPFIND /x"));
+    expect(response.status).toBe(405);
+    expect(response.headers["content-type"]).toBe("application/problem+json");
+    expect(bodyCode(response)).toBe("NOPE");
+  });
+
   it("closes the connection when classifyError answers a handler error with 413", async () => {
     const port = await serve(schmock(), {
       handle: () => Promise.reject(new Error("quota exceeded")),

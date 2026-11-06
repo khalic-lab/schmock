@@ -501,9 +501,10 @@ function withJsonContentType(
 /**
  * The JSON error envelope `{ "error": message, "code": code }` every transport
  * answers a failure with, normalized for `method`. `headers` are added after
- * the JSON content type (a 405's `allow`). The one constructor of that shape,
- * so `handle()`, `listen()`, `intercept()` and the adapters built on
- * `@schmock/core/adapter` cannot drift apart.
+ * the JSON content type (a 405's `allow`); a content type among them, in any
+ * letter case, replaces the JSON default rather than duplicating it. The one
+ * constructor of that shape, so `handle()`, `listen()`, `intercept()` and the
+ * adapters built on `@schmock/core/adapter` cannot drift apart.
  */
 export function buildJsonErrorResponse(
   input: Schmock.JsonErrorResponseOptions,
@@ -512,7 +513,9 @@ export function buildJsonErrorResponse(
     {
       status: input.status,
       body: { error: input.error, code: input.code },
-      headers: { "content-type": "application/json", ...input.headers },
+      headers: hasHeader(input.headers ?? {}, "content-type")
+        ? { ...input.headers }
+        : { "content-type": "application/json", ...input.headers },
     },
     input.method,
   );
