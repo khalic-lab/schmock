@@ -272,6 +272,14 @@ describe("request body validation", () => {
       expect(normalize({ field: { a: "b" } }, arrayOfFiles)).toEqual({
         field: { a: "b" },
       });
+      // The one element is read under the item schema, so a lone file under
+      // an array of arrays of files is the one-element array of one file.
+      expect(
+        normalize(upload([["field", lone]]), {
+          type: "array",
+          items: arrayOfFiles,
+        }),
+      ).toEqual({ field: [[expect.any(Blob)]] });
     });
 
     it("still rejects a file sent for a field that is not binary", async () => {
