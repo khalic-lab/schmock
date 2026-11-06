@@ -332,6 +332,35 @@ describe("toExpress", () => {
       );
     });
 
+    it("skips an override header whose value is undefined", async () => {
+      // `req.params.tenant` is typed string but is undefined without a
+      // `:tenant` mount, so the route must not see an undefined header.
+      const realMock = schmock();
+      realMock("GET /keys", ({ headers }) => ({
+        keys: Object.keys(headers).sort(),
+        auth: headers.authorization ?? null,
+      }));
+      const res = createRes();
+      const req = Object.assign(
+        createReq({ path: "/keys", headers: { authorization: "Bearer t" } }),
+        { params: {} as Record<string, string> },
+      );
+
+      await toExpress(realMock, {
+        beforeRequest: (incoming) => ({
+          headers: {
+            "x-tenant": incoming.params.tenant,
+            authorization: incoming.params.auth,
+          },
+        }),
+      })(req, res, vi.fn() as NextFunction);
+
+      expect(endedJson(res)).toEqual({
+        keys: ["authorization"],
+        auth: "Bearer t",
+      });
+    });
+
     it("merges an override's query onto the request's own", async () => {
       const mock = createMock(() =>
         Promise.resolve({ status: 200, body: "ok", headers: {} }),

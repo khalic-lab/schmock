@@ -192,20 +192,23 @@ function sendFormattedError(send: FormattedErrorSend): void {
  * Merge a beforeRequest override's headers onto the request's own, so a hook
  * can add one header without dropping the rest. An override replaces a header
  * whatever case either side spells its name in, and keeps its own spelling.
+ * An override entry whose value is `undefined` (`req.params.tenant` without a
+ * `:tenant` mount, say) is skipped, as if the hook had not named it.
  */
 function mergeHeaders(
   headers: Record<string, string>,
   override: Record<string, string>,
 ): Record<string, string> {
-  const replaced = new Set(
-    Object.keys(override).map((name) => name.toLowerCase()),
+  const supplied = Object.entries(override).filter(
+    (entry): entry is [string, string] => entry[1] !== undefined,
   );
+  const replaced = new Set(supplied.map(([name]) => name.toLowerCase()));
   // Own-property definition, so a `__proto__` header stays an ordinary entry.
   return Object.fromEntries([
     ...Object.entries(headers).filter(
       ([name]) => !replaced.has(name.toLowerCase()),
     ),
-    ...Object.entries(override),
+    ...supplied,
   ]);
 }
 

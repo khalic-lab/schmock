@@ -66,6 +66,8 @@ Modify request data before Schmock processes it. Return an object with any subse
 `headers` and `query` are merged onto the request's own, so returning one
 header adds it and keeps the rest (`authorization` included); a header the
 override names replaces the request's header of that name in any case.
+An override header whose value is `undefined` is skipped, so the request's
+header of that name, if any, is kept.
 `method`, `path` and `body` replace the request's. Because of the merge, an
 override cannot remove a header or a query key; to drop one (`authorization`,
 say, to simulate an unauthenticated call), use `transformHeaders` or
@@ -80,8 +82,8 @@ and the Angular adapter pass it on.
 ```typescript
 toExpress(mock, {
   beforeRequest: (req) => ({
-    // Add a tenant header from the URL; the client's headers are kept
-    headers: { 'x-tenant': req.params.tenant },
+    // Add a tenant header from the subdomain; the client's headers are kept
+    headers: { 'x-tenant': req.hostname.split('.')[0] },
   }),
 })
 ```
