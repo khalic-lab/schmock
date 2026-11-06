@@ -1854,8 +1854,10 @@ Error response format:
 ```
 
 `details` entries are raw Ajv `ErrorObject`s — the instance location is
-`instancePath`, not `path`. Two rejections emit synthetic details instead, and
-neither carries a `schemaPath`:
+`instancePath`, not `path`. A rejection lists at most 100 of them; when more
+errors occur, a final synthetic entry `{ instancePath: "", keyword:
+'truncated', params: { omitted }, message }` counts the rest. Two rejections
+emit synthetic details instead, and neither carries a `schemaPath`:
 
 - The `bodyRequired` rejection carries only `instancePath: ""`,
   `keyword: 'required'` and `message`.

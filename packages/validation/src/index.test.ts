@@ -1546,5 +1546,80 @@ describe("validationPlugin", () => {
         }),
       ).toThrow();
     });
+
+    it("caps request rejection details and records how many were left out", async () => {
+      const mock = schmock();
+      mock("POST /items", () => ({ ok: true })).pipe(
+        validationPlugin({
+          request: { body: { type: "array", items: { type: "string" } } },
+        }),
+      );
+
+      const response = await mock.handle("POST", "/items", {
+        body: new Array(1000).fill(0),
+      });
+      const details = (response.body as { details: unknown[] }).details;
+
+      expect(response.status).toBe(400);
+      expect(details).toHaveLength(101);
+      expect(details[0]).toMatchObject({ instancePath: "/0", keyword: "type" });
+      expect(details[100]).toEqual({
+        instancePath: "",
+        keyword: "truncated",
+        params: { omitted: 900 },
+        message: "900 more errors omitted",
+      });
+    });
+
+    it("caps response validation details the same way", async () => {
+      const mock = schmock();
+      mock("GET /items", () => new Array(150).fill(0)).pipe(
+        validationPlugin({
+          response: { body: { type: "array", items: { type: "string" } } },
+        }),
+      );
+
+      const response = await mock.handle("GET", "/items");
+      const details = (response.body as { details: unknown[] }).details;
+
+      expect(response.status).toBe(500);
+      expect(details).toHaveLength(101);
+      expect(details[100]).toMatchObject({
+        keyword: "truncated",
+        params: { omitted: 50 },
+      });
+    });
+
+    it("keeps exactly 100 details whole and truncates from the 101st", async () => {
+      const mock = schmock();
+      mock("POST /items", () => ({ ok: true })).pipe(
+        validationPlugin({
+          request: { body: { type: "array", items: { type: "string" } } },
+        }),
+      );
+
+      const atCap = await mock.handle("POST", "/items", {
+        body: new Array(100).fill(0),
+      });
+      const overCap = await mock.handle("POST", "/items", {
+        body: new Array(101).fill(0),
+      });
+      const atCapDetails = (atCap.body as { details: unknown[] }).details;
+      const overCapDetails = (overCap.body as { details: unknown[] }).details;
+
+      expect(atCapDetails).toHaveLength(100);
+      expect(atCapDetails).not.toContainEqual(
+        expect.objectContaining({ keyword: "truncated" }),
+      );
+      expect(atCapDetails[99]).toMatchObject({ instancePath: "/99" });
+      expect(overCapDetails).toHaveLength(101);
+      expect(overCapDetails[99]).toMatchObject({ instancePath: "/99" });
+      expect(overCapDetails[100]).toEqual({
+        instancePath: "",
+        keyword: "truncated",
+        params: { omitted: 1 },
+        message: "1 more errors omitted",
+      });
+    });
   });
 });

@@ -103,6 +103,29 @@ function createAjv({ coerceTypes }: AjvOptions = { coerceTypes: false }): Ajv {
   return ajv;
 }
 
+/**
+ * Ajv runs with `allErrors`, so one large invalid body can yield an error per
+ * item. A rejection keeps the first errors and ends with one synthetic entry
+ * counting the rest, so its body stays small however many items fail.
+ */
+const MAX_ERROR_DETAILS = 100;
+
+function capDetails(details: unknown): unknown {
+  if (!Array.isArray(details) || details.length <= MAX_ERROR_DETAILS) {
+    return details;
+  }
+  const omitted = details.length - MAX_ERROR_DETAILS;
+  return [
+    ...details.slice(0, MAX_ERROR_DETAILS),
+    {
+      instancePath: "",
+      keyword: "truncated",
+      params: { omitted },
+      message: `${omitted} more errors omitted`,
+    },
+  ];
+}
+
 type SchemaUriResolver = Ajv["opts"]["uriResolver"];
 
 interface SchemaInventory {
@@ -876,7 +899,7 @@ export function validationPlugin(
   ): Schmock.PluginResult {
     const response = {
       status: requestErrorStatus,
-      body: { error, code, details },
+      body: { error, code, details: capDetails(details) },
     };
     requestRejections.set(response, cloneGraph(response));
     return {
@@ -1027,7 +1050,7 @@ export function validationPlugin(
               body: {
                 error: "Response validation failed",
                 code: "RESPONSE_VALIDATION_ERROR",
-                details: validators.responseBody.errors,
+                details: capDetails(validators.responseBody.errors),
               },
             },
           };
