@@ -743,7 +743,9 @@ async function dereferenceDocument({
   policy,
 }: DereferenceDocumentArgs): Promise<OpenAPI.Document> {
   // Ref-free object sources keep their fast path: no resolver, no clone, no
-  // validator. `browser-compat.test.ts` pins it.
+  // validator. `browser-compat.test.ts` pins it. The browser build's refusals
+  // come first, or a ref-free spec would slip past them.
+  resolver.assertSupported({ options: refOptions, strict });
   const hasRefs = baseUrl !== undefined || containsRef(raw);
   if (!hasRefs && !strict) return raw;
 

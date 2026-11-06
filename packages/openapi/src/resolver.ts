@@ -61,6 +61,15 @@ export interface SpecResolver {
    */
   parse(source: string, options: RefParserOptions): Promise<OpenAPI.Document>;
 
+  /**
+   * Throw for an option this build cannot honour. Called before the ref-free
+   * fast path in `loadDocument` as well as by `dereference`, so whether an
+   * option is refused never depends on whether the spec has a `$ref`.
+   */
+  assertSupported(
+    request: Pick<DereferenceRequest, "options" | "strict">,
+  ): void;
+
   /** Replace every `$ref` with its target, validating first when `strict`. */
   dereference(request: DereferenceRequest): Promise<OpenAPI.Document>;
 
@@ -423,6 +432,9 @@ export function createResolver(): SpecResolver {
 
   return {
     fetchRef: createGuardedFetch(),
+
+    // Every option is available under Node.
+    assertSupported: () => undefined,
 
     parse: async (source, options) => {
       try {

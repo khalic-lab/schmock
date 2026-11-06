@@ -32,8 +32,30 @@ function nodeOnly(what: string, detail: string): SchmockError {
   );
 }
 
+function assertSupported({
+  options,
+  strict,
+}: Pick<DereferenceRequest, "options" | "strict">): void {
+  if (strict) {
+    throw nodeOnly(
+      "strict: true",
+      "Validating against the OpenAPI meta-schema needs the Node build. " +
+        "Validate the spec in your build or test step and leave strict off at runtime.",
+    );
+  }
+  if (options.resolve.external) {
+    throw nodeOnly(
+      "refs: { external: true }",
+      "External $refs are resolved by swagger-parser, which cannot run in a browser. " +
+        "Bundle a spec whose $refs all point inside itself.",
+    );
+  }
+}
+
 export function createResolver(): SpecResolver {
   return {
+    assertSupported,
+
     parse: (source: string): Promise<OpenAPI.Document> => {
       throw nodeOnly(
         "Loading a spec from a file path or URL",
@@ -42,26 +64,11 @@ export function createResolver(): SpecResolver {
       );
     },
 
-    dereference: async ({
-      document,
-      options,
-      strict,
-    }: DereferenceRequest): Promise<OpenAPI.Document> => {
-      if (strict) {
-        throw nodeOnly(
-          "strict: true",
-          "Validating against the OpenAPI meta-schema needs the Node build. " +
-            "Validate the spec in your build or test step and leave strict off at runtime.",
-        );
-      }
-      if (options.resolve.external) {
-        throw nodeOnly(
-          "refs: { external: true }",
-          "External $refs are resolved by swagger-parser, which cannot run in a browser. " +
-            "Bundle a spec whose $refs all point inside itself.",
-        );
-      }
-      return dereferenceInternal(document);
+    dereference: async (
+      request: DereferenceRequest,
+    ): Promise<OpenAPI.Document> => {
+      assertSupported(request);
+      return dereferenceInternal(request.document);
     },
 
     // Unreachable in practice: `dereference` refuses external refs above, so
