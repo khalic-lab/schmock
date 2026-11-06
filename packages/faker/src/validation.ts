@@ -570,8 +570,8 @@ function estimateSchema(
     return child;
   };
 
-  if (isArrayLike(schema)) {
-    for (const keyword of ARRAY_KEYWORDS) handled.add(keyword);
+  /** Nodes and certain characters of the items `array` generates. */
+  const arrayItems = (array: JSONSchema7): Omit<Estimate, "height"> => {
     // json-schema-faker fills a nested array to maxItems, but the root array
     // is resized per request (determineArrayCount), which can raise a lone
     // minItems to DEFAULT_ARRAY_COUNT and sizes a tuple to its length. Its
@@ -580,18 +580,18 @@ function estimateSchema(
     const count =
       root?.explicitCount ??
       (root
-        ? Math.max(effectiveArrayCount(schema), arrayCountRange(schema).most)
-        : effectiveArrayCount(schema));
+        ? Math.max(effectiveArrayCount(array), arrayCountRange(array).most)
+        : effectiveArrayCount(array));
     const certainCount = root
-      ? (root.explicitCount ?? schema.minItems ?? 0)
+      ? (root.explicitCount ?? array.minItems ?? 0)
       : count;
     // A Draft-7 tuple becomes json-schema-faker's `prefixItems`, replacing a
     // native one (see `jsfTraversalView`), and its `additionalItems` fills
     // the tail; otherwise a native `prefixItems` leads and `items` fills it.
-    const nativePrefix: unknown = Reflect.get(schema, "prefixItems");
-    const tuple = Array.isArray(schema.items);
-    const positional: unknown[] = Array.isArray(schema.items)
-      ? schema.items
+    const nativePrefix: unknown = Reflect.get(array, "prefixItems");
+    const tuple = Array.isArray(array.items);
+    const positional: unknown[] = Array.isArray(array.items)
+      ? array.items
       : Array.isArray(nativePrefix)
         ? nativePrefix
         : [];
@@ -602,7 +602,7 @@ function estimateSchema(
       if (index < count) itemNodes = capped(itemNodes + child.nodes);
       if (index < certainCount) itemChars = capped(itemChars + child.chars);
     });
-    const tail = tuple ? schema.additionalItems : schema.items;
+    const tail = tuple ? array.additionalItems : array.items;
     const rest = tail === undefined ? LEAF : value(tail);
     itemNodes = capped(
       itemNodes + Math.max(0, count - positional.length) * rest.nodes,
@@ -615,19 +615,25 @@ function estimateSchema(
     // `contains` draw, whatever the count. They take the place of items, so
     // charging them on top overstates the array a little and never
     // understates it.
-    if (schema.contains !== undefined) {
+    if (array.contains !== undefined) {
       itemNodes = capped(
-        itemNodes + containsDraws(schema) * value(schema.contains).nodes,
+        itemNodes + containsDraws(array) * value(array.contains).nodes,
       );
     }
-    const containsAll: unknown = Reflect.get(schema, "containsAll");
+    const containsAll: unknown = Reflect.get(array, "containsAll");
     if (Array.isArray(containsAll)) {
       for (const entry of containsAll) {
         itemNodes = capped(itemNodes + value(entry).nodes);
       }
     }
-    nodes = capped(nodes + itemNodes);
-    chars = capped(chars + itemChars);
+    return { nodes: itemNodes, chars: itemChars };
+  };
+
+  if (isArrayLike(schema)) {
+    for (const keyword of ARRAY_KEYWORDS) handled.add(keyword);
+    const items = arrayItems(schema);
+    nodes = capped(nodes + items.nodes);
+    chars = capped(chars + items.chars);
   }
 
   if (isObjectLike(schema)) {
@@ -672,6 +678,14 @@ function estimateSchema(
     // largest floor is certain.
     chars = Math.max(chars, estimate.chars);
   }
+  // json-schema-faker merges the entries into one array before it generates,
+  // so a count from one entry multiplies the items of another.
+  const mergedArray = mergeAllOfArray(schema, state.views);
+  if (mergedArray !== undefined) {
+    const items = arrayItems(mergedArray);
+    nodes = Math.max(nodes, capped(1 + items.nodes));
+    chars = Math.max(chars, items.chars);
+  }
 
   let alternative = 0;
   for (const keyword of ["anyOf", "oneOf"] as const) {
@@ -715,6 +729,67 @@ function estimateSchema(
   const nullable =
     hasType(schema, "null") || Reflect.get(schema, "schmockNullable") === true;
   return { height, nodes, chars: nullable ? 0 : chars };
+}
+
+/**
+ * The array keywords json-schema-faker's `allOf` merge takes from the last
+ * schema that declares them.
+ */
+const LAST_ARRAY_KEYWORDS = [
+  "items",
+  "additionalItems",
+  "prefixItems",
+  "contains",
+] as const;
+
+/**
+ * The array keywords of `schema` merged with its `allOf` entries the way
+ * json-schema-faker merges them (the largest `minItems`, the smallest
+ * `maxItems`, the last `items`, `prefixItems`, `additionalItems` and
+ * `contains`), reading each entry through its `$ref`. Undefined when no
+ * entry declares an array keyword, so the node's own estimate already holds,
+ * or when a `type` on the node or an entry rules the array out.
+ */
+function mergeAllOfArray(
+  schema: JSONSchema7,
+  views: (schema: JSONSchema7) => JSONSchema7,
+): JSONSchema7 | undefined {
+  const entries = (schema.allOf ?? [])
+    .filter(isJSONSchema7)
+    .map((entry) => views(entry));
+  const declaresArray = (part: JSONSchema7) =>
+    part.minItems !== undefined ||
+    part.maxItems !== undefined ||
+    LAST_ARRAY_KEYWORDS.some(
+      (keyword) => Reflect.get(part, keyword) !== undefined,
+    );
+  const parts = [schema, ...entries];
+  if (
+    !entries.some(declaresArray) ||
+    parts.some((part) => part.type !== undefined && !hasType(part, "array"))
+  ) {
+    return undefined;
+  }
+  const merged: JSONSchema7 = { type: "array" };
+  for (const part of parts) {
+    if (part.minItems !== undefined) {
+      merged.minItems = Math.max(
+        merged.minItems ?? part.minItems,
+        part.minItems,
+      );
+    }
+    if (part.maxItems !== undefined) {
+      merged.maxItems = Math.min(
+        merged.maxItems ?? part.maxItems,
+        part.maxItems,
+      );
+    }
+    for (const keyword of LAST_ARRAY_KEYWORDS) {
+      const declared: unknown = Reflect.get(part, keyword);
+      if (declared !== undefined) Reflect.set(merged, keyword, declared);
+    }
+  }
+  return merged;
 }
 
 function estimateDefinition(

@@ -1009,6 +1009,87 @@ describe("validateSchema", () => {
     });
   });
 
+  describe("array keywords split across allOf", () => {
+    // 500 required integers per item: 10,000 items pass the node budget.
+    const properties = Object.fromEntries(
+      Array.from({ length: 500 }, (_, index) => [
+        `f${index}`,
+        { type: "integer" } satisfies JSONSchema7,
+      ]),
+    );
+    const item: JSONSchema7 = {
+      type: "object",
+      properties,
+      required: Object.keys(properties),
+    };
+    const listOf = (list: JSONSchema7): JSONSchema7 => ({
+      type: "object",
+      properties: { list },
+      required: ["list"],
+    });
+
+    it.each([
+      [
+        "the count in an allOf entry",
+        { type: "array", items: item, allOf: [{ minItems: 10_000 }] },
+      ],
+      [
+        "the count and the items in separate entries",
+        { allOf: [{ minItems: 10_000 }, { items: item }] },
+      ],
+      [
+        "the items behind a $ref entry",
+        {
+          type: "array",
+          minItems: 10_000,
+          items: { type: "integer" },
+          allOf: [{ $ref: "#/$defs/Wide" }],
+        },
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "charges an array with %s as json-schema-faker merges it",
+      (_, list) => {
+        const schema = { ...listOf(list), $defs: { Wide: { items: item } } };
+        expectResource(
+          captureFailure(() => validateSchema(schema)),
+          {
+            resource: "generated_nodes",
+          },
+        );
+      },
+    );
+
+    it("holds the merged count to the smallest maxItems", () => {
+      const list: JSONSchema7 = {
+        type: "array",
+        items: item,
+        allOf: [{ minItems: 10 }, { maxItems: 10_000 }, { maxItems: 10 }],
+      };
+      expect(() => validateSchema(listOf(list))).not.toThrow();
+    });
+
+    it("raises the merged count to the largest minItems", () => {
+      const list: JSONSchema7 = {
+        type: "array",
+        items: item,
+        allOf: [{ minItems: 10_000 }, { minItems: 10 }],
+      };
+      expectResource(
+        captureFailure(() => validateSchema(listOf(list))),
+        { resource: "generated_nodes" },
+      );
+    });
+
+    it("merges no array where a type rules the array out", () => {
+      for (const value of [
+        { type: "object", items: item, allOf: [{ minItems: 10_000 }] },
+        { items: item, allOf: [{ type: "object", minItems: 10_000 }] },
+      ] satisfies JSONSchema7[]) {
+        expect(() => validateSchema(listOf(value))).not.toThrow();
+      }
+    });
+  });
+
   describe("count on a root array reached through a wrapper", () => {
     const list: JSONSchema7 = { type: "array", items: { type: "integer" } };
 

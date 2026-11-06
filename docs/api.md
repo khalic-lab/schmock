@@ -1774,7 +1774,11 @@ branch supplies the value instead. A `helpers.fake` template counts the
 certain length of each placeholder it calls plus its literal text (the
 placeholders alone when that text holds a brace), and an array of templates
 counts its shortest. Nested arrays are bounded by
-`generated_nodes`; there is no separate memory estimate.
+`generated_nodes`; there is no separate memory estimate. An array whose
+`allOf` entries carry its count or its items is charged as json-schema-faker
+merges them: the largest `minItems`, the smallest `maxItems` and the last
+`items` declared, so a `minItems` in one entry multiplies the `items` of
+another.
 
 Faker arguments that set a size are held to the string limit:
 
