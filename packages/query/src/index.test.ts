@@ -854,6 +854,35 @@ describe("queryPlugin", () => {
       }
     });
 
+    const nonObjectOptions: [string, string, unknown][] = [
+      ["null options", "options", null],
+      ["string options", "options", "abc"],
+      ["array options", "options", []],
+      ["numeric pagination", "pagination", { pagination: 5 }],
+      ["null pagination", "pagination", { pagination: null }],
+      ["array pagination", "pagination", { pagination: [] }],
+      ["string sorting", "sorting", { sorting: "x" }],
+      ["boolean filtering", "filtering", { filtering: true }],
+    ];
+
+    for (const [label, option, options] of nonObjectOptions) {
+      it(`rejects ${label} with a QUERY_CONFIG_INVALID naming ${option}`, () => {
+        expect.hasAssertions();
+        try {
+          queryPlugin(options as any);
+        } catch (error) {
+          expect(error).toMatchObject({
+            name: "SchmockError",
+            code: "QUERY_CONFIG_INVALID",
+            context: { option },
+          });
+          expect((error as Error).message).toContain(
+            `queryPlugin: ${option} must be an object`,
+          );
+        }
+      });
+    }
+
     it("keeps config errors structured when the received value is unprintable", () => {
       const received: Record<string, unknown> = Object.create(null);
       const pagination = {};

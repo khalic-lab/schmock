@@ -1963,7 +1963,8 @@ interface QueryPluginOptions {
 
 Every section is optional — `queryPlugin()` with no options passes responses
 through untouched. Invalid options throw a `SchmockError`
-(`QUERY_CONFIG_INVALID`) at creation time: limits must be positive integers,
+(`QUERY_CONFIG_INVALID`) at creation time: the options and each section given
+must be objects, limits must be positive integers,
 parameter names must be non-empty strings, `allowed` must be an array of
 field names that excludes `__proto__`, `constructor` and `prototype`,
 `sorting.default` must be a non-empty string listed in `sorting.allowed`, and

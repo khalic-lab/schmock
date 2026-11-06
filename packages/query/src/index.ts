@@ -174,8 +174,18 @@ function validateOptions(options: QueryPluginOptions): void {
   }
 }
 
+function assertObject(value: unknown, option: string): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw configError(`${option} must be an object`, option, value);
+  }
+}
+
 function snapshotOptions(options: QueryPluginOptions): QueryPluginOptions {
+  assertObject(options, "options");
   const { pagination, sorting, filtering } = options;
+  if (pagination !== undefined) assertObject(pagination, "pagination");
+  if (sorting !== undefined) assertObject(sorting, "sorting");
+  if (filtering !== undefined) assertObject(filtering, "filtering");
   let paginationSnapshot: PaginationOptions | undefined;
   let sortingSnapshot: SortingOptions | undefined;
   let filteringSnapshot: FilteringOptions | undefined;
