@@ -102,7 +102,7 @@ await openapi({
 |---|---|---|
 | `external` | `false` | Resolve any `$ref` leaving the root document |
 | `allowHttp` | `false` | Also resolve `http(s)` refs (requires `external`) |
-| `allowedHosts` | `[]` | Hosts an http ref may target; empty means any host |
+| `allowedHosts` | `[]` | Hosts an http ref may target, matched as a URL spells them (case, an IDN in Unicode or punycode, an IPv6 address with or without brackets, a trailing dot); empty means any host |
 | `timeoutMs` | `5000` | Per-request timeout for an http ref |
 | `redirects` | `0` | Redirects to follow (`0` refuses them) |
 | `maxBytes` | `1000000` | Maximum size of one fetched ref document, after decompression |

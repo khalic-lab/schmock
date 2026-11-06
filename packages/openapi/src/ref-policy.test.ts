@@ -83,6 +83,50 @@ describe("checkRef host allow-list", () => {
     });
   });
 
+  it("matches an allow-list entry spelled the way a URL would not spell it", () => {
+    const allows = (entry: string, ref: string): boolean =>
+      checkRef(
+        ref,
+        resolveRefPolicy({
+          external: true,
+          allowHttp: true,
+          allowedHosts: [entry],
+        }),
+      ).allowed;
+
+    // URL.hostname punycodes an IDN, keeps IPv6 brackets and keeps a
+    // trailing dot; an entry has to be compared in that same form.
+    expect(allows("bücher.de", "https://bücher.de/a.yaml")).toBe(true);
+    expect(allows("2606:4700::1111", "https://[2606:4700::1111]/a.yaml")).toBe(
+      true,
+    );
+    expect(
+      allows("[2606:4700::1111]", "https://[2606:4700::1111]/a.yaml"),
+    ).toBe(true);
+    expect(
+      allows("schemas.example.com.", "https://schemas.example.com/a.yaml"),
+    ).toBe(true);
+    expect(
+      allows("schemas.example.com", "https://schemas.example.com./a.yaml"),
+    ).toBe(true);
+    // Normalizing must not widen an entry: one with a port or a path names
+    // no hostname, so it still matches nothing.
+    expect(
+      allows("schemas.example.com:8080", "https://schemas.example.com/a.yaml"),
+    ).toBe(false);
+    expect(
+      allows("schemas.example.com/x", "https://schemas.example.com/a.yaml"),
+    ).toBe(false);
+    // The same for the spellings URL would otherwise accept as the bare
+    // host: a bracketed IPv6 entry with a port, and a trailing slash.
+    expect(
+      allows("[2606:4700::1111]:8080", "https://[2606:4700::1111]/a.yaml"),
+    ).toBe(false);
+    expect(
+      allows("schemas.example.com/", "https://schemas.example.com/a.yaml"),
+    ).toBe(false);
+  });
+
   it("still blocks a host outside the allow-list", () => {
     const verdict = checkRef("https://other.example.com/a.json#/A", policy);
     expect(verdict.allowed).toBe(false);

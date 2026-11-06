@@ -25,16 +25,50 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_REDIRECTS = 0;
 const DEFAULT_MAX_BYTES = 1_000_000;
 
+/** A hostname without the trailing dot that fully qualifies it. */
+function withoutTrailingDot(host: string): string {
+  return host.endsWith(".") ? host.slice(0, -1) : host;
+}
+
+/**
+ * An allow-list entry in the form `URL.hostname` gives a ref's host:
+ * lowercased, an IDN punycoded, an IPv6 literal bracketed, and without a
+ * trailing dot, which {@link checkRef} strips from the ref's host too.
+ *
+ * An entry that is not a bare hostname — one with a port or a path — is left
+ * as spelled, so it keeps matching nothing rather than starting to match the
+ * host it contains.
+ */
+function canonicalHost(entry: string): string {
+  const lowered = entry.toLowerCase();
+  const bracketed =
+    lowered.includes(":") && !lowered.startsWith("[")
+      ? `[${lowered}]`
+      : lowered;
+  try {
+    const url = new URL(`http://${bracketed}`);
+    const bare =
+      url.port === "" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === "" &&
+      url.username === "" &&
+      url.password === "" &&
+      !bracketed.includes("/");
+    return bare ? withoutTrailingDot(url.hostname) : lowered;
+  } catch {
+    return lowered;
+  }
+}
+
 export function resolveRefPolicy(policy?: RefPolicy): ResolvedRefPolicy {
   return {
     external: policy?.external === true,
     allowHttp: policy?.allowHttp === true,
-    // `URL.hostname` is always ASCII-lowercased, so an allow-list entry with
-    // uppercase letters would never match and would silently block a host the
-    // operator explicitly allowed. Normalize entries to compare like with like.
-    allowedHosts: (policy?.allowedHosts ?? []).map((host) =>
-      host.toLowerCase(),
-    ),
+    // `URL.hostname` is normalized — lowercased, punycoded, bracketed — so an
+    // entry spelled any other way would never match and would silently block
+    // a host the operator explicitly allowed. Compare like with like.
+    allowedHosts: (policy?.allowedHosts ?? []).map(canonicalHost),
     timeoutMs: policy?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     redirects: policy?.redirects ?? DEFAULT_REDIRECTS,
     maxBytes: policy?.maxBytes ?? DEFAULT_MAX_BYTES,
@@ -264,7 +298,7 @@ export function checkRef(ref: string, policy: ResolvedRefPolicy): RefVerdict {
 
   if (
     policy.allowedHosts.length > 0 &&
-    !policy.allowedHosts.includes(hostname)
+    !policy.allowedHosts.includes(withoutTrailingDot(hostname))
   ) {
     return { allowed: false, reason: `host "${hostname}" is not allowed` };
   }
