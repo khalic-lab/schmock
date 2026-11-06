@@ -345,6 +345,46 @@ describe("loadDocument", () => {
     }
   });
 
+  describe("refs.timeoutMs on a spec without http refs", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    for (const [label, refs] of [
+      ["allowHttp", { external: true, allowHttp: true, timeoutMs: 10 }],
+      ["external refs alone", { external: true, timeoutMs: 10 }],
+      ["external refs off", { timeoutMs: 10 }],
+    ] as const) {
+      it(`does not cap how long dereferencing local refs may take under ${label}`, async () => {
+        const schemas: Record<string, unknown> = {
+          Leaf: { type: "string" },
+        };
+        for (let i = 0; i < 50; i++) {
+          schemas[`S${i}`] = {
+            type: "object",
+            properties: { leaf: { $ref: "#/components/schemas/Leaf" } },
+          };
+        }
+        const spec = specWithResponseSchema(
+          { $ref: "#/components/schemas/S0" },
+          schemas,
+        );
+        // A slow machine, made deterministic: every clock read is 50 ms on.
+        let now = Date.now();
+        vi.spyOn(Date, "now").mockImplementation(() => {
+          now += 50;
+          return now;
+        });
+
+        // timeoutMs is per http request; there is none here, so it bounds
+        // nothing. It used to become ref-parser's whole-dereference budget.
+        const api = await loadDocument(spec, { refs });
+
+        expect(Object.keys(api.paths ?? {})).toEqual(["/x"]);
+      });
+    }
+  });
+
   describe("a $ref ending in a long whitespace run", () => {
     it("is refused by the policy pre-scan in linear time", async () => {
       // 100k spaces before one other character: a backtracking `\s*$` scan

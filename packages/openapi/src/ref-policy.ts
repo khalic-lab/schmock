@@ -603,7 +603,6 @@ export interface RefParserOptions {
           read: (file: { url: string }) => Promise<string>;
         };
   };
-  timeoutMs?: number;
 }
 
 /**
@@ -664,7 +663,6 @@ export function buildRefParserOptions(
           }),
       },
     },
-    timeoutMs: resolved.timeoutMs * 4,
   };
 }
 
