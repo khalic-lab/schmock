@@ -117,23 +117,6 @@ function validateFixtures(suite, fixturesArgument) {
   console.log(expected.join(" "));
 }
 
-function resolveVersion() {
-  const eventName = process.env.GITHUB_EVENT_NAME;
-  if (eventName === "release") {
-    const tag = process.env.RELEASE_TAG ?? "";
-    if (!tag.startsWith("v")) {
-      throw new Error(
-        `release tag "${tag}" must be v followed by a valid exact semantic version`,
-      );
-    }
-    return exactVersion(tag.slice(1));
-  }
-  if (eventName === "workflow_dispatch") {
-    return exactVersion(process.env.DISPATCH_VERSION ?? "");
-  }
-  throw new Error(`unsupported GitHub event "${eventName ?? ""}"`);
-}
-
 function pinManifest(tempRootArgument, manifestArgument, versionArgument) {
   if (!tempRootArgument)
     throw new Error("pin-manifest requires an explicit temp root");
@@ -197,9 +180,6 @@ function pinManifest(tempRootArgument, manifestArgument, versionArgument) {
 function main() {
   const [command, ...args] = process.argv.slice(2);
   switch (command) {
-    case "resolve-version":
-      console.log(resolveVersion());
-      return;
     case "validate-version":
       exactVersion(args[0]);
       return;

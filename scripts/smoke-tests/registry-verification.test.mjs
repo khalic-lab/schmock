@@ -26,7 +26,6 @@ const REGISTRY_HELPER = join(
   ROOT_DIR,
   "scripts/smoke-tests/registry-fixture.mjs",
 );
-const WORKFLOW = join(ROOT_DIR, ".github/workflows/registry-verification.yml");
 const FAKER_FIXTURE = join(
   ROOT_DIR,
   "scripts/smoke-tests/fixtures/faker/package.json",
@@ -79,27 +78,17 @@ function makeFixtureTree(names) {
   return directory;
 }
 
-test("release tags and dispatch inputs resolve to an injection-safe exact version", () => {
-  const release = run("node", [REGISTRY_HELPER, "resolve-version"], {
-    GITHUB_EVENT_NAME: "release",
-    RELEASE_TAG: "v2.3.0",
-  });
-  assert.equal(release.status, 0, output(release));
-  assert.equal(release.stdout.trim(), "2.3.0");
+test("validate-version accepts exact versions and rejects injected ones", () => {
+  for (const version of ["2.3.0", "2.4.0-beta.1"]) {
+    const result = run("node", [REGISTRY_HELPER, "validate-version", version]);
+    assert.equal(result.status, 0, output(result));
+  }
 
-  const dispatch = run("node", [REGISTRY_HELPER, "resolve-version"], {
-    GITHUB_EVENT_NAME: "workflow_dispatch",
-    DISPATCH_VERSION: "2.4.0-beta.1",
-  });
-  assert.equal(dispatch.status, 0, output(dispatch));
-  assert.equal(dispatch.stdout.trim(), "2.4.0-beta.1");
-
-  const injection = run("node", [REGISTRY_HELPER, "resolve-version"], {
-    GITHUB_EVENT_NAME: "workflow_dispatch",
-    DISPATCH_VERSION: "2.3.0\nEVIL=value",
-  });
-  assert.notEqual(injection.status, 0);
-  assert.match(output(injection), /valid exact semantic version/i);
+  for (const version of ["2.3.0\nEVIL=value", "v2.3.0", "^2.3.0", ""]) {
+    const result = run("node", [REGISTRY_HELPER, "validate-version", version]);
+    assert.notEqual(result.status, 0, `accepted ${JSON.stringify(version)}`);
+    assert.match(output(result), /valid exact semantic version/i);
+  }
 });
 
 test("rewriting a copied fixture pins every @schmock dependency without touching its source", () => {
@@ -376,19 +365,4 @@ test("an unknown filter refuses an all-suites no-op before install", () => {
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
-});
-
-test("registry workflow requires a dispatch version and passes safe env values", () => {
-  const workflow = readFileSync(WORKFLOW, "utf8");
-  assert.match(workflow, /version:\s*\n\s+description:.*\n\s+required: true/);
-  assert.match(
-    workflow,
-    /RELEASE_TAG: \$\{\{ github\.event\.release\.tag_name \}\}/,
-  );
-  assert.match(workflow, /SCHMOCK_VERSION/);
-  assert.equal(
-    workflow.match(/run-all\.sh -- "\$\{packages\[@\]\}"/g)?.length,
-    2,
-  );
-  assert.doesNotMatch(workflow, /run-all\.sh \$PACKAGES/);
 });
