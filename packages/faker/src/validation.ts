@@ -1082,7 +1082,14 @@ function validateNode(
   }
 
   if (hasType(schema, "array")) {
-    if (schema.items === null || schema.items === undefined) {
+    // A 2020-12 tuple's `prefixItems` defines its positions, and a missing
+    // `items` leaves the tail open, as `items: true` would.
+    const prefixItems: unknown = Reflect.get(schema, "prefixItems");
+    const openTuple =
+      schema.items === undefined &&
+      Array.isArray(prefixItems) &&
+      prefixItems.length > 0;
+    if ((schema.items === null || schema.items === undefined) && !openTuple) {
       throw new SchemaValidationError(
         `${path}.items`,
         "Array schema must have valid items definition",

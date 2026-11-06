@@ -1189,7 +1189,7 @@ enum, and `const: x` becomes `enum: [x, null]`. One on a schema that also uses
 ## Generation Failures
 
 When a response schema cannot be generated from — an empty schema, an array
-with no `items`, an unsupported `type`, an empty `enum` or `anyOf`, a nesting
+with neither `items` nor `prefixItems`, an unsupported `type`, an empty `enum` or `anyOf`, a nesting
 or size limit — the request now fails with a **structured 500** rather than a
 laundered `200 {}`:
 

@@ -1230,6 +1230,47 @@ describe("validateSchema", () => {
     });
   });
 
+  describe("open 2020-12 tuples", () => {
+    it("generates a prefixItems tuple that declares no items", async () => {
+      const schema = withKeywords(
+        { type: "array" },
+        { prefixItems: [{ type: "string" }, { type: "integer" }] },
+      );
+
+      const generated = await generateOnce(schema);
+
+      expect(Array.isArray(generated)).toBe(true);
+      const [first, second] = generated as unknown[];
+      expect(typeof first).toBe("string");
+      expect(Number.isInteger(second)).toBe(true);
+    });
+
+    it("still rejects an array with no usable items or prefixItems", () => {
+      expectSchemaError(
+        captureFailure(() => validateSchema({ type: "array" })),
+        "$.items",
+      );
+      expectSchemaError(
+        captureFailure(() =>
+          validateSchema(withKeywords({ type: "array" }, { prefixItems: [] })),
+        ),
+        "$.items",
+      );
+      // A null items is malformed, not absent, so prefixItems does not excuse it.
+      expectSchemaError(
+        captureFailure(() =>
+          validateSchema(
+            withKeywords(
+              { type: "array" },
+              { items: null, prefixItems: [{ type: "string" }] },
+            ),
+          ),
+        ),
+        "$.items",
+      );
+    });
+  });
+
   describe("count on a root array reached through a wrapper", () => {
     const list: JSONSchema7 = { type: "array", items: { type: "integer" } };
 
