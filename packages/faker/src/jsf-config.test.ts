@@ -1716,6 +1716,43 @@ describe("invented pattern property keys", () => {
     }
   });
 
+  it("invents only keys a propertyNames pattern or length accepts", async () => {
+    for (const [names, source, accepts] of [
+      [{ pattern: "^a" }, "^[ab][a-z]{0,3}$", (key: string) => /^a/.test(key)],
+      [{ minLength: 4 }, "^[a-z]{1,5}$", (key: string) => key.length >= 4],
+      [{ maxLength: 2 }, "^[a-z]{1,5}$", (key: string) => key.length <= 2],
+    ] satisfies [JSONSchema7, string, (key: string) => boolean][]) {
+      const schema: JSONSchema7 = {
+        type: "object",
+        minProperties: 2,
+        patternProperties: { [source]: { type: "integer" } },
+        propertyNames: names,
+        additionalProperties: false,
+      };
+      for (const value of await generateSeeds(schema, 5)) {
+        const keys = Object.keys(objectOf(value));
+        expect(keys.length).toBeGreaterThanOrEqual(1);
+        for (const key of keys) {
+          expect(accepts(key), `${key} under ${JSON.stringify(names)}`).toBe(
+            true,
+          );
+        }
+      }
+    }
+  });
+
+  it("invents no key a propertyNames keyword it cannot check could reject", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      patternProperties: { "^ab$": { type: "integer" } },
+      propertyNames: { not: { const: "ab" } },
+      additionalProperties: false,
+    };
+    for (const value of await generateSeeds(schema, 5)) {
+      expect(Object.keys(objectOf(value))).toEqual([]);
+    }
+  });
+
   it("never runs its own suffixed keys through a backtracking pattern", () => {
     const schema: JSONSchema7 = {
       type: "object",
