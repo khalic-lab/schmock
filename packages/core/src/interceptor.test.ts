@@ -1087,6 +1087,135 @@ describe("mock.intercept()", () => {
     }
   });
 
+  it.each([
+    "application/x-www-form-urlencoded",
+    "text/plain",
+    "application/octet-stream",
+    "multipart/form-data; boundary=x",
+    "application/json",
+  ])(
+    "delivers an empty %s body as undefined, as collectBody does",
+    async (contentType) => {
+      mock("POST /api/empty", ({ body }) => ({
+        isUndefined: body === undefined,
+      }));
+      const handle = mock.intercept({ passthrough: false });
+
+      try {
+        const response = await fetch("http://localhost/api/empty", {
+          method: "POST",
+          headers: { "content-type": contentType },
+          body: "",
+        });
+        expect(await response.json()).toEqual({ isUndefined: true });
+      } finally {
+        handle.restore();
+      }
+    },
+  );
+
+  it("delivers an empty body with no content type as undefined", async () => {
+    mock("POST /api/empty-untyped", ({ body }) => ({
+      isUndefined: body === undefined,
+    }));
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const request = new Request("http://localhost/api/empty-untyped", {
+        method: "POST",
+        body: new Uint8Array(0),
+      });
+      expect(request.headers.get("content-type")).toBeNull();
+      expect(request.body).not.toBeNull();
+      const response = await fetch(request);
+      expect(await response.json()).toEqual({ isUndefined: true });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("delivers a one-byte body intact", async () => {
+    mock("POST /api/one-byte", ({ body }) => ({ body }));
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const response = await fetch("http://localhost/api/one-byte", {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: "a",
+      });
+      expect(await response.json()).toEqual({ body: "a" });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("decodes a non-ASCII text body as UTF-8", async () => {
+    mock("POST /api/utf8-text", ({ body }) => ({ body }));
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const response = await fetch("http://localhost/api/utf8-text", {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: "caf\u00e9 \u2713",
+      });
+      expect(await response.json()).toEqual({ body: "caf\u00e9 \u2713" });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("decodes raw non-ASCII bytes in a form body as UTF-8", async () => {
+    mock("POST /api/utf8-form", ({ body }) => ({ body }));
+    const handle = mock.intercept({ passthrough: false });
+
+    try {
+      const response = await fetch("http://localhost/api/utf8-form", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "name=caf\u00e9",
+      });
+      expect(await response.json()).toEqual({ body: { name: "caf\u00e9" } });
+    } finally {
+      handle.restore();
+    }
+  });
+
+  it("passes a POST body through intact after reading it for a route miss", async () => {
+    mock("POST /api/other", { routed: true });
+    const savedFetch = globalThis.fetch;
+    const seen: unknown[] = [];
+    // A beforeRequest hook makes the lease read the body before it knows the
+    // request misses every route, so the same request then reaches the network.
+    const handle = mock.intercept({
+      passthrough: true,
+      beforeRequest: (request) => {
+        seen.push(request.body);
+        return request;
+      },
+    });
+
+    try {
+      const response = await fetch("http://localhost/api/missing", {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: "payload",
+      });
+      expect(await response.text()).toBe("real backend");
+      expect(seen).toEqual(["payload"]);
+      expect(savedFetch).toHaveBeenCalledOnce();
+      const [passthroughInput] = savedFetch.mock.calls[0];
+      if (!(passthroughInput instanceof Request)) {
+        throw new Error("Expected passthrough to receive a Request");
+      }
+      expect(passthroughInput.bodyUsed).toBe(false);
+      expect(await passthroughInput.text()).toBe("payload");
+    } finally {
+      handle.restore();
+    }
+  });
+
   it("decodes an inherited multipart body when init headers replace the header list", async () => {
     mock("POST /api/inherited-form", ({ body }) => ({
       isFormData: body instanceof FormData,

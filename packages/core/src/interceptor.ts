@@ -562,7 +562,8 @@ interface ExtractedBody {
 
 /**
  * Read a request body into the shape `collectBody()` gives the same request,
- * by the shared decode table and JSON parser. A refused JSON body is reported
+ * by the shared decode table and JSON parser. An empty body of any type is no
+ * body at all, as the Node ingress reads it. A refused JSON body is reported
  * rather than thrown, so the lease can answer it 400 or route its text.
  * Multipart is read with the platform's own parser, whose rejection
  * propagates as before.
@@ -573,14 +574,13 @@ async function extractBody(
   const { request } = normalizedRequest;
   if (request.body === null) return { value: undefined };
 
-  const body = request.clone();
+  const bytes = await request.clone().arrayBuffer();
+  if (bytes.byteLength === 0) return { value: undefined };
   const contentType =
     normalizedRequest.routedContentType ?? request.headers.get("content-type");
   switch (requestBodyKindOf(contentType)) {
     case "json": {
-      const text = await body.text();
-      // An empty JSON body is no body at all, as the Node ingress reads it.
-      if (text === "") return { value: undefined };
+      const text = new TextDecoder().decode(bytes);
       try {
         return { value: parseJsonBody(text) };
       } catch (error) {
@@ -591,19 +591,19 @@ async function extractBody(
       }
     }
     case "form":
-      return decodeFormBody(await body.text());
+      return decodeFormBody(new TextDecoder().decode(bytes));
     case "text":
-      return { value: await body.text() };
+      return { value: new TextDecoder().decode(bytes) };
     case "multipart":
       // Parsed under the routed content type, whose boundary the request
       // itself may no longer carry.
       return {
-        value: await new Response(body.body, {
+        value: await new Response(bytes, {
           headers: { "content-type": contentType ?? "" },
         }).formData(),
       };
     case "binary":
-      return { value: await body.arrayBuffer() };
+      return { value: bytes };
   }
 }
 
