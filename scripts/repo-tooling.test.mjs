@@ -588,6 +588,9 @@ test("the tarball allowlist rejects names that only start with an allowed file",
     "package/package.json.tmp",
     "package/LICENSEsrc/secret.ts",
     "package/adapter/package.json.bak",
+    // The dots are literal: no other character stands in for them.
+    "package/packageXjson",
+    "package/READMEXmd",
   ];
   const output = packAllowlistRun(["package/package.json", ...forbidden]);
   assert.match(output, /included non-distributable files/);
