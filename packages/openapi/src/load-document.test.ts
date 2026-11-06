@@ -853,6 +853,47 @@ describe("loadDocument", () => {
         $ref: "./missing-sample.js",
       });
     });
+
+    it("reads another document's examples by the root's Swagger 2.0 rules", async () => {
+      // The sub-file has no `swagger` key of its own. Read as OAS 3, its
+      // `examples` would be a map of Reference Objects and the `$ref` would
+      // be followed to a file that does not exist.
+      writeFileSync(
+        join(dir, "swagger.json"),
+        JSON.stringify({
+          swagger: "2.0",
+          info: { title: "Split", version: "1.0.0" },
+          paths: { "/pets": { $ref: "./pets2.json#/PetsPath" } },
+        }),
+      );
+      writeFileSync(
+        join(dir, "pets2.json"),
+        JSON.stringify({
+          PetsPath: {
+            get: {
+              produces: ["application/json"],
+              responses: {
+                "200": {
+                  description: "ok",
+                  schema: { type: "object" },
+                  examples: {
+                    "application/json": { $ref: "./missing-example.json" },
+                  },
+                },
+              },
+            },
+          },
+        }),
+      );
+
+      const api = (await loadDocument(join(dir, "swagger.json"), {
+        refs: { external: true },
+      })) as unknown as { paths: Record<string, any> };
+
+      expect(
+        api.paths["/pets"].get.responses["200"].examples["application/json"],
+      ).toEqual({ $ref: "./missing-example.json" });
+    });
   });
 
   describe("pointer length", () => {
