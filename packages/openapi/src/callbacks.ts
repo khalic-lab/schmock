@@ -1,5 +1,6 @@
 import type * as Schmock from "@schmock/core";
 import { getHeader, getResponseParts } from "@schmock/core";
+import { isCredentialName } from "@schmock/core/adapter";
 import { generateFromSchema } from "@schmock/faker";
 import type { ParsedCallback } from "./parser.js";
 import { isRecord } from "./utils.js";
@@ -65,7 +66,7 @@ export async function dispatchCallbacks(
         body = await generateFromSchema({ schema: callback.requestBody, seed });
       } catch (error) {
         console.warn(
-          `[@schmock/openapi] Callback body generation failed for ${callback.method} ${url}:`,
+          `[@schmock/openapi] Callback body generation failed for ${callback.method} ${redactCallbackUrl(url)}:`,
           error instanceof Error ? error.message : error,
         );
         continue;
@@ -85,10 +86,52 @@ export async function dispatchCallbacks(
       });
     } catch (error) {
       console.warn(
-        `[@schmock/openapi] Callback dispatcher failed for ${callback.method} ${url}:`,
+        `[@schmock/openapi] Callback dispatcher failed for ${callback.method} ${redactCallbackUrl(url)}:`,
         error instanceof Error ? error.message : error,
       );
     }
+  }
+}
+
+/**
+ * A callback URL as a warning prints it: without its userinfo, and with the
+ * value of every query parameter named like a credential (core's
+ * `isCredentialName`: `access_token`, `api_key`, …) replaced by "[redacted]".
+ * The URL often comes from the client's request body, so it can carry a
+ * token the log must not show. Plain string surgery rather than `new URL()`,
+ * which throws on a relative URL and rewrites the rest of it.
+ */
+function redactCallbackUrl(url: string): string {
+  const withoutUserinfo = url.replace(
+    /^([a-z][a-z\d+.-]*:\/\/)[^/?#]*@/i,
+    "$1",
+  );
+  const queryStart = withoutUserinfo.indexOf("?");
+  if (queryStart === -1) return withoutUserinfo;
+  const fragmentStart = withoutUserinfo.indexOf("#", queryStart);
+  const queryEnd =
+    fragmentStart === -1 ? withoutUserinfo.length : fragmentStart;
+  const query = withoutUserinfo
+    .slice(queryStart + 1, queryEnd)
+    .split("&")
+    .map((pair) => {
+      const separator = pair.indexOf("=");
+      if (separator === -1) return pair;
+      const name = pair.slice(0, separator);
+      return isCredentialName(decodeQueryName(name))
+        ? `${name}=[redacted]`
+        : pair;
+    })
+    .join("&");
+  return `${withoutUserinfo.slice(0, queryStart + 1)}${query}${withoutUserinfo.slice(queryEnd)}`;
+}
+
+/** A query parameter name as a server reads it, or as written if malformed. */
+function decodeQueryName(name: string): string {
+  try {
+    return decodeURIComponent(name.replace(/\+/g, " "));
+  } catch {
+    return name;
   }
 }
 

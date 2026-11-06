@@ -47,6 +47,40 @@ describe("dispatchCallbacks", () => {
     );
   });
 
+  it("masks credentials in the URL its failure warnings print", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const dispatcher = vi.fn((_request: Schmock.OpenApiCallbackRequest) =>
+      Promise.reject(new Error("ECONNREFUSED")),
+    );
+    const callbackUrl =
+      "https://alice:hunter2@client.example/hook?access_token=SECRET123&page=2#frag";
+
+    await dispatchCallbacks(
+      [
+        { urlExpression: "{$request.body#/callbackUrl}", method: "POST" },
+        {
+          urlExpression: "{$request.body#/callbackUrl}",
+          method: "PUT",
+          // An empty schema makes @schmock/faker reject.
+          requestBody: {},
+        },
+      ],
+      dispatcher,
+      makeContext({ body: { callbackUrl } }),
+      { id: 1 },
+    );
+
+    // The dispatcher still receives the real URL.
+    expect(dispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({ url: callbackUrl }),
+    );
+    const printed = warnSpy.mock.calls.map((call) => String(call[0]));
+    expect(printed).toEqual([
+      "[@schmock/openapi] Callback dispatcher failed for POST https://client.example/hook?access_token=[redacted]&page=2#frag:",
+      "[@schmock/openapi] Callback body generation failed for PUT https://client.example/hook?access_token=[redacted]&page=2#frag:",
+    ]);
+  });
+
   it("skips callbacks whose runtime URL resolves to an empty value", async () => {
     const dispatcher = vi.fn((_request: Schmock.OpenApiCallbackRequest) => {});
 

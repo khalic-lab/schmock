@@ -1302,7 +1302,12 @@ stored row nor what the client receives. The dispatched `content-type` is always
 `application/json` — the parser extracts JSON callback bodies only. Generated
 callback bodies are not re-validated, since they are produced from the schema.
 If generation fails, the failure is logged and that one callback is skipped;
-other callbacks on the same operation still dispatch.
+other callbacks on the same operation still dispatch. A dispatcher that throws
+or rejects is logged the same way. Both warnings print the callback URL
+without its userinfo (`user:password@`) and with the value of every query
+parameter named like a credential (`access_token`, `api_key`, `client_secret`
+and the like) replaced by `[redacted]`; the dispatcher still receives the URL
+unchanged.
 
 ## Schema Patching
 
