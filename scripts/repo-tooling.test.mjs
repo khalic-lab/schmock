@@ -520,11 +520,13 @@ const REAL_BUN = spawnSync("sh", ["-c", "command -v bun"], {
  *
  * With `throughRanges`, publint and attw pass, `bun -e` runs the real Bun, and
  * the stubbed `bun install` stops the run instead, reporting
- * "install reached". `shell` is the bash that runs the script.
+ * "install reached" and the dependency names of the consumer manifest the
+ * ranges stage wrote. `packedManifest` replaces the packed package.json.
+ * `shell` is the bash that runs the script.
  */
 function packAllowlistRun(
   entries,
-  { shell = "bash", throughRanges = false } = {},
+  { shell = "bash", throughRanges = false, packedManifest } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "schmock-pack-allowlist-"));
   try {
@@ -566,7 +568,11 @@ function packAllowlistRun(
     stub(
       join(bin, "bun"),
       `[ "$1" = "-e" ] && exec "$SCHMOCK_TEST_REAL_BUN" "$@"
-[ "$1" = "install" ] && { echo "install reached"; exit 3; }
+[ "$1" = "install" ] && {
+  echo "install reached"
+  node -e 'console.log("consumer dependencies: " + JSON.stringify(Object.keys(require("./package.json").dependencies)))'
+  exit 3
+}
 [ "$1 $2 $3" = "pm pack --destination" ] || exit 3
 stage=$(mktemp -d)
 cd "$stage" || exit 3
@@ -574,6 +580,7 @@ for entry in $SCHMOCK_TEST_PACK_ENTRIES; do
   mkdir -p "$(dirname "$entry")"
   echo '{}' > "$entry"
 done
+[ -n "$SCHMOCK_TEST_PACKED_MANIFEST" ] && printf '%s' "$SCHMOCK_TEST_PACKED_MANIFEST" > package/package.json
 tar -czf "$4/schmock-fixture-9.9.9.tgz" $SCHMOCK_TEST_PACK_ENTRIES`,
     );
     const result = spawnSync(
@@ -587,6 +594,9 @@ tar -czf "$4/schmock-fixture-9.9.9.tgz" $SCHMOCK_TEST_PACK_ENTRIES`,
           TMPDIR: root,
           SCHMOCK_TEST_PACK_ENTRIES: entries.join(" "),
           SCHMOCK_TEST_REAL_BUN: REAL_BUN,
+          SCHMOCK_TEST_PACKED_MANIFEST: packedManifest
+            ? JSON.stringify(packedManifest)
+            : "",
         },
       },
     );
@@ -643,4 +653,25 @@ test("check-release-candidate.sh passes no consumer extras under the system Bash
   assert.doesNotMatch(output, /unbound variable/);
   assert.match(output, /^\[ranges 1\/1\]/m);
   assert.match(output, /^install reached$/m);
+  // No empty extra spec either: the consumer depends on the candidate alone.
+  assert.match(output, /^consumer dependencies: \["@schmock\/fixture"\]$/m);
+});
+
+test("the ranges stage stops on an internal range that rejects a candidate", () => {
+  const output = packAllowlistRun(
+    ["package/package.json", "package/dist/index.js"],
+    {
+      throughRanges: true,
+      packedManifest: {
+        name: "@schmock/fixture",
+        version: "9.9.9",
+        peerDependencies: { "@schmock/fixture": "^1.0.0" },
+      },
+    },
+  );
+  assert.match(
+    output,
+    /declares peerDependencies\.@schmock\/fixture as "\^1\.0\.0", which does not accept release candidate 9\.9\.9/,
+  );
+  assert.doesNotMatch(output, /install reached/);
 });

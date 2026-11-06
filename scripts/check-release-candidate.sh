@@ -241,9 +241,11 @@ for ((index = 0; index < TOTAL; index += 1)); do
 done
 
 echo "[ranges 1/1] Validating internal dependency ranges"
+# ESM imports, not require(): Bun 1.3 runs a require()-using -e script as
+# CommonJS and exits 0 on an uncaught throw, so the checks below never failed.
 bun -e '
-  const { readFileSync, writeFileSync } = require("node:fs");
-  const { join } = require("node:path");
+  import { readFileSync, writeFileSync } from "node:fs";
+  import { join } from "node:path";
   const [manifestPath, candidatesPath, packDir, ...extraSpecs] = process.argv.slice(1);
   const candidates = new Map();
   const dependencies = {};
