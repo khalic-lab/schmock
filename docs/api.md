@@ -1778,7 +1778,8 @@ counts its shortest. Nested arrays are bounded by
 `allOf` entries carry its count or its items is charged as json-schema-faker
 merges them: the largest `minItems`, the smallest `maxItems` and the last
 `items` declared, so a `minItems` in one entry multiplies the `items` of
-another.
+another. Likewise the properties that a node and its `allOf` entries declare
+all count, each name once at the largest certain length any of them gives it.
 
 Faker arguments that set a size are held to the string limit:
 

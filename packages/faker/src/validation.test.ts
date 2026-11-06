@@ -1090,6 +1090,146 @@ describe("validateSchema", () => {
     });
   });
 
+  describe("object properties split across allOf", () => {
+    const text: JSONSchema7 = {
+      type: "string",
+      minLength: 60_000,
+      maxLength: 60_000,
+    };
+    const requiring = (name: string, schema: JSONSchema7): JSONSchema7 => ({
+      properties: { [name]: schema },
+      required: [name],
+    });
+
+    it("adds the strings that different entries require", () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        minItems: 150,
+        maxItems: 150,
+        items: {
+          type: "object",
+          allOf: [requiring("a", text), requiring("b", text)],
+        },
+      };
+      expectResource(
+        captureFailure(() => validateSchema(schema)),
+        {
+          resource: "generated_chars",
+          actual: 18_000_000,
+        },
+      );
+    });
+
+    it("adds a single entry's string to the node's own", () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        minItems: 150,
+        maxItems: 150,
+        items: {
+          type: "object",
+          ...requiring("a", text),
+          allOf: [requiring("b", text)],
+        },
+      };
+      expectResource(
+        captureFailure(() => validateSchema(schema)),
+        {
+          resource: "generated_chars",
+          actual: 18_000_000,
+        },
+      );
+    });
+
+    it("adds the strings behind a $ref entry", () => {
+      const schema: JSONSchema7 = {
+        definitions: { A: requiring("a", text) },
+        type: "array",
+        minItems: 150,
+        maxItems: 150,
+        items: {
+          type: "object",
+          allOf: [{ $ref: "#/definitions/A" }, requiring("b", text)],
+        },
+      };
+      expectResource(
+        captureFailure(() => validateSchema(schema)),
+        {
+          resource: "generated_chars",
+          actual: 18_000_000,
+        },
+      );
+    });
+
+    it("merges no properties where a type rules the object out", () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        minItems: 150,
+        maxItems: 150,
+        items: {
+          type: "string",
+          allOf: [requiring("a", text), requiring("b", text)],
+        },
+      };
+      expect(() => validateSchema(schema)).not.toThrow();
+    });
+
+    it("counts a property that several entries declare once", () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        minItems: 150,
+        maxItems: 150,
+        items: {
+          type: "object",
+          properties: { a: { type: "string" } },
+          allOf: [requiring("a", text), requiring("a", text)],
+        },
+      };
+      expect(() => validateSchema(schema)).not.toThrow();
+    });
+
+    it("charges a property at its longest declaration, not its last", () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        minItems: 150,
+        maxItems: 150,
+        items: {
+          type: "object",
+          allOf: [
+            requiring("a", text),
+            requiring("b", text),
+            requiring("a", { type: "string" }),
+          ],
+        },
+      };
+      expectResource(
+        captureFailure(() => validateSchema(schema)),
+        {
+          resource: "generated_chars",
+          actual: 18_000_000,
+        },
+      );
+    });
+
+    it("merges the properties of an object type written as a list", () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        minItems: 150,
+        maxItems: 150,
+        items: {
+          type: ["object"],
+          allOf: [requiring("a", text), requiring("b", text)],
+        },
+      };
+      expectResource(
+        captureFailure(() => validateSchema(schema)),
+        {
+          resource: "generated_chars",
+          actual: 18_000_000,
+        },
+      );
+    });
+  });
+
   describe("count on a root array reached through a wrapper", () => {
     const list: JSONSchema7 = { type: "array", items: { type: "integer" } };
 

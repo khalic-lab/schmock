@@ -686,6 +686,9 @@ function estimateSchema(
     nodes = Math.max(nodes, capped(1 + items.nodes));
     chars = Math.max(chars, items.chars);
   }
+  // It merges their properties too, so the strings that different entries
+  // declare all come out, while one declared twice is still one string.
+  chars = Math.max(chars, mergedPropertyChars(schema, state.views, estimates));
 
   let alternative = 0;
   for (const keyword of ["anyOf", "oneOf"] as const) {
@@ -790,6 +793,39 @@ function mergeAllOfArray(
     }
   }
   return merged;
+}
+
+/**
+ * The certain characters of the properties `schema` and its `allOf` entries
+ * declare, merged by name the way json-schema-faker merges them: each name
+ * charged once, at the largest certain length any of them gives it. Zero when
+ * a `type` on the node or an entry rules the object out.
+ */
+function mergedPropertyChars(
+  schema: JSONSchema7,
+  views: (schema: JSONSchema7) => JSONSchema7,
+  estimates: Map<JSONSchema7, Estimate>,
+): number {
+  const entries = (schema.allOf ?? [])
+    .filter(isJSONSchema7)
+    .map((entry) => views(entry));
+  const parts = [schema, ...entries];
+  if (
+    entries.length === 0 ||
+    parts.some((part) => part.type !== undefined && !hasType(part, "object"))
+  ) {
+    return 0;
+  }
+  const byName = new Map<string, number>();
+  for (const part of parts) {
+    for (const [name, property] of Object.entries(part.properties ?? {})) {
+      const certain = estimateDefinition(property, estimates).chars;
+      byName.set(name, Math.max(byName.get(name) ?? 0, certain));
+    }
+  }
+  let total = 0;
+  for (const certain of byName.values()) total = capped(total + certain);
+  return total;
 }
 
 function estimateDefinition(
