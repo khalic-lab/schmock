@@ -39,7 +39,7 @@ app.get('/api/health', (req, res) => res.json({ ok: true }))  // real handler
 
 ```typescript
 toExpress(mock, {
-  passErrorsToNext: true,     // pass non-Schmock errors to Express error handler (default: true)
+  passErrorsToNext: true,     // pass errors (SchmockError included) to Express's error handler when no errorFormatter is set (default: true)
 
   beforeRequest: (req, res) => ({
     headers: { 'x-request-id': req.get('x-request-id') || 'none' },

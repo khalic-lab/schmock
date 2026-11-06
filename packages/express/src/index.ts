@@ -34,7 +34,10 @@ export interface ExpressAdapterOptions {
   errorFormatter?: (error: Error, req: Request) => unknown;
 
   /**
-   * Whether to pass non-Schmock errors to Express error handler
+   * Whether to pass errors, `SchmockError` included, to Express's error
+   * handler (`next(error)`) when no `errorFormatter` is set, or when the
+   * response is already committed. When false and no `errorFormatter` is
+   * set, the adapter answers with core's 500 instead.
    * @default true
    */
   passErrorsToNext?: boolean;
