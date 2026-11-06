@@ -609,19 +609,19 @@ export class CallableMockInstance {
     path: string,
     admission: AdmissionSnapshot,
   ): RouteResolution {
-    let requestPath = path;
+    // A missing leading slash is implied whatever the namespace, so a
+    // slash-less `handle()` path routes the same with or without one.
+    let requestPath = path.startsWith("/") ? path : `/${path}`;
     // Apply namespace if configured. A root namespace ("/") parses to the
     // empty prefix and strips nothing.
     const namespacePrefix = admission.namespace
       ? this.#namespacePrefix(admission.namespace)
       : undefined;
     if (namespacePrefix !== undefined && namespacePrefix.path !== "") {
-      const pathToCheck = path.startsWith("/") ? path : `/${path}`;
-
       // Segment-boundary match: "/api" serves "/api" and "/api/users" but
       // not "/apiv2". The trailing-slash rule is parsePathPrefix's, shared
       // with intercept({ baseUrl }): "/api/" is the same namespace as "/api".
-      if (!matchPathPrefix(namespacePrefix, pathToCheck)) {
+      if (!matchPathPrefix(namespacePrefix, requestPath)) {
         return {
           kind: "outside-namespace",
           namespacePath: namespacePrefix.path,
@@ -629,7 +629,7 @@ export class CallableMockInstance {
       }
 
       // Remove namespace prefix, ensuring we always start with /
-      const stripped = pathToCheck.slice(namespacePrefix.path.length);
+      const stripped = requestPath.slice(namespacePrefix.path.length);
       requestPath = stripped.startsWith("/") ? stripped : `/${stripped}`;
     }
 

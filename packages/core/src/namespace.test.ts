@@ -129,6 +129,35 @@ describe("namespace functionality", () => {
       expect(response.body).toBe("users");
     });
 
+    it("strips the namespace from a slash-less path without eating a doubled slash", async () => {
+      const mock = schmock({ namespace: "/api" });
+      mock("GET /users", "single");
+      mock("GET //users", "doubled");
+
+      const response = await mock.handle("GET", "api//users");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toBe("doubled");
+    });
+
+    it.each([
+      ["no namespace", undefined],
+      ["an empty namespace", ""],
+      ["the root namespace", "/"],
+    ])(
+      "implies the leading slash of a request path under %s",
+      async (_label, namespace) => {
+        const mock = schmock(namespace === undefined ? {} : { namespace });
+        mock("GET /users", "users");
+
+        const response = await mock.handle("GET", "users");
+
+        expect(response.status).toBe(200);
+        expect(response.body).toBe("users");
+        expect(mock.lastRequest("GET", "/users")?.path).toBe("/users");
+      },
+    );
+
     it("rejects requests that partially match namespace", async () => {
       const mock = schmock({ namespace: "/api" });
       mock("GET /users", "users");
