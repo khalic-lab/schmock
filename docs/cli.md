@@ -315,6 +315,10 @@ from a URL cannot be watched; watch a local copy instead.` (context
 `{ option: 'watch', spec }`). It used to watch a local directory named after
 the URL, report it missing on every retry, and never reload.
 
+A `file:` URL spec (`file:///abs/dir/api.json`) is a spec on disk: `--watch`
+watches the file it names. It used to resolve the URL as a relative path, and
+startup failed with `ENOENT` on `<cwd>/file:/abs/dir`.
+
 `--watch` is also available programmatically as `watch: true` — see
 [Programmatic usage](#programmatic-usage).
 

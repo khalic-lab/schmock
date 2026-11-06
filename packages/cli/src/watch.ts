@@ -1,6 +1,7 @@
 import type { FSWatcher } from "node:fs";
 import { realpathSync, watch } from "node:fs";
 import { basename, dirname, relative, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import type * as Schmock from "@schmock/core";
 import { toError } from "@schmock/core/adapter";
 import { loadSeedFile } from "./seed-manifest.js";
@@ -114,6 +115,22 @@ function realDirectory(directory: string): string {
 }
 
 /**
+ * The path of the spec on disk. The openapi plugin reads a `file:` URL spec
+ * as the file it names, so the watch must too: resolved as a path, the URL
+ * became `<cwd>/file:/…` and the watch failed with ENOENT.
+ */
+function specFilePath(spec: string): string {
+  if (/^file:/i.test(spec)) {
+    try {
+      return fileURLToPath(spec);
+    } catch {
+      // Not a URL Node can turn into a path; watch it as a path, as before.
+    }
+  }
+  return resolvePath(spec);
+}
+
+/**
  * Every file a reload reads, grouped by the directory to watch it through:
  * the spec, the `--seed` manifest and each file entry it names. With
  * `--refs-external` every schema-like sibling of the spec counts too, because
@@ -138,7 +155,7 @@ function collectWatchTargets(options: CliOptions): Map<string, WatchMatcher> {
     matcherFor(dirname(path)).names.add(basename(path));
   };
 
-  const resolvedSpec = resolvePath(options.spec);
+  const resolvedSpec = specFilePath(options.spec);
   addFile(resolvedSpec);
   if (options.refsExternal) {
     matcherFor(dirname(resolvedSpec)).schemaSiblings = true;
