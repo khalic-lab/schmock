@@ -413,10 +413,13 @@ export function toExpress(
     let responseMethod: Schmock.HttpMethod = "GET";
     try {
       admission = acquireRequestAdmission(mock);
-      const handleRequest: MockRequestHandler =
-        admission?.handle ??
-        ((admittedMethod, admittedPath, admittedOptions) =>
-          mock.handle(admittedMethod, admittedPath, admittedOptions));
+      // Called through its admission, so a class-based one keeps `this`.
+      const admitted = admission;
+      const handleRequest: MockRequestHandler = admitted
+        ? (admittedMethod, admittedPath, admittedOptions) =>
+            admitted.handle(admittedMethod, admittedPath, admittedOptions)
+        : (admittedMethod, admittedPath, admittedOptions) =>
+            mock.handle(admittedMethod, admittedPath, admittedOptions);
       responseMethod = req.method.toUpperCase() === "HEAD" ? "HEAD" : "GET";
 
       // Skip non-standard HTTP methods (e.g. WebDAV PROPFIND, LOCK)

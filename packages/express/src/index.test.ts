@@ -422,6 +422,38 @@ describe("toExpress", () => {
       );
     });
 
+    it("calls a class-based admission's handle with its receiver", async () => {
+      class Admission {
+        released = false;
+        readonly response = { status: 200, body: { ok: true }, headers: {} };
+        async handle() {
+          return this.response;
+        }
+        release() {
+          this.released = true;
+        }
+      }
+      const admission = new Admission();
+      const mock = createMock(() =>
+        Promise.resolve({ status: 500, body: "bare", headers: {} }),
+      );
+      Object.defineProperty(
+        mock,
+        Symbol.for("@schmock/core.request-admission"),
+        { configurable: true, value: () => admission },
+      );
+      const res = createRes();
+
+      await toExpress(mock, { passErrorsToNext: false })(
+        createReq(),
+        res,
+        vi.fn(),
+      );
+
+      expect(endedJson(res)).toEqual({ ok: true });
+      expect(admission.released).toBe(true);
+    });
+
     it("retains the admitted generation across an async adapter hook", async () => {
       const realMock = schmock();
       const uninstall = vi.fn();
