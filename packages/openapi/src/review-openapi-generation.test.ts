@@ -1037,3 +1037,148 @@ describe("nullable list envelopes (hunt openapi-1-G15)", () => {
     });
   }
 });
+
+describe("nullable composed list envelope key order (hunt openapi-1-G39)", () => {
+  const pet = { $ref: "#/components/schemas/Pet" };
+  const json = (schema: Record<string, unknown>) => ({
+    "application/json": { schema },
+  });
+
+  it("keeps the declared key order of an allOf envelope marked nullable", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: {
+          openapi: "3.0.3",
+          info: { title: "Nullable page", version: "1.0.0" },
+          paths: {
+            "/pets": {
+              get: {
+                responses: {
+                  "200": {
+                    description: "list",
+                    content: json({
+                      allOf: [{ $ref: "#/components/schemas/Page" }],
+                      nullable: true,
+                    }),
+                  },
+                },
+              },
+              post: {
+                requestBody: { content: json(pet) },
+                responses: { "201": { description: "c", content: json(pet) } },
+              },
+            },
+            "/pets/{petId}": {
+              get: {
+                responses: { "200": { description: "p", content: json(pet) } },
+              },
+            },
+          },
+          components: {
+            schemas: {
+              Page: {
+                type: "object",
+                required: ["items", "size"],
+                properties: {
+                  items: { type: "array", items: pet },
+                  size: { type: "integer" },
+                },
+              },
+              Pet: {
+                type: "object",
+                required: ["id", "name"],
+                properties: {
+                  id: { type: "integer" },
+                  name: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        fakerSeed: 1,
+      }),
+    );
+    await mock.handle("POST", "/pets", { body: { name: "rex" } });
+
+    const response = await mock.handle("GET", "/pets");
+
+    expect(response.status).toBe(200);
+    expect(Object.keys(Object(response.body))).toEqual(["items", "size"]);
+    expect(Object(response.body).items).toEqual([{ id: 1, name: "rex" }]);
+  });
+
+  it("keeps the declared key order below a nullable allOf envelope whose list is nested", async () => {
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: {
+          openapi: "3.0.3",
+          info: { title: "Nullable outer envelope", version: "1.0.0" },
+          paths: {
+            "/pets": {
+              get: {
+                responses: {
+                  "200": {
+                    description: "list",
+                    content: json({
+                      allOf: [{ $ref: "#/components/schemas/Envelope" }],
+                      nullable: true,
+                    }),
+                  },
+                },
+              },
+              post: {
+                requestBody: { content: json(pet) },
+                responses: { "201": { description: "c", content: json(pet) } },
+              },
+            },
+            "/pets/{petId}": {
+              get: {
+                responses: { "200": { description: "p", content: json(pet) } },
+              },
+            },
+          },
+          components: {
+            schemas: {
+              Envelope: {
+                type: "object",
+                required: ["page", "total"],
+                properties: {
+                  page: { $ref: "#/components/schemas/Page" },
+                  total: { type: "integer" },
+                },
+              },
+              Page: {
+                type: "object",
+                required: ["items", "size"],
+                properties: {
+                  items: { type: "array", items: pet },
+                  size: { type: "integer" },
+                },
+              },
+              Pet: {
+                type: "object",
+                required: ["id", "name"],
+                properties: {
+                  id: { type: "integer" },
+                  name: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        fakerSeed: 1,
+      }),
+    );
+    await mock.handle("POST", "/pets", { body: { name: "rex" } });
+
+    const response = await mock.handle("GET", "/pets");
+    const body = Object(response.body);
+
+    expect(response.status).toBe(200);
+    expect(Object.keys(body)).toEqual(["page", "total"]);
+    expect(Object.keys(Object(body.page))).toEqual(["items", "size"]);
+    expect(Object(body.page).items).toEqual([{ id: 1, name: "rex" }]);
+  });
+});

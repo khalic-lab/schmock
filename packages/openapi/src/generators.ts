@@ -456,7 +456,8 @@ function defineOwn(
  * The skeleton was generated without the array property, so writing it back
  * afterwards would move it to the end of the object: `{items, total}` would go
  * out as `{"total":…,"items":[…]}`. Each level is therefore rebuilt from the
- * schema's declaration order (own `properties`, then `allOf` branches), with
+ * schema's declaration order (own `properties`, then `allOf` branches, looking
+ * through the normalizer's nullable wrapper), with
  * undeclared skeleton keys after it and an undeclared path key last.
  *
  * Only own properties are read and every key is defined, never assigned, so a
@@ -469,7 +470,9 @@ function injectAtPath(
   value: unknown,
 ): Record<string, unknown> {
   const [head, ...rest] = path;
-  const declarations = schema ? propertyDeclarations(schema) : [];
+  const declarations = schema
+    ? propertyDeclarations(unwrapNullable(schema))
+    : [];
   let slot = value;
   if (rest.length > 0) {
     const child = Object.hasOwn(skeleton, head) ? skeleton[head] : undefined;
