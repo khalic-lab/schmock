@@ -1637,9 +1637,10 @@ register them the same way:
   keys to reach `minProperties` without passing `maxProperties`.
 - A lone `minimum`/`exclusiveMinimum` of 1000 or more, or a lone
   `maximum`/`exclusiveMaximum` of -1000 or less, generates in range, with or
-  without `multipleOf`. Bounds that meet on one node, or through `allOf` (the
-  node, its entries inline or behind a `$ref` or a chain of them at any
-  depth, and the declarations of a property several of them declare, inline
+  without `multipleOf`, and so does a `oneOf`/`anyOf` branch or `then`/`else`
+  with a tighter bound on the same side. Bounds that meet on one node, or
+  through `allOf` (the node, its entries inline or behind a `$ref` or a chain
+  of them at any depth, and the declarations of a property several of them declare, inline
   or by `$ref`), are reconciled: the tightest bound of each side applies,
   inclusive or exclusive (an exclusive bound wins a tie), and several
   `multipleOf` combine into their least common multiple. When that multiple

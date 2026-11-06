@@ -343,6 +343,23 @@ describe("review: lone numeric bounds (finding 19)", () => {
     expect(normalizeSchemaForJsf(schema).maximum).toBeGreaterThan(5_000);
   });
 
+  it("keeps the partner past the bounds of a oneOf/anyOf branch", async () => {
+    for (const schema of [
+      { type: "integer", minimum: 1500, oneOf: [{ minimum: 5000 }] },
+      { type: "integer", minimum: 1500, anyOf: [{ minimum: 5000 }] },
+      { type: "integer", maximum: -1500, oneOf: [{ maximum: -5000 }] },
+    ] satisfies JSONSchema7[]) {
+      for (let seed = 1; seed <= 20; seed += 1) {
+        const value = Number(await generateFromSchema({ schema, seed }));
+        if (schema.minimum !== undefined) {
+          expect(value).toBeGreaterThanOrEqual(5000);
+        } else {
+          expect(value).toBeLessThanOrEqual(-5000);
+        }
+      }
+    }
+  });
+
   it("ignores OpenAPI 3.0 boolean exclusive bounds", () => {
     const schema: JSONSchema7 = { type: "number" };
     Reflect.set(schema, "exclusiveMinimum", true);

@@ -523,11 +523,12 @@ export function normalizeSchemaForJsf(
     reconcileAllOfBounds(copy, bounds);
   }
   for (const copy of [...copies, ...state.replaced]) {
+    // Before the restatement, which moves the branches it reads.
+    closeLoneNumericBound(copy, resolve);
     carryCompositionThroughAllOf(copy, resolve);
     // After the merge pass, which may drop this `faker` and must then leave
     // the `format` in place.
     pinFakerDateToUtc(copy);
-    closeLoneNumericBound(copy);
   }
   return normalized;
 }
@@ -1238,10 +1239,17 @@ function keepTighterBounds(normalized: JsfObjectSchema): void {
  * so the range it draws from is not inverted. The `multipleOf` path starts
  * from the same default range, so it needs the partner too; there the partner
  * sits at least two steps away, so a multiple always lies between the bounds.
- * Runs once the bounds that meet through `allOf` are reconciled: a partner
- * written earlier would read as a real bound there. Only the JSF copy changes.
+ * json-schema-faker merges the chosen `oneOf`/`anyOf` branch (or `then`/
+ * `else`) into the node, and the tighter bound wins, so the partner sits past
+ * every branch's bound on the same side too, at least two of any branch's
+ * steps away. Runs once the bounds that meet through `allOf` are reconciled:
+ * a partner written earlier would read as a real bound there. Only the JSF
+ * copy changes.
  */
-function closeLoneNumericBound(normalized: JsfObjectSchema): void {
+function closeLoneNumericBound(
+  normalized: JsfObjectSchema,
+  resolve: ResolveMember,
+): void {
   const lower = numericBound(
     normalized.minimum,
     normalized.exclusiveMinimum,
@@ -1252,24 +1260,64 @@ function closeLoneNumericBound(normalized: JsfObjectSchema): void {
     normalized.exclusiveMaximum,
     Math.min,
   );
-  const step = normalized.multipleOf;
-  const span =
-    typeof step === "number" && step > 0
-      ? Math.max(JSF_DEFAULT_NUMBER_BOUND, 2 * step)
-      : JSF_DEFAULT_NUMBER_BOUND;
+  const branches = mergedBranches(normalized, resolve);
+  const steps = [normalized, ...branches].flatMap(({ multipleOf }) =>
+    typeof multipleOf === "number" && multipleOf > 0 ? [2 * multipleOf] : [],
+  );
+  const span = Math.max(JSF_DEFAULT_NUMBER_BOUND, ...steps);
   if (
     lower !== undefined &&
     upper === undefined &&
     lower >= JSF_DEFAULT_NUMBER_BOUND
   ) {
-    normalized.maximum = lower + span;
+    const highest = branches.reduce(
+      (bound, branch) =>
+        Math.max(
+          bound,
+          numericBound(branch.minimum, branch.exclusiveMinimum, Math.max) ??
+            bound,
+        ),
+      lower,
+    );
+    normalized.maximum = highest + span;
   } else if (
     upper !== undefined &&
     lower === undefined &&
     upper <= -JSF_DEFAULT_NUMBER_BOUND
   ) {
-    normalized.minimum = upper - span;
+    const lowest = branches.reduce(
+      (bound, branch) =>
+        Math.min(
+          bound,
+          numericBound(branch.maximum, branch.exclusiveMaximum, Math.min) ??
+            bound,
+        ),
+      upper,
+    );
+    normalized.minimum = lowest - span;
   }
+}
+
+/**
+ * The schemas json-schema-faker may merge into `copy` besides its `allOf`:
+ * each `oneOf`/`anyOf` branch, and `then`/`else` beside an `if`, inline or
+ * behind a `$ref` it can follow.
+ */
+function mergedBranches(
+  copy: JsfObjectSchema,
+  resolve: ResolveMember,
+): JsfObjectSchema[] {
+  const branches: unknown[] = [];
+  for (const keyword of ["oneOf", "anyOf"] as const) {
+    const list = copy[keyword];
+    if (Array.isArray(list)) branches.push(...list);
+  }
+  if (copy.if !== undefined) branches.push(copy.then, copy.else);
+  return branches.flatMap((branch): JsfObjectSchema[] => {
+    if (!isJsfObject(branch)) return [];
+    const merged = mergedEntry(branch, resolve);
+    return merged ? [merged.schema] : [];
+  });
 }
 
 /** The keywords of one numeric range. */
