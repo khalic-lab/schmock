@@ -198,6 +198,30 @@ describe("route matching", () => {
       expect(response.body).toEqual({ userId: "1" });
     });
 
+    it("ignores only one trailing slash, for static and parameter routes alike", async () => {
+      const mock = schmock();
+      mock("GET /users", "users");
+      mock("GET /items/:id", ({ params }) => ({ id: params.id }));
+
+      expect((await mock.handle("GET", "/users/")).status).toBe(200);
+      expect((await mock.handle("GET", "/users//")).status).toBe(404);
+      expect((await mock.handle("GET", "/items/1/")).status).toBe(200);
+      expect((await mock.handle("GET", "/items/1//")).status).toBe(404);
+    });
+
+    it("keeps a route with a doubled trailing slash apart from the bare one", async () => {
+      const mock = schmock();
+      mock("GET /a", "a");
+      mock("GET /a//", "a-double");
+
+      expect(mock.getRoutes().map((route) => route.path)).toEqual([
+        "/a",
+        "/a/",
+      ]);
+      expect((await mock.handle("GET", "/a")).body).toBe("a");
+      expect((await mock.handle("GET", "/a//")).body).toBe("a-double");
+    });
+
     it("delivers captured parameters decoded", async () => {
       const mock = schmock();
       mock("GET /items/:id", ({ params }) => ({ id: params.id }));

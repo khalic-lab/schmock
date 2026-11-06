@@ -1,5 +1,4 @@
 import { isBinaryBody } from "./binary.js";
-import { normalizePath } from "./constants.js";
 import type { DebugLogger } from "./debug-logger.js";
 import { errorMessage, RouteDefinitionError, SchmockError } from "./errors.js";
 import { parseRouteKey } from "./parser.js";
@@ -151,14 +150,16 @@ export class RouteTable {
     // Parse the route key to create pattern and extract parameters
     const parsed = parseRouteKey(route);
 
-    // FIX 2.2: normalize paths before duplicate check so /users and /users/ are
-    // treated as the same route (consistent with the static-route Map key below).
+    // FIX 2.2: `parsed.path` is already trailing-slash normalized, so /users
+    // and /users/ are the same route (consistent with the static-route Map key
+    // below). It is used as-is: normalizing again would make /a// a duplicate
+    // of /a, though only one trailing slash is ignored.
     // Routes that differ only in parameter names (`/users/:id` and
     // `/users/:userId`) compile to the same pattern and match the same
     // requests, so the later one would be unreachable: it is a duplicate too.
     // Keyed lookups, not a scan of every route: comparing with each earlier
     // route made registering a large spec quadratic.
-    const pathKey = `${parsed.method} ${normalizePath(parsed.path)}`;
+    const pathKey = `${parsed.method} ${parsed.path}`;
     const patternKey = `${parsed.method} ${parsed.pattern.source}`;
     const samePath = this.#duplicates.byPath.get(pathKey);
     const existing = this.#earlierRoute(

@@ -76,6 +76,10 @@ A route key without a leading slash is a compile error and is rejected at
 definition time with `RouteParseError`. Build keys from untyped strings with
 `toRouteKey(method, path)`, which supplies the slash.
 
+One trailing slash is ignored, on the route key and on the request path alike:
+`GET /users` serves `/users/` but not `/users//`, and `GET /users/` is the same
+route as `GET /users`, while `GET /users//` is a different one.
+
 A route that matches the same requests as an existing route of the same method
 is a duplicate, including one that differs only in parameter names
 (`GET /users/:id` then `GET /users/:userId`). The first registration wins,

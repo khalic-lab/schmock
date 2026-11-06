@@ -1,4 +1,4 @@
-import { decodePathSegment, normalizePath } from "./constants.js";
+import { decodePathSegment } from "./constants.js";
 
 /**
  * Compiled callable route with pattern matching
@@ -29,8 +29,9 @@ export function findRoute(
   staticRoutes: Map<string, CompiledCallableRoute>,
   routes: CompiledCallableRoute[],
 ): CompiledCallableRoute | undefined {
-  // O(1) lookup for static routes
-  const staticMatch = staticRoutes.get(`${method} ${normalizePath(path)}`);
+  // O(1) lookup for static routes. `path` is already trailing-slash
+  // normalized by the caller; normalizing again would ignore a second slash.
+  const staticMatch = staticRoutes.get(`${method} ${path}`);
   if (staticMatch) {
     return staticMatch;
   }

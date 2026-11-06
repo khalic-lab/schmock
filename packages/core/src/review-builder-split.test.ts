@@ -364,7 +364,7 @@ describe("RouteTable", () => {
     const table = new RouteTable();
     // Same pattern as the new route, different path key.
     table.define({ route: "GET /:a//", generator: 1, config: {}, logger });
-    // Same path key as the new route, different pattern.
+    // Neither: only one trailing slash is ignored, so "/:b//" is "/:b/".
     table.define({ route: "GET /:b", generator: 2, config: {}, logger });
 
     table.define({
