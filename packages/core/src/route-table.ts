@@ -56,20 +56,28 @@ function defaultContentType(generator: Schmock.Generator): string {
 }
 
 /**
- * Why static JSON data would fail every request, or `undefined` when it would
- * not. The body is taken out of a tuple or envelope by the rule responses use,
- * and checked by the serializer `normalizeResponse` applies, so data it would
+ * Why static data would fail every request, or `undefined` when it would not.
+ * The body is taken out of a tuple or envelope by the rule responses use, and
+ * checked by the serializer `normalizeResponse` applies, so data it would
  * reject on each request (nested `undefined`, a Map, a sparse array) fails at
- * definition instead. A body that is absent, a string or binary is never
- * JSON-serialized and passes.
+ * definition instead. That serializer runs whatever the content type, so
+ * every content type is checked. A body that is absent, a string or binary is
+ * never JSON-serialized and passes, and so does a bare primitive under
+ * `text/plain`, which `parseResponse` sends as `String(body)`.
  */
-function staticJsonProblem(data: Schmock.StaticData): string | undefined {
-  const { body } = getResponseParts(data);
+function staticJsonProblem(
+  data: Schmock.StaticData,
+  contentType: string | undefined,
+): string | undefined {
+  const { kind, body } = getResponseParts(data);
   if (
     body === undefined ||
     body === null ||
     typeof body === "string" ||
-    isBinaryBody(body)
+    isBinaryBody(body) ||
+    (kind === "plain" &&
+      contentType === "text/plain" &&
+      typeof body !== "object")
   ) {
     return undefined;
   }
@@ -133,16 +141,13 @@ export class RouteTable {
       routeConfig.contentType = defaultContentType(generator);
     }
 
-    // Validate generator matches contentType if it's static data
-    if (
-      typeof generator !== "function" &&
-      routeConfig.contentType === "application/json"
-    ) {
-      const problem = staticJsonProblem(generator);
+    // Static data every request would fail to serialize is refused now
+    if (typeof generator !== "function") {
+      const problem = staticJsonProblem(generator, routeConfig.contentType);
       if (problem !== undefined) {
         throw new RouteDefinitionError(
           route,
-          `Generator data is not valid JSON but contentType is application/json (${problem})`,
+          `Generator data is not valid JSON but contentType is ${routeConfig.contentType}, which serializes it as JSON (${problem})`,
         );
       }
     }

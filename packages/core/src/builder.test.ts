@@ -331,6 +331,54 @@ describe("schmock callable API", () => {
       },
     );
 
+    it.each([
+      ["application/json; charset=utf-8", { a: new Map([[1, 2]]) }],
+      ["application/problem+json", { a: new Map([[1, 2]]) }],
+      ["Application/JSON", { a: new Map([[1, 2]]) }],
+      ["text/plain", { a: new Map([[1, 2]]) }],
+      ["text/html", { a: new Map([[1, 2]]) }],
+      ["text/plain", [200, Number.NaN]],
+      ["text/html", Number.NaN],
+      ["application/json", Number.NaN],
+    ] satisfies Array<[string, unknown]>)(
+      "rejects static data every request would fail to serialize under %s",
+      (contentType, data) => {
+        const mock = schmock();
+        let thrown: unknown;
+        try {
+          mock("GET /data", data as Schmock.StaticData, { contentType });
+        } catch (error) {
+          thrown = error;
+        }
+
+        expect(thrown).toBeInstanceOf(RouteDefinitionError);
+        expect(thrown instanceof Error ? thrown.message : "").toContain(
+          `contentType is ${contentType}`,
+        );
+        expect(mock.getRoutes()).toEqual([]);
+      },
+    );
+
+    it.each([
+      ["a number", 42],
+      ["NaN", Number.NaN],
+      ["a boolean", true],
+    ] satisfies Array<[string, unknown]>)(
+      "accepts static %s under text/plain, which sends it as text",
+      async (_label, data) => {
+        const mock = schmock();
+
+        expect(() => {
+          mock("GET /data", data as Schmock.StaticData, {
+            contentType: "text/plain",
+          });
+        }).not.toThrow();
+        const response = await mock.handle("GET", "/data");
+        expect(response.status).toBe(200);
+        expect(response.body).toBe(String(data));
+      },
+    );
+
     it("names the reason JSON.stringify gave for static data with a cycle", () => {
       const cycle: Record<string, unknown> = { name: "loop" };
       cycle.self = cycle;
