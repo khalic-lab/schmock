@@ -6,6 +6,7 @@ import {
   GENERATABLE_FORMATS,
 } from "./field-name-matcher.js";
 import { INFERRED_FAKER_MARKER } from "./jsf-config.js";
+import { narrowTypeUnion } from "./not-support.js";
 import { mapSchemaChildren, type SchemaChildSlot } from "./schema-children.js";
 import { isJSONSchema7 } from "./utils.js";
 import { validateFakerMethod } from "./validation.js";
@@ -132,6 +133,7 @@ function stripNullableForGeneration(schema: FakerSchema): FakerSchema {
 
   const unwrapped = unwrapNullUnion(schema, !marked);
   if (unwrapped) return unwrapped;
+  if (leavesOnlyNull(schema)) return schema;
 
   if (!marked && !isNativeNullableType(schema)) return schema;
   schema.schmockNullable = true;
@@ -163,6 +165,19 @@ function stripNullableForGeneration(schema: FakerSchema): FakerSchema {
  * `type: [..., "null"]` with at least one other type, and nothing that pins
  * the value to null itself (a `const: null`, or an enum of only nulls).
  */
+/**
+ * Whether a lone `not.type` rejects every member of the node's type union
+ * but `null`. Null is then the only value, which the JSF copy generates by
+ * narrowing the union to it, so the union is kept.
+ */
+function leavesOnlyNull(schema: FakerSchema): boolean {
+  const { not } = schema;
+  if (!isJSONSchema7(not) || not.type === undefined) return false;
+  if (Object.keys(not).length !== 1) return false;
+  const allowed = narrowTypeUnion(schema.type, not.type);
+  return allowed?.length === 1 && allowed[0] === "null";
+}
+
 function isNativeNullableType(schema: FakerSchema): boolean {
   if (!Array.isArray(schema.type) || !schema.type.includes("null")) {
     return false;

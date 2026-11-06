@@ -532,9 +532,9 @@ function unavoidableType(
       ? "not.type number on an untyped node lets json-schema-faker pick integer, which is a number"
       : undefined;
   }
-  if (types.length > 1 && narrowTypeUnion(types, excluded) !== undefined) {
-    return undefined;
-  }
+  // The copy narrows the declared union, null included, so a `not.type` that
+  // leaves only the null of `[T, "null"]` generates null.
+  if (narrowTypeUnion(schema.type, excluded) !== undefined) return undefined;
   const rejected = typeList(excluded);
   if (
     types.includes("number") &&

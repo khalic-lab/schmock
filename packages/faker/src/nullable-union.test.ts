@@ -83,3 +83,14 @@ describe("nullable union encodings from the OpenAPI normalizer", () => {
     expect(nulls).toBeLessThan(15);
   });
 });
+
+describe("a not.type that leaves only the null of a nullable union", () => {
+  it.each([
+    [{ type: ["string", "null"], not: { type: "string" } }],
+    [{ type: ["null", "string"], not: { type: ["string", "integer"] } }],
+  ] satisfies Array<[JSONSchema7]>)("generates null for %j", async (schema) => {
+    for (let seed = 1; seed <= 20; seed++) {
+      await expect(generateFromSchema({ schema, seed })).resolves.toBeNull();
+    }
+  });
+});

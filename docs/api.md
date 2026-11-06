@@ -1608,7 +1608,9 @@ register them the same way:
   more than 256 schemas, a `$ref` that can't be followed, or an `allOf` or
   `$ref` chain that loops back.
 - Generation avoids what `not` rejects when it is a lone `not.type` (a type
-  union is narrowed, an untyped node gets another type), a `not.const` or
+  union is narrowed, so `type: ['string', 'null']` beside
+  `not: { type: 'string' }` always generates `null`, and an untyped node gets
+  another type), a `not.const` or
   `not.enum`, or a lone `not.required` (one optional listed property is left
   out, together with every property whose `dependentRequired`,
   `dependencies` or `dependentSchemas` would bring it back). A listed
