@@ -84,6 +84,44 @@ describe("operation extraction", () => {
         `security scheme "clientCert": unsupported type "${"type" in scheme ? scheme.type : "(none)"}", skipped; a requirement naming it is never satisfied`,
       ]);
     });
+
+    it.each([
+      [
+        "an http scheme other than bearer or basic",
+        { type: "http", scheme: "digest" },
+        'unsupported http scheme "digest"',
+      ],
+      [
+        "an http scheme with no scheme",
+        { type: "http" },
+        'unsupported http scheme "(none)"',
+      ],
+      [
+        "an apiKey outside header, query and cookie",
+        { type: "apiKey", in: "body", name: "k" },
+        'apiKey location "body" is not header, query or cookie',
+      ],
+      [
+        "an apiKey with no name",
+        { type: "apiKey", in: "header" },
+        'apiKey has no "name"',
+      ],
+    ])("reports %s it skips", async (_, scheme, problem) => {
+      const spec = await parseSpec({
+        openapi: "3.1.0",
+        info: { title: "secured", version: "1.0.0" },
+        components: { securitySchemes: { s: scheme } },
+        security: [{ s: [] }],
+        paths: {
+          "/ping": { get: { responses: { "200": { description: "OK" } } } },
+        },
+      });
+
+      expect(spec.securitySchemes?.has("s") ?? false).toBe(false);
+      expect(spec.warnings).toEqual([
+        `security scheme "s": ${problem}, skipped; a requirement naming it is never satisfied`,
+      ]);
+    });
   });
 
   describe("an OpenAPI 3.1 mutualTLS security scheme", () => {

@@ -815,7 +815,9 @@ TLS handshake, which the mock never sees. Another scheme listed in the same
 requirement is still checked. An operation-level `security: []` explicitly
 overrides global security and makes that operation public. A scheme of any
 other type is skipped with a parse warning, and a requirement that names it is
-never satisfied.
+never satisfied. So is an `http` scheme other than `bearer` or `basic` (such as
+`digest`), and an `apiKey` with no `name` or with an `in` other than `header`,
+`query` or `cookie`.
 
 A cookie API key is read from the request's `Cookie` header, and in a browser
 that header never reaches the mock. Page code cannot set it, and the fetch

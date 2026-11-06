@@ -690,12 +690,12 @@ export function extractSecuritySchemes(
     const scheme =
       type && isRecord(schemeDef)
         ? toSecurityScheme(type, schemeDef, ctx.dialect)
-        : undefined;
-    if (!scheme) {
+        : `unsupported type "(none)"`;
+    if (typeof scheme === "string") {
       // A requirement naming a skipped scheme can never be met, so with
       // `security: true` it answers 401 to every request: say why.
       ctx.warnings.push(
-        `security scheme "${name}": unsupported type "${type ?? "(none)"}", skipped; a requirement naming it is never satisfied`,
+        `security scheme "${name}": ${scheme}, skipped; a requirement naming it is never satisfied`,
       );
       continue;
     }
@@ -713,18 +713,23 @@ const SECURITY_SCHEME_TYPES = new Set([
   "mutualTLS",
 ]);
 const API_KEY_LOCATIONS = new Set(["header", "query", "cookie"]);
+const HTTP_SCHEMES = new Set(["bearer", "basic"]);
 
+/**
+ * The scheme the mock simulates, or why it cannot: a requirement can only be
+ * met by a scheme whose credentials the request pipeline knows where to find.
+ */
 function toSecurityScheme(
   type: string,
   def: Record<string, unknown>,
   dialect: ParseContext["dialect"],
-): SecurityScheme | undefined {
+): SecurityScheme | string {
   // Handle Swagger 2.0 basic auth
   if (dialect === "swagger2" && type === "basic") {
     return { type: "http", scheme: "basic" };
   }
 
-  if (!SECURITY_SCHEME_TYPES.has(type)) return undefined;
+  if (!SECURITY_SCHEME_TYPES.has(type)) return `unsupported type "${type}"`;
 
   const scheme: SecurityScheme = {
     type:
@@ -741,17 +746,22 @@ function toSecurityScheme(
 
   if (type === "apiKey") {
     const location = getString(def.in);
-    if (location && API_KEY_LOCATIONS.has(location)) {
-      scheme.in =
-        location === "header"
-          ? "header"
-          : location === "query"
-            ? "query"
-            : "cookie";
+    if (!location || !API_KEY_LOCATIONS.has(location)) {
+      return `apiKey location "${location ?? "(none)"}" is not header, query or cookie`;
     }
+    scheme.in =
+      location === "header"
+        ? "header"
+        : location === "query"
+          ? "query"
+          : "cookie";
     scheme.name = getString(def.name);
+    if (!scheme.name) return 'apiKey has no "name"';
   } else if (type === "http") {
     scheme.scheme = getString(def.scheme)?.toLowerCase();
+    if (!scheme.scheme || !HTTP_SCHEMES.has(scheme.scheme)) {
+      return `unsupported http scheme "${scheme.scheme ?? "(none)"}"`;
+    }
   }
 
   return scheme;
