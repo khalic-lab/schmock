@@ -262,6 +262,35 @@ describe("validateSchema", () => {
   });
 
   describe("certain string floors", () => {
+    it.each([
+      [
+        "a one-member type list",
+        { type: ["string"], pattern: "^[a-z]{60000}$" },
+      ],
+      ["no type beside a pattern", { pattern: "^[a-z]{60000}$" }],
+      ["no type beside minLength", { minLength: 60_000 }],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "charges a string with %s against the character budget",
+      (_, item) => {
+        expectResource(
+          captureFailure(() => fakerPlugin({ schema: rowsOf(item, 300) })),
+          { resource: "generated_chars", actual: 18_000_000 },
+        );
+      },
+    );
+
+    it("charges no string floor on a node another type claims", () => {
+      for (const item of [
+        { minLength: 60_000, minimum: 0 },
+        { minLength: 60_000, properties: { a: { type: "integer" } } },
+        { minLength: 60_000, enum: [1, 2] },
+        // A type list that names another type may generate that instead.
+        { type: ["string", "integer"], minLength: 60_000 },
+      ] satisfies JSONSchema7[]) {
+        expect(() => fakerPlugin({ schema: rowsOf(item, 300) })).not.toThrow();
+      }
+    });
+
     it("charges a pattern's shortest match against the character budget", () => {
       const schema = rowsOf({ type: "string", pattern: "^[a-z]{60000}$" }, 300);
 

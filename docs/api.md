@@ -1756,7 +1756,11 @@ unless the object's `const`, `enum` or `default` is returned instead.
 
 `generated_chars` counts every string and object key in one response. At
 creation it is checked against the least the schema can produce: each
-string's certain length multiplied by its array counts. A string's certain
+string's certain length multiplied by its array counts. A string is a schema
+whose `type` names only `string`, or an untyped one that json-schema-faker
+reads as a string from its `minLength`, `maxLength`, `pattern`, `format` or
+`faker` (no object, array or number keyword, `const`, `enum` or `default`
+beside them). A string's certain
 length is the largest of its `minLength`, the shortest match of its `pattern`,
 and the length argument of a faker method that always produces that many
 characters (`string.alpha`, `string.alphanumeric`, `string.numeric`,

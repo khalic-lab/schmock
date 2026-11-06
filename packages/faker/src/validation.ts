@@ -552,7 +552,7 @@ function estimateSchema(
   let height = 0;
   let nodes = 1;
   // Only a schema that can be nothing but a string is certain to emit one.
-  let chars = schema.type === "string" ? certainStringLength(schema) : 0;
+  let chars = isCertainString(schema) ? certainStringLength(schema) : 0;
   /** Keywords the rules below account for; the rest are charged in full. */
   const handled = new Set<string>([
     ...NON_VALUE_KEYWORDS,
@@ -715,6 +715,51 @@ function estimateDefinition(
   estimates: Map<JSONSchema7, Estimate>,
 ): Estimate {
   return isJSONSchema7(definition) ? (estimates.get(definition) ?? LEAF) : LEAF;
+}
+
+/** Keywords that make json-schema-faker read an untyped node as a number. */
+const NUMBER_KEYWORDS: readonly string[] = [
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+];
+
+/** Keywords that make json-schema-faker read an untyped node as a string. */
+const STRING_KEYWORDS: readonly string[] = [
+  "minLength",
+  "maxLength",
+  "pattern",
+  "format",
+  "faker",
+];
+
+/**
+ * Whether json-schema-faker can generate nothing but a string here: a `type`
+ * that names only `string` (a `null` beside it is charged nothing anyway),
+ * or no `type` and a string keyword, which is how json-schema-faker infers
+ * one once no object, array or number keyword and no fixed value claims the
+ * node first.
+ */
+function isCertainString(schema: JSONSchema7): boolean {
+  if (schema.type !== undefined) {
+    const types: unknown[] = Array.isArray(schema.type)
+      ? schema.type
+      : [schema.type];
+    return (
+      types.includes("string") &&
+      types.every((type) => type === "string" || type === "null")
+    );
+  }
+  const has = (keyword: string) => Reflect.get(schema, keyword) !== undefined;
+  return (
+    STRING_KEYWORDS.some(has) &&
+    !isObjectLike(schema) &&
+    !isArrayLike(schema) &&
+    !["prefixItems", "contains", "uniqueItems", ...NUMBER_KEYWORDS].some(has) &&
+    !["const", "enum", "default"].some(has)
+  );
 }
 
 /**
