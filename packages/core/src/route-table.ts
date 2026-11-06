@@ -1,5 +1,6 @@
 import { isBinaryBody } from "./binary.js";
 import type { DebugLogger } from "./debug-logger.js";
+import { assertValidDelay } from "./delay.js";
 import { errorMessage, RouteDefinitionError, SchmockError } from "./errors.js";
 import { parseRouteKey } from "./parser.js";
 import { stringifyJsonBody } from "./response-normalizer.js";
@@ -133,6 +134,7 @@ export class RouteTable {
     logger: DebugLogger;
   }): void {
     const { route, generator, logger } = input;
+    assertValidDelay(input.config.delay, `delay for route ${route}`);
     // FIX 1.2: shallow-clone the caller's config so mutations below stay private
     const routeConfig = { ...input.config };
 

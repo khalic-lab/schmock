@@ -1,6 +1,41 @@
 import { throwIfAborted } from "./abort.js";
+import { SchmockError } from "./errors.js";
 
 type ResponseDelay = number | [number, number];
+
+/** The longest delay `setTimeout` honours (2^31 - 1 ms, about 24.8 days). */
+const MAX_DELAY_MS = 2_147_483_647;
+
+function isValidDelayMs(value: unknown): boolean {
+  return (
+    typeof value === "number" && Number.isFinite(value) && value <= MAX_DELAY_MS
+  );
+}
+
+/**
+ * Reject a response delay no timer can honour. `setTimeout` turns Infinity or
+ * anything past 2^31 - 1 ms into a 1 ms wait and NaN into none, so a test meant
+ * to make a client time out got an immediate answer instead. A negative value
+ * still clamps to zero and a reversed range still draws between its bounds.
+ *
+ * @param option What the error names: `delay`, or the route's own delay.
+ * @throws SchmockError `INVALID_CONFIG`
+ */
+export function assertValidDelay(delay: unknown, option = "delay"): void {
+  if (delay === undefined) return;
+  const valid = Array.isArray(delay)
+    ? delay.length === 2 && delay.every(isValidDelayMs)
+    : isValidDelayMs(delay);
+  if (valid) return;
+  const shown = Array.isArray(delay)
+    ? `[${delay.map(String).join(", ")}]`
+    : String(delay);
+  throw new SchmockError(
+    `Invalid ${option}: ${shown}. Expected a finite number of milliseconds no greater than ${MAX_DELAY_MS}, or a [min, max] pair of them.`,
+    "INVALID_CONFIG",
+    { delay },
+  );
+}
 
 /**
  * Apply configured response delay: the route's own when set, the mock's

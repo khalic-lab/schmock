@@ -25,6 +25,13 @@ it leaves history unbounded. Any other value — negative (which once meant
 unbounded), fractional, `NaN` or `Infinity` — throws a `SchmockError`
 (`INVALID_CONFIG`) from `schmock()`.
 
+`delay`, global or per route, is a finite number of milliseconds no greater
+than 2147483647 (the longest wait `setTimeout` can hold), or a `[min, max]`
+pair of them. `NaN`, `Infinity` or a larger value throws a `SchmockError`
+(`INVALID_CONFIG`) from `schmock()` or from the route definition, since a timer
+would have turned it into a wait of about 1 ms. A negative delay still means no
+delay, and a reversed range still draws between its two bounds.
+
 One trailing slash on `namespace` is ignored: `'/api/'` and `'/api'` are the
 same namespace. Both serve `/api`, `/api/` and `/api/users`, and neither serves
 `/api//users` (404) or `/apiv2/users`. `'/api/'` used to serve `/api//users`.

@@ -436,6 +436,38 @@ describe("response delay functionality", () => {
     });
   });
 
+  describe("invalid delay configuration", () => {
+    const invalid: Array<[string, number | [number, number]]> = [
+      ["Infinity", Number.POSITIVE_INFINITY],
+      ["NaN", Number.NaN],
+      ["a value past the 32-bit timer limit", 2 ** 31],
+      ["a range ending in Infinity", [1000, Number.POSITIVE_INFINITY]],
+      ["a range starting at NaN", [Number.NaN, 10]],
+    ];
+
+    it.each(invalid)("rejects %s as the global delay", (_label, delay) => {
+      expect(() => schmock({ delay })).toThrow(
+        expect.objectContaining({ code: "INVALID_CONFIG" }),
+      );
+    });
+
+    it.each(invalid)("rejects %s as a route delay", (_label, delay) => {
+      const mock = schmock();
+      expect(() => mock("GET /test", "response", { delay })).toThrow(
+        expect.objectContaining({ code: "INVALID_CONFIG" }),
+      );
+      expect(mock.getRoutes()).toHaveLength(0);
+    });
+
+    it("accepts the longest delay a timer can hold", () => {
+      expect(() => schmock({ delay: 2 ** 31 - 1 })).not.toThrow();
+      const mock = schmock();
+      expect(() =>
+        mock("GET /test", "response", { delay: [0, 2 ** 31 - 1] }),
+      ).not.toThrow();
+    });
+  });
+
   describe("concurrent requests with delay", () => {
     it("applies delay to concurrent requests independently", async () => {
       vi.useFakeTimers();

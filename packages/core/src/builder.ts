@@ -12,7 +12,7 @@ import {
   parsePathPrefix,
 } from "./constants.js";
 import { createRequestId, DebugLogger } from "./debug-logger.js";
-import { applyResponseDelay } from "./delay.js";
+import { applyResponseDelay, assertValidDelay } from "./delay.js";
 import {
   errorMessage,
   RouteNotFoundError,
@@ -219,6 +219,7 @@ export class CallableMockInstance {
   ) {
     // First: an invalid maxHistorySize throws before anything else is built.
     this.requestHistory = new RequestHistory(globalConfig.maxHistorySize);
+    assertValidDelay(globalConfig.delay);
     this.globalConfig = {
       ...globalConfig,
       state: globalConfig.state ?? {},
