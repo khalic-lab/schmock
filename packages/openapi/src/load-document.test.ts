@@ -1168,6 +1168,23 @@ describe("loadDocument", () => {
       expect(loaded.discriminator[MARKER]).toEqual([["cat"], ["dog"]]);
     });
 
+    it("resolves an owner's mapping against the document the owner sits in", async () => {
+      // `Pet` lives in another file, so its bare-name targets name that
+      // file's components, not the root's.
+      const api = (await loadDocument(
+        join(
+          import.meta.dirname,
+          "__fixtures__/external/bare-mapping-spec.json",
+        ),
+        { refs: { external: true } },
+      )) as unknown as { paths: Record<string, any> };
+
+      const loaded =
+        api.paths["/pet"].get.responses["200"].content["application/json"]
+          .schema;
+      expect(loaded.discriminator[MARKER]).toEqual([["kitty"], ["doggo"]]);
+    });
+
     it("names thousands of component-object branches in linear time", async () => {
       // Each branch used to filter the whole mapping, resolving every target
       // as a URL again: 2,000 branches took seconds.
