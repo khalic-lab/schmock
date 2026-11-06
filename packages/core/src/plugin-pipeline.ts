@@ -3,7 +3,7 @@ import {
   awaitHookWithAbort,
   throwIfAborted,
 } from "./abort.js";
-import { errorMessage, PluginError, toError } from "./errors.js";
+import { errorMessage, isError, PluginError, toError } from "./errors.js";
 
 /** Structural typing — DebugLogger satisfies this without an import */
 interface PipelineLogger {
@@ -85,7 +85,7 @@ async function recoverPluginError(
         onAbandoned,
       );
       throwIfAborted(signal);
-      if (errorResult instanceof Error) {
+      if (isError(errorResult)) {
         currentError = errorResult;
         continue;
       }

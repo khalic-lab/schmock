@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { acquireRequestAdmission } from "./adapter";
 import { PluginError, schmock } from "./index";
@@ -411,6 +412,23 @@ describe("plugin system", () => {
       const response = await mock.handle("GET", "/test");
       expect(response.status).toBe(500);
       expect(response.body.code).toBe("PLUGIN_ERROR");
+    });
+
+    it("treats an Error from another realm that onError returns as the new error", async () => {
+      const mock = schmock();
+      mock("GET /test", "response").pipe({
+        name: "realm-plugin",
+        process: () => {
+          throw new Error("Plugin failed");
+        },
+        onError: () => runInNewContext('new Error("replaced in a vm")'),
+      });
+
+      const response = await mock.handle("GET", "/test");
+
+      expect(response.status).toBe(500);
+      expect(response.body).toMatchObject({ code: "PLUGIN_ERROR" });
+      expect(response.body.error).toContain("replaced in a vm");
     });
 
     it("handles onError hook failures", async () => {
