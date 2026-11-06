@@ -13,7 +13,7 @@ import {
 } from "vitest";
 import { loadDocument } from "./load-document";
 import { openapi } from "./plugin";
-import type { RefFetch } from "./ref-policy";
+import { type RefFetch, resolveReference } from "./ref-policy";
 
 /**
  * `loadDocument` end to end: what reaches the resolvers, what they are kept
@@ -321,6 +321,39 @@ describe("loadDocument", () => {
         });
       }
     }
+  });
+
+  describe("a $ref ending in a long whitespace run", () => {
+    it("is refused by the policy pre-scan in linear time", async () => {
+      // 100k spaces before one other character: a backtracking `\s*$` scan
+      // took seconds on this before the refusal was reached.
+      const ref = `${" ".repeat(100_000)}x`;
+      const started = performance.now();
+
+      const error = await failureOf(
+        loadDocument(specWithResponseSchema({ $ref: ref }), {}),
+      );
+
+      expect(codeOf(error)).toBe("OPENAPI_EXTERNAL_REF_BLOCKED");
+      expect(performance.now() - started).toBeLessThan(1_000);
+    }, 30_000);
+
+    it("keeps the trailing whitespace ref-parser keeps", () => {
+      expect(resolveReference("/specs/api.yaml", "pet.json \t\n")).toBe(
+        "/specs/pet.json \t\n",
+      );
+      expect(
+        resolveReference(
+          "https://schemas.example.com/v1/api.json",
+          "pet.json  ",
+        ),
+      ).toBe("https://schemas.example.com/v1/pet.json  ");
+      // URL drops leading whitespace from the reference; the trailing run
+      // is still measured from the end of the ref as spelled.
+      expect(resolveReference("/specs/api.yaml", "  pet.json \t")).toBe(
+        "/specs/pet.json \t",
+      );
+    });
   });
 
   describe("$refs to nothing", () => {

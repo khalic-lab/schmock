@@ -228,7 +228,10 @@ export function resolveReference(from: string, to: string): string {
     path.startsWith("\\\\?\\") ? path : path.split("\\").join("/");
   const fromUrl = new URL(toPosix(from), "https://aaa.nonexistanturl.com");
   const resolved = new URL(toPosix(to), fromUrl);
-  const endSpaces = /(\s*)$/.exec(to)?.[1] ?? "";
+  // `trimEnd` strips the same whitespace class as ref-parser's `/(\s*)$/`, in
+  // linear time: that regex retries the run from every start position, which
+  // is quadratic on a long whitespace run before a non-space character.
+  const endSpaces = to.slice(to.trimEnd().length);
   if (resolved.hostname === "aaa.nonexistanturl.com") {
     return resolved.pathname + resolved.search + resolved.hash + endSpaces;
   }
