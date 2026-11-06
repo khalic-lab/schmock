@@ -1,4 +1,8 @@
-import { awaitWithAbort, throwIfAborted } from "./abort.js";
+import {
+  type AbandonedHookTracker,
+  awaitHookWithAbort,
+  throwIfAborted,
+} from "./abort.js";
 import type { DebugLogger } from "./debug-logger.js";
 import { errorMessage, SchmockError } from "./errors.js";
 import { snapshotNormalizedBody, snapshotRequestBody } from "./snapshot.js";
@@ -224,8 +228,10 @@ export async function runAfterResponseHooks(input: {
   response: Schmock.Response;
   logger: Pick<DebugLogger, "log">;
   signal?: AbortSignal;
+  /** Told about a hook an abort abandoned while it still runs. */
+  onAbandoned?: AbandonedHookTracker;
 }): Promise<void> {
-  const { plugins, context, response, logger, signal } = input;
+  const { plugins, context, response, logger, signal, onAbandoned } = input;
   for (const plugin of plugins) {
     const settle: unknown = plugin.afterResponse;
     if (typeof settle !== "function") continue;
@@ -235,7 +241,9 @@ export async function runAfterResponseHooks(input: {
         context,
         settledResponseCopy(response),
       ]);
-      if (isThenable(result)) await awaitWithAbort(result, signal);
+      if (isThenable(result)) {
+        await awaitHookWithAbort(result, signal, onAbandoned);
+      }
     } catch (error) {
       throwIfAborted(signal);
       logger.log(

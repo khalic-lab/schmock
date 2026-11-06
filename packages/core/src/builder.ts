@@ -1,4 +1,8 @@
-import { awaitWithAbort, throwIfAborted } from "./abort.js";
+import {
+  type AbandonedHookTracker,
+  awaitWithAbort,
+  throwIfAborted,
+} from "./abort.js";
 import {
   canonicalizePath,
   markResponseException,
@@ -75,7 +79,16 @@ interface AdmissionSnapshot {
   readonly state: Record<string, unknown>;
   readonly namespace?: string;
   readonly globalDelay?: number | [number, number];
+  /** The transport or handle() is done with the request. */
   released: boolean;
+  /**
+   * Plugin hooks an abort abandoned that are still running. The generation
+   * stays admitted until they settle, so a reset() never uninstalls a plugin
+   * underneath one of its own hooks.
+   */
+  abandonedHooks: number;
+  /** The generation has counted this request out. */
+  generationReleased: boolean;
 }
 
 interface CanonicalNamespace {
@@ -385,13 +398,51 @@ export class CallableMockInstance {
       namespace: this.globalConfig.namespace,
       globalDelay: this.globalConfig.delay,
       released: false,
+      abandonedHooks: 0,
+      generationReleased: false,
     };
   }
 
   #releaseRequestAdmission(admission: AdmissionSnapshot): void {
     if (admission.released) return;
     admission.released = true;
+    this.#settleRequestAdmission(admission);
+  }
+
+  /** Count the request out once it is released and no abandoned hook runs. */
+  #settleRequestAdmission(admission: AdmissionSnapshot): void {
+    if (
+      !admission.released ||
+      admission.abandonedHooks > 0 ||
+      admission.generationReleased
+    ) {
+      return;
+    }
+    admission.generationReleased = true;
     this.generations.release(admission.requestGeneration);
+  }
+
+  /**
+   * Keep the request's generation admitted until a plugin hook that an abort
+   * abandoned settles: the abort rejects handle() at once, but the hook keeps
+   * running and may still use what its plugin's install() set up.
+   */
+  #holdForAbandonedHook(
+    admission: AdmissionSnapshot,
+    pending: PromiseLike<unknown>,
+  ): void {
+    if (admission.generationReleased) return;
+    admission.abandonedHooks += 1;
+    const settle = () => {
+      admission.abandonedHooks -= 1;
+      this.#settleRequestAdmission(admission);
+    };
+    Promise.resolve(pending).then(settle, settle);
+  }
+
+  /** The tracker the request's plugin hooks report an abandoned promise to. */
+  #abandonedHookTracker(scope: RequestScope): AbandonedHookTracker {
+    return (pending) => this.#holdForAbandonedHook(scope.admission, pending);
   }
 
   createRequestAdmission(): Schmock.RequestAdmission {
@@ -719,6 +770,7 @@ export class CallableMockInstance {
       pluginContext,
       this.logger,
       signal,
+      this.#abandonedHookTracker(scope),
     );
     throwIfAborted(signal);
     const context =
@@ -789,6 +841,7 @@ export class CallableMockInstance {
         error,
         this.logger,
         signal,
+        this.#abandonedHookTracker(scope),
       );
       throwIfAborted(signal);
       const context = markRecovered(recovery.context);
@@ -824,6 +877,7 @@ export class CallableMockInstance {
           result,
           this.logger,
           scope.signal,
+          this.#abandonedHookTracker(scope),
         );
         throwIfAborted(scope.signal);
         scope.context =
@@ -926,6 +980,7 @@ export class CallableMockInstance {
         response,
         logger: this.logger,
         signal,
+        onAbandoned: this.#abandonedHookTracker(scope),
       });
     }
 

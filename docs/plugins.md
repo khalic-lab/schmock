@@ -38,8 +38,10 @@ plugin behind. Do not retain the scoped instance for later use.
 
 `reset()` retires the current plugin generation immediately for new requests.
 Its `uninstall()` hooks then run in reverse registration order after every
-already-admitted request using that generation has settled. Cleanup must be
-synchronous. A plugin piped while a request is running belongs to the next
+already-admitted request using that generation has settled. A request that an
+abort cancelled while one of its plugin hooks was pending rejects at once, but
+it settles only when that hook's promise does, so a hook that resumes after the
+abort still finds its plugin installed. Cleanup must be synchronous. A plugin piped while a request is running belongs to the next
 request generation and cannot enter the in-flight pipeline.
 
 The `uninstall()` instance is read-only and expires when the hook returns:

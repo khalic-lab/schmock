@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { acquireRequestAdmission } from "./adapter";
 import { PluginError, schmock } from "./index";
 
 describe("plugin system", () => {
@@ -851,6 +852,224 @@ describe("plugin system", () => {
       await second;
       expect(uninstall).toHaveBeenCalledOnce();
     });
+
+    it.each([
+      ["handle()", false],
+      ["a transport admission", true],
+    ])(
+      "defers uninstall past a hook an abort abandoned, through %s",
+      async (_label, viaAdmission) => {
+        const mock = schmock();
+        const log: string[] = [];
+        let resource: { open: boolean } | undefined;
+        let resumeHook = () => {};
+        const hookBarrier = new Promise<void>((resolve) => {
+          resumeHook = resolve;
+        });
+        let announceHookStart = () => {};
+        const hookStarted = new Promise<void>((resolve) => {
+          announceHookStart = resolve;
+        });
+
+        mock("GET /db", { ok: true }).pipe({
+          name: "db",
+          install() {
+            resource = { open: true };
+          },
+          uninstall() {
+            if (resource) resource.open = false;
+            log.push("uninstall");
+          },
+          async process(context, response) {
+            announceHookStart();
+            await hookBarrier;
+            log.push(`resumed open=${String(resource?.open)}`);
+            return { context, response };
+          },
+        });
+
+        const controller = new AbortController();
+        const admission = viaAdmission
+          ? acquireRequestAdmission(mock)
+          : undefined;
+        const pending = admission
+          ? admission.handle("GET", "/db", { signal: controller.signal })
+          : mock.handle("GET", "/db", { signal: controller.signal });
+        await hookStarted;
+        mock.reset();
+        controller.abort();
+        await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+        admission?.release();
+        expect(log).toEqual([]);
+
+        resumeHook();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(log).toEqual(["resumed open=true", "uninstall"]);
+      },
+    );
+
+    it.each(["beforeRequest", "onError", "afterResponse"] as const)(
+      "defers uninstall past an abandoned %s hook",
+      async (stage) => {
+        const mock = schmock();
+        const log: string[] = [];
+        let resource: { open: boolean } | undefined;
+        let resumeHook = () => {};
+        const hookBarrier = new Promise<void>((resolve) => {
+          resumeHook = resolve;
+        });
+        let announceHookStart = () => {};
+        const hookStarted = new Promise<void>((resolve) => {
+          announceHookStart = resolve;
+        });
+        const blockingHook = async () => {
+          announceHookStart();
+          await hookBarrier;
+          log.push(`resumed open=${String(resource?.open)}`);
+        };
+
+        mock("GET /db", { ok: true }).pipe({
+          name: "db",
+          install() {
+            resource = { open: true };
+          },
+          uninstall() {
+            if (resource) resource.open = false;
+            log.push("uninstall");
+          },
+          async beforeRequest(context) {
+            if (stage === "beforeRequest") await blockingHook();
+            return { context };
+          },
+          process(context, response) {
+            if (stage === "onError") throw new Error("process failed");
+            return { context, response };
+          },
+          async onError() {
+            if (stage === "onError") await blockingHook();
+            return undefined;
+          },
+          async afterResponse() {
+            if (stage === "afterResponse") await blockingHook();
+          },
+        });
+
+        const controller = new AbortController();
+        const pending = mock.handle("GET", "/db", {
+          signal: controller.signal,
+        });
+        await hookStarted;
+        mock.reset();
+        controller.abort();
+        await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+        expect(log).toEqual([]);
+
+        resumeHook();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(log).toEqual(["resumed open=true", "uninstall"]);
+      },
+    );
+
+    it.each([
+      ["handle()", false],
+      ["a transport admission", true],
+    ])(
+      "uninstalls once an abandoned hook rejects, through %s",
+      async (_label, viaAdmission) => {
+        const mock = schmock();
+        const log: string[] = [];
+        let failHook = () => {};
+        const hookBarrier = new Promise<void>((resolve) => {
+          failHook = resolve;
+        });
+        let announceHookStart = () => {};
+        const hookStarted = new Promise<void>((resolve) => {
+          announceHookStart = resolve;
+        });
+
+        mock("GET /db", { ok: true }).pipe({
+          name: "db",
+          uninstall() {
+            log.push("uninstall");
+          },
+          async process() {
+            announceHookStart();
+            await hookBarrier;
+            log.push("hook failed");
+            throw new Error("hook failed after the abort");
+          },
+        });
+
+        const controller = new AbortController();
+        const admission = viaAdmission
+          ? acquireRequestAdmission(mock)
+          : undefined;
+        const pending = admission
+          ? admission.handle("GET", "/db", { signal: controller.signal })
+          : mock.handle("GET", "/db", { signal: controller.signal });
+        await hookStarted;
+        mock.reset();
+        controller.abort();
+        await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+        admission?.release();
+        expect(log).toEqual([]);
+
+        failHook();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(log).toEqual(["hook failed", "uninstall"]);
+      },
+    );
+
+    it.each([
+      ["handle()", false],
+      ["a transport admission", true],
+    ])(
+      "defers uninstall past a hook that aborted before it returned, through %s",
+      async (_label, viaAdmission) => {
+        const mock = schmock();
+        const log: string[] = [];
+        let resource: { open: boolean } | undefined;
+        let resumeHook = () => {};
+        const hookBarrier = new Promise<void>((resolve) => {
+          resumeHook = resolve;
+        });
+        const controller = new AbortController();
+
+        mock("GET /db", { ok: true }).pipe({
+          name: "db",
+          install() {
+            resource = { open: true };
+          },
+          uninstall() {
+            if (resource) resource.open = false;
+            log.push("uninstall");
+          },
+          process(context, response) {
+            // The signal is already aborted when the pipeline awaits this.
+            controller.abort();
+            return hookBarrier.then(() => {
+              log.push(`resumed open=${String(resource?.open)}`);
+              return { context, response };
+            });
+          },
+        });
+
+        const admission = viaAdmission
+          ? acquireRequestAdmission(mock)
+          : undefined;
+        const pending = admission
+          ? admission.handle("GET", "/db", { signal: controller.signal })
+          : mock.handle("GET", "/db", { signal: controller.signal });
+        await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+        admission?.release();
+        mock.reset();
+        expect(log).toEqual([]);
+
+        resumeHook();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(log).toEqual(["resumed open=true", "uninstall"]);
+      },
+    );
 
     it("expires the uninstall instance once uninstall returns", () => {
       const mock = schmock();

@@ -1,4 +1,8 @@
-import { awaitWithAbort, throwIfAborted } from "./abort.js";
+import {
+  type AbandonedHookTracker,
+  awaitHookWithAbort,
+  throwIfAborted,
+} from "./abort.js";
 import { errorMessage, PluginError, toError } from "./errors.js";
 
 /** Structural typing — DebugLogger satisfies this without an import */
@@ -63,6 +67,7 @@ async function recoverPluginError(
   context: Schmock.PluginContext,
   logger: PipelineLogger,
   signal?: AbortSignal,
+  onAbandoned?: AbandonedHookTracker,
 ): Promise<
   { handled: true; response: unknown } | { handled: false; error: Error }
 > {
@@ -74,9 +79,10 @@ async function recoverPluginError(
     if (!plugin.onError) continue;
 
     try {
-      const errorResult = await awaitWithAbort(
+      const errorResult = await awaitHookWithAbort(
         plugin.onError(currentError, context),
         signal,
+        onAbandoned,
       );
       throwIfAborted(signal);
       if (errorResult instanceof Error) {
@@ -106,6 +112,7 @@ export async function runPluginBeforeRequest(
   context: Schmock.PluginContext,
   logger: PipelineLogger,
   signal = context.signal,
+  onAbandoned?: AbandonedHookTracker,
 ): Promise<PipelineResult> {
   let currentContext = preserveRequestSignal(context, signal);
 
@@ -116,9 +123,10 @@ export async function runPluginBeforeRequest(
 
     logger.log("pipeline", `Running beforeRequest: ${plugin.name}`);
     try {
-      const result = await awaitWithAbort(
+      const result = await awaitHookWithAbort(
         plugin.beforeRequest(currentContext),
         signal,
+        onAbandoned,
       );
       throwIfAborted(signal);
       if (result === undefined) continue;
@@ -148,6 +156,7 @@ export async function runPluginBeforeRequest(
         currentContext,
         logger,
         signal,
+        onAbandoned,
       );
       if (recovery.handled) {
         return {
@@ -171,6 +180,7 @@ export async function recoverGeneratorError(
   error: unknown,
   logger: PipelineLogger,
   signal = context.signal,
+  onAbandoned?: AbandonedHookTracker,
 ): Promise<PipelineResult> {
   throwIfAborted(signal);
   const recovery = await recoverPluginError(
@@ -180,6 +190,7 @@ export async function recoverGeneratorError(
     context,
     logger,
     signal,
+    onAbandoned,
   );
   throwIfAborted(signal);
   if (recovery.handled) {
@@ -203,6 +214,7 @@ export async function runPluginPipeline(
   initialResponse: unknown,
   logger: PipelineLogger,
   signal = context.signal,
+  onAbandoned?: AbandonedHookTracker,
 ): Promise<PipelineResult> {
   let currentContext = preserveRequestSignal(context, signal);
   let response: unknown = initialResponse;
@@ -218,9 +230,10 @@ export async function runPluginPipeline(
     logger.log("pipeline", `Processing plugin: ${plugin.name}`);
 
     try {
-      const result = await awaitWithAbort(
+      const result = await awaitHookWithAbort(
         plugin.process(currentContext, response),
         signal,
+        onAbandoned,
       );
       throwIfAborted(signal);
 
@@ -255,6 +268,7 @@ export async function runPluginPipeline(
         currentContext,
         logger,
         signal,
+        onAbandoned,
       );
       if (recovery.handled) {
         return {
