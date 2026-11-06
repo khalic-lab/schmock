@@ -1215,6 +1215,41 @@ describe("resource list overrides under validateResponses", () => {
     },
   );
 
+  it("validates a reshaped list against the success status it declares", async () => {
+    // A list that answers 203: the override's shape must replace that
+    // status's contract, not a 200 the list never sends.
+    const nonAuthoritativeSpec = spec({
+      "/users": {
+        get: {
+          responses: {
+            "203": {
+              description: "list",
+              content: json({ type: "array", items: user }),
+            },
+          },
+        },
+        post: {
+          responses: { "201": { description: "c", content: json(user) } },
+        },
+      },
+      "/users/{id}": {
+        get: {
+          responses: { "200": { description: "u", content: json(user) } },
+        },
+      },
+    });
+    const mock = await mockOf(nonAuthoritativeSpec, {
+      validateResponses: true,
+      seed: { users: [{ id: 1, name: "A" }] },
+      resources: { users: { listWrapProperty: "items" } },
+    });
+
+    const list = await mock.handle("GET", "/users");
+    expect(list.status).toBe(203);
+    expect(list.headers["content-type"]).toBe("application/json");
+    expect(list.body).toEqual({ items: [{ id: 1, name: "A" }] });
+  });
+
   it.each<[string, Schmock.ResourceOverride]>([
     ["listFlat: false", { listFlat: false }],
     ['listWrapProperty: ""', { listWrapProperty: "" }],
