@@ -94,6 +94,93 @@ describe("Express resolves dot segments before routing (decision 57)", () => {
       ).toBe("/pets");
     });
 
+    it("resolves dot segments inside a mount and routes below it", async () => {
+      expect(
+        await routedPathOf({
+          baseUrl: "/api",
+          url: "/a/../pets",
+          path: "/a/../pets",
+        }),
+      ).toBe("/pets");
+    });
+
+    it("passes a target that resolves outside its mount to next()", async () => {
+      // Express strips `/api` from `/api/../secrets` before the middleware
+      // runs; the target itself resolves to `/secrets`, outside the mount.
+      for (const url of ["/../secrets", "/%2e%2e/secrets", "/.."]) {
+        const handle = vi.fn(async () => ({
+          status: 200,
+          body: "mock",
+          headers: {},
+        }));
+        const mock = { handle } as unknown as CallableMockInstance;
+        const next = vi.fn();
+        await toExpress(mock)(
+          {
+            method: "GET",
+            baseUrl: "/api",
+            url,
+            path: url,
+            headers: {},
+            query: {},
+          } as unknown as Request,
+          {
+            status: vi.fn().mockReturnThis(),
+            setHeader: vi.fn().mockReturnThis(),
+            end: vi.fn(),
+          } as unknown as Response,
+          next as NextFunction,
+        );
+        expect({ url, handled: handle.mock.calls.length }).toEqual({
+          url,
+          handled: 0,
+        });
+        expect(next).toHaveBeenCalledWith();
+      }
+    });
+
+    it("routes a target that resolves to the mount itself as its root", async () => {
+      // `/api/../api` resolves to `/api`, which Bun hands the `/api` mount
+      // as `/`.
+      expect(
+        await routedPathOf({
+          baseUrl: "/api",
+          url: "/../api",
+          path: "/../api",
+        }),
+      ).toBe("/");
+    });
+
+    it("passes a target that resolves to a sibling of its mount to next()", async () => {
+      // `/api/../apiary` shares the `/api` prefix but is not below the mount.
+      const handle = vi.fn(async () => ({
+        status: 200,
+        body: "mock",
+        headers: {},
+      }));
+      const mock = { handle } as unknown as CallableMockInstance;
+      const next = vi.fn();
+      await toExpress(mock)(
+        {
+          method: "GET",
+          baseUrl: "/api",
+          url: "/../apiary",
+          path: "/../apiary",
+          headers: {},
+          query: {},
+        } as unknown as Request,
+        {
+          status: vi.fn().mockReturnThis(),
+          setHeader: vi.fn().mockReturnThis(),
+          end: vi.fn(),
+        } as unknown as Response,
+        next as NextFunction,
+      );
+
+      expect(handle).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalledWith();
+    });
+
     it("keeps req.path for a hand-built request without a URL", async () => {
       expect(await routedPathOf({ path: "/a/../pets" })).toBe("/a/../pets");
     });
@@ -106,9 +193,12 @@ describe("Express resolves dot segments before routing (decision 57)", () => {
       for (const server of servers.splice(0)) server.close();
     });
 
-    async function expressPort(mock: CallableMockInstance): Promise<number> {
+    async function expressPort(
+      mock: CallableMockInstance,
+      mount = "/",
+    ): Promise<number> {
       const app = express();
-      app.use(toExpress(mock));
+      app.use(mount, toExpress(mock));
       app.use((_req, res) => {
         res.status(418).json({ route: "next()" });
       });
@@ -135,6 +225,20 @@ describe("Express resolves dot segments before routing (decision 57)", () => {
 
       expect(JSON.parse(viaExpress.body)).toMatchObject({ route });
       expect(viaExpress).toEqual(viaListen);
+    });
+
+    it.each([
+      ["/api/a/../pets", 200, { route: "GET /pets" }],
+      ["/api/../pets", 418, { route: "next()" }],
+      ["/api/%2e%2e/pets", 418, { route: "next()" }],
+    ])("under an /api mount routes %s to %s", async (target, status, body) => {
+      const port = await expressPort(routingMock(), "/api");
+      const response = await rawGet(port, target);
+
+      expect({
+        status: response.status,
+        body: JSON.parse(response.body),
+      }).toEqual({ status, body });
     });
   });
 });

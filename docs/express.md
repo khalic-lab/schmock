@@ -192,6 +192,11 @@ resolved, as `mock.listen()` and the CLI route it: `/a/../pets` is routed as
 `/pets`, `/a/%2e%2e/pets` too, and `/pets/..` as `/`. Express's own `req.path`
 keeps them raw under Node, so the sibling Express routes of the same app still
 match the raw path. Under Bun, `node:http` resolves them before Express runs.
+Under a mount, the dot segments are resolved with the mount path in front: with
+`app.use('/api', toExpress(mock))`, `/api/a/../pets` is routed as `/pets`, while
+`/api/../pets` resolves to `/pets` outside the mount, so the mock does not
+answer it and the request goes to `next()` (under Bun it never reaches the
+mount).
 
 ## Response Behavior
 

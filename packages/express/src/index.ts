@@ -293,25 +293,47 @@ function defaultQuery(req: Request): Record<string, string> {
  */
 const REQUEST_TARGET_ORIGIN = "http://schmock.invalid";
 
+/** The scheme and authority of an absolute-form request target. */
+const ABSOLUTE_TARGET_PREFIX = /^[a-z][a-z\d+.-]*:\/\/[^/?#]*/i;
+
 /**
  * The path a request is routed under: the pathname of `req.url` (the URL
  * `req.path` comes from, so a mount or rewrite still applies) parsed as
  * `mock.listen()` and the CLI parse a request target. That resolves `.`, `..`
  * and their percent-encoded spellings, which Express's own `req.path` keeps
  * raw under Node; Bun's node:http resolves them before Express runs, so this
- * also makes the routed path the same on both runtimes. A hand-built request
- * without a URL, or a target that does not parse, keeps `req.path`.
+ * also makes the routed path the same on both runtimes.
+ *
+ * Under a mount, Express has already cut `req.baseUrl` off `req.url`, so the
+ * dot segments are resolved against the mount path put back in front:
+ * `/api/../secrets` resolves to `/secrets`, which Bun never hands the `/api`
+ * mount. Such a target returns `undefined`, and the request falls through.
+ * A hand-built request without a URL, or a target that does not parse, keeps
+ * `req.path`.
  */
-function routedPath(req: Request): string {
+function routedPath(req: Request): string | undefined {
   const target: unknown = req.url;
   if (typeof target === "string") {
-    try {
-      if (target.startsWith("/")) {
-        return new URL(`${REQUEST_TARGET_ORIGIN}${target}`).pathname;
+    const prefix = target.startsWith("/")
+      ? ""
+      : ABSOLUTE_TARGET_PREFIX.exec(target)?.[0];
+    if (prefix !== undefined) {
+      const mount = typeof req.baseUrl === "string" ? req.baseUrl : "";
+      const rest = target.slice(prefix.length);
+      try {
+        const resolved = new URL(
+          `${REQUEST_TARGET_ORIGIN}${mount}${rest.startsWith("/") ? "" : "/"}${rest}`,
+        ).pathname;
+        // Without the trailing slash, so a root mount ("") routes everything.
+        const base = new URL(
+          `${REQUEST_TARGET_ORIGIN}${mount}`,
+        ).pathname.replace(/\/$/, "");
+        if (resolved === base) return "/";
+        if (!resolved.startsWith(`${base}/`)) return undefined;
+        return resolved.slice(base.length);
+      } catch {
+        // Not a parseable target: route the path Express derived.
       }
-      return new URL(target).pathname;
-    } catch {
-      // Not a parseable target: route the path Express derived.
     }
   }
   return req.path;
@@ -367,10 +389,15 @@ export function toExpress(
         return next();
       }
 
+      // A target whose dot segments climb out of the mount is not this
+      // middleware's request.
+      const path = routedPath(req);
+      if (path === undefined) return next();
+
       // Run request interceptor if provided
       let requestData = {
         method,
-        path: routedPath(req),
+        path,
         headers: transformHeaders(req.headers),
         body: req.body,
         query: transformQuery ? transformQuery(req.query) : defaultQuery(req),
