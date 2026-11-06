@@ -180,6 +180,56 @@ describe("findBestMapping", () => {
     expect(result?.mapping.trueProbability).toBe(0.05);
   });
 
+  describe("a specific word before a trailing name or address", () => {
+    it.each([
+      ["emailAddress", "internet.email"],
+      ["email_address", "internet.email"],
+      ["userEmailAddress", "internet.email"],
+      ["companyName", "company.name"],
+      ["company_name", "company.name"],
+      ["organizationName", "company.name"],
+      ["brandName", "company.name"],
+      ["cityName", "location.city"],
+      ["stateName", "location.state"],
+      ["billingStateName", "location.state"],
+      ["countryName", "location.country"],
+      ["country_name", "location.country"],
+      ["countyName", "location.county"],
+      ["continentName", "location.continent"],
+    ])("maps %s to %s", (field, method) => {
+      expect(
+        findBestMapping(field, { type: "string" })?.mapping.fakerMethod,
+      ).toBe(method);
+    });
+
+    it.each([
+      ["name", "person.fullName"],
+      ["customerName", "person.fullName"],
+      ["address", "location.streetAddress"],
+      ["homeAddress", "location.streetAddress"],
+      ["street", "location.streetAddress"],
+    ])("still maps %s to %s", (field, method) => {
+      expect(
+        findBestMapping(field, { type: "string" })?.mapping.fakerMethod,
+      ).toBe(method);
+    });
+
+    it("generates an email address for emailAddress", async () => {
+      const generated = await generateFromSchema({
+        schema: {
+          type: "object",
+          properties: { emailAddress: { type: "string" } },
+          required: ["emailAddress"],
+        },
+        seed: 7,
+      });
+
+      expect(generated).toMatchObject({
+        emailAddress: expect.stringMatching(/^[^\s@]+@[^\s@]+$/),
+      });
+    });
+  });
+
   describe("ID suffix detection", () => {
     it("maps userId to UUID", () => {
       const result = findBestMapping("userId", { type: "string" });

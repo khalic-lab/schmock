@@ -11,7 +11,7 @@ export interface FieldMapping {
 // ── Identity & Auth ─────────────────────────────────────────────────
 const identity: FieldMapping[] = [
   {
-    keywords: ["email"],
+    keywords: ["email", "email_address"],
     fakerMethod: "internet.email",
     schemaType: "string",
     minScore: 0.6,
@@ -165,19 +165,19 @@ const address: FieldMapping[] = [
     minScore: 0.6,
   },
   {
-    keywords: ["city", "town"],
+    keywords: ["city", "town", "city_name"],
     fakerMethod: "location.city",
     schemaType: "string",
     minScore: 0.6,
   },
   {
-    keywords: ["state", "province", "region"],
+    keywords: ["state", "province", "region", "state_name"],
     fakerMethod: "location.state",
     schemaType: "string",
     minScore: 0.8,
   },
   {
-    keywords: ["country"],
+    keywords: ["country", "country_name"],
     fakerMethod: "location.country",
     schemaType: "string",
     minScore: 0.8,
@@ -189,13 +189,13 @@ const address: FieldMapping[] = [
     minScore: 0.8,
   },
   {
-    keywords: ["county"],
+    keywords: ["county", "county_name"],
     fakerMethod: "location.county",
     schemaType: "string",
     minScore: 0.9,
   },
   {
-    keywords: ["continent"],
+    keywords: ["continent", "continent_name"],
     fakerMethod: "location.continent",
     schemaType: "string",
     minScore: 0.9,
@@ -419,6 +419,9 @@ const business: FieldMapping[] = [
       "employer",
       "brand",
       "operator",
+      "company_name",
+      "organization_name",
+      "brand_name",
     ],
     fakerMethod: "company.name",
     schemaType: "string",

@@ -1537,6 +1537,13 @@ matches a mapping that names it exactly or ends with that token. `phoneType`,
 `emailStatus` and `cityCode` get no phone number, email or city; `countryCode`
 and `zipCode` still map through their own keywords.
 
+A trailing `name` or `address` after a more specific word maps by that word:
+`emailAddress` generates an email, `companyName`, `organizationName` and
+`brandName` a company, and `cityName`, `stateName`, `countryName`,
+`countyName` and `continentName` that place. Other `…Name` and `…Address`
+fields, such as `customerName` or `homeAddress`, keep the person's name and
+street address.
+
 ### Schema extensions
 
 ```typescript
