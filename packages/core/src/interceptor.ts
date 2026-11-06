@@ -848,7 +848,12 @@ export function createFetchLease(
       }
       context.method = initialMethod;
       const admission = admitRequest?.();
-      const admittedHandle = admission?.handle ?? handle;
+      // Called through the admission, so a class-based one keeps `this`.
+      const admittedHandle: Schmock.MockRequestHandler =
+        admission === undefined
+          ? handle
+          : (method, routedPath, requestOptions) =>
+              admission.handle(method, routedPath, requestOptions);
       // Without a beforeRequest hook (which receives the body and may change
       // the method or path), the request handle() will see is already known,
       // so a passthrough lease asks the admission whether any route answers

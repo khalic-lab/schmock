@@ -1346,6 +1346,37 @@ describe("mock.intercept()", () => {
     }
   });
 
+  it("calls a class-based admission's handle with the admission as receiver", async () => {
+    class ClassAdmission implements Schmock.RequestAdmission {
+      readonly body = { ok: true };
+      released = false;
+      async handle(): Promise<Schmock.Response> {
+        return { status: 200, body: this.body, headers: {} };
+      }
+      release(): void {
+        this.released = true;
+      }
+    }
+    let admission: ClassAdmission | undefined;
+    const interceptor = createFetchInterceptor(
+      async () => ({ status: 500, body: "fallback", headers: {} }),
+      { passthrough: false },
+      () => {
+        admission = new ClassAdmission();
+        return admission;
+      },
+    );
+
+    try {
+      const response = await fetch("http://localhost/api/class");
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(admission?.released).toBe(true);
+    } finally {
+      interceptor.restore();
+    }
+  });
+
   it("forwards the effective AbortSignal to handle request options", async () => {
     const handleRequest = vi.fn(
       async (): Promise<Schmock.Response> => ({
