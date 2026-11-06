@@ -1238,13 +1238,84 @@ describe("loadDocument", () => {
         schemas,
       );
 
-      const started = performance.now();
-      const marker = (await markerOf(spec, "oneOf")) as string[][];
-      const elapsed = performance.now() - started;
+      // The deterministic guard: resolving a pointer target decodes its
+      // fragment once, so counting the decodes shows the mapping is indexed
+      // once rather than once per branch (count × count). The clock is a
+      // secondary guard only.
+      const realDecode = globalThis.decodeURIComponent;
+      let decodes = 0;
+      vi.stubGlobal("decodeURIComponent", (text: string) => {
+        decodes++;
+        return realDecode(text);
+      });
+      let marker: string[][];
+      let elapsed: number;
+      try {
+        const started = performance.now();
+        marker = (await markerOf(spec, "oneOf")) as string[][];
+        elapsed = performance.now() - started;
+      } finally {
+        vi.unstubAllGlobals();
+      }
 
       expect(marker[0]).toEqual(["v0"]);
       expect(marker[count - 1]).toEqual([`v${count - 1}`]);
+      expect(decodes).toBeGreaterThanOrEqual(count);
+      expect(decodes).toBeLessThan(count * 10);
       expect(elapsed).toBeLessThan(1500);
+    });
+
+    describe("a bare mapping target spelled like a file name", () => {
+      let dir: string;
+
+      beforeAll(() => {
+        // `Cat.json` is a component name to the mapping, not a relative URL,
+        // even though a file of that name sits beside the spec and a branch
+        // `$ref`s it.
+        dir = mkdtempSync(join(tmpdir(), "schmock-bare-target-"));
+        writeFileSync(
+          join(dir, "Cat.json"),
+          JSON.stringify({
+            type: "object",
+            properties: { petType: { type: "string" } },
+          }),
+        );
+        writeFileSync(
+          join(dir, "spec.json"),
+          JSON.stringify(
+            anyOfPetSpec(
+              {
+                anyOf: [
+                  { $ref: "./Cat.json" },
+                  { $ref: "#/components/schemas/Dog" },
+                ],
+                discriminator: {
+                  propertyName: "petType",
+                  mapping: { feline: "Cat.json", dog: "Dog" },
+                },
+              },
+              { Dog: animal("bark") },
+            ),
+          ),
+        );
+      });
+
+      afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+      it("does not name the file's schema by that target", async () => {
+        const api = (await loadDocument(join(dir, "spec.json"), {
+          refs: { external: true },
+        })) as unknown as {
+          components: {
+            schemas: { Pet: { discriminator: Record<string, unknown> } };
+          };
+        };
+
+        expect(api.components.schemas.Pet.discriminator[MARKER]).toEqual([
+          null,
+          ["dog"],
+        ]);
+      });
     });
 
     it("aligns the marker with oneOf when a node declares both", async () => {
