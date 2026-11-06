@@ -179,6 +179,22 @@ describe("schmock callable API", () => {
       });
     });
 
+    it("treats a '?' in the path as a path character, not a query string", async () => {
+      const mock = schmock();
+      mock("GET /q", ({ query }) => ({ query }));
+
+      const inPath = await mock.handle("GET", "/q?a=1");
+      expect(inPath.status).toBe(404);
+      expect(inPath.body).toMatchObject({
+        error: "Route not found: GET /q%3Fa=1",
+        code: "ROUTE_NOT_FOUND",
+      });
+
+      const asOption = await mock.handle("GET", "/q", { query: { a: "1" } });
+      expect(asOption.status).toBe(200);
+      expect(asOption.body).toEqual({ query: { a: "1" } });
+    });
+
     it("provides headers", async () => {
       const mock = schmock();
       mock(

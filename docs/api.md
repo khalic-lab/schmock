@@ -166,6 +166,13 @@ interface Response {
 }
 ```
 
+`path` is the path alone, not a URL. A `?` or `#` in it is a literal path
+character, encoded as `%3F` or `%23` like any other, so
+`handle('GET', '/q?a=1')` looks for a route named `/q?a=1` and answers 404
+`Route not found: GET /q%3Fa=1`. Pass query parameters as `options.query`:
+`handle('GET', '/q', { query: { a: '1' } })`. `listen()`, `intercept()` and
+the adapters split the URL themselves; only a direct `handle()` caller has to.
+
 `form` is for a transport that decodes an urlencoded body itself: pass the
 record as `body` and every field as sent as `form`, and the route and plugins
 receive both (see [Request Context](#request-context)). `handle()` does not
