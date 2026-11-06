@@ -1755,3 +1755,63 @@ describe("a 3.1 contract closed with unevaluatedProperties (hunt openapi-1-G18)"
     expect(Object(deleted.body).name).toBe("rex");
   });
 });
+
+describe("a typed nullable create contract (hunt openapi-1-G16)", () => {
+  const nullablePet = {
+    type: "object",
+    nullable: true,
+    required: ["id", "name", "createdAt"],
+    properties: {
+      id: { type: "integer" },
+      name: { type: "string" },
+      createdAt: { type: "string", format: "date-time", readOnly: true },
+    },
+  };
+  const petsSpec = spec({
+    "/pets": {
+      get: {
+        responses: {
+          "200": {
+            description: "list",
+            content: json({ type: "array", items: nullablePet }),
+          },
+        },
+      },
+      post: {
+        requestBody: { content: json(nullablePet) },
+        responses: {
+          "201": { description: "created", content: json(nullablePet) },
+        },
+      },
+    },
+    "/pets/{id}": {
+      get: {
+        responses: {
+          "200": { description: "pet", content: json(nullablePet) },
+        },
+      },
+    },
+  });
+
+  it("always generates the base, so the readOnly createdAt is never dropped", async () => {
+    const mock = await mockOf(petsSpec, { validateResponses: true });
+
+    // Faker rolls a nullable node to null ~5% of the time, so 200 unseeded
+    // creates reach that roll with near certainty.
+    const outcomes = new Set<string>();
+    for (let i = 0; i < 200; i++) {
+      const created = await mock.handle("POST", "/pets", {
+        body: { name: "rex" },
+      });
+      const body = Object(created.body);
+      outcomes.add(
+        created.status !== 201
+          ? `status ${created.status}`
+          : Object.hasOwn(body, "createdAt")
+            ? "complete"
+            : "no createdAt",
+      );
+    }
+    expect([...outcomes]).toEqual(["complete"]);
+  });
+});

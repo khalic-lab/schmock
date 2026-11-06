@@ -468,7 +468,8 @@ When the operation declares no response schema (or a non-object one), create
 falls back to echoing the request body and stamping the id. An object contract
 may omit `type`: `properties` or `allOf` alone, a polymorphic `oneOf`/`anyOf`
 whose branches are all objects (Stripe's `anyOf: [bank_account, card]`), and a
-`nullable: true` object all count, so their created bodies are generated too.
+`nullable: true` object all count, so their created bodies are generated too
+(a nullable contract from its object, never as `null`).
 
 A `DELETE` usually answers with the deleted row. When its response declares a
 confirmation object that the row does not satisfy, such as Stripe's

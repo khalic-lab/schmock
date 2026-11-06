@@ -834,14 +834,18 @@ async function generateContractBase(
   seed?: number,
 ): Promise<Record<string, unknown>> {
   if (!schema || typeof schema === "boolean") return {};
-  // Generated from the node inside a nullable wrapper: the wrapper's null
-  // branch is a valid value for faker to pick, and no base at all.
+  // Generated from the non-null alternative of a nullable contract (the node
+  // inside the wrapper, or a typed node without its `null`): null is a valid
+  // value for faker to pick, and no base at all.
   const contract = unwrapNullable(schema);
   if (Object.keys(contract).length === 0) return {};
   if (!isObjectShaped(contract)) return {};
 
   try {
-    const generated = await generateFromSchema({ schema: contract, seed });
+    const generated = await generateFromSchema({
+      schema: nonNullable(contract),
+      seed,
+    });
     return isRecord(generated) ? { ...generated } : {};
   } catch (error) {
     console.warn(
