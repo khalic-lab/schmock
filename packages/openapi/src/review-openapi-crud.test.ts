@@ -1669,3 +1669,89 @@ describe("the errorSchema resource override", () => {
     expect(duplicate.body).toMatchObject({ id: 2, name: "B" });
   });
 });
+
+describe("a 3.1 contract closed with unevaluatedProperties (hunt openapi-1-G18)", () => {
+  const petRef = { $ref: "#/components/schemas/Pet" };
+  const closedSpec = {
+    openapi: "3.1.0",
+    info: { title: "Closed by unevaluatedProperties", version: "1.0.0" },
+    components: {
+      schemas: {
+        Base: {
+          type: "object",
+          properties: { id: { type: "integer", readOnly: true } },
+        },
+        Pet: {
+          allOf: [
+            { $ref: "#/components/schemas/Base" },
+            {
+              type: "object",
+              required: ["name"],
+              properties: { name: { type: "string" } },
+            },
+          ],
+          unevaluatedProperties: false,
+        },
+      },
+    },
+    paths: {
+      "/pets": {
+        get: {
+          responses: {
+            "200": {
+              description: "list",
+              content: json({ type: "array", items: petRef }),
+            },
+          },
+        },
+        post: {
+          requestBody: { content: json(petRef) },
+          responses: { "201": { description: "c", content: json(petRef) } },
+        },
+      },
+      "/pets/{petId}": {
+        parameters: [
+          {
+            name: "petId",
+            in: "path",
+            required: true,
+            schema: { type: "integer" },
+          },
+        ],
+        get: {
+          responses: { "200": { description: "p", content: json(petRef) } },
+        },
+        delete: {
+          responses: { "200": { description: "d", content: json(petRef) } },
+        },
+      },
+    },
+  };
+
+  it("drops an undeclared request field from the created and stored row", async () => {
+    const mock = await mockOf(closedSpec, {
+      validateRequests: false,
+      validateResponses: true,
+    });
+
+    const created = await mock.handle("POST", "/pets", {
+      body: { name: "rex", extra: 1 },
+    });
+    expect(created.status).toBe(201);
+    expect(created.body).toEqual({ id: 1, name: "rex" });
+
+    const list = await mock.handle("GET", "/pets");
+    expect(list.body).toEqual([{ id: 1, name: "rex" }]);
+  });
+
+  it("does not count a row with an undeclared field as the delete contract", async () => {
+    const mock = await mockOf(closedSpec, {
+      seed: { pets: [{ id: 1, name: "rex", extra: 1 }] },
+    });
+
+    const deleted = await mock.handle("DELETE", "/pets/1");
+    expect(deleted.status).toBe(200);
+    expect(Object(deleted.body)).not.toHaveProperty("extra");
+    expect(Object(deleted.body).name).toBe("rex");
+  });
+});

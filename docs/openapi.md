@@ -431,7 +431,8 @@ When the create operation declares a response schema, the created body is
 - a declared property the request omits keeps its generated value, so `required`
   and `format` constraints hold;
 - an **undeclared** request field is copied through, unless the contract sets
-  `additionalProperties: false` — then it is dropped. PUT and PATCH apply the
+  `additionalProperties: false` (or, on a 3.1 composition,
+  `unevaluatedProperties: false`) — then it is dropped. PUT and PATCH apply the
   same rule to the fields they merge, against their own response contract when
   it is the item (it declares the id property at its top level). Otherwise (a
   `204`, an envelope, or a confirmation such as `{ updated: boolean }`) they

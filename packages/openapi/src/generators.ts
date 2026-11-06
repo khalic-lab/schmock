@@ -572,7 +572,7 @@ function describesRow(
   for (const name of requiredProperties(contract)) {
     if (!Object.hasOwn(row, name)) return false;
   }
-  if (contract.additionalProperties === false) {
+  if (isClosedContract(contract)) {
     const declared = collectSchemaProperties(contract);
     for (const key of Object.keys(row)) {
       if (!Object.hasOwn(declared, key)) return false;
@@ -788,9 +788,7 @@ function acceptedFields(
 ): Array<[string, unknown]> {
   const declared = collectSchemaProperties(contract);
   const noContract = Object.keys(declared).length === 0;
-  const open =
-    contract === undefined ||
-    unwrapNullable(contract).additionalProperties !== false;
+  const open = contract === undefined || !isClosedContract(contract);
   return Object.entries(body).filter(
     ([property, value]) =>
       value !== undefined &&
@@ -799,6 +797,20 @@ function acceptedFields(
       !modes.readOnly.has(property) &&
       !modes.writeOnly.has(property) &&
       (Object.hasOwn(declared, property) || noContract || open),
+  );
+}
+
+/**
+ * Whether an object contract accepts only the properties it declares: closed
+ * by `additionalProperties: false`, or, on a 3.1 composition, by
+ * `unevaluatedProperties: false`, which reaches through its `allOf` branches.
+ */
+function isClosedContract(schema: JSONSchema7): boolean {
+  // `unevaluatedProperties` is 2019-09+, so JSONSchema7 does not type it.
+  const contract = unwrapNullable(schema);
+  return (
+    contract.additionalProperties === false ||
+    Reflect.get(contract, "unevaluatedProperties") === false
   );
 }
 
