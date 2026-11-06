@@ -1061,6 +1061,26 @@ describe("file-path specs when a DOM window global exists", () => {
     });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it("resolves a relative ref in an inline spec against the working directory", async () => {
+    vi.stubGlobal("window", {
+      location: { href: "http://localhost:3000/app/" },
+    });
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("network access is not allowed here"));
+    const ref = `./${relative(process.cwd(), externalDir)}/models.json#/Thing`;
+
+    const parsed = await parseSpec(specWithResponseSchema({ $ref: ref }), {
+      refs: { external: true },
+    });
+
+    expect(parsed.paths[0].responses.get(200)?.schema).toMatchObject({
+      type: "object",
+      properties: { label: { type: "string" } },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });
 
 // ── #58: OAS 3.1 `$ref` siblings are a conjunction, not an override ──────────

@@ -183,6 +183,22 @@ async function rootLocation(source: string): Promise<string> {
 }
 
 /**
+ * The location to hand ref-parser for an inline spec, which has no file of
+ * its own: `undefined` outside a DOM, where ref-parser already resolves a
+ * relative `$ref` against the working directory.
+ *
+ * Under a `window` global ref-parser takes `window.location` as the working
+ * directory instead, so `./pet.json` was downloaded from the page's origin.
+ * The working directory as a `file://` URL, with its trailing slash so that
+ * relative refs resolve inside it, keeps the documented behaviour.
+ */
+async function inlineRootLocation(): Promise<string | undefined> {
+  if (!("window" in globalThis)) return undefined;
+  const cwd = await rootLocation(process.cwd());
+  return cwd.endsWith("/") ? cwd : `${cwd}/`;
+}
+
+/**
  * Whether ref-parser's file resolver would read `url`: no scheme, or `file:`.
  * The same test as its own `isFileSystemPath`, minus the `window` sniffing.
  */
@@ -481,12 +497,12 @@ export function createResolver(): SpecResolver {
         ? () => undefined
         : pinSupportedVersion(document);
       try {
-        return baseUrl !== undefined
-          ? await parser.validate(
-              await rootLocation(baseUrl),
-              document,
-              derefOptions,
-            )
+        const root =
+          baseUrl !== undefined
+            ? await rootLocation(baseUrl)
+            : await inlineRootLocation();
+        return root !== undefined
+          ? await parser.validate(root, document, derefOptions)
           : await parser.validate(document, derefOptions);
       } finally {
         restoreVersion();

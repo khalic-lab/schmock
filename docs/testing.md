@@ -161,6 +161,8 @@ only when the item schema declares it, otherwise `id`. For a `Pet` that declares
 A file-path `spec` (`'./petstore.yaml'`), and any relative external `$ref`s
 it has with `refs: { external: true }`, is read from disk in jsdom and
 happy-dom test environments too, not fetched relative to `window.location`.
+So is a relative external `$ref` in an inline spec object, which resolves
+against the process working directory there as it does anywhere else.
 
 ## Testing with Express
 
