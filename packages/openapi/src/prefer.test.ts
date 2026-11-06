@@ -181,3 +181,74 @@ describe("Prefer response headers", () => {
     },
   );
 });
+
+describe("Prefer example under a default or range response", () => {
+  const ok = {
+    description: "ok",
+    content: {
+      "application/json": {
+        schema: { type: "object", properties: { a: { type: "string" } } },
+      },
+    },
+  };
+  const withExample = (name: string, value: unknown) => ({
+    description: "error",
+    content: {
+      "application/json": {
+        schema: { type: "object" },
+        examples: { [name]: { value } },
+      },
+    },
+  });
+  const spec = {
+    openapi: "3.1.0",
+    info: { title: "prefer examples", version: "1.0.0" },
+    paths: {
+      "/default": {
+        get: {
+          responses: {
+            "200": ok,
+            default: withExample("boom", { error: "boom" }),
+          },
+        },
+      },
+      "/range": {
+        get: {
+          responses: { "200": ok, "4XX": withExample("nf", { error: "nf" }) },
+        },
+      },
+      "/numeric": {
+        get: {
+          responses: { "200": ok, "404": withExample("nf", { error: "nf" }) },
+        },
+      },
+      "/default-only": {
+        get: {
+          responses: { default: withExample("boom", { error: "boom" }) },
+        },
+      },
+    },
+  };
+
+  it.each([
+    ["/default", "boom", 500, { error: "boom" }],
+    ["/range", "nf", 400, { error: "nf" }],
+    ["/numeric", "nf", 404, { error: "nf" }],
+    ["/default-only", "boom", 200, { error: "boom" }],
+  ])(
+    "GET %s with Prefer: example=%s serves that example",
+    async (path, name, status, body) => {
+      const mock = schmock();
+      mock.pipe(await openapi({ spec, validateResponses: true }));
+
+      const response = await mock.handle("GET", path, {
+        headers: { prefer: `example=${name}` },
+      });
+
+      expect({ status: response.status, body: response.body }).toEqual({
+        status,
+        body,
+      });
+    },
+  );
+});

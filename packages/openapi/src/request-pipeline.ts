@@ -31,6 +31,7 @@ import {
 import { routeIdExamples } from "./resource-placement.js";
 import { generateHeaderValues, routeHeaderSeed } from "./response-headers.js";
 import {
+  entryStatus,
   findResponseEntry,
   findSuccessResponse,
   type ResponseStatusKey,
@@ -290,10 +291,11 @@ export function processContentNegotiation(
   if (prefer.code !== undefined) {
     selectedEntry = findResponseEntry(responses, prefer.code);
   } else if (prefer.example !== undefined) {
-    selectedEntry = [...responses.values()].find(
-      (entry) =>
-        selectResponseExample(context, entry, prefer.example ?? "").found,
-    );
+    selectedEntry = findPreferredExample(
+      context,
+      responses,
+      prefer.example,
+    )?.entry;
   } else if (defaultStatus !== undefined) {
     selectedEntry = findResponseEntry(responses, defaultStatus);
   } else {
@@ -967,15 +969,9 @@ export async function processPreferHeader(
 
   // Prefer: example=name — find a named example across responses
   if (prefer.example !== undefined) {
-    for (const [code, entry] of responses) {
-      const selectedExample = selectResponseExample(
-        context,
-        entry,
-        prefer.example,
-      );
-      if (typeof code === "number" && selectedExample.found) {
-        return replaced(code, selectedExample.value, entry);
-      }
+    const preferred = findPreferredExample(context, responses, prefer.example);
+    if (preferred) {
+      return replaced(preferred.status, preferred.value, preferred.entry);
     }
   }
 
@@ -1005,6 +1001,25 @@ export async function processPreferHeader(
   }
 
   return unchanged;
+}
+
+/**
+ * The first response entry holding the example `name`, the status it is
+ * served with (see {@link entryStatus}) and the example's value. Content
+ * negotiation checks the entry this picks, so both steps agree on it.
+ */
+function findPreferredExample(
+  context: Schmock.PluginContext,
+  responses: Map<ResponseStatusKey, ParsedResponseEntry>,
+  name: string,
+): { status: number; entry: ParsedResponseEntry; value: unknown } | undefined {
+  for (const [key, entry] of responses) {
+    const selected = selectResponseExample(context, entry, name);
+    if (!selected.found) continue;
+    const status = entryStatus(responses, key, entry);
+    if (status !== undefined) return { status, entry, value: selected.value };
+  }
+  return undefined;
 }
 
 function selectResponseSchema(

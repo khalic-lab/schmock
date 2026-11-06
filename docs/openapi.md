@@ -783,6 +783,12 @@ const res = await mock.handle('GET', '/users', {
 // Returns the "admin-user" example from the spec
 ```
 
+An example declared under a `default` or range (`4XX`) response is served with
+the status the operation already answers that response with when it is the
+success response, and otherwise with the lowest status it covers that no other
+key declares: `4XX` beside a declared `400` answers 401, and `default` beside a
+`200` answers 500 (then 4xx, 2xx, 3xx when the 5xx are all declared).
+
 ### Parsing
 
 The header follows RFC 7240. Directives are comma-separated and several may be

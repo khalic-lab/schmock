@@ -105,6 +105,39 @@ export function findSuccessResponse<T>(
   return undefined;
 }
 
+/** Which hundreds a `default` entry's status is looked for in, in order. */
+const DEFAULT_STATUS_CLASSES: readonly number[] = [5, 4, 2, 3];
+
+/**
+ * The status a response is served with when it is chosen by its entry rather
+ * than by a status, as `Prefer: example=` chooses it: the key itself for a
+ * declared code, else the status the operation already answers that entry
+ * with (`2XX` or `default` as its success response, see
+ * {@link findSuccessResponse}), else the lowest status the entry covers that
+ * no other key claims: `4XX` beside a declared `400` gives 401, and `default`
+ * beside a `200` gives 500. Reading the status back through
+ * {@link findResponseEntry} always finds `entry`, so validation and content
+ * negotiation check the entry the body came from. `undefined` for a `1XX`
+ * entry, which no mock response can carry.
+ */
+export function entryStatus<T>(
+  responses: Map<ResponseStatusKey, T>,
+  key: ResponseStatusKey,
+  entry: T,
+): number | undefined {
+  if (typeof key === "number") return key;
+  const success = findSuccessResponse(responses);
+  if (success && success[1] === entry) return success[0];
+  const classes = key === "default" ? DEFAULT_STATUS_CLASSES : [Number(key[0])];
+  for (const hundred of classes) {
+    if (hundred < 2) continue;
+    for (let status = hundred * 100; status < hundred * 100 + 100; status++) {
+      if (findResponseEntry(responses, status) === entry) return status;
+    }
+  }
+  return undefined;
+}
+
 /**
  * The status a mock answers an operation with.
  *
