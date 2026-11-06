@@ -1,5 +1,5 @@
 import { schmock } from "@schmock/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type ValidationPluginOptions, validationPlugin } from "./index";
 
 function context(
@@ -875,6 +875,56 @@ describe("validationPlugin multipart bodies", () => {
     expect(received).toBeInstanceOf(FormData);
     expect(received instanceof FormData && received.get("name")).toBe("Ada");
     expect(rejected.status).toBe(400);
+  });
+
+  it("logs no Ajv strict-mode warnings for union types or upload rules", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await validateForm(
+        {
+          type: "object",
+          properties: {
+            g: { type: ["string", "number"] },
+            f: { type: "string", format: "binary", maxLength: 1000 },
+          },
+        },
+        form([
+          ["g", "x"],
+          ["f", new Blob(["png"])],
+        ]),
+      );
+
+      expect(result.response).toBeUndefined();
+      expect(warn.mock.calls).toEqual([]);
+      expect(log.mock.calls).toEqual([]);
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it("still logs a real strict-mode remark from the schemas compiled at creation", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      validationPlugin({
+        request: {
+          body: { properties: { a: { type: "string" } } },
+          query: { properties: { q: { type: "string" } } },
+        },
+        response: { body: { properties: { r: { type: "string" } } } },
+      });
+
+      const remarks = warn.mock.calls
+        .map((call) => String(call[0]))
+        .filter((message) => message.includes("strict mode"));
+      expect(remarks).toHaveLength(3);
+      for (const remark of remarks) {
+        expect(remark).toContain('missing type "object"');
+      }
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("keeps a field named __proto__ as an own field", async () => {

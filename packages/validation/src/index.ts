@@ -74,6 +74,12 @@ interface AjvOptions {
    * scalar types (`"2"` satisfies `type: "integer"`). Bodies keep strict types.
    */
   coerceTypes: boolean;
+  /**
+   * Whether Ajv logs strict-mode remarks. The multipart copy of
+   * `request.body` compiles quietly: its schema was already compiled, and
+   * remarked on, at creation, and its file-part rewrite is the plugin's own.
+   */
+  quiet?: boolean;
 }
 
 /**
@@ -85,7 +91,9 @@ interface AjvOptions {
  */
 const MULTIPLE_OF_PRECISION = 6;
 
-function createAjv({ coerceTypes }: AjvOptions = { coerceTypes: false }): Ajv {
+function createAjv(
+  { coerceTypes, quiet = false }: AjvOptions = { coerceTypes: false },
+): Ajv {
   // `ownProperties` keeps validation aligned with the transport: JSON.stringify
   // emits own enumerable properties only, so inherited members must neither
   // satisfy `required` nor trip `additionalProperties`.
@@ -94,6 +102,9 @@ function createAjv({ coerceTypes }: AjvOptions = { coerceTypes: false }): Ajv {
     ownProperties: true,
     coerceTypes,
     multipleOfPrecision: MULTIPLE_OF_PRECISION,
+    // A `type` array is valid draft-07, so it draws no strict-mode remark.
+    allowUnionTypes: true,
+    ...(quiet ? { logger: false as const } : {}),
   });
   // Schemas produced by @schmock/openapi carry schmock generation markers.
   // Draft-07 Ajv defaults to strictSchema:true and would throw
@@ -291,8 +302,9 @@ function compileSchema({
   target,
   inventories,
   coerceTypes,
+  quiet,
 }: CompileSchemaOptions): ValidateFunction {
-  const ajv = createAjv({ coerceTypes });
+  const ajv = createAjv({ coerceTypes, quiet });
   const seenIds = new Set<string>();
   const ambiguousIds = new Set<string>();
 
@@ -896,6 +908,7 @@ export function validationPlugin(
           inventory === requestBodyInventory ? formInventory : inventory,
         ),
         coerceTypes: true,
+        quiet: true,
       });
     }
     return formBodyValidator;
