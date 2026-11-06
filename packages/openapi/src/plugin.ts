@@ -60,11 +60,13 @@ const REQUEST_REJECTED_STATE = "openapi:requestRejected";
 /** The status an applied Prefer directive answered with, for afterResponse. */
 const PREFER_STATUS_STATE = "openapi:preferStatus";
 /**
- * Set by `process()` once it handles the route's own response. It stays unset
- * when a `beforeRequest` answered instead (this plugin's rejection, or another
- * plugin's short-circuit) and when an `onError` hook recovered a failure, since
- * core skips the response processors then: the operation did not run, or did
- * not finish, so afterResponse commits nothing and dispatches no callback.
+ * Set by `process()` once it has handled the route's own response without
+ * throwing. It stays unset when a `beforeRequest` answered instead (this
+ * plugin's rejection, or another plugin's short-circuit), when an `onError`
+ * hook recovered a generator failure, since core skips the response
+ * processors then, and when `process()` itself threw: the operation did not
+ * run, or did not finish, so afterResponse commits nothing and dispatches no
+ * callback.
  */
 const OPERATION_RAN_STATE = "openapi:operationRan";
 
@@ -248,7 +250,6 @@ export async function openapi(
       ) {
         return { context, response: incomingResponse };
       }
-      context.state.set(OPERATION_RAN_STATE, true);
 
       const result = await processPreferHeader(
         context,
@@ -271,18 +272,18 @@ export async function openapi(
       }
       const negotiated = applyResponseContentType(context, result.response);
       const response = negotiated.response;
-      if (negotiated.rejected) return { context, response };
-
-      if (options.validateResponses) {
-        const validationResult = validateResponse(
-          context,
-          response,
-          responseValidatorCtx,
-        );
-        if (validationResult) return validationResult;
+      let settled: Schmock.PluginResult = { context, response };
+      if (!negotiated.rejected && options.validateResponses) {
+        settled =
+          validateResponse(context, response, responseValidatorCtx) ?? settled;
       }
 
-      return { context, response };
+      // Only once every step above has returned: a throw in them (an
+      // `onSchema` hook failing on a Prefer body) leaves the operation
+      // unfinished, and an `onError` hook that recovers it with a 2xx must
+      // not commit the write the generator staged.
+      context.state.set(OPERATION_RAN_STATE, true);
+      return settled;
     },
 
     // Staged writes are committed, and callbacks dispatched, only here: once
@@ -339,8 +340,9 @@ function discardPendingMutations(context: Schmock.PluginContext): void {
  * 500 that a plugin piped after this one answered with all leave the
  * collection untouched. Any applied Prefer directive has already discarded
  * the queue (see `process()`), so a `Prefer: code=201` on a create stores
- * nothing either. A generator failure an `onError` hook recovered, even with a
- * 2xx, did not finish, so whatever it staged is dropped.
+ * nothing either. A generator failure, or a failure in this plugin's own
+ * `process()`, that an `onError` hook recovered, even with a 2xx, did not
+ * finish, so whatever it staged is dropped.
  *
  * Only the instance that owns the route settles: clearing another instance's
  * queue would drop a mutation its owner still has to commit.

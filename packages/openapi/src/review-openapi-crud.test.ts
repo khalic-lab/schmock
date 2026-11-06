@@ -1680,6 +1680,70 @@ describe("settling a request once its response is final (#39)", () => {
     expect(urls).toEqual([]);
     expect(stored(mock)).toEqual([{ id: 1, name: "rex" }]);
   });
+
+  it("commits nothing when openapi's own Prefer step throws and onError recovers", async () => {
+    const urls: string[] = [];
+    const preferSpec = spec({
+      "/pets": {
+        get: {
+          responses: {
+            "200": {
+              description: "list",
+              content: json({ type: "array", items: openPet }),
+            },
+          },
+        },
+        post: {
+          responses: {
+            "201": { description: "c", content: json(openPet) },
+            "400": {
+              description: "bad",
+              content: json({
+                type: "object",
+                properties: { err: { type: "string" } },
+              }),
+            },
+          },
+          callbacks: hook("https://hooks.example/created"),
+        },
+      },
+      "/pets/{petId}": {
+        get: {
+          responses: { "200": { description: "p", content: json(openPet) } },
+        },
+      },
+    });
+    const mock = schmock({ state: {} });
+    mock.pipe(
+      await openapi({
+        spec: preferSpec,
+        callbacks: { dispatch: (request) => void urls.push(request.url) },
+        // Throws only for the 400 body `Prefer: code=400` asks for, after the
+        // create generator staged its write.
+        onSchema: (schema) => {
+          if (schema.properties?.err) throw new Error("hook failed");
+          return schema;
+        },
+      }),
+    );
+    mock.pipe({
+      name: "recover",
+      process(context, response) {
+        return { context, response };
+      },
+      onError() {
+        return { status: 201, body: { recovered: true } };
+      },
+    });
+
+    const answered = await mock.handle("POST", "/pets", {
+      body: { name: "rex" },
+      headers: { prefer: "code=400" },
+    });
+    expect(answered).toMatchObject({ status: 201, body: { recovered: true } });
+    expect(urls).toEqual([]);
+    expect(stored(mock)).toEqual([]);
+  });
 });
 
 describe("the errorSchema resource override", () => {

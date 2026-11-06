@@ -592,7 +592,9 @@ the write is discarded:
   `delay`, say) stores nothing.
 - A request whose operation did not run to completion stores nothing, whatever
   status it answers with: one a plugin answered in its `beforeRequest`, and one
-  whose route failed and an `onError` hook recovered, even with a 2xx.
+  whose route failed, or whose `@schmock/openapi` processing failed (an
+  `onSchema` hook throwing on a `Prefer` body, say), and an `onError` hook
+  recovered, even with a 2xx.
 
 Ids are still allocated eagerly, so a rejected create burns an id: the sequence
 can have gaps, but never duplicates. The adapter hooks that run after
@@ -1258,8 +1260,8 @@ with a 500. The exception is a status a `Prefer` directive simulated, such as
 `Prefer: code=404`: the client asked for that simulation, so its callbacks
 fire with the simulated body. A request whose operation did not run fires
 none, whatever its status: one a plugin piped before `@schmock/openapi`
-answered in its `beforeRequest`, and one whose route failed and an `onError`
-hook recovered.
+answered in its `beforeRequest`, and one whose route or whose
+`@schmock/openapi` processing failed and an `onError` hook recovered.
 
 Callback runtime expressions support RFC 6901 JSON Pointers, including array
 indices and escaped `~0`/`~1` tokens, for request and response bodies.
