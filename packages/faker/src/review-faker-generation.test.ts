@@ -360,6 +360,49 @@ describe("review: lone numeric bounds (finding 19)", () => {
     }
   });
 
+  it("keeps the partner past a branch bound beside an allOf", async () => {
+    for (const schema of [
+      {
+        type: "integer",
+        minimum: 1500,
+        allOf: [{ type: "integer" }],
+        oneOf: [{ minimum: 5000 }],
+      },
+      {
+        type: "integer",
+        maximum: -1500,
+        allOf: [{ type: "integer" }],
+        anyOf: [{ maximum: -5000 }],
+      },
+    ] satisfies JSONSchema7[]) {
+      for (let seed = 1; seed <= 20; seed += 1) {
+        const value = Number(await generateFromSchema({ schema, seed }));
+        if (schema.minimum !== undefined) {
+          expect(value).toBeGreaterThanOrEqual(5000);
+        } else {
+          expect(value).toBeLessThanOrEqual(-5000);
+        }
+      }
+    }
+  });
+
+  it("keeps two of a branch's steps between the bound and its partner", async () => {
+    for (const schema of [
+      { type: "integer", minimum: 1500, oneOf: [{ multipleOf: 3000 }] },
+      { type: "integer", maximum: -1500, anyOf: [{ multipleOf: 3000 }] },
+    ] satisfies JSONSchema7[]) {
+      for (let seed = 1; seed <= 20; seed += 1) {
+        const value = Number(await generateFromSchema({ schema, seed }));
+        expect(Number.isInteger(value / 3000), `${value}`).toBe(true);
+        if (schema.minimum !== undefined) {
+          expect(value).toBeGreaterThanOrEqual(1500);
+        } else {
+          expect(value).toBeLessThanOrEqual(-1500);
+        }
+      }
+    }
+  });
+
   it("ignores OpenAPI 3.0 boolean exclusive bounds", () => {
     const schema: JSONSchema7 = { type: "number" };
     Reflect.set(schema, "exclusiveMinimum", true);
