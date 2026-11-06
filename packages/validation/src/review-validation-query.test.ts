@@ -724,6 +724,48 @@ describe("validationPlugin multipart bodies", () => {
     });
   });
 
+  it("holds each value of a repeated numeric field to plain decimal notation", async () => {
+    const schema = {
+      type: "object" as const,
+      properties: {
+        qty: {
+          type: "array" as const,
+          items: { type: "integer" as const, maximum: 10 },
+        },
+      },
+    };
+
+    for (const bad of ["1e400", "Infinity", "0x0A", "1e1", " 3 "]) {
+      const body = form([
+        ["qty", "5"],
+        ["qty", bad],
+      ]);
+      const result = await validateForm(schema, body);
+      expect(result.response, JSON.stringify(bad)).toMatchObject({
+        status: 400,
+        body: {
+          details: [
+            {
+              instancePath: "/qty/1",
+              keyword: "type",
+              params: { value: bad },
+            },
+          ],
+        },
+      });
+      expect(body.getAll("qty")).toEqual(["5", bad]);
+    }
+
+    const accepted = await validateForm(
+      schema,
+      form([
+        ["qty", "5"],
+        ["qty", "7"],
+      ]),
+    );
+    expect(accepted.response).toBeUndefined();
+  });
+
   it("keeps JSON bodies strictly typed", async () => {
     const result = await validateForm(
       { type: "object", properties: { age: { type: "integer" } } },

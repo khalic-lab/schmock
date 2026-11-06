@@ -1795,8 +1795,9 @@ A `multipart/*` body arrives as `FormData`, so `request.body` validates a
 record of its fields instead: each name maps to its value, a name sent more
 than once maps to an array of its values in order, and a file part maps to its
 `File`. Form fields always arrive as strings, so this record coerces scalar
-types under the same rules as query and header values, described next:
-`age=42` satisfies `type: 'integer'`. A file part satisfies OpenAPI's upload
+types under the same rules as query and header values, described next, and
+holds each value of a repeated name to them too: `age=42` satisfies
+`type: 'integer'`. A file part satisfies OpenAPI's upload
 idiom `type: 'string', format: 'binary'`, alone or as `items` of an array, as
 well as `type: 'object'` and `{}`. The coercion happens on a copy, so the
 route still receives the original `FormData`.
@@ -1861,8 +1862,9 @@ emit synthetic details instead, and neither carries a `schemaPath`:
 
 - The `bodyRequired` rejection carries only `instancePath: ""`,
   `keyword: 'required'` and `message`.
-- A query or header value rejected for not being a finite number in plain
-  decimal notation carries `instancePath` (such as `'/page'`),
+- A query, header or form value rejected for not being a finite number in
+  plain decimal notation carries `instancePath` (such as `'/page'`, or
+  `'/qty/1'` for the second value of a repeated form field),
   `keyword: 'type'`, `params: { value }` with the original string, and
   `message: 'must be a finite number in plain decimal notation'`. Its `params`
   differ from an Ajv `type` error's `params: { type }`.

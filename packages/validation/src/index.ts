@@ -668,10 +668,30 @@ function escapePointerSegment(segment: string): string {
   return segment.replace(/~/g, "~0").replace(/\//g, "~1");
 }
 
+function numericCoercionError(
+  instancePath: string,
+  value: unknown,
+  coercedValue: unknown,
+): CoercionError | undefined {
+  if (typeof value !== "string" || typeof coercedValue !== "number") {
+    return undefined;
+  }
+  if (Number.isFinite(coercedValue) && PLAIN_DECIMAL.test(value)) {
+    return undefined;
+  }
+  return {
+    instancePath,
+    keyword: "type",
+    params: { value },
+    message: "must be a finite number in plain decimal notation",
+  };
+}
+
 /**
  * Ajv skips `minimum`/`maximum` for non-finite numbers, and the route still
  * receives the original string, so a value Ajv coerced to a number must be a
- * finite number in plain decimal notation to pass.
+ * finite number in plain decimal notation to pass. A repeated form field's
+ * values are checked one by one.
  */
 function numericCoercionErrors(
   original: Record<string, unknown>,
@@ -680,16 +700,20 @@ function numericCoercionErrors(
   const errors: CoercionError[] = [];
   for (const [name, value] of Object.entries(original)) {
     const coercedValue = readOwnValue(coerced, name);
-    if (typeof value !== "string" || typeof coercedValue !== "number") {
+    const path = `/${escapePointerSegment(name)}`;
+    if (Array.isArray(value) && Array.isArray(coercedValue)) {
+      value.forEach((item, index) => {
+        const error = numericCoercionError(
+          `${path}/${index}`,
+          item,
+          coercedValue[index],
+        );
+        if (error) errors.push(error);
+      });
       continue;
     }
-    if (Number.isFinite(coercedValue) && PLAIN_DECIMAL.test(value)) continue;
-    errors.push({
-      instancePath: `/${escapePointerSegment(name)}`,
-      keyword: "type",
-      params: { value },
-      message: "must be a finite number in plain decimal notation",
-    });
+    const error = numericCoercionError(path, value, coercedValue);
+    if (error) errors.push(error);
   }
   return errors;
 }
@@ -935,8 +959,15 @@ export function validationPlugin(
         const validateForm = form ? formBodyValidate() : undefined;
         if (form && validateForm) {
           // Ajv coerces in place, and the record is already a copy, so the
-          // route still receives the original FormData and its strings.
-          const coercedForm = { ...form };
+          // route still receives the original FormData and its strings. A
+          // repeated field's array is copied too, so its strings survive for
+          // the plain-decimal check.
+          const coercedForm = Object.fromEntries(
+            Object.entries(form).map(([name, value]) => [
+              name,
+              Array.isArray(value) ? [...value] : value,
+            ]),
+          );
           const errors = validateForm(coercedForm)
             ? numericCoercionErrors(form, coercedForm)
             : validateForm.errors;
