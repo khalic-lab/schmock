@@ -125,9 +125,10 @@ export function createReferenceViews(
  * merged into the node that holds it, the way json-schema-faker merges a
  * root JSON Pointer it follows (`mergeIntoHolder`): the target's `faker`,
  * `not`, `if`/`then`/`else` and `default` carry over as they would through a
- * pointer. A root JSON Pointer is merged in the same way when the node it
- * sits on reads a `not` (its own or a target's), or is itself a `not` body,
- * so the JSF copy encodes the `not` against the keywords it is merged with
+ * pointer. A root JSON Pointer inside an embedded `$id` resource names a
+ * schema of that resource, so it is merged as well. A root JSON Pointer is
+ * also merged in the same way when the node it sits on reads a `not` (its
+ * own or a target's), or is itself a `not` body, so the JSF copy encodes the `not` against the keywords it is merged with
  * (`normalizeSchemaForJsf`) and json-schema-faker never reaches a `not` body
  * through a `$ref` it would not look into. The target of a merged reference
  * has its own references merged first, so a chain collapses into one node.
@@ -159,9 +160,12 @@ export function inlineUnfollowedReferences(root: JSONSchema7): JSONSchema7 {
       inlineWhole(schema);
       continue;
     }
+    // A pointer inside an embedded `$id` resource names a schema of that
+    // resource, while json-schema-faker reads it from the document root.
+    const inResource = refs.resolve(schema, "#") !== root;
     const unfollowed = resolvedReferences(schema, refs).filter(
       ({ keyword, reference }) =>
-        keyword === "$dynamicRef" || !isRootPointer(reference),
+        keyword === "$dynamicRef" || inResource || !isRootPointer(reference),
     );
     if (unfollowed.length > 0) inlined.set(schema, unfollowed);
   }

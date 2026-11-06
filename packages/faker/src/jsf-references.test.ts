@@ -33,6 +33,15 @@ describe("inlineUnfollowedReferences", () => {
         },
       ],
       [
+        "only root JSON Pointers under a URN $id",
+        {
+          $id: "urn:example:root",
+          type: "object",
+          properties: { a: { $ref: "#/$defs/A" }, self: { $ref: "#" } },
+          $defs: { A: { type: "string" } },
+        },
+      ],
+      [
         "a reference nothing resolves",
         { type: "object", properties: { a: { $ref: "missing.json" } } },
       ],
@@ -190,6 +199,86 @@ describe("inlineUnfollowedReferences", () => {
         page: "P",
         spaced: "S",
       });
+    });
+
+    describe("a JSON Pointer inside an embedded $id resource", () => {
+      const resource = (rootDefs: JSONSchema7["$defs"]): JSONSchema7 => ({
+        type: "object",
+        required: ["a"],
+        properties: { a: { $ref: "https://ex.com/a.json" } },
+        $defs: {
+          ...rootDefs,
+          A: {
+            $id: "https://ex.com/a.json",
+            type: "object",
+            required: ["b"],
+            properties: { b: { $ref: "#/$defs/B" } },
+            $defs: { B: { type: "integer", minimum: 7, maximum: 8 } },
+          },
+        },
+      });
+
+      it.each([
+        ["no root definition of that name", {}],
+        [
+          "a root definition of the same name",
+          { B: { type: "string", const: "ROOT" } },
+        ],
+      ] satisfies Array<[string, JSONSchema7["$defs"]]>)(
+        "resolves against the resource with %s",
+        async (_, rootDefs) => {
+          for (let seed = 1; seed <= 5; seed++) {
+            const value = await generateFromSchema({
+              schema: resource(rootDefs),
+              seed,
+            });
+            expect([{ a: { b: 7 } }, { a: { b: 8 } }]).toContainEqual(value);
+          }
+        },
+      );
+
+      // No nested `$defs` here, so only the pointer's place inside the
+      // resource tells it apart from a root pointer.
+      it.each([
+        ["#/definitions/B", "B"],
+        ["#/properties/c", "c"],
+      ])(
+        "merges %s against the resource when the root reads it differently",
+        async (pointer) => {
+          const schema: JSONSchema7 = {
+            type: "object",
+            required: ["a"],
+            properties: {
+              a: { $ref: "https://ex.com/a.json" },
+              c: { type: "string", const: "ROOT" },
+            },
+            definitions: { B: { type: "string", const: "ROOT" } },
+            $defs: {
+              A: {
+                $id: "https://ex.com/a.json",
+                type: "object",
+                required: ["b"],
+                properties: {
+                  b: { $ref: pointer },
+                  c: { type: "integer", const: 7 },
+                },
+                definitions: { B: { type: "integer", const: 7 } },
+              },
+            },
+          };
+          const copy = inlineUnfollowedReferences(schema);
+          const a = propertyOf(copy, "a");
+          expect(propertyOf(a, "b")).toMatchObject({
+            type: "integer",
+            const: 7,
+          });
+          expect(propertyOf(a, "b").$ref).toBeUndefined();
+          for (let seed = 1; seed <= 3; seed++) {
+            const value = await generateFromSchema({ schema, seed });
+            expect(value).toMatchObject({ a: { b: 7 } });
+          }
+        },
+      );
     });
   });
 });

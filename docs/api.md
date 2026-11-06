@@ -1659,8 +1659,9 @@ register them the same way:
   `$ref` to an embedded `$id` (a draft-07 plain-name `$id` such as `#item`, an
   `$id` under `definitions`, or a relative `$id` named by a URI resolved
   against the root `$id`), and a JSON Pointer `$ref` with percent-encoded
-  characters (`#/$defs/a%20b`) generate the schema they name. The target is
-  merged into the node that holds the reference the way json-schema-faker
+  characters (`#/$defs/a%20b`) generate the schema they name. A JSON Pointer
+  inside an embedded `$id` resource names a schema of that resource, as the
+  specification reads it. The target is merged into the node that holds the reference the way json-schema-faker
   merges a JSON Pointer `$ref`: the target's keywords, `faker`, `not`,
   `if`/`then`/`else` and `default` included, with the node's own keywords
   over them, except that both `allOf` lists are kept. A `$dynamicRef` that
