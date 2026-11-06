@@ -126,3 +126,55 @@ export function segmentParamName(segment: string): string | undefined {
     QUOTED_PARAM_SEGMENT.exec(segment)?.[1]
   );
 }
+
+const PLAIN_NAME_CHAR = /[A-Za-z0-9_-]/;
+
+/**
+ * Where the parameter whose `:` sits at `index` ends and what it is called, or
+ * undefined when that colon is literal text — read as core's route grammar
+ * reads it (a quoted name, else the longest plain name).
+ */
+function readRouteParam(
+  path: string,
+  index: number,
+): { name: string; quoted: boolean; end: number } | undefined {
+  if (path[index] !== ":") return undefined;
+  if (path[index + 1] === '"') {
+    const close = path.indexOf('"', index + 2);
+    if (close <= index + 2) return undefined;
+    return { name: path.slice(index + 2, close), quoted: true, end: close + 1 };
+  }
+  let end = index + 1;
+  while (end < path.length && PLAIN_NAME_CHAR.test(path[end])) end += 1;
+  if (end === index + 1) return undefined;
+  return { name: path.slice(index + 1, end), quoted: false, end };
+}
+
+/**
+ * Every parameter name in a route path, in path order, embedded ones
+ * included: `/users/user-:uid/posts` → `["uid"]`, `/r/:from-:to` →
+ * `["from", "to"]`. A `\:` is a literal colon, and the hyphens ending a plain
+ * name right before another parameter separate the two, as core reads them.
+ */
+export function routeParamNames(path: string): string[] {
+  const names: string[] = [];
+  let index = 0;
+  while (index < path.length) {
+    if (path[index] === "\\" && path[index + 1] === ":") {
+      index += 2;
+      continue;
+    }
+    const param = readRouteParam(path, index);
+    if (!param) {
+      index += 1;
+      continue;
+    }
+    const name =
+      !param.quoted && readRouteParam(path, param.end)
+        ? param.name.replace(/-+$/, "")
+        : param.name;
+    if (name) names.push(name);
+    index = param.end;
+  }
+  return names;
+}

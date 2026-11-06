@@ -13,7 +13,7 @@
  * - `openapi:collections:/owners/:ownerId/pets|ownerId=7`
  */
 
-import { segmentParamName } from "./path-template.js";
+import { routeParamNames } from "./path-template.js";
 
 const COLLECTION_PREFIX = "openapi:collections:";
 const COUNTER_PREFIX = "openapi:counter:";
@@ -21,16 +21,15 @@ const SEEDED_PREFIX = "openapi:seeded:";
 
 /**
  * Parent path parameter names, in path order.
- * `"/owners/:ownerId/pets"` → `["ownerId"]`; `"/pets"` → `[]`.
+ * `"/owners/:ownerId/pets"` → `["ownerId"]`; `"/pets"` → `[]`. A parameter
+ * that shares its segment with literal text counts too:
+ * `"/users/user-:uid/posts"` → `["uid"]`.
  *
  * The resource's own id parameter never appears here: `basePath` is the
  * collection path, so the item id segment has already been stripped.
  */
 export function parentParamNames(basePath: string): string[] {
-  return basePath
-    .split("/")
-    .filter((segment) => segment.startsWith(":"))
-    .map((segment) => segmentParamName(segment) ?? segment.slice(1));
+  return routeParamNames(basePath);
 }
 
 /**

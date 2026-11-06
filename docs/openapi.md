@@ -570,7 +570,9 @@ collection path** rather than its last path segment. `/users` and
 A nested collection gets one collection per parent id: with
 `/owners/{ownerId}/pets`, a pet created under `POST /owners/1/pets` is not listed
 by `GET /owners/2/pets`, and `GET /owners/2/pets/{id}` answers 404 for it. Id
-counters restart per scope, so two owners can each hold a pet with id `1`.
+counters restart per scope, so two owners can each hold a pet with id `1`. A
+parent parameter that shares its segment with literal text, as in
+`/users/user-{uid}/posts` or `/orgs/{org}.json/posts`, scopes the same way.
 
 > **Written scopes are not evicted.** A read no longer allocates: `GET`s across
 > any number of parent ids on a resource with no seed data leave the state object
