@@ -1305,6 +1305,99 @@ describe("validationPlugin", () => {
   });
 
   describe("configuration snapshots", () => {
+    it("validates multipart bodies against the request.body taken at creation", async () => {
+      const multipart = (entries: Array<[string, string]>) => {
+        const body = new FormData();
+        for (const [name, value] of entries) body.append(name, value);
+        return body;
+      };
+      const validate = (plugin: Schmock.Plugin, body: FormData) =>
+        runBeforeRequest(plugin, {
+          path: "/test",
+          route: {},
+          method: "POST",
+          params: {},
+          query: {},
+          headers: {},
+          body,
+          state: new Map(),
+        });
+      const schema = (): Schmock.JSONSchema7 => ({
+        type: "object",
+        required: ["a"],
+        properties: { a: { type: "string" } },
+      });
+
+      const relaxed = { request: { body: schema() } };
+      const relaxedPlugin = validationPlugin(relaxed);
+      relaxed.request.body.required = [];
+
+      const removed: ValidationPluginOptions = { request: { body: schema() } };
+      const removedPlugin = validationPlugin(removed);
+      if (removed.request) delete removed.request.body;
+
+      const replaced: ValidationPluginOptions = { request: { body: schema() } };
+      const replacedPlugin = validationPlugin(replaced);
+      if (replaced.request) Reflect.set(replaced.request, "body", 42);
+
+      const missingA = await validate(relaxedPlugin, multipart([["b", "x"]]));
+      const afterRemoval = await validate(
+        removedPlugin,
+        multipart([["a", "x"]]),
+      );
+      const afterReplacement = await validate(
+        replacedPlugin,
+        multipart([["a", "x"]]),
+      );
+
+      expect(missingA.response).toMatchObject({
+        status: 400,
+        body: { details: [{ keyword: "required" }] },
+      });
+      expect(afterRemoval.response).toBeUndefined();
+      expect(afterReplacement.response).toBeUndefined();
+    });
+
+    it("leaves the JSON-body schema untouched by the multipart file-part rewrite", async () => {
+      // The upload slot's node is also a `const` value, which the compiled
+      // JSON validator compares against at run time.
+      const upload: Schmock.JSONSchema7 = { type: "string", format: "binary" };
+      const plugin = validationPlugin({
+        request: {
+          body: {
+            type: "object",
+            properties: { f: upload, g: { const: upload } },
+          },
+        },
+      });
+      const validate = (body: unknown) =>
+        runBeforeRequest(plugin, {
+          path: "/test",
+          route: {},
+          method: "POST",
+          params: {},
+          query: {},
+          headers: {},
+          body,
+          state: new Map(),
+        });
+      const multipart = new FormData();
+      multipart.append("f", new Blob(["png"]));
+
+      const uploaded = await validate(multipart);
+      const sameConst = await validate({
+        g: { type: "string", format: "binary" },
+      });
+      const rewrittenConst = await validate({ g: {} });
+
+      expect(uploaded.response).toBeUndefined();
+      expect(sameConst.response).toBeUndefined();
+      expect(rewrittenConst.response).toMatchObject({
+        status: 400,
+        body: { details: [{ instancePath: "/g", keyword: "const" }] },
+      });
+    });
+
     it("keeps schemas, bodyRequired, and statuses fixed after factory creation", async () => {
       const requestBodySchema: Schmock.JSONSchema7 = {
         type: "object",

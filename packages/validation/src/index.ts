@@ -949,7 +949,8 @@ export function validationPlugin(
   function formBodyValidate(): ValidateFunction | undefined {
     if (!requestBodyInventory) return undefined;
     if (!formBodyValidator) {
-      const formSchema = cloneSchema(options.request?.body, "request.body");
+      // A copy of the creation-time snapshot: acceptFileParts rewrites it.
+      const formSchema = cloneSchema(requestBodySchema, "request.body");
       if (!formSchema) return undefined;
       const formInventory = inventorySchema(
         acceptFileParts(formSchema),
