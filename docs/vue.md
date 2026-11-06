@@ -49,7 +49,8 @@ restoreSchmockInterception(app)
 ```
 
 `restoreSchmockInterception(app)` is idempotent and safe for an app that never
-intercepted. A `mount()` that throws releases the lease before rethrowing, so a
+intercepted. A `mount()` that throws releases the lease before rethrowing, and
+a `mount()` whose target selector matches no element releases it as well, so a
 failed startup does not leave `globalThis.fetch` patched.
 
 Several apps may share one mock: each `app.use(schmockPlugin, { mock })` takes

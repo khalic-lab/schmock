@@ -52,13 +52,19 @@ export const schmockPlugin: Plugin<SchmockPluginOptions> = {
 
     const mountApp = app.mount.bind(app);
     app.mount = (...args: Parameters<App["mount"]>) => {
+      let mounted: ReturnType<App["mount"]>;
       try {
-        return mountApp(...args);
+        mounted = mountApp(...args);
       } catch (error) {
         // A failed mount never unmounts, so onUnmount would never fire.
         restoreSchmockInterception(app);
         throw error;
       }
+      // A selector that matches nothing makes Vue warn and return without
+      // mounting. Vue sets _container only once a mount succeeds, so a repeat
+      // mount of a mounted app, which also returns nothing, keeps its lease.
+      if (!app._container) restoreSchmockInterception(app);
+      return mounted;
     };
 
     app.onUnmount(() => {

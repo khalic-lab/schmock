@@ -134,6 +134,41 @@ describe("schmockPlugin", () => {
     expect(globalThis.fetch).toBe(savedFetch);
   });
 
+  it("releases interception when the mount target is missing", () => {
+    const mock = schmock();
+    const savedFetch = globalThis.fetch;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const app = createApp(defineComponent({ render: () => h("div") }));
+      app.use(schmockPlugin, { mock });
+      expect(globalThis.fetch).not.toBe(savedFetch);
+
+      expect(app.mount("#schmock-missing-target")).toBeUndefined();
+      expect(globalThis.fetch).toBe(savedFetch);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("keeps interception when an already mounted app is mounted again", () => {
+    const mock = schmock();
+    const savedFetch = globalThis.fetch;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const app = createApp(defineComponent({ render: () => h("div") }));
+    app.use(schmockPlugin, { mock });
+    try {
+      app.mount(document.createElement("div"));
+      app.mount(document.createElement("div"));
+      expect(globalThis.fetch).not.toBe(savedFetch);
+    } finally {
+      app.unmount();
+      warn.mockRestore();
+    }
+    expect(globalThis.fetch).toBe(savedFetch);
+  });
+
   it("lets two apps share one mock", async () => {
     const mock = schmock();
     mock("GET /api/users", [{ id: 1, name: "Alice" }]);
