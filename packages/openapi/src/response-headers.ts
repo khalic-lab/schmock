@@ -1,4 +1,6 @@
 import type * as Schmock from "@schmock/core";
+import { ResourceLimitError } from "@schmock/core";
+import { MAX_STRING_LENGTH } from "@schmock/faker";
 import type { JSONSchema7 } from "json-schema";
 import { poolEntries } from "./example-values.js";
 import { hasType, isRecord } from "./utils.js";
@@ -212,9 +214,7 @@ function generateSingleHeaderValue(
     return numericHeaderValue(schema, false);
   }
   if (hasType(schema, "string")) {
-    return "x".repeat(
-      typeof schema.minLength === "number" ? schema.minLength : 0,
-    );
+    return "x".repeat(stringHeaderLength(name, schema.minLength));
   }
   if (hasType(schema, "boolean")) {
     return "false";
@@ -225,6 +225,26 @@ function generateSingleHeaderValue(
   // guessing one would be worse than omitting the header. Not an oversight —
   // do not "fix" it without deciding the serialization first.
   return undefined;
+}
+
+/**
+ * How long a string header's placeholder is: its `minLength`, read as no
+ * minimum when negative or not a number. A minimum past faker's
+ * string length limit is refused as it is in a generated body, rather than
+ * allocated and sent on every response.
+ */
+function stringHeaderLength(name: string, minLength: unknown): number {
+  if (typeof minLength !== "number" || Number.isNaN(minLength)) return 0;
+  const length = Math.max(0, Math.ceil(minLength));
+  if (length > MAX_STRING_LENGTH) {
+    throw new ResourceLimitError(
+      "string_length",
+      MAX_STRING_LENGTH,
+      length,
+      `header ${name}`,
+    );
+  }
+  return length;
 }
 
 /**

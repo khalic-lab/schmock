@@ -1125,7 +1125,10 @@ the header schema:
 - `integer` and `number` fall back to `0`, or to the nearest whole number inside
   `minimum`/`exclusiveMinimum`/`maximum`/`exclusiveMaximum` when those exclude
   `0` (the midpoint of a fractional `number` range);
-- `string` falls back to `minLength` characters (empty by default);
+- `string` falls back to `minLength` characters (empty by default, and for a
+  negative `minLength`); a `minLength` past 65,536, the string length a
+  generated body may reach, answers 500 `RESOURCE_LIMIT_ERROR` as it does in a
+  body;
 - `boolean` falls back to `false`.
 
 Nullable header schemas (3.0 `nullable: true`, 3.1 `type: [T, "null"]`) emit
