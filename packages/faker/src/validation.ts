@@ -1292,14 +1292,23 @@ function recordStringLimit(
     }
     // json-schema-faker honours a pattern's explicit repetition floor
     // (`a{70000}`) and caps its upper bounds, so the shortest match is what a
-    // pattern forces it to generate.
+    // pattern forces it to generate, as far as a `maxLength` keeps it and
+    // unless another keyword supplies the value (`patternLengthFloor`).
     if (
       typeof schema.pattern === "string" &&
       compilePattern(schema.pattern) !== undefined
     ) {
-      const bounds = regexLengthBounds(schema.pattern);
-      recordStringViolation(bounds.min, path, state);
-      recordPatternGrowth(schema, bounds.longest, path, state);
+      recordStringViolation(
+        cappedBy(patternLengthFloor(schema), caps.maxLength),
+        path,
+        state,
+      );
+      recordPatternGrowth(
+        schema,
+        regexLengthBounds(schema.pattern).longest,
+        path,
+        state,
+      );
     }
   }
   // Generation invents a key matching a `patternProperties` pattern, so the

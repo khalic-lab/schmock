@@ -214,6 +214,49 @@ describe("review: faker allocation ceilings (finding 78)", () => {
     ).not.toThrow();
   });
 
+  it("holds a pattern's string_length charge to what generation keeps of it", () => {
+    const long = "^a{70000}$";
+    for (const keywords of [
+      { format: "email" },
+      { enum: ["x"] },
+      { maxLength: 10 },
+      { faker: "person.firstName" },
+      { default: "x" },
+      { allOf: [{ maxLength: 10 }] },
+    ]) {
+      const schema: JSONSchema7 = { type: "string", pattern: long };
+      for (const [keyword, value] of Object.entries(keywords)) {
+        Reflect.set(schema, keyword, value);
+      }
+      expect(
+        () => fakerPlugin({ schema }),
+        JSON.stringify(keywords),
+      ).not.toThrow();
+    }
+    expectResource(
+      captureFailure(() =>
+        fakerPlugin({ schema: { type: "string", pattern: long } }),
+      ),
+      "string_length",
+    );
+  });
+
+  it("holds an if's pattern to the maxLength its merge brings in", async () => {
+    // json-schema-faker merges the `if` with its parent and `then`, so the
+    // parent's maxLength truncates the pattern the `if` carries.
+    const schema: JSONSchema7 = {
+      type: "string",
+      maxLength: 10,
+      if: { pattern: "^a{70000}$" },
+      // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+      then: { minLength: 1 },
+    };
+    expect(() => fakerPlugin({ schema })).not.toThrow();
+    const generated = await generateFromSchema({ schema, seed: 1 });
+    expect(typeof generated).toBe("string");
+    expect((generated as string).length).toBeLessThanOrEqual(10);
+  });
+
   it("refuses a pattern whose nested open quantifiers outgrow the response budget", () => {
     // json-schema-faker repeats each `+` up to five times, so the longest
     // string it can build grows fivefold with every level of nesting while

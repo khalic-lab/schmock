@@ -1811,7 +1811,9 @@ direct call, its method path included. faker scans the result again after each
 substitution, and a placeholder assembled there from another placeholder's
 output is not checked. The expanded `helpers.mustache` output and the explicit upper quantifier in
 `helpers.fromRegExp` must fit in 65,536 characters, and a schema `pattern`
-whose shortest match is longer than that is rejected at creation. A `pattern`
+whose shortest match is longer than that is rejected at creation, counted as
+for `generated_chars`: only up to the smallest `maxLength`, and not at all when
+another keyword supplies the value. A `pattern`
 is also rejected, as `generated_chars`, when the longest string
 json-schema-faker could build from it passes the whole 16,777,216-character
 response budget on its own. json-schema-faker repeats `*`, `+` and `{n,}` up
