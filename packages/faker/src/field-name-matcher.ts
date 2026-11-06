@@ -486,6 +486,12 @@ export function findBestMapping(
       continue;
     }
 
+    // A boolean takes only a boolean mapping. One that declares no type
+    // ("price") generates a string, which json-schema-faker coerces to true.
+    if (schemaType === "boolean" && mapping.schemaType !== "boolean") {
+      continue;
+    }
+
     // Check schema type constraint
     if (mapping.schemaType && schemaType && mapping.schemaType !== schemaType) {
       const isNumeric =

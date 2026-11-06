@@ -180,6 +180,28 @@ describe("findBestMapping", () => {
     expect(result?.mapping.trueProbability).toBe(0.05);
   });
 
+  it.each(["hasBalance", "feeWaived", "isTotal"])(
+    "gives the boolean %s no money mapping",
+    (field) => {
+      expect(findBestMapping(field, { type: "boolean" })).toBeUndefined();
+    },
+  );
+
+  it("generates both values for a boolean named after money", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: { hasBalance: { type: "boolean" } },
+      required: ["hasBalance"],
+    };
+    const seen = new Set<unknown>();
+    for (let seed = 0; seed < 100; seed++) {
+      const generated = await generateFromSchema({ schema, seed });
+      seen.add(Reflect.get(Object(generated), "hasBalance"));
+    }
+
+    expect(seen).toEqual(new Set([true, false]));
+  });
+
   describe("a specific word before a trailing name or address", () => {
     it.each([
       ["emailAddress", "internet.email"],
