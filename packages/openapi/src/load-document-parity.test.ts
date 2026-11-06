@@ -148,6 +148,29 @@ describe("loadDocument agrees under the Node and browser resolvers", () => {
     }
   });
 
+  it("refuses refs: { external: true } in the browser resolver's own dereference", async () => {
+    // `loadDocument` asks first, but the resolver must not depend on every
+    // caller doing so: called directly it refuses too.
+    const { createResolver } = await import("./resolver.browser");
+    const { buildRefParserOptions } = await import("./ref-policy");
+    const resolver = createResolver();
+    const document = specWithResponseSchema(
+      { $ref: "#/components/schemas/Name" },
+      { Name: { type: "string" } },
+    ) as never;
+    const dereference = (external: boolean) =>
+      resolver.dereference({
+        document: structuredClone(document),
+        baseUrl: undefined,
+        options: buildRefParserOptions({ external }),
+        strict: false,
+      });
+
+    const failure = await dereference(true).catch((error: unknown) => error);
+    expect((failure as { code?: unknown }).code).toBe("OPENAPI_NODE_ONLY");
+    await expect(dereference(false)).resolves.toBeDefined();
+  });
+
   it("refuses strict: true in a browser whether or not the spec has a $ref", async () => {
     for (const schema of [
       { type: "string" },
