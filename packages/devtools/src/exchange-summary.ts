@@ -1,5 +1,6 @@
 import type * as Schmock from "@schmock/core";
 import { toError } from "@schmock/core/adapter";
+import { redactUrl } from "./redact-url.js";
 import type { ExchangeSummary, ExchangeTone } from "./types.js";
 
 function displayUrlOf(url: string, pageOrigin: string | undefined): string {
@@ -40,7 +41,7 @@ export function summarizeExchange(
 ): ExchangeSummary {
   const { method, url } = exchange.request;
   return {
-    name: `${method} ${displayUrlOf(url, pageOrigin)}`,
+    name: `${method} ${redactUrl(displayUrlOf(url, pageOrigin))}`,
     outcome: outcomeOf(exchange),
     duration: `${Math.max(0, exchange.endTime - exchange.startTime).toFixed(1)} ms`,
     tone: toneOf(exchange),

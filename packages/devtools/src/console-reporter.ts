@@ -1,5 +1,6 @@
 import type * as Schmock from "@schmock/core";
 import { redactHeaders } from "@schmock/core";
+import { redactUrl } from "./redact-url.js";
 import type { ExchangeSummary, ExchangeTone } from "./types.js";
 
 type ConsoleSink = Pick<
@@ -26,7 +27,8 @@ export const TONE_STYLES: Readonly<Record<ExchangeTone, string>> =
  * console as `%s` arguments, never inside the format string, so a `%c`, `%s`
  * or `%d` in them prints literally instead of consuming arguments.
  *
- * Credential headers (core's `SENSITIVE_HEADER_NAMES`) are logged as
+ * Credential headers (core's `SENSITIVE_HEADER_NAMES`) and query parameters
+ * named like credentials (core's `isCredentialName`) are logged as
  * "[redacted]", as core's debug log does, so the group still shows they were
  * sent.
  */
@@ -47,7 +49,7 @@ export function logExchange(
     const { method, url, headers, body } = exchange.request;
     sink.log("Request", {
       method,
-      url,
+      url: redactUrl(url),
       headers: redactHeaders(headers),
       ...(body !== undefined ? { body } : {}),
     });

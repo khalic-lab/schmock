@@ -1019,6 +1019,31 @@ describe("PR15 aborted and error replies", () => {
       hookError,
     ]);
   });
+
+  it("masks credential query parameters in the logged URL", async () => {
+    const harnessed = harness();
+    harnessed.installWorker(stubWorker());
+    const page = harnessed.openPage();
+    const hookError = new Error("hook failed");
+    lease(page, {
+      beforeResponse: () => {
+        throw hookError;
+      },
+    });
+    await start(page);
+    await replyOf(
+      await sendFrame(
+        page,
+        frameFor("http://localhost/api/users?api_key=SUPER-SECRET&page=2"),
+      ),
+    );
+    expect(error.mock.calls[0]).toEqual([
+      TEXT.mockFailureFormat,
+      "GET",
+      "http://localhost/api/users?api_key=[redacted]&page=2",
+      hookError,
+    ]);
+  });
 });
 
 describe("PR16 ignored frames", () => {

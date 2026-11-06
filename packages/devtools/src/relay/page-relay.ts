@@ -6,6 +6,7 @@ import {
   toError,
 } from "@schmock/core/adapter";
 import { invalidOption } from "../invalid-option.js";
+import { redactUrl } from "../redact-url.js";
 import type {
   RelayFallbackReason,
   ServiceWorkerRelay,
@@ -201,7 +202,7 @@ function handleFrame(event: RelayMessageEvent): void {
         console.error(
           "Schmock relay: %s %s failed in the mock, so the page receives a network error.",
           frame.request.method,
-          frame.request.url,
+          redactUrl(frame.request.url),
           error,
         );
         const failure = toError(error);

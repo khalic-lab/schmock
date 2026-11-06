@@ -60,8 +60,13 @@ Credential headers display as `"[redacted]"`, with their names kept so the
 group still shows they were sent: `authorization`, `proxy-authorization`,
 `cookie`, `set-cookie`, `x-api-key`, `x-auth-token` and
 `x-schmock-admin-token`, the set core's debug log masks
-(`SENSITIVE_HEADER_NAMES`). Bodies are logged as they are, so a password in a
-request body still shows.
+(`SENSITIVE_HEADER_NAMES`). Query parameters named like a credential
+(`api_key`, `access_token`, `client_secret`: the rule core's debug log masks
+query parameters by, see [Debug mode](./debug-mode.md#credential-redaction))
+show as `[redacted]` wherever the URL appears: the group title, the
+`Request`'s URL, the Performance entry's name, tooltip and URL property, and
+the relay's `failed in the mock` error. Bodies are logged as they are, so a
+password in a request body still shows.
 
 ### Performance panel
 

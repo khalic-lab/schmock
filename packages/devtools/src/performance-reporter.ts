@@ -1,4 +1,5 @@
 import type * as Schmock from "@schmock/core";
+import { redactUrl } from "./redact-url.js";
 import type { DevToolsColor, ExchangeSummary, ExchangeTone } from "./types.js";
 
 export const TONE_COLORS: Readonly<Record<ExchangeTone, DevToolsColor>> =
@@ -17,6 +18,8 @@ export function measureExchange(
   timeline: Pick<Performance, "measure"> | undefined = globalThis.performance,
 ): void {
   if (typeof timeline?.measure !== "function") return;
+  // Measures outlive the page in recorded and shared traces.
+  const url = redactUrl(exchange.request.url);
   try {
     // Method call on the timeline: a detached `measure` is an illegal invocation.
     timeline.measure(summary.name, {
@@ -30,10 +33,10 @@ export function measureExchange(
             ? { trackGroup: target.trackGroup }
             : {}),
           color: TONE_COLORS[summary.tone],
-          tooltipText: `${exchange.request.method} ${exchange.request.url} → ${summary.outcome}`,
+          tooltipText: `${exchange.request.method} ${url} → ${summary.outcome}`,
           properties: [
             ["Method", exchange.request.method],
-            ["URL", exchange.request.url],
+            ["URL", url],
             ["Outcome", summary.outcome],
             ["Duration", summary.duration],
           ],

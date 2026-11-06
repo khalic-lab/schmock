@@ -344,6 +344,40 @@ describe("devtoolsPlugin", () => {
     expect(devtoolsOf(trackEntries()[0]).color).toBe("error");
   });
 
+  // Core's debug log masks query parameters named like credentials; every
+  // place the devtools output shows the URL masks the same ones.
+  it("masks credential query parameters wherever the URL is shown", () => {
+    const url =
+      "http://localhost/api/me?api_key=SUPER-SECRET&limit=2&access_token=TOK";
+    const masked =
+      "http://localhost/api/me?api_key=[redacted]&limit=2&access_token=[redacted]";
+    devtoolsPlugin().onExchange?.(exchangeAt(url));
+
+    expect(firstTitle()).toBe(`Schmock GET ${masked} → 200 (3.2 ms)`);
+    const request = vi
+      .mocked(console.log)
+      .mock.calls.find(([label]) => label === "Request");
+    expect(request?.[1]).toMatchObject({ url: masked });
+    const [entry] = trackEntries();
+    expect(entry?.name).toBe(`GET ${masked}`);
+    const devtools = devtoolsOf(entry as PerformanceEntry);
+    expect(devtools.tooltipText).toBe(`GET ${masked} → 200`);
+    expect(devtools.properties).toContainEqual(["URL", masked]);
+    expect(JSON.stringify([groupCollapsed.mock.calls, devtools])).not.toMatch(
+      /SUPER-SECRET|TOK\b/,
+    );
+  });
+
+  it("masks credential query parameters in a same-origin path label", () => {
+    vi.stubGlobal("location", { origin: "http://localhost" });
+    devtoolsPlugin().onExchange?.(
+      exchangeAt("http://localhost/api/me?client_secret=s3&page=1"),
+    );
+    expect(firstTitle()).toBe(
+      "Schmock GET /api/me?client_secret=[redacted]&page=1 → 200 (3.2 ms)",
+    );
+  });
+
   it("reports an aborted exchange", () => {
     devtoolsPlugin().onExchange?.(abortedExchange());
     expect(firstTitle().endsWith("→ aborted (3.2 ms)")).toBe(true);
