@@ -27,9 +27,11 @@ import {
   serializeResponseBody,
 } from "@schmock/core";
 import {
+  acquireRequestAdmission,
   buildJsonErrorResponse,
   HttpIngressError,
   parseJsonBody,
+  type RequestAdmission,
   requestBodyKindOf,
   toError,
 } from "@schmock/core/adapter";
@@ -748,6 +750,12 @@ interface Interception {
   readonly observer: Subscriber<HttpEvent<unknown>>;
   readonly abortController: AbortController;
   aborted: boolean;
+  /**
+   * The mock's routes and plugins as they were when the request arrived, so
+   * a `mock.reset()` while its body is decoded or its hook runs changes
+   * neither; `undefined` for a hand-written mock, routed through `handle`.
+   */
+  admission?: RequestAdmission;
   innerSub?: { unsubscribe(): void };
   /**
    * Shapes error responses. A request hook's rewrite updates it; a throw
@@ -779,6 +787,33 @@ function whenSettled<T, R>(
   next: (settled: T) => R,
 ): R | Promise<R> {
   return isPromiseLike(value) ? Promise.resolve(value).then(next) : next(value);
+}
+
+/**
+ * Hand the request to the real backend. The mock is done with it, so its
+ * admission is released first: a `reset()` must not wait on the network.
+ */
+function passThrough(interception: Interception): void {
+  const { req, next, observer } = interception;
+  interception.admission?.release();
+  interception.innerSub = next.handle(req).subscribe(observer);
+}
+
+/**
+ * Whether the admission says for certain that no route answers the request.
+ * Anything but a definite `false` from its probe, a throw included, counts
+ * as a route, so a wrong answer only costs a body read.
+ */
+function definitelyUnrouted(
+  admission: RequestAdmission | undefined,
+  method: Schmock.HttpMethod,
+  path: string,
+): boolean {
+  try {
+    return admission?.hasRoute?.(method, path) === false;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -948,12 +983,12 @@ function transformAndEmit(
   schmockResponse: Schmock.Response,
 ): undefined | Promise<void> {
   if (interception.aborted) return undefined;
-  const { req, next, observer, config } = interception;
+  const { req, observer, config } = interception;
 
   const answered = !isRouteNotFound(schmockResponse);
   if (!answered && config.passthrough) {
     // The real backend emits its own Sent event.
-    interception.innerSub = next.handle(req).subscribe(observer);
+    passThrough(interception);
     return undefined;
   }
 
@@ -1009,10 +1044,11 @@ function applyRequestOverride(
   requestData: RoutedRequest,
   override: Schmock.AdapterRequestOverride,
 ): void {
-  const { req, next, observer } = interception;
-  const method = toSupportedHttpMethod(override.method ?? req.method);
+  const method = toSupportedHttpMethod(
+    override.method ?? interception.req.method,
+  );
   if (!method) {
-    interception.innerSub = next.handle(req).subscribe(observer);
+    passThrough(interception);
     return;
   }
   const { form, ...request } = requestData;
@@ -1036,20 +1072,23 @@ function dispatchRequest(
   interception: Interception,
   routed: RoutedRequest,
 ): void {
-  const { config, abortController } = interception;
+  const { config, abortController, admission } = interception;
   interception.responseMethod = routed.method;
 
-  config.mock
-    .handle(routed.method, routed.path, {
-      // Fold header casing at the single choke point: doing it inside
-      // headersToObject would miss a request hook override that supplies
-      // capitalized keys.
-      headers: lowercaseHeaderKeys(routed.headers),
-      body: routed.body,
-      ...(routed.form === undefined ? {} : { form: routed.form }),
-      query: routed.query,
-      signal: abortController.signal,
-    })
+  const options: Schmock.RequestOptions = {
+    // Fold header casing at the single choke point: doing it inside
+    // headersToObject would miss a request hook override that supplies
+    // capitalized keys.
+    headers: lowercaseHeaderKeys(routed.headers),
+    body: routed.body,
+    ...(routed.form === undefined ? {} : { form: routed.form }),
+    query: routed.query,
+    signal: abortController.signal,
+  };
+  (admission
+    ? admission.handle(routed.method, routed.path, options)
+    : config.mock.handle(routed.method, routed.path, options)
+  )
     .then(
       (response) => transformAndEmit(interception, response),
       (error: unknown) => {
@@ -1071,8 +1110,9 @@ function dispatchRequest(
  * other adapter failure instead of escaping intercept() as a bare Error.
  */
 function runInterception(interception: Interception, routePath: string): void {
-  const { req } = interception;
+  const { req, config } = interception;
   try {
+    interception.admission = acquireRequestAdmission(config.mock);
     const headers = wireHeaders(req);
     const routedRequest = (decoded: DecodedBody): RoutedRequest => ({
       method: interception.responseMethod,
@@ -1096,7 +1136,22 @@ function runInterception(interception: Interception, routePath: string): void {
       runRequestHook(interception, routedRequest(decoded));
     };
 
-    const body = routedRequestBody(req, getHeader(headers, "content-type"));
+    // Without a request hook, which may change the method or path, the
+    // request the mock will see is known, so a passthrough interceptor asks
+    // the admission whether any route answers it. On a definite miss the
+    // body is never read, as in the fetch interceptor: the mock still sees
+    // the request, without a body, and passes it to the real backend.
+    const unrouted =
+      config.passthrough &&
+      config.requestHook === undefined &&
+      definitelyUnrouted(
+        interception.admission,
+        interception.responseMethod,
+        routePath,
+      );
+    const body = unrouted
+      ? { value: undefined }
+      : routedRequestBody(req, getHeader(headers, "content-type"));
     if (!isPromiseLike(body)) {
       route(body);
       return;
@@ -1181,6 +1236,7 @@ export function createSchmockInterceptor(
         return () => {
           interception.aborted = true;
           interception.abortController.abort();
+          interception.admission?.release();
           interception.innerSub?.unsubscribe();
         };
       });

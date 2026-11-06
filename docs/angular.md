@@ -492,6 +492,9 @@ describe('UserService', () => {
   and before any hook or route runs; with `passthrough: true` its text is
   routed instead, as the fetch interceptor routes it. A multipart body the
   platform cannot parse (a missing boundary) fails the request with a 500.
+  With `passthrough: true` and no `transformRequest` or `beforeRequest` hook,
+  a request no route answers is passed to the real backend without its body
+  being read, so such a body only fails a request the mock would answer.
   Angular labels a `URLSearchParams` body `application/json`, as its backends
   do, so a strict interceptor refuses it like any JSON body that does not
   parse; set `Content-Type: application/x-www-form-urlencoded` to receive its
@@ -553,3 +556,9 @@ failure's message and its code when it is a `SchmockError`, otherwise
 
 Unsubscribing aborts pending Schmock work and unsubscribes any unmatched
 passthrough request. No response is emitted after teardown.
+
+Each request is admitted against the mock's routes and plugins as they are
+when it is intercepted, as `mock.listen()`, Express and the fetch interceptor
+admit theirs: a `mock.reset()` while its body is decoded or a request hook
+runs neither changes the routes it sees nor uninstalls its plugins before it
+settles. A request passed to the real backend is released before it goes.

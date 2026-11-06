@@ -1273,8 +1273,9 @@ The entry also re-exports the `InterceptOptions`, `InterceptHandle` and
 
 `hasRoute(method, path)` answers whether `handle` would match a route for that
 method and path, against the same route table the admission pinned. A `false`
-answer must be exact, because the fetch interceptor uses it to skip reading a
-passthrough request's body; any other answer, or a throw, counts as a match.
+answer must be exact, because the fetch interceptor and the Angular adapter use
+it to skip reading a passthrough request's body; any other answer, or a throw,
+counts as a match.
 Admissions from `schmock()` always carry it. An admission passed to
 `createFetchInterceptor` without it has every request body read, and its
 responses are normalized like a mock's own: hop-by-hop headers are dropped and

@@ -15,7 +15,7 @@ import {
 import type * as Schmock from "@schmock/core";
 import type { CallableMockInstance } from "@schmock/core";
 import { schmock } from "@schmock/core";
-import { lastValueFrom, of } from "rxjs";
+import { lastValueFrom, NEVER, Observable, of } from "rxjs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSchmockInterceptor, provideSchmockInterceptor } from "./index";
 
@@ -1667,6 +1667,145 @@ describe("Angular Adapter", () => {
       );
 
       expect(transformRequest).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("request admission", () => {
+    it("routes against the routes it arrived under when reset() runs meanwhile", async () => {
+      const realMock = schmock();
+      const uninstall = vi.fn();
+      realMock("GET /generation", "old").pipe({
+        name: "old-generation",
+        process: (context, response) => ({ context, response }),
+        uninstall,
+      });
+      let releaseHook = () => {};
+      const hookBarrier = new Promise<void>((resolve) => {
+        releaseHook = resolve;
+      });
+      const InterceptorClass = createSchmockInterceptor(realMock, {
+        passthrough: false,
+        beforeRequest: async () => {
+          await hookBarrier;
+        },
+      });
+      const staleStart = vi.fn();
+
+      const pending = lastValueFrom(
+        new InterceptorClass().intercept(
+          new HttpRequest("GET", "/generation", null, {
+            responseType: "text",
+          }),
+          { handle: vi.fn() },
+        ),
+      );
+      realMock.reset();
+      expect(uninstall).not.toHaveBeenCalled();
+      realMock.on("request:start", staleStart);
+      realMock("GET /generation", "new");
+      releaseHook();
+
+      expect(await pending).toMatchObject({ status: 200, body: "old" });
+      expect(uninstall).toHaveBeenCalledOnce();
+      expect(staleStart).not.toHaveBeenCalled();
+    });
+
+    it("releases its admission when a request passes through", async () => {
+      const realMock = schmock();
+      const uninstall = vi.fn();
+      realMock("GET /mocked", "ok").pipe({
+        name: "plugin",
+        process: (context, response) => ({ context, response }),
+        uninstall,
+      });
+      const InterceptorClass = createSchmockInterceptor(realMock);
+
+      await lastValueFrom(
+        new InterceptorClass().intercept(new HttpRequest("GET", "/other"), {
+          handle: () => of(new HttpResponse({ body: "real" })),
+        }),
+      );
+      realMock.reset();
+
+      expect(uninstall).toHaveBeenCalledOnce();
+    });
+
+    it("releases its admission before the real backend is subscribed", async () => {
+      const realMock = schmock();
+      const uninstall = vi.fn();
+      realMock("GET /mocked", "ok").pipe({
+        name: "plugin",
+        process: (context, response) => ({ context, response }),
+        uninstall,
+      });
+      // The rewrite never reaches handle(), so only passThrough() can
+      // release the admission the request took on arrival.
+      const InterceptorClass = createSchmockInterceptor(realMock, {
+        transformRequest: () => ({ method: "PROPFIND" as any }),
+      });
+      let uninstalledAtSubscribe: number | undefined;
+      const backend = new Observable<HttpResponse<unknown>>((subscriber) => {
+        // A reset() run as the backend starts must not wait on this request.
+        realMock.reset();
+        uninstalledAtSubscribe = uninstall.mock.calls.length;
+        subscriber.next(new HttpResponse({ body: "real" }));
+        subscriber.complete();
+      });
+
+      await lastValueFrom(
+        new InterceptorClass().intercept(new HttpRequest("GET", "/mocked"), {
+          handle: () => backend,
+        }),
+      );
+
+      expect(uninstalledAtSubscribe).toBe(1);
+    });
+
+    it("releases its admission when a request given up before routing is unsubscribed", () => {
+      const realMock = schmock();
+      const uninstall = vi.fn();
+      realMock("GET /mocked", "ok").pipe({
+        name: "plugin",
+        process: (context, response) => ({ context, response }),
+        uninstall,
+      });
+      // The hook never settles, so the mock never sees the request and only
+      // teardown can release the admission it was given on arrival.
+      const InterceptorClass = createSchmockInterceptor(realMock, {
+        beforeRequest: () => new Promise<void>(() => {}),
+      });
+
+      const subscription = new InterceptorClass()
+        .intercept(new HttpRequest("GET", "/mocked"), { handle: vi.fn() })
+        .subscribe();
+      subscription.unsubscribe();
+      realMock.reset();
+
+      expect(uninstall).toHaveBeenCalledOnce();
+    });
+
+    it("releases its admission before the network answers an unsupported-method rewrite", () => {
+      const realMock = schmock();
+      const uninstall = vi.fn();
+      realMock("GET /mocked", "ok").pipe({
+        name: "plugin",
+        process: (context, response) => ({ context, response }),
+        uninstall,
+      });
+      const InterceptorClass = createSchmockInterceptor(realMock, {
+        transformRequest: () => ({ method: "PROPFIND" as any }),
+      });
+      // The real backend has not answered yet, so teardown has not run.
+      const handle = vi.fn().mockReturnValue(NEVER);
+
+      const subscription = new InterceptorClass()
+        .intercept(new HttpRequest("GET", "/mocked"), { handle })
+        .subscribe();
+      expect(handle).toHaveBeenCalledOnce();
+      realMock.reset();
+
+      expect(uninstall).toHaveBeenCalledOnce();
+      subscription.unsubscribe();
     });
   });
 

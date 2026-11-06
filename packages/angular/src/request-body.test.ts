@@ -10,9 +10,9 @@ import {
   HttpRequest,
   HttpResponse,
 } from "@angular/common/http";
-import { schmock } from "@schmock/core";
+import { type CallableMockInstance, schmock } from "@schmock/core";
 import { lastValueFrom, of } from "rxjs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type AngularAdapterOptions, createSchmockInterceptor } from "./index";
 
 /** The Accept header Angular's backends add when the caller set none. */
@@ -303,6 +303,145 @@ describe("Angular request bodies reach handlers as the backend sends them", () =
       const { body } = await received(new HttpRequest("PUT", "/echo", blob));
       expect(body).toBeInstanceOf(FormData);
       expect((body as FormData).get("name")).toBe("Rex");
+    });
+
+    it("passes an unmocked request through without reading its body", async () => {
+      const request = new HttpRequest("POST", "/other", "garbage", {
+        headers: new HttpHeaders({
+          "Content-Type": "multipart/form-data; boundary=x",
+        }),
+      });
+      const { events, error, routed } = await outcome(request, {
+        passthrough: true,
+      });
+      expect(error).toBeUndefined();
+      expect(routed).toBe(false);
+      expect(events).toEqual([expect.objectContaining({ body: "real" })]);
+    });
+
+    it("reads the body of an unrouted request a request hook reroutes", async () => {
+      // The hook may move the request onto a route, so the arrival path
+      // alone cannot tell the adapter to skip the body.
+      const request = new HttpRequest("POST", "/other", "plain text", {
+        headers: new HttpHeaders({ "Content-Type": "text/plain" }),
+      });
+      const { body, error, routed } = await outcome(request, {
+        passthrough: true,
+        transformRequest: () => ({ path: "/echo" }),
+      });
+      expect(error).toBeUndefined();
+      expect(routed).toBe(true);
+      expect(body).toBe("plain text");
+    });
+
+    it("fails an unrouted body it cannot parse when passthrough is off", async () => {
+      // With passthrough off the mock owns every request, so the body is
+      // read, and fails, before the route miss would answer 404.
+      const request = new HttpRequest("POST", "/other", "garbage", {
+        headers: new HttpHeaders({
+          "Content-Type": "multipart/form-data; boundary=x",
+        }),
+      });
+      const { error, routed } = await outcome(request, { passthrough: false });
+      expect(routed).toBe(false);
+      expect(error).toMatchObject({ status: 500 });
+    });
+
+    it("reads the body for a hand-written mock under passthrough", async () => {
+      // A hand-written mock has no admission to say a route is missing, so
+      // the body is read and reaches its handle().
+      const handle = vi.fn(async () => ({
+        status: 200,
+        body: { ok: true },
+        headers: {},
+      }));
+      const mock = { handle, pipe: vi.fn() } as unknown as CallableMockInstance;
+      const Interceptor = createSchmockInterceptor(mock, { passthrough: true });
+      const request = new HttpRequest("POST", "/echo", "plain text", {
+        headers: new HttpHeaders({ "Content-Type": "text/plain" }),
+      });
+      await lastValueFrom(
+        new Interceptor().intercept(request, {
+          handle: () => of(new HttpResponse({ body: "real" })),
+        }),
+      );
+      expect(handle).toHaveBeenCalledTimes(1);
+      expect(handle).toHaveBeenCalledWith(
+        "POST",
+        "/echo",
+        expect.objectContaining({ body: "plain text" }),
+      );
+    });
+
+    it("reads the body when the admission has no route probe", async () => {
+      // An admission without hasRoute cannot say a route is missing, so the
+      // body is read and reaches the admission's handle().
+      const handle = vi.fn(async () => ({
+        status: 200,
+        body: { ok: true },
+        headers: {},
+      }));
+      const release = vi.fn();
+      const mock = {
+        handle: vi.fn(),
+        pipe: vi.fn(),
+        [Symbol.for("@schmock/core.request-admission")]: () => ({
+          handle,
+          release,
+        }),
+      } as unknown as CallableMockInstance;
+      const Interceptor = createSchmockInterceptor(mock, { passthrough: true });
+      const request = new HttpRequest("POST", "/echo", "plain text", {
+        headers: new HttpHeaders({ "Content-Type": "text/plain" }),
+      });
+      await lastValueFrom(
+        new Interceptor().intercept(request, {
+          handle: () => of(new HttpResponse({ body: "real" })),
+        }),
+      );
+      expect(handle).toHaveBeenCalledTimes(1);
+      expect(handle).toHaveBeenCalledWith(
+        "POST",
+        "/echo",
+        expect.objectContaining({ body: "plain text" }),
+      );
+      expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads the body when the admission's route probe throws", async () => {
+      // A probe that throws cannot say a route is missing, so the body is
+      // read and reaches the admission's handle().
+      const handle = vi.fn(async () => ({
+        status: 200,
+        body: { ok: true },
+        headers: {},
+      }));
+      const mock = {
+        handle: vi.fn(),
+        pipe: vi.fn(),
+        [Symbol.for("@schmock/core.request-admission")]: () => ({
+          handle,
+          release: vi.fn(),
+          hasRoute: () => {
+            throw new Error("probe failed");
+          },
+        }),
+      } as unknown as CallableMockInstance;
+      const Interceptor = createSchmockInterceptor(mock, { passthrough: true });
+      const request = new HttpRequest("POST", "/echo", "plain text", {
+        headers: new HttpHeaders({ "Content-Type": "text/plain" }),
+      });
+      await lastValueFrom(
+        new Interceptor().intercept(request, {
+          handle: () => of(new HttpResponse({ body: "real" })),
+        }),
+      );
+      expect(handle).toHaveBeenCalledTimes(1);
+      expect(handle).toHaveBeenCalledWith(
+        "POST",
+        "/echo",
+        expect.objectContaining({ body: "plain text" }),
+      );
     });
 
     it("fails a multipart body the platform cannot parse", async () => {

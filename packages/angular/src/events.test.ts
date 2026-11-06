@@ -9,7 +9,7 @@ import {
   HttpRequest,
   HttpResponse,
 } from "@angular/common/http";
-import { schmock } from "@schmock/core";
+import { type CallableMockInstance, schmock } from "@schmock/core";
 import { lastValueFrom, type Observable, of, toArray } from "rxjs";
 import { describe, expect, it, vi } from "vitest";
 import { type AngularAdapterOptions, createSchmockInterceptor } from "./index";
@@ -80,9 +80,12 @@ describe("Angular interceptor events", () => {
   });
 
   it("emits Sent before the 500 of a mock whose handle() rejects", async () => {
-    const mock = schmock();
-    mock("GET /api/x", [200, {}]);
-    vi.spyOn(mock, "handle").mockRejectedValue(new Error("boom"));
+    // A hand-written mock, which has no request admission, is routed through
+    // its own handle(); a schmock() instance is routed through its admission.
+    const mock = {
+      handle: vi.fn().mockRejectedValue(new Error("boom")),
+      pipe: vi.fn(),
+    } as unknown as CallableMockInstance;
     const Interceptor = createSchmockInterceptor(mock);
     const events: HttpEvent<unknown>[] = [];
     const error = await new Promise<unknown>((resolve) => {
