@@ -126,12 +126,15 @@ export function createReferenceViews(
  * root JSON Pointer it follows (`mergeIntoHolder`): the target's `faker`,
  * `not`, `if`/`then`/`else` and `default` carry over as they would through a
  * pointer. A root JSON Pointer inside an embedded `$id` resource names a
- * schema of that resource, so it is merged as well. A root JSON Pointer is
- * also merged in the same way when the node it sits on reads a `not` (its
- * own or a target's), or is itself a `not` body, so the JSF copy encodes the `not` against the keywords it is merged with
- * (`normalizeSchemaForJsf`) and json-schema-faker never reaches a `not` body
- * through a `$ref` it would not look into. The target of a merged reference
- * has its own references merged first, so a chain collapses into one node.
+ * schema of that resource, so it is merged as well, and so is a
+ * `#/$defs/<name>` pointer that a nested `$defs` of that name could shadow
+ * for json-schema-faker. A root JSON Pointer is also merged in the same way
+ * when the node it sits on reads a `not` (its own or a target's), or is
+ * itself a `not` body, so the JSF copy encodes the `not` against the
+ * keywords it is merged with (`normalizeSchemaForJsf`) and json-schema-faker
+ * never reaches a `not` body through a `$ref` it would not look into. The
+ * target of a merged reference has its own references merged first, so a
+ * chain collapses into one node.
  *
  * `root` must have passed `validateSchema`, which rejects reference cycles.
  * A reference the index cannot resolve is left as it is. When nothing is
@@ -143,6 +146,7 @@ export function inlineUnfollowedReferences(root: JSONSchema7): JSONSchema7 {
 
   const refs = createLocalRefResolver(root);
   const view = createReferenceViews(refs);
+  const shadowable = nestedDefinitionPointers(root);
   const inlined = new Map<JSONSchema7, ResolvedReference[]>();
   const whole = new Set<JSONSchema7>();
   const pending: JSONSchema7[] = [];
@@ -165,7 +169,10 @@ export function inlineUnfollowedReferences(root: JSONSchema7): JSONSchema7 {
     const inResource = refs.resolve(schema, "#") !== root;
     const unfollowed = resolvedReferences(schema, refs).filter(
       ({ keyword, reference }) =>
-        keyword === "$dynamicRef" || inResource || !isRootPointer(reference),
+        keyword === "$dynamicRef" ||
+        inResource ||
+        !isRootPointer(reference) ||
+        shadowable.has(reference),
     );
     if (unfollowed.length > 0) inlined.set(schema, unfollowed);
   }
@@ -177,6 +184,31 @@ export function inlineUnfollowedReferences(root: JSONSchema7): JSONSchema7 {
   }
   if (inlined.size === 0) return root;
   return copyWithInlined(root, inlined, new Map());
+}
+
+/**
+ * The `#/$defs/<name>` pointers a nested `$defs` can shadow: json-schema-faker
+ * registers each node's `$defs` under `#/$defs/<name>` while it walks below
+ * that node, so such a pointer there reads the nested definition, not the
+ * root's.
+ */
+function nestedDefinitionPointers(root: JSONSchema7): Set<string> {
+  const pointers = new Set<string>();
+  const seen = new Set<JSONSchema7>();
+  const pending = [root];
+  while (pending.length > 0) {
+    const schema = pending.pop();
+    if (!schema || seen.has(schema)) continue;
+    seen.add(schema);
+    const defs: unknown = schema.$defs;
+    if (schema !== root && typeof defs === "object" && defs !== null) {
+      for (const name of Object.keys(defs)) pointers.add(`#/$defs/${name}`);
+    }
+    for (const child of collectSchemaChildren(schema, "$")) {
+      pending.push(child.schema);
+    }
+  }
+  return pointers;
 }
 
 /** A schema node holding a `$ref` or `$dynamicRef`. */

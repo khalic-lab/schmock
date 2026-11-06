@@ -201,6 +201,26 @@ describe("inlineUnfollowedReferences", () => {
       });
     });
 
+    it("reads a root $defs pointer from the root below a nested $defs of that name", async () => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        required: ["a"],
+        $defs: { x: { const: "ROOT" } },
+        properties: {
+          a: {
+            type: "object",
+            required: ["b"],
+            $defs: { x: { const: 7 } },
+            properties: { b: { $ref: "#/$defs/x" } },
+          },
+        },
+      };
+
+      await expect(generateFromSchema({ schema })).resolves.toEqual({
+        a: { b: "ROOT" },
+      });
+    });
+
     describe("a JSON Pointer inside an embedded $id resource", () => {
       const resource = (rootDefs: JSONSchema7["$defs"]): JSONSchema7 => ({
         type: "object",
