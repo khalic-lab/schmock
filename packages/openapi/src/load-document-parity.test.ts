@@ -267,6 +267,28 @@ describe("loadDocument agrees under the Node and browser resolvers", () => {
     });
   }
 
+  for (const [ref, id] of [
+    ["#pet", "#pet"],
+    ["#my%20pet", "https://example.test/schemas/pet.json#my%20pet"],
+  ] as const) {
+    it(`loads the anchor $ref ${ref}, whose anchor an $id fragment (${id}) declares`, async () => {
+      const spec = {
+        ...specWithResponseSchema(
+          { $ref: ref },
+          { Pet: { $id: id, type: "object" } },
+        ),
+        openapi: "3.1.0",
+      };
+
+      for (const build of BUILDS) {
+        const loadDocument = await loadDocumentFor(build);
+        await expect(loadDocument(structuredClone(spec), {})).resolves.toEqual(
+          expect.objectContaining({ openapi: "3.1.0" }),
+        );
+      }
+    });
+  }
+
   for (const unrelatedRef of [true, false]) {
     it(`names discriminator branches that are component objects ${unrelatedRef ? "with" : "without"} a $ref elsewhere`, async () => {
       const spec = aliasedDiscriminatorSpec(unrelatedRef);
