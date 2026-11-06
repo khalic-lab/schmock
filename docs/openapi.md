@@ -1137,7 +1137,8 @@ Header values obey `fakerSeed` too: see
 [Deterministic Generation](#deterministic-generation) for the fixed-clock trade
 a seeded `format: date-time` header makes.
 
-Headers always come from the same response entry the status does. An operation
+Headers always come from the same response entry the status does, including
+under `Prefer: code=`, `example=` and `dynamic=true`. An operation
 declaring only `404` therefore answers 404 *with the 404 entry's headers* (see
 [Operations with no 2xx response](#operations-with-no-2xx-response)). Only an
 operation that declares no responses at all falls back to a bare `200 {}` with

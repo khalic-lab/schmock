@@ -29,6 +29,7 @@ import {
   toValidationInstance,
 } from "./request-body.js";
 import { routeIdExamples } from "./resource-placement.js";
+import { generateHeaderValues, routeHeaderSeed } from "./response-headers.js";
 import {
   findResponseEntry,
   findSuccessResponse,
@@ -923,11 +924,26 @@ export async function processPreferHeader(
     return unchanged;
   }
 
-  const replaced = (status: number, body: unknown): PreferResult => ({
-    context,
-    response: [status, body],
-    applied: true,
-  });
+  // The headers come from the entry the status does, as the generators'
+  // own responses take them.
+  const replaced = (
+    status: number,
+    body: unknown,
+    entry: ParsedResponseEntry,
+  ): PreferResult => {
+    const headers = generateHeaderValues(
+      entry.headers,
+      routeHeaderSeed(context.route),
+    );
+    return {
+      context,
+      response:
+        Object.keys(headers).length > 0
+          ? [status, body, headers]
+          : [status, body],
+      applied: true,
+    };
+  };
 
   // Prefer: code=N — return the response for that status code
   if (prefer.code !== undefined) {
@@ -945,7 +961,7 @@ export async function processPreferHeader(
         : prefer.code === 204
           ? undefined
           : {};
-      return replaced(prefer.code, body);
+      return replaced(prefer.code, body, entry);
     }
   }
 
@@ -958,7 +974,7 @@ export async function processPreferHeader(
         prefer.example,
       );
       if (typeof code === "number" && selectedExample.found) {
-        return replaced(code, selectedExample.value);
+        return replaced(code, selectedExample.value, entry);
       }
     }
   }
@@ -976,7 +992,7 @@ export async function processPreferHeader(
     if (success) {
       const [code, entry] = success;
       const schema = selectResponseSchema(context, entry);
-      if (!schema) return replaced(code, code === 204 ? undefined : {});
+      if (!schema) return replaced(code, code === 204 ? undefined : {}, entry);
       const body = await generateResponseBody({
         schema,
         status: code,
@@ -984,7 +1000,7 @@ export async function processPreferHeader(
         onSchema,
         context,
       });
-      return replaced(code, body);
+      return replaced(code, body, entry);
     }
   }
 

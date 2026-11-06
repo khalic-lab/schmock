@@ -33,6 +33,7 @@ import {
   IdExampleFilter,
   listServesItem,
 } from "./resource-placement.js";
+import { HEADER_SEED_KEY, type HeaderSeed } from "./response-headers.js";
 import {
   findRepresentativeResponse,
   findResponseEntry,
@@ -55,9 +56,11 @@ import { hasType, isRecord, normalizeMediaType } from "./utils.js";
 function buildRouteConfig(
   parsedPath: ParsedPath,
   ownerToken: string,
+  headerSeed: HeaderSeed | undefined,
 ): Schmock.RouteConfig {
   return {
     [OWNER_KEY]: ownerToken,
+    ...(headerSeed === undefined ? {} : { [HEADER_SEED_KEY]: headerSeed }),
     "openapi:responses": parsedPath.responses,
     "openapi:path": parsedPath.path,
     "openapi:requestBody": parsedPath.requestBody,
@@ -176,7 +179,7 @@ export function registerCrudRoutes(
       );
     }
 
-    const config = buildRouteConfig(route.parsed, ownerToken);
+    const config = buildRouteConfig(route.parsed, ownerToken, hooks.headerSeed);
     config[ID_EXAMPLES_KEY] = idExamples;
     if (route.op === "create" && routeMeta.responseStatus !== undefined) {
       config["openapi:preflightResponseStatus"] = routeMeta.responseStatus;
@@ -198,7 +201,7 @@ export function registerNonCrudRoutes(
 ): void {
   for (const parsedPath of nonCrudPaths) {
     const routeKey = toRouteKey(parsedPath.method, parsedPath.path);
-    const config = buildRouteConfig(parsedPath, ownerToken);
+    const config = buildRouteConfig(parsedPath, ownerToken, hooks.headerSeed);
     // Must stay in lockstep with `createStaticGenerator`'s lookup: naming a
     // status the generator never returns would make content negotiation check
     // the wrong entry's media types.

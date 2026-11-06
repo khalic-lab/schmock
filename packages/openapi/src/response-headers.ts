@@ -24,6 +24,24 @@ export interface HeaderSeed {
   next(): number;
 }
 
+/**
+ * The route metadata key holding the installation's {@link HeaderSeed}, for
+ * the headers `Prefer` generates outside the route's generator.
+ */
+export const HEADER_SEED_KEY = "openapi:headerSeed";
+
+/** The {@link HeaderSeed} a route was registered with, if it has one. */
+export function routeHeaderSeed(
+  route: Schmock.RouteConfig,
+): HeaderSeed | undefined {
+  const value: unknown = route[HEADER_SEED_KEY];
+  return isRecord(value) &&
+    typeof value.seed === "number" &&
+    typeof value.next === "function"
+    ? (value as unknown as HeaderSeed)
+    : undefined;
+}
+
 export function createHeaderSeed(seed?: number): HeaderSeed | undefined {
   if (seed === undefined) return undefined;
   let ordinal = 0;

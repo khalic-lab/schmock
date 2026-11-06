@@ -99,3 +99,85 @@ describe("Prefer code range", () => {
     });
   });
 });
+
+describe("Prefer response headers", () => {
+  const object = (properties: Record<string, unknown>) => ({
+    type: "object",
+    properties,
+  });
+  const specWithHeaders = {
+    openapi: "3.0.3",
+    info: { title: "prefer headers", version: "1.0.0" },
+    paths: {
+      "/uploads": {
+        post: {
+          requestBody: {
+            content: { "application/json": { schema: { type: "object" } } },
+          },
+          responses: {
+            "201": {
+              description: "created",
+              headers: {
+                "X-Rate": { schema: { type: "string", enum: ["5"] } },
+              },
+              content: {
+                "application/json": {
+                  schema: object({ ok: { type: "boolean" } }),
+                  examples: { one: { value: { ok: true } } },
+                },
+              },
+            },
+            "400": {
+              description: "bad",
+              headers: { "X-Err": { schema: { type: "string", enum: ["e"] } } },
+              content: {
+                "application/json": {
+                  schema: object({ m: { type: "string" } }),
+                },
+              },
+            },
+          },
+        },
+      },
+      "/ping": {
+        get: {
+          responses: {
+            "200": {
+              description: "ok",
+              headers: {
+                "X-Rate": { schema: { type: "string", enum: ["5"] } },
+              },
+              content: {
+                "application/json": {
+                  schema: object({ ok: { type: "boolean" } }),
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  it.each([
+    ["POST", "/uploads", "dynamic=true", 201, { "X-Rate": "5" }],
+    ["POST", "/uploads", "code=201", 201, { "X-Rate": "5" }],
+    ["POST", "/uploads", "example=one", 201, { "X-Rate": "5" }],
+    ["POST", "/uploads", "code=400", 400, { "X-Err": "e" }],
+    ["GET", "/ping", "dynamic=true", 200, { "X-Rate": "5" }],
+  ] as const)(
+    "%s %s with Prefer: %s keeps the headers its status declares",
+    async (method, path, prefer, status, headers) => {
+      const mock = schmock();
+      mock.pipe(await openapi({ spec: specWithHeaders }));
+
+      const response = await mock.handle(method, path, {
+        body: method === "POST" ? {} : undefined,
+        headers: { prefer },
+      });
+
+      expect(response.status).toBe(status);
+      expect(response.headers).toMatchObject(headers);
+    },
+  );
+});
