@@ -51,21 +51,37 @@ function openArrayCount(
     return Math.floor(explicitCount);
   }
 
+  const { least, most } = arrayCountRange(schema);
+  if (schema.minItems !== undefined && schema.maxItems !== undefined) {
+    return Math.floor(random() * (most - least + 1)) + least;
+  }
+  return most;
+}
+
+/**
+ * The fewest and most items `determineArrayCount` picks for `schema` when
+ * no explicit count is given. Only a schema with both `minItems` and
+ * `maxItems` has a range; every other one gets a single count.
+ */
+export function arrayCountRange(schema: JSONSchema7): {
+  least: number;
+  most: number;
+} {
+  const single = (count: number) => ({ least: count, most: count });
   if (schema.minItems !== undefined && schema.maxItems !== undefined) {
     const min = schema.minItems;
-    const max = Math.max(min, schema.maxItems);
-    return Math.floor(random() * (max - min + 1)) + min;
+    return { least: min, most: Math.max(min, schema.maxItems) };
   }
 
   if (schema.minItems !== undefined) {
-    return Math.max(schema.minItems, DEFAULT_ARRAY_COUNT);
+    return single(Math.max(schema.minItems, DEFAULT_ARRAY_COUNT));
   }
 
   if (schema.maxItems !== undefined) {
-    return Math.min(schema.maxItems, DEFAULT_ARRAY_COUNT);
+    return single(Math.min(schema.maxItems, DEFAULT_ARRAY_COUNT));
   }
 
-  return tuplePrefix(schema)?.length ?? DEFAULT_ARRAY_COUNT;
+  return single(tuplePrefix(schema)?.length ?? DEFAULT_ARRAY_COUNT);
 }
 
 /**

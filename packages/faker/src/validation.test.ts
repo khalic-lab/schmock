@@ -946,6 +946,69 @@ describe("validateSchema", () => {
     });
   });
 
+  describe("root array sizing", () => {
+    // 10,000 objects of 39 integers: about 400,000 nodes per root item, so
+    // three root items pass the generated-node budget and one does not.
+    const properties = Object.fromEntries(
+      Array.from({ length: 39 }, (_, index) => [
+        `p${index}`,
+        { type: "integer" } satisfies JSONSchema7,
+      ]),
+    );
+    const block: JSONSchema7 = {
+      type: "array",
+      minItems: 10_000,
+      maxItems: 10_000,
+      items: {
+        type: "object",
+        properties,
+        required: Object.keys(properties),
+      },
+    };
+
+    it.each([
+      [
+        "only minItems, which generation raises to three",
+        { type: "array", minItems: 1, items: block },
+      ],
+      [
+        "a tuple, which generation sizes to its length",
+        {
+          type: "array",
+          items: [
+            { type: "integer" },
+            { type: "integer" },
+            { type: "integer" },
+            block,
+            block,
+            block,
+          ],
+        },
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "charges a root with %s for every item generation makes",
+      (_, schema) => {
+        expectResource(
+          captureFailure(() => validateSchema(schema)),
+          {
+            resource: "generated_nodes",
+          },
+        );
+      },
+    );
+
+    it("accepts a root whose generated items fit", () => {
+      expect(() =>
+        validateSchema({
+          type: "array",
+          minItems: 1,
+          maxItems: 2,
+          items: block,
+        }),
+      ).not.toThrow();
+    });
+  });
+
   describe("count on a root array reached through a wrapper", () => {
     const list: JSONSchema7 = { type: "array", items: { type: "integer" } };
 

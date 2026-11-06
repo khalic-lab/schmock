@@ -14,6 +14,7 @@ import {
 import { fakerLengthFloor, validateFakerConfig } from "./faker-allocation.js";
 import { createReferenceViews } from "./jsf-references.js";
 import { findUnhonouredNot } from "./not-support.js";
+import { arrayCountRange } from "./overrides.js";
 import { createLocalRefResolver, type LocalRefResolver } from "./ref-index.js";
 import { regexLengthBounds } from "./regex-bounds.js";
 import { findRootArray } from "./root-array.js";
@@ -571,10 +572,16 @@ function estimateSchema(
 
   if (isArrayLike(schema)) {
     for (const keyword of ARRAY_KEYWORDS) handled.add(keyword);
-    const count = root?.explicitCount ?? effectiveArrayCount(schema);
     // json-schema-faker fills a nested array to maxItems, but the root array
-    // is resized per request (determineArrayCount) anywhere from minItems up,
-    // so only minItems — or the explicit count — is certain there.
+    // is resized per request (determineArrayCount), which can raise a lone
+    // minItems to DEFAULT_ARRAY_COUNT and sizes a tuple to its length. Its
+    // most items are charged as nodes, and only minItems — or the explicit
+    // count — is certain for characters.
+    const count =
+      root?.explicitCount ??
+      (root
+        ? Math.max(effectiveArrayCount(schema), arrayCountRange(schema).most)
+        : effectiveArrayCount(schema));
     const certainCount = root
       ? (root.explicitCount ?? schema.minItems ?? 0)
       : count;
