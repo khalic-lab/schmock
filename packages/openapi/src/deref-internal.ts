@@ -587,10 +587,11 @@ function collectDocumentRefs(document: unknown): DocumentRefs {
  * - A ring of `$ref`s that never reaches a value (`A: {$ref: B}`,
  *   `B: {$ref: A}`). This module used to recurse until the stack overflowed,
  *   and ref-parser silently leaves the `$ref` in the output, from where it
- *   reached AJV and the faker generator as a schema. A `$ref` naming its own
- *   location is not a ring — both resolvers keep it on purpose — and neither
- *   is a cycle through real schema content, which dereferences to an object
- *   cycle.
+ *   reached AJV and the faker generator as a schema. A bare `$ref` naming its
+ *   own location is not a ring — both resolvers keep it on purpose — and
+ *   neither is a cycle through real schema content, which dereferences to an
+ *   object cycle. One that carries siblings is: ref-parser merges them over
+ *   the same `$ref` again until the stack overflows.
  * - A pointer through a name the document does not hold but every object
  *   inherits (`#/__proto__`, `#/components/schemas/Pet/constructor`).
  *   ref-parser follows it to a built-in prototype, and the discriminator pass
@@ -663,7 +664,18 @@ function assertNoRefRing(document: unknown, refs: Set<string>): void {
       } catch {
         break;
       }
-      if (next === current) break;
+      if (next === current) {
+        // Siblings derive a new object from the target, which is this same
+        // `$ref` again, so ref-parser merges without end and overflows the
+        // stack. Only a bare self-reference is left in place.
+        if (isExtendedRef(target)) {
+          throw refError(
+            `$ref "${start}" points at its own location and carries siblings, so it never reaches a value`,
+            start,
+          );
+        }
+        break;
+      }
       current = next;
     }
     for (const pointer of chain) settled.add(pointer);

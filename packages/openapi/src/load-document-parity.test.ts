@@ -163,6 +163,43 @@ describe("loadDocument agrees under the Node and browser resolvers", () => {
     });
   }
 
+  for (const version of ["3.0.3", "3.1.0"]) {
+    it(`refuses a self-pointing $ref with siblings with the same code (${version})`, async () => {
+      const spec = {
+        ...specWithResponseSchema(
+          { type: "string" },
+          { C: { $ref: "#/components/schemas/C", description: "d" } },
+        ),
+        openapi: version,
+      };
+
+      const [node, browser] = [
+        await failureFor("node", spec),
+        await failureFor("browser", spec),
+      ];
+
+      expect(node).toEqual({
+        name: "SchmockError",
+        code: "OPENAPI_INVALID_REF",
+      });
+      expect(browser).toEqual(node);
+    });
+  }
+
+  it("loads a bare self-pointing $ref", async () => {
+    const spec = specWithResponseSchema(
+      { type: "string" },
+      { C: { $ref: "#/components/schemas/C" } },
+    );
+
+    for (const build of BUILDS) {
+      const loadDocument = await loadDocumentFor(build);
+      await expect(loadDocument(structuredClone(spec), {})).resolves.toEqual(
+        expect.objectContaining({ openapi: "3.0.3" }),
+      );
+    }
+  });
+
   it("loads an anchor $ref whose anchor the document declares", async () => {
     const spec = {
       ...specWithResponseSchema(

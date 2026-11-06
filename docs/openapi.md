@@ -221,8 +221,10 @@ not in the browser build.
   each request, with `SCHEMA_GENERATION_ERROR` for the `$ref` and
   `SCHEMA_VALIDATION_ERROR` for the `$dynamicRef`.
 - **A ring of `$ref`s** that never reaches a value (`A` → `B` → `A`) fails with
-  `OPENAPI_INVALID_REF` on both the Node and browser builds. A `$ref` pointing
-  at its own location is allowed.
+  `OPENAPI_INVALID_REF` on both the Node and browser builds. A bare `$ref`
+  pointing at its own location is allowed, but one that also carries siblings
+  (`C: { $ref: "#/components/schemas/C", description: "…" }`) never reaches a
+  value either and fails the same way.
 - **A `$ref` to nothing**, such as `#/components/schemas/Missing` when there is
   no `Missing`, fails with `OPENAPI_INVALID_REF` on both builds, with `strict`
   on or off. Under Node the same holds for a pointer into another document
