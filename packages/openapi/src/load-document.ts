@@ -528,55 +528,95 @@ function mappingTargetRef(target: string, documentUri: string): string | null {
   }
 }
 
-function mappingTargetsBranch(
-  target: unknown,
-  ownerIdentities: SchemaIdentity[],
-  branchIdentities: SchemaIdentity[],
-): boolean {
-  if (typeof target !== "string") return false;
-  const ownerDocuments = new Set(
-    ownerIdentities.map((identity) => identity.documentUri),
-  );
-  if (isBareMappingTarget(target)) {
-    return branchIdentities.some(
-      (identity) =>
-        identity.name === target && ownerDocuments.has(identity.documentUri),
-    );
-  }
+/**
+ * One discriminator's mapping, each target resolved once against every
+ * document its owner sits in.
+ *
+ * Built once per discriminator rather than per branch: filtering the whole
+ * mapping for each branch, with a URL parse per pair, made thousands of
+ * branches take seconds.
+ */
+interface MappingIndex {
+  /** Mapping keys by the schema a pointer target names. */
+  byRef: Map<string, Set<string>>;
+  /** Mapping keys by owner document and bare component name. */
+  byName: Map<string, Set<string>>;
+  /** Each mapping key's declaration position. */
+  order: Map<string, number>;
+}
 
-  const targets = new Set<string>();
-  for (const documentUri of ownerDocuments) {
-    const resolved = mappingTargetRef(target, documentUri);
-    if (resolved) targets.add(resolved);
-  }
-  return branchIdentities.some((identity) =>
-    targets.has(identityRef(identity)),
-  );
+function bareNameKey(documentUri: string, name: string): string {
+  return `${documentUri}\u0000${name}`;
+}
+
+function addMappingKey(
+  map: Map<string, Set<string>>,
+  target: string,
+  key: string,
+): void {
+  const keys = map.get(target);
+  if (keys) keys.add(key);
+  else map.set(target, new Set([key]));
 }
 
 /**
- * `rootIdentities` stand in for an owner with no identity of its own: one
- * inline in a response or request body, whose mapping targets resolve against
- * the document it sits in. Without them no target could match, and every
- * branch fell back to its component name whatever the mapping said.
+ * `ownerIdentities` falls back to the root document's for an owner with no
+ * identity of its own: one inline in a response or request body, whose
+ * mapping targets resolve against the document it sits in. Without that no
+ * target could match, and every branch fell back to its component name
+ * whatever the mapping said.
  */
-function valuesForDereferencedBranch(
+function indexMapping(
   mapping: Record<string, unknown>,
-  owner: Record<string, unknown>,
+  ownerIdentities: SchemaIdentity[],
+): MappingIndex {
+  const index: MappingIndex = {
+    byRef: new Map(),
+    byName: new Map(),
+    order: new Map(),
+  };
+  const ownerDocuments = new Set(
+    ownerIdentities.map((identity) => identity.documentUri),
+  );
+  for (const [key, target] of Object.entries(mapping)) {
+    if (typeof target !== "string") continue;
+    index.order.set(key, index.order.size);
+    for (const documentUri of ownerDocuments) {
+      if (isBareMappingTarget(target)) {
+        addMappingKey(index.byName, bareNameKey(documentUri, target), key);
+        continue;
+      }
+      const resolved = mappingTargetRef(target, documentUri);
+      if (resolved) addMappingKey(index.byRef, resolved, key);
+    }
+  }
+  return index;
+}
+
+function valuesForDereferencedBranch(
+  index: MappingIndex,
   branch: unknown,
   identities: WeakMap<object, SchemaIdentity[]>,
-  rootIdentities: SchemaIdentity[],
 ): string[] | null {
   if (!isRecord(branch)) return null;
   const branchIdentities = identities.get(branch) ?? [];
   if (branchIdentities.length === 0) return null;
-  const ownerIdentities = identities.get(owner) ?? rootIdentities;
 
-  const explicit = Object.entries(mapping)
-    .filter(([, target]) =>
-      mappingTargetsBranch(target, ownerIdentities, branchIdentities),
-    )
-    .map(([key]) => key);
+  const matched = new Set<string>();
+  for (const identity of branchIdentities) {
+    for (const key of index.byRef.get(identityRef(identity)) ?? []) {
+      matched.add(key);
+    }
+    if (identity.name === undefined) continue;
+    const byName = index.byName.get(
+      bareNameKey(identity.documentUri, identity.name),
+    );
+    for (const key of byName ?? []) matched.add(key);
+  }
+  // In declaration order, as the mapping lists them.
+  const explicit = [...matched].sort(
+    (a, b) => (index.order.get(a) ?? 0) - (index.order.get(b) ?? 0),
+  );
   if (explicit.length > 0) return explicit;
   const implicit = branchIdentities.find((identity) => identity.name)?.name;
   return implicit ? [implicit] : null;
@@ -650,17 +690,12 @@ function markDereferencedDiscriminatorValues(
         : undefined;
       const existing = Array.isArray(existingRaw) ? existingRaw : [];
       const mapping = isRecord(disc.mapping) ? disc.mapping : {};
-      const values = branches.map((branch, index) => {
-        const marked = existing[index];
-        return Array.isArray(marked) && marked.length > 0
-          ? marked
-          : valuesForDereferencedBranch(
-              mapping,
-              node,
-              branch,
-              identities,
-              rootIdentities,
-            );
+      let index: MappingIndex | undefined;
+      const values = branches.map((branch, position) => {
+        const marked = existing[position];
+        if (Array.isArray(marked) && marked.length > 0) return marked;
+        index ??= indexMapping(mapping, identities.get(node) ?? rootIdentities);
+        return valuesForDereferencedBranch(index, branch, identities);
       });
       if (values.some((value) => value !== null)) {
         disc[DISCRIMINATOR_VALUES_MARKER] = values;

@@ -1050,6 +1050,33 @@ describe("loadDocument", () => {
       expect(loaded.discriminator[MARKER]).toEqual([["cat"], ["dog"]]);
     });
 
+    it("names thousands of component-object branches in linear time", async () => {
+      // Each branch used to filter the whole mapping, resolving every target
+      // as a URL again: 2,000 branches took seconds.
+      const count = 3000;
+      const schemas: Record<string, unknown> = {};
+      const branches: unknown[] = [];
+      const mapping: Record<string, string> = {};
+      for (let i = 0; i < count; i++) {
+        const schema = { type: "object" };
+        schemas[`S${i}`] = schema;
+        branches.push(schema);
+        mapping[`v${i}`] = `#/components/schemas/S${i}`;
+      }
+      const spec = anyOfPetSpec(
+        { oneOf: branches, discriminator: { propertyName: "kind", mapping } },
+        schemas,
+      );
+
+      const started = performance.now();
+      const marker = (await markerOf(spec, "oneOf")) as string[][];
+      const elapsed = performance.now() - started;
+
+      expect(marker[0]).toEqual(["v0"]);
+      expect(marker[count - 1]).toEqual([`v${count - 1}`]);
+      expect(elapsed).toBeLessThan(1500);
+    });
+
     it("aligns the marker with oneOf when a node declares both", async () => {
       const spec = anyOfPetSpec(
         {
