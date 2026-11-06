@@ -558,24 +558,28 @@ export function buildFormattedErrorResponse(
   if (isThenable(formatted)) {
     Promise.resolve(formatted).catch(() => {});
   }
+  // The body goes out as JSON, and a string would otherwise be sent verbatim
+  // as wire text that does not parse; it is sent as a JSON string instead.
+  const body =
+    typeof formatted === "string" ? JSON.stringify(formatted) : formatted;
   try {
     return normalizeResponse(
       {
         status: 500,
-        body: formatted,
+        body,
         headers: withJsonContentType(inheritedHeaders),
       },
       method,
     );
   } catch {
-    // The inherited headers were not transportable. `formatted` is reused,
-    // so the formatter still fires exactly once.
+    // The inherited headers were not transportable. `body` is reused, so
+    // the formatter still fires exactly once.
   }
   try {
     return normalizeResponse(
       {
         status: 500,
-        body: formatted,
+        body,
         headers: { "content-type": "application/json" },
       },
       method,

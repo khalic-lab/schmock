@@ -974,6 +974,31 @@ describe("buildFormattedErrorResponse", () => {
     expect(unserializable).toEqual(minimal);
   });
 
+  it("sends a string the formatter returns as a JSON string", () => {
+    const response = buildFormattedErrorResponse({
+      formatter: (failure) => failure.message,
+      error,
+      method: "GET",
+    });
+    expect(response.headers).toEqual({ "content-type": "application/json" });
+    expect(response.body).toBe('"boom"');
+    expect(JSON.parse(String(response.body))).toBe("boom");
+  });
+
+  it("sends a string result as a JSON string when the inherited headers cannot be sent", () => {
+    const response = buildFormattedErrorResponse({
+      formatter: (failure) => failure.message,
+      error,
+      inheritedHeaders: { "x-bad": "line\nbreak" },
+      method: "GET",
+    });
+    expect(response).toEqual({
+      status: 500,
+      body: '"boom"',
+      headers: { "content-type": "application/json" },
+    });
+  });
+
   it("falls back without an unhandled rejection when the formatter returns a rejecting promise", async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);

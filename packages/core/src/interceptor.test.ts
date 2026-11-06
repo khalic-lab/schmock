@@ -1531,6 +1531,25 @@ describe("mock.intercept()", () => {
     }
   });
 
+  it("answers a string errorFormatter result as valid JSON", async () => {
+    mock("GET /api/boom", () => {
+      throw new Error("boom");
+    });
+    const handle = mock.intercept({
+      passthrough: false,
+      errorFormatter: (error) => error.message,
+    });
+
+    try {
+      const response = await fetch("http://localhost/api/boom");
+      expect(response.status).toBe(500);
+      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(await response.json()).toBe("boom");
+    } finally {
+      handle.restore();
+    }
+  });
+
   describe("an async errorFormatter", () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);

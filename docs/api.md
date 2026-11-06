@@ -1120,7 +1120,9 @@ argument and does not normalize the result.
 
 `buildFormattedErrorResponse()` runs an `errorFormatter` and returns the
 normalized 500 that carries its result, with `content-type: application/json`
-and the inherited headers minus their content type. When the inherited headers
+and the inherited headers minus their content type. A string result is sent as
+a JSON string (`'boom'` goes out as `"boom"`), so the body always parses as
+JSON; return an object, not pre-encoded JSON text. When the inherited headers
 cannot be sent (a non-string value, a control character, a case-duplicate
 name), it keeps the formatted body and sends only the JSON content type. When
 the formatter throws or its result cannot be serialized, it sends
