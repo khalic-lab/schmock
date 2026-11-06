@@ -969,6 +969,37 @@ describe("composition beside allOf (faker-3)", () => {
     }
   });
 
+  it("generates allOf + anyOf over $defs references", async () => {
+    const schema: JSONSchema7 = {
+      allOf: [{ $ref: "#/$defs/Base" }],
+      anyOf: [{ $ref: "#/$defs/Cat" }, { $ref: "#/$defs/Dog" }],
+      $defs: { Base: PET_BASE, Cat: kind("cat"), Dog: kind("dog") },
+    };
+    for (const value of await generateSeeds(schema)) {
+      const pet = objectOf(value);
+      expect(Number.isInteger(pet.id)).toBe(true);
+      expect(["cat", "dog"]).toContain(pet.kind);
+    }
+  });
+
+  it("honours an enum an anyOf $ref branch beside allOf adds", async () => {
+    const schema: JSONSchema7 = {
+      allOf: [{ $ref: "#/$defs/Base" }],
+      anyOf: [{ $ref: "#/$defs/Listed" }],
+      $defs: {
+        Base: {
+          type: "object",
+          properties: { email: { type: "string" } },
+          required: ["email"],
+        },
+        Listed: { properties: { email: { enum: ["a@x.io", "b@x.io"] } } },
+      },
+    };
+    for (const value of await generateSeeds(schema)) {
+      expect(["a@x.io", "b@x.io"]).toContain(objectOf(value).email);
+    }
+  });
+
   it("applies an if/then beside allOf", async () => {
     const schema: JSONSchema7 = {
       allOf: [PET_BASE],

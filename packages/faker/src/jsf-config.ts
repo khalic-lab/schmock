@@ -685,11 +685,17 @@ function dropMergedPropertyFakers(
 ): void {
   // JSF resolves a `$ref` before merging only in `allOf` and `oneOf`; a
   // `$ref` anywhere else replaces the merge, so it has no properties here.
+  // An `anyOf` beside `allOf` is restated inside the `allOf`
+  // (`carryCompositionThroughAllOf`), so its `$ref` branches merge too.
   const allOf = listMembers(copy, "allOf", resolve);
   const branches = [
     ...listMembers(copy, "oneOf", resolve),
-    ...listMembers(copy, "anyOf", (entry) =>
-      isJsfObject(entry) ? entry : undefined,
+    ...listMembers(
+      copy,
+      "anyOf",
+      allOf.length > 0
+        ? resolve
+        : (entry) => (isJsfObject(entry) ? entry : undefined),
     ),
   ];
   const own: MergeMember = {
@@ -765,7 +771,17 @@ function carryCompositionThroughAllOf(
       const list = resolve(entry)?.[keyword];
       return Array.isArray(list) ? [list] : [];
     });
-    const restated = combineBranches([...held, branches]);
+    // JSF merges an `anyOf` branch without resolving its `$ref`; inside an
+    // `allOf` it does resolve it.
+    const sibling =
+      keyword === "anyOf"
+        ? branches.map((branch) =>
+            isJsfObject(branch) && branch.$ref !== undefined
+              ? { allOf: [branch] }
+              : branch,
+          )
+        : branches;
+    const restated = combineBranches([...held, sibling]);
     if (restated === undefined) continue;
     entries = [...entries, { [keyword]: restated }];
     delete copy[keyword];
