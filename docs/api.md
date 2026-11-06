@@ -1634,8 +1634,12 @@ register them the same way:
   bounds leave one nearby. `type: 'integer'` with a fractional step yields
   integers.
 - `patternProperties` generate at least one key matching a pattern, and enough
-  keys to reach `minProperties` without passing `maxProperties`. A pattern
-  whose schema is `false` gets no key.
+  keys to reach `minProperties` without passing `maxProperties`, counting the
+  `required` names as well as the declared properties. A pattern whose schema
+  is `false` gets no key. Invented keys pass `propertyNames`: with an `enum`
+  or `const` they are taken from its values, and a `propertyNames` that uses
+  any keyword besides `type`, `enum`, `const`, `pattern`, `minLength`,
+  `maxLength` and annotations gets no invented keys.
 - A lone `minimum`/`exclusiveMinimum` of 1000 or more, or a lone
   `maximum`/`exclusiveMaximum` of -1000 or less, generates in range, with or
   without `multipleOf`, and so does a `oneOf`/`anyOf` branch or `then`/`else`

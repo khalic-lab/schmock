@@ -1646,4 +1646,34 @@ describe("invented pattern property keys", () => {
       }
     }
   });
+
+  it("counts required names the properties do not declare", async () => {
+    for (const maxProperties of [1, 2]) {
+      const schema: JSONSchema7 = {
+        type: "object",
+        required: ["abc"],
+        maxProperties,
+        patternProperties: { "^[a-z]+$": { type: "integer" } },
+      };
+      for (const value of await generateSeeds(schema, 5)) {
+        expect(Object.keys(objectOf(value)).length).toBeLessThanOrEqual(
+          maxProperties,
+        );
+      }
+    }
+  });
+
+  it("invents only keys propertyNames accepts", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      patternProperties: { "^[a-z]+$": { type: "integer" } },
+      propertyNames: { enum: ["ab", "cd"] },
+      additionalProperties: false,
+    };
+    for (const value of await generateSeeds(schema, 5)) {
+      for (const key of Object.keys(objectOf(value))) {
+        expect(["ab", "cd"]).toContain(key);
+      }
+    }
+  });
 });

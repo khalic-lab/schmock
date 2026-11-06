@@ -1713,6 +1713,68 @@ function generatePatternKey(pattern: string, seed: number): string | undefined {
   }
 }
 
+/** What `propertyNames` lets an invented key be. */
+interface PropertyNameRule {
+  accepts: (key: string) => boolean;
+  /** The only names it accepts, from its `enum` or `const`. */
+  listed?: string[];
+}
+
+/** The `propertyNames` keywords `propertyNameRule` can check a key against. */
+const PROPERTY_NAME_KEYWORDS = new Set([
+  "type",
+  "enum",
+  "const",
+  "pattern",
+  "minLength",
+  "maxLength",
+]);
+
+/**
+ * The rule `propertyNames` sets for an invented key, or undefined when no key
+ * may be invented: a `false` schema, or one with a keyword other than
+ * `PROPERTY_NAME_KEYWORDS` and annotations, which an invented key could fail.
+ */
+function propertyNameRule(names: unknown): PropertyNameRule | undefined {
+  if (names === undefined || names === true) return { accepts: () => true };
+  if (!isJsfObject(names)) return undefined;
+  const checkable = Object.keys(names).every(
+    (key) => PROPERTY_NAME_KEYWORDS.has(key) || ANNOTATION_KEYWORDS.has(key),
+  );
+  if (!checkable) return undefined;
+  const { type, pattern, minLength, maxLength } = names;
+  if (
+    type !== undefined &&
+    type !== "string" &&
+    !(Array.isArray(type) && type.includes("string"))
+  ) {
+    return undefined;
+  }
+  const regex = typeof pattern === "string" ? compilePattern(pattern) : null;
+  if (pattern !== undefined && !regex) return undefined;
+  const accepts = (key: string): boolean => {
+    const length = [...key].length;
+    return (
+      (!regex || regex.test(key)) &&
+      (typeof minLength !== "number" || length >= minLength) &&
+      (typeof maxLength !== "number" || length <= maxLength) &&
+      (names.const === undefined || names.const === key) &&
+      (!Array.isArray(names.enum) || names.enum.includes(key))
+    );
+  };
+  const values =
+    names.const !== undefined
+      ? [names.const]
+      : Array.isArray(names.enum)
+        ? names.enum
+        : undefined;
+  if (!values) return { accepts };
+  const listed = values.filter(
+    (value): value is string => typeof value === "string" && accepts(value),
+  );
+  return { accepts, listed };
+}
+
 /**
  * json-schema-faker never emits a key that matches `patternProperties`: a
  * pattern-keyed map comes out empty, and when `minProperties` forces extra keys
@@ -1720,6 +1782,8 @@ function generatePatternKey(pattern: string, seed: number): string | undefined {
  * then forbids. Declare seeded keys that match exactly one pattern as ordinary
  * properties, enough to reach `minProperties` (at least one) without passing
  * `maxProperties`, so JSF generates each value from its pattern's schema.
+ * The required names count as declared, since JSF emits them too, and every
+ * key must pass `propertyNames` (see `propertyNameRule`).
  */
 function addPatternPropertyKeys(request: PatternKeyRequest): void {
   const { schema, normalized, patternProperties, context } = request;
@@ -1736,11 +1800,19 @@ function addPatternPropertyKeys(request: PatternKeyRequest): void {
     ({ source }) => patternProperties[source] !== false,
   );
   if (sources.length === 0) return;
+  const names = propertyNameRule(schema.propertyNames);
+  if (!names) return;
 
   const properties: Record<string, JsonSchema> = {
     ...(isJSONSchema7(normalized.properties) ? normalized.properties : {}),
   };
-  const declared = Object.keys(properties).length;
+  const taken = new Set(Object.keys(properties));
+  if (Array.isArray(normalized.required)) {
+    for (const name of normalized.required) {
+      if (typeof name === "string") taken.add(name);
+    }
+  }
+  const declared = taken.size;
   const wanted = Math.max(1, (schema.minProperties ?? 0) - declared);
   const room =
     schema.maxProperties === undefined
@@ -1749,8 +1821,30 @@ function addPatternPropertyKeys(request: PatternKeyRequest): void {
   const target = Math.min(wanted, room);
 
   const added: string[] = [];
+  /** True when `key` is free, passes `propertyNames` and matches only `source`. */
+  const fits = (key: string, source: string): boolean => {
+    if (taken.has(key) || !names.accepts(key)) return false;
+    const matching = patterns.filter((pattern) => pattern.regex.test(key));
+    return matching.length === 1 && matching[0].source === source;
+  };
+  const add = (key: string, source: string): void => {
+    Object.defineProperty(properties, key, {
+      value: patternProperties[source],
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    taken.add(key);
+    added.push(key);
+  };
+
   for (let slot = 0; slot < target; slot += 1) {
     const { source } = sources[slot % sources.length];
+    if (names.listed) {
+      const key = names.listed.find((name) => fits(name, source));
+      if (key !== undefined) add(key, source);
+      continue;
+    }
     for (let attempt = 0; attempt < PATTERN_KEY_ATTEMPTS; attempt += 1) {
       context.patternKeyCount += 1;
       const generated = generatePatternKey(
@@ -1761,21 +1855,8 @@ function addPatternPropertyKeys(request: PatternKeyRequest): void {
       // A pattern with no end anchor ("^x_") yields one string; a suffix keeps
       // later keys distinct while still matching.
       const key = attempt === 0 ? generated : `${generated}${attempt}`;
-      const matching = patterns.filter((pattern) => pattern.regex.test(key));
-      if (
-        Object.hasOwn(properties, key) ||
-        matching.length !== 1 ||
-        matching[0].source !== source
-      ) {
-        continue;
-      }
-      Object.defineProperty(properties, key, {
-        value: patternProperties[source],
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
-      added.push(key);
+      if (!fits(key, source)) continue;
+      add(key, source);
       break;
     }
   }
