@@ -128,7 +128,7 @@ function validateAdminToken(value: string | undefined): string | undefined {
   if (!isUsableAdminToken(value)) {
     // No value in the context: it is a credential.
     throw invalidFlag(
-      "Invalid --admin-token. The token must be non-empty and contain no whitespace.",
+      "Invalid --admin-token. The token must be non-empty visible ASCII with no whitespace.",
       { flag: "--admin-token" },
     );
   }

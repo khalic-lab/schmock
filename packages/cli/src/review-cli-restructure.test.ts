@@ -658,7 +658,7 @@ describe("CLI errors carry SchmockError codes", () => {
     {
       args: ["spec.json", "--admin", "--admin-token", "has space"],
       message:
-        "Invalid --admin-token. The token must be non-empty and contain no whitespace.",
+        "Invalid --admin-token. The token must be non-empty visible ASCII with no whitespace.",
       context: { flag: "--admin-token" },
     },
     {

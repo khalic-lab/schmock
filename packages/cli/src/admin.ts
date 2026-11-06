@@ -241,8 +241,13 @@ export function answerAdminRequest(request: AdminRequest): Schmock.Response {
   );
 }
 
+/**
+ * Whether a token can be presented at all. Node reads header bytes as
+ * Latin-1, so a token outside visible ASCII (`tökén`, a zero-width space)
+ * never equals what curl or fetch sends, and fetch refuses some outright.
+ */
 export function isUsableAdminToken(value: string): boolean {
-  return value !== "" && !/\s/.test(value);
+  return /^[\x21-\x7E]+$/.test(value);
 }
 
 /**
@@ -250,19 +255,20 @@ export function isUsableAdminToken(value: string): boolean {
  * consumer (listen, reload, the printed banner) sees the same value.
  *
  * @throws SchmockError `INVALID_CONFIG` for an empty token or one containing
- *   whitespace
+ *   whitespace or anything outside visible ASCII
  */
 export function resolveAdminToken(options: CliOptions): string | undefined {
   if (!options.admin) return undefined;
   if (options.adminToken === undefined) return randomUUID();
   // The flag parser checks this too, but `createCliServer` is public: an empty
   // token is refused by every admin request, and one containing whitespace
-  // (a trailing newline read from a file) can never match a bearer header, so
-  // either would start an admin API nobody can use. Fail fast instead.
+  // (a trailing newline read from a file) or a non-ASCII character can never
+  // match a bearer header, so any of them would start an admin API nobody can
+  // use. Fail fast instead.
   if (!isUsableAdminToken(options.adminToken)) {
     // The context names the option only: the value is a credential.
     throw new SchmockError(
-      "Invalid admin token. The token must be non-empty and contain no whitespace.",
+      "Invalid admin token. The token must be non-empty visible ASCII with no whitespace.",
       "INVALID_CONFIG",
       { option: "adminToken" },
     );

@@ -148,6 +148,17 @@ describe("parseCliArgs", () => {
     ).toThrow(/admin-token/);
   });
 
+  // A header value is read as Latin-1, so a token outside visible ASCII never
+  // matches what curl or fetch sends, and fetch refuses some outright.
+  it.each([["tökén"], ["tok\u200ben"], ["tok\u0000en"], ["tok\u007fen"]])(
+    "throws on an --admin-token %j outside visible ASCII",
+    (token) => {
+      expect(() =>
+        parseCliArgs(["--spec", "x.yaml", "--admin", "--admin-token", token]),
+      ).toThrow(/admin-token/);
+    },
+  );
+
   it("parses --admin-history-limit", () => {
     const result = parseCliArgs([
       "--spec",

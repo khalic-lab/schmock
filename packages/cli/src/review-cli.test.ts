@@ -3,6 +3,7 @@ import { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveAdminToken } from "./admin";
 import { createCliServer, isLoopbackHost, parseCliArgs, run } from "./cli";
 
 const PETSTORE_SPEC = resolve(
@@ -148,6 +149,15 @@ describe("createCliServer admin token validation", () => {
           adminToken,
         }),
       ).rejects.toThrow(/admin token/i);
+    },
+  );
+
+  it.each([["tökén"], ["tok\u200ben"], ["tok\u007fen"]])(
+    "rejects adminToken %j, which no HTTP client can present",
+    (adminToken) => {
+      expect(() =>
+        resolveAdminToken({ spec: PETSTORE_SPEC, admin: true, adminToken }),
+      ).toThrow(/admin token/i);
     },
   );
 

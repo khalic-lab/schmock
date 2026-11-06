@@ -57,9 +57,13 @@ something else:
   fractional seed.
 - `--admin-token` without `--admin` fails with `--admin-token requires --admin.`;
   the token does not turn the admin API on.
-- `createCliServer({ admin: true, adminToken })` throws `Invalid admin token. The
-  token must be non-empty and contain no whitespace.` for an empty token or one
-  containing whitespace, including a trailing newline read from a file.
+- `--admin-token` and `createCliServer({ admin: true, adminToken })` take
+  visible ASCII only (`!` to `~`). The flag fails with `Invalid --admin-token.`
+  and `createCliServer` throws `Invalid admin token.`, both followed by `The
+  token must be non-empty visible ASCII with no whitespace.`, for an empty token,
+  one containing whitespace (including a trailing newline read from a file), or
+  one with a non-ASCII character such as `é` or a zero-width space. Node reads
+  header bytes as Latin-1, so curl and fetch could never present such a token.
 - `--hostname` must be a non-empty host. A blank value is rejected: it is *not*
   the `127.0.0.1` default — `listen(port, '')` binds every interface, so a typo
   used to publish the mock to the network. The same check applies to
