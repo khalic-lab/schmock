@@ -227,6 +227,9 @@ not in the browser build.
   no `Missing`, fails with `OPENAPI_INVALID_REF` on both builds, with `strict`
   on or off. Under Node the same holds for a pointer into another document
   (`./pet.yaml#/Missing`); the original swagger-parser error is the `cause`.
+  A fragment that is not a pointer, such as the typo `#components/schemas/Pet`
+  or an anchor reference `#nope` that no `$anchor`, `$dynamicAnchor` or `$id`
+  in the document declares, fails the same way.
 - **An empty `$ref`** (`"$ref": ""`) fails with `OPENAPI_INVALID_REF` under
   every `refs` policy, in the root document or, with external refs on, in a
   document it references. It names no schema, so it is not treated as an

@@ -140,6 +140,46 @@ describe("loadDocument agrees under the Node and browser resolvers", () => {
     expect(browser).toEqual(node);
   });
 
+  for (const [version, ref] of [
+    ["3.0.3", "#components/schemas/Pet"],
+    ["3.1.0", "#nope"],
+  ] as const) {
+    it(`refuses the fragment $ref ${ref}, which names nothing, with the same code`, async () => {
+      const spec = {
+        ...specWithResponseSchema({ $ref: ref }, { Pet: { type: "object" } }),
+        openapi: version,
+      };
+
+      const [node, browser] = [
+        await failureFor("node", spec),
+        await failureFor("browser", spec),
+      ];
+
+      expect(node).toEqual({
+        name: "SchmockError",
+        code: "OPENAPI_INVALID_REF",
+      });
+      expect(browser).toEqual(node);
+    });
+  }
+
+  it("loads an anchor $ref whose anchor the document declares", async () => {
+    const spec = {
+      ...specWithResponseSchema(
+        { $ref: "#pet" },
+        { Pet: { $anchor: "pet", type: "object" } },
+      ),
+      openapi: "3.1.0",
+    };
+
+    for (const build of BUILDS) {
+      const loadDocument = await loadDocumentFor(build);
+      await expect(loadDocument(structuredClone(spec), {})).resolves.toEqual(
+        expect.objectContaining({ openapi: "3.1.0" }),
+      );
+    }
+  });
+
   for (const unrelatedRef of [true, false]) {
     it(`names discriminator branches that are component objects ${unrelatedRef ? "with" : "without"} a $ref elsewhere`, async () => {
       const spec = aliasedDiscriminatorSpec(unrelatedRef);

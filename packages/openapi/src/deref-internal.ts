@@ -516,16 +516,51 @@ function canonicalPointer(pointer: string): string {
   return joinPointer("#", parseTokens(pointer));
 }
 
-/** Every internal `$ref` in `document`, each spelling once. */
-function internalRefs(document: unknown): Set<string> {
-  const refs = new Set<string>();
+interface DocumentRefs {
+  /** Every internal `$ref`, each spelling once. */
+  pointers: Set<string>;
+  /** Every `$ref` to a plain-name fragment (`#pet`), each spelling once. */
+  names: Set<string>;
+  /** The names an `$anchor`, `$dynamicAnchor` or `$id` fragment declares. */
+  declared: Set<string>;
+}
+
+/** The plain name a `#name` fragment spells, or `undefined` for a pointer. */
+function fragmentName(ref: string): string | undefined {
+  let name = ref.slice(1);
+  try {
+    name = decodeURIComponent(name);
+  } catch {
+    // Keep the literal text, as `parseTokens` does.
+  }
+  return name.startsWith("/") ? undefined : name;
+}
+
+function collectDocumentRefs(document: unknown): DocumentRefs {
+  const refs: DocumentRefs = {
+    pointers: new Set(),
+    names: new Set(),
+    declared: new Set(),
+  };
   const seen = new WeakSet<object>();
   const stack: unknown[] = [document];
   while (stack.length > 0) {
     const node = stack.pop();
     if (!isWalkable(node) || seen.has(node)) continue;
     seen.add(node);
-    if (isInternalRef(node)) refs.add(node.$ref);
+    if (isInternalRef(node)) refs.pointers.add(node.$ref);
+    else if (isRefObject(node) && node.$ref.startsWith("#")) {
+      refs.names.add(node.$ref);
+    }
+    for (const key of ["$anchor", "$dynamicAnchor"]) {
+      const anchor = Object.hasOwn(node, key) ? node[key] : undefined;
+      if (typeof anchor === "string") refs.declared.add(anchor);
+    }
+    const id = Object.hasOwn(node, "$id") ? node.$id : undefined;
+    if (typeof id === "string" && id.includes("#")) {
+      const name = fragmentName(id.slice(id.indexOf("#")));
+      if (name) refs.declared.add(name);
+    }
     for (const child of Object.values(node)) stack.push(child);
   }
   return refs;
@@ -552,9 +587,22 @@ function internalRefs(document: unknown): Set<string> {
  * - A pointer to nothing. Both resolvers refused it, but ref-parser with a
  *   `MissingPointerError` that escaped `openapi()` uncoded, and this module
  *   with `OPENAPI_INVALID_REF`; refusing it here gives one answer.
+ * - A fragment that is not a pointer and names no anchor the document
+ *   declares (`#components/schemas/Pet`, a `#nope` no `$anchor` carries).
+ *   Neither resolver follows a plain-name fragment, so it loaded and then
+ *   failed every request. One whose anchor exists is left for generation.
  */
 export function assertInternalRefs(document: unknown): void {
-  const refs = internalRefs(document);
+  const { pointers: refs, names, declared } = collectDocumentRefs(document);
+  for (const ref of names) {
+    const name = fragmentName(ref);
+    if (name !== undefined && !declared.has(name)) {
+      throw refError(
+        `$ref "${ref}" is neither a JSON pointer ("#/...") nor a name an $anchor, $dynamicAnchor or $id in the document declares`,
+        ref,
+      );
+    }
+  }
   for (const ref of refs) {
     const tokens = parseTokens(ref).length;
     if (tokens > MAX_POINTER_TOKENS) {
