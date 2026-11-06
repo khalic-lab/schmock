@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as adapterEntry from "./adapter.js";
 import { redactQuery } from "./headers.js";
@@ -41,6 +42,21 @@ describe("failed requests", () => {
         expect(mock.callCount()).toBe(1);
       },
     );
+  });
+
+  it("answers an Error thrown from another realm with its message", async () => {
+    const mock = schmock();
+    mock("GET /fails", () => {
+      throw runInNewContext('new TypeError("boom from other realm")');
+    });
+
+    const response = await mock.handle("GET", "/fails");
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: "boom from other realm",
+      code: "INTERNAL_ERROR",
+    });
   });
 
   describe("non-Error throws", () => {

@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
   errorMessage,
@@ -89,6 +90,58 @@ describe("errorMessage", () => {
     });
 
     expect(errorMessage(error)).toBe("Unknown error");
+  });
+});
+
+describe("errors from another realm", () => {
+  const foreign = (): Error =>
+    runInNewContext('new TypeError("boom from other realm")');
+
+  it("describes one by its message", () => {
+    expect(errorMessage(foreign())).toBe("boom from other realm");
+  });
+
+  it("returns one with a string message as is", () => {
+    const error = foreign();
+    expect(toError(error)).toBe(error);
+  });
+
+  it.runIf(typeof Reflect.get(Error, "isError") === "function")(
+    "does not take an object that only forges the Error tag for one",
+    () => {
+      const forged = { message: "forged", [Symbol.toStringTag]: "Error" };
+      expect(Object.prototype.toString.call(forged)).toBe("[object Error]");
+      expect(errorMessage(forged)).toBe('{"message":"forged"}');
+      expect(toError(forged)).not.toBe(forged);
+    },
+  );
+
+  describe("on a runtime without Error.isError", () => {
+    const withoutIsError = (run: () => void) => {
+      const descriptor = Object.getOwnPropertyDescriptor(Error, "isError");
+      Reflect.deleteProperty(Error, "isError");
+      try {
+        run();
+      } finally {
+        if (descriptor) Object.defineProperty(Error, "isError", descriptor);
+      }
+    };
+
+    it("recognises one by its object tag", () => {
+      withoutIsError(() => {
+        const error = foreign();
+        expect(errorMessage(error)).toBe("boom from other realm");
+        expect(toError(error)).toBe(error);
+      });
+    });
+
+    it("still describes a plain object as its JSON", () => {
+      withoutIsError(() => {
+        const thrown = { message: "plain" };
+        expect(errorMessage(thrown)).toBe('{"message":"plain"}');
+        expect(toError(thrown)).not.toBe(thrown);
+      });
+    });
   });
 });
 

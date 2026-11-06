@@ -21,6 +21,20 @@ function describeThrownValue(value: unknown): string {
   }
 }
 
+/**
+ * Whether a value is an Error from any realm. `instanceof Error` misses one
+ * created in another realm (a `node:vm` context, an iframe), which would then
+ * be described as the JSON of its enumerable fields: `"{}"`.
+ */
+export function isError(value: unknown): value is Error {
+  if (value instanceof Error) return true;
+  const isErrorOf: unknown = Reflect.get(Error, "isError");
+  if (typeof isErrorOf === "function") {
+    return Reflect.apply(isErrorOf, Error, [value]) === true;
+  }
+  return Object.prototype.toString.call(value) === "[object Error]";
+}
+
 /** An Error's `message` when it is a string; `undefined` otherwise, or when reading it throws. */
 function stringMessageOf(error: Error): string | undefined {
   try {
@@ -45,7 +59,7 @@ function stringMessageOf(error: Error): string | undefined {
  * the same way.
  */
 export function errorMessage(error: unknown): string {
-  if (!(error instanceof Error)) return describeThrownValue(error);
+  if (!isError(error)) return describeThrownValue(error);
   const message = stringMessageOf(error);
   if (message !== undefined) return message;
   try {
@@ -65,7 +79,7 @@ export function errorMessage(error: unknown): string {
  * so an `errorFormatter` can still read what was thrown.
  */
 export function toError(value: unknown): Error {
-  if (value instanceof Error && stringMessageOf(value) !== undefined) {
+  if (isError(value) && stringMessageOf(value) !== undefined) {
     return value;
   }
   return new Error(errorMessage(value), { cause: value });
