@@ -38,6 +38,83 @@ describe("determineArrayCount", () => {
   });
 });
 
+describe("a closed tuple at the root", () => {
+  /** `{ type: "array", items: false, prefixItems: [string, integer] }`. */
+  function closedTuple(keywords: JSONSchema7 = {}): JSONSchema7 {
+    return Object.assign<JSONSchema7, object>(
+      { type: "array", items: false, ...keywords },
+      { prefixItems: [{ type: "string" }, { type: "integer" }] },
+    );
+  }
+
+  function expectPair(generated: unknown): void {
+    expect(generated).toEqual([expect.any(String), expect.any(Number)]);
+  }
+
+  it("generates the 2020-12 tuple's prefix items", async () => {
+    expectPair(await generateFromSchema({ schema: closedTuple(), seed: 1 }));
+  });
+
+  it("holds an explicit count to the prefix length", async () => {
+    expectPair(
+      await generateFromSchema({ schema: closedTuple(), count: 5, seed: 1 }),
+    );
+  });
+
+  it("holds a maxItems range to the prefix length", async () => {
+    const schema = closedTuple({ minItems: 1, maxItems: 6 });
+    for (let seed = 0; seed < 10; seed++) {
+      const generated = await generateFromSchema({ schema, seed });
+      expect(Array.isArray(generated) && generated.length).toBeLessThanOrEqual(
+        2,
+      );
+    }
+  });
+
+  it("holds an explicit count to a closed Draft-7 tuple", async () => {
+    const schema: JSONSchema7 = {
+      type: "array",
+      items: [{ type: "string" }, { type: "integer" }],
+      additionalItems: false,
+    };
+
+    expectPair(await generateFromSchema({ schema, count: 5, seed: 1 }));
+  });
+});
+
+describe("an open tuple at the root", () => {
+  it.each([1, 5])(
+    "defaults an open 2020-12 tuple of %i prefix items to its prefix length",
+    (length) => {
+      const schema = Object.assign<JSONSchema7, object>(
+        { type: "array", items: { type: "string" } },
+        { prefixItems: Array.from({ length }, () => ({ type: "string" })) },
+      );
+
+      expect(determineArrayCount(schema)).toBe(length);
+    },
+  );
+
+  it("generates every prefix item of an open 2020-12 tuple", async () => {
+    const schema = Object.assign<JSONSchema7, object>(
+      { type: "array", items: { type: "string" } },
+      {
+        prefixItems: [
+          { type: "string" },
+          { type: "integer" },
+          { type: "boolean" },
+          { type: "string" },
+          { type: "integer" },
+        ],
+      },
+    );
+
+    const generated = await generateFromSchema({ schema, seed: 1 });
+
+    expect(Array.isArray(generated) && generated.length).toBe(5);
+  });
+});
+
 describe("applyOverrides — caller-owned references", () => {
   const itemSchema: JSONSchema7 = {
     type: "array",

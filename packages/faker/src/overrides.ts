@@ -7,7 +7,9 @@ const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 /**
  * Determine number of items to generate for array schema
- * Prefers explicit count, then schema minItems/maxItems, with sane defaults
+ * Prefers explicit count, then schema minItems/maxItems, with sane defaults.
+ * A tuple defaults to its prefix length, and a closed tuple (Draft 7
+ * `additionalItems: false`, 2020-12 `items: false`) never exceeds it.
  * @param schema - Array schema with optional minItems/maxItems
  * @param explicitCount - Explicit count override from plugin options; negative
  *   counts yield 0, fractional counts round down, and NaN is treated as absent
@@ -17,6 +19,28 @@ export function determineArrayCount(
   schema: JSONSchema7,
   explicitCount?: number,
   random: () => number = Math.random,
+): number {
+  const count = openArrayCount(schema, explicitCount, random);
+  const prefix = tuplePrefix(schema);
+  const closed =
+    prefix !== undefined &&
+    (Array.isArray(schema.items)
+      ? schema.additionalItems === false
+      : schema.items === false);
+  return closed ? Math.min(count, prefix.length) : count;
+}
+
+/** A Draft 7 `items` array, else a 2020-12 `prefixItems` array. */
+function tuplePrefix(schema: JSONSchema7): unknown[] | undefined {
+  if (Array.isArray(schema.items)) return schema.items;
+  const prefixItems: unknown = Reflect.get(schema, "prefixItems");
+  return Array.isArray(prefixItems) ? prefixItems : undefined;
+}
+
+function openArrayCount(
+  schema: JSONSchema7,
+  explicitCount: number | undefined,
+  random: () => number,
 ): number {
   // A NaN count carries no intent, so the schema decides instead. Fractions
   // round down; +Infinity is kept so the caller still hits the array-size limit.
@@ -41,11 +65,7 @@ export function determineArrayCount(
     return Math.min(schema.maxItems, DEFAULT_ARRAY_COUNT);
   }
 
-  if (Array.isArray(schema.items)) {
-    return schema.items.length;
-  }
-
-  return DEFAULT_ARRAY_COUNT;
+  return tuplePrefix(schema)?.length ?? DEFAULT_ARRAY_COUNT;
 }
 
 /**
