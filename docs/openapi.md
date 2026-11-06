@@ -957,8 +957,10 @@ reads the body as the object its schema describes:
   declared as an object or an array and the bracketed key itself is not
   declared: `metadata[order]=42` reads as `{ metadata: { order: "42" } }`, and
   `expand[]=a&expand[]=b` or `expand[0]=a&expand[1]=b` as an array. That covers
-  OpenAPI's `deepObject` encoding. A bracketed name sent more than once follows
-  the rule above, by the schema it lands on: `filter[sizes]=s&filter[sizes]=m`
+  OpenAPI's `deepObject` encoding. A key of more than 256 bracket segments,
+  the nesting depth a JSON body may reach, stays literal. A bracketed name sent
+  more than once follows the rule above, by the schema it lands on:
+  `filter[sizes]=s&filter[sizes]=m`
   gives every value to an array `sizes`, and `filter[color]=red&filter[color]=blue`
   keeps `blue` for a string `color`.
 - An urlencoded property's entry in the media type's `encoding` map says how an

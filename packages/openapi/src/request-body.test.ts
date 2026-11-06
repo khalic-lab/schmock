@@ -482,6 +482,47 @@ describe("request body validation", () => {
       });
     });
 
+    it("keeps a bracket key nested past the depth limit literal", async () => {
+      const mock = await validatingMock({
+        "application/x-www-form-urlencoded": {
+          schema: {
+            type: "object",
+            properties: {
+              meta: { type: "object", additionalProperties: true },
+            },
+          },
+        },
+      });
+      const deep = `meta${"[a]".repeat(30_000)}`;
+
+      const result = await interceptedPost(mock, {
+        body: new URLSearchParams({ [deep]: "x" }),
+      });
+
+      expect(result.status).toBe(201);
+      expect(
+        normalizeRequestBody(
+          new URLSearchParams({ [deep]: "x" }),
+          "application/x-www-form-urlencoded",
+          { type: "object", properties: { meta: { type: "object" } } },
+        ),
+      ).toEqual({ [deep]: "x" });
+    });
+
+    it("still nests a bracket key at the depth limit", () => {
+      const normalized = normalizeRequestBody(
+        new URLSearchParams({ [`meta${"[a]".repeat(256)}`]: "x" }),
+        "application/x-www-form-urlencoded",
+        { type: "object", properties: { meta: { type: "object" } } },
+      ) as Record<string, unknown>;
+
+      let node: unknown = normalized.meta;
+      for (let level = 0; level < 255; level++) {
+        node = (node as Record<string, unknown>).a;
+      }
+      expect(node).toEqual({ a: "x" });
+    });
+
     it("accepts Stripe's deepObject metadata and integer fields", {
       timeout: 60_000,
     }, async () => {

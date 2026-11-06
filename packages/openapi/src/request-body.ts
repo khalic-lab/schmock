@@ -36,6 +36,14 @@ const BRACKET_KEY = /^([^[\]]+)((?:\[[^[\]]*\])+)$/;
 const BRACKET_SEGMENT = /\[([^[\]]*)\]/g;
 
 /**
+ * Most bracket segments a key nests through, the depth core allows a JSON
+ * body. Nesting, and every walk over the result, recurses once per level, so
+ * a key of tens of thousands of segments overflowed the stack; a deeper key
+ * stays literal instead.
+ */
+const MAX_BRACKET_DEPTH = 256;
+
+/**
  * The OpenAPI `style` values an urlencoded property may declare in its media
  * type's `encoding` map: the query parameter styles.
  */
@@ -541,8 +549,9 @@ class BracketNode {
 
 /**
  * `[base, ...segments]` for a bracket key that nests: its base is a declared
- * object or array property and the key itself is not declared. `undefined`
- * for a key that stays literal.
+ * object or array property, the key itself is not declared, and it has at
+ * most {@link MAX_BRACKET_DEPTH} segments. `undefined` for a key that stays
+ * literal.
  */
 function bracketPath(key: string, schemas: FieldSchemas): string[] | undefined {
   if (schemas.declared.has(key)) return undefined;
@@ -555,7 +564,9 @@ function bracketPath(key: string, schemas: FieldSchemas): string[] | undefined {
   if (!(admitsObject(baseSchema) || admitsType(baseSchema, "array"))) {
     return undefined;
   }
-  return [base, ...[...match[2].matchAll(BRACKET_SEGMENT)].map((m) => m[1])];
+  const segments = [...match[2].matchAll(BRACKET_SEGMENT)].map((m) => m[1]);
+  if (segments.length > MAX_BRACKET_DEPTH) return undefined;
+  return [base, ...segments];
 }
 
 function nestBracketKeys(
