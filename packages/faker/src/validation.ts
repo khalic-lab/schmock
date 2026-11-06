@@ -99,6 +99,8 @@ interface WalkState {
   arraySize?: Violation;
   objectSize?: Violation;
   stringLength?: Violation;
+  /** A pattern whose longest generated match alone passes the budget. */
+  patternGrowth?: Violation;
   composition?: Violation;
 }
 
@@ -205,6 +207,7 @@ export function validateSchema(
     state.arraySize,
     state.objectSize,
     state.stringLength,
+    state.patternGrowth,
   ]) {
     if (violation) {
       throw new ResourceLimitError(
@@ -1102,7 +1105,9 @@ function recordStringLimit(
       typeof schema.pattern === "string" &&
       compilePattern(schema.pattern) !== undefined
     ) {
-      recordStringViolation(regexLengthBounds(schema.pattern).min, path, state);
+      const bounds = regexLengthBounds(schema.pattern);
+      recordStringViolation(bounds.min, path, state);
+      recordPatternGrowth(schema, bounds.longest, path, state);
     }
   }
   // Generation invents a key matching a `patternProperties` pattern, so the
@@ -1136,6 +1141,36 @@ function generatesPatternKeys(schema: JSONSchema7): boolean {
     schema.enum === undefined &&
     schema.default === undefined
   );
+}
+
+/**
+ * Nested open quantifiers multiply json-schema-faker's repetition cap, so a
+ * pattern whose shortest match is one character can still make it build a
+ * string of billions before any output check runs. One such string alone
+ * passing the whole response budget is refused, unless a keyword that
+ * replaces the pattern means it is never built.
+ */
+function recordPatternGrowth(
+  schema: JSONSchema7,
+  longest: number,
+  path: string,
+  state: WalkState,
+): void {
+  if (
+    longest <= MAX_GENERATED_CHARS ||
+    state.patternGrowth ||
+    PATTERN_OVERRIDES.some(
+      (keyword) => Reflect.get(schema, keyword) !== undefined,
+    )
+  ) {
+    return;
+  }
+  state.patternGrowth = {
+    resource: "generated_chars",
+    limit: MAX_GENERATED_CHARS,
+    actual: longest,
+    path: `${path}.pattern`,
+  };
 }
 
 function canGenerateString(schema: JSONSchema7): boolean {

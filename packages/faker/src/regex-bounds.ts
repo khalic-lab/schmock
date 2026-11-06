@@ -3,6 +3,13 @@ import { capped } from "./saturating.js";
 interface LengthBounds {
   min: number;
   max: number;
+  /**
+   * The longest string json-schema-faker's own generator builds from the
+   * pattern: it repeats a quantified atom at most five times past the
+   * quantifier's lower bound and never past its upper bound, so nested open
+   * quantifiers multiply that cap level by level.
+   */
+  longest: number;
 }
 
 interface RegexFrame extends LengthBounds {
@@ -10,16 +17,22 @@ interface RegexFrame extends LengthBounds {
   zeroWidth: boolean;
 }
 
-const EMPTY: LengthBounds = { min: 0, max: 0 };
-const SINGLE: LengthBounds = { min: 1, max: 1 };
+const EMPTY: LengthBounds = { min: 0, max: 0, longest: 0 };
+const SINGLE: LengthBounds = { min: 1, max: 1, longest: 1 };
+/** json-schema-faker emits a backreference as the literal digit it names. */
+const BACKREFERENCE: LengthBounds = { min: 0, max: 0, longest: 1 };
+
+/** json-schema-faker's repetition cap past a quantifier's lower bound. */
+const GENERATED_REPEAT_SPAN = 5;
 
 /**
  * Length bounds of the strings a regular expression describes, from the
  * repetition it states explicitly. `min` is the shortest match; `max` charges
  * each quantifier's upper bound, and only the lower bound of an unbounded one
- * (`*`, `+`, `{n,}`), since generators cap open repetition themselves. Anchors
- * and lookarounds are zero-width and a backreference counts as empty, so `min`
- * never overstates what a generator must produce.
+ * (`*`, `+`, `{n,}`), since generators cap open repetition themselves; `longest`
+ * applies json-schema-faker's own cap. Anchors and lookarounds are zero-width
+ * and a backreference counts as empty, so `min` never overstates what a
+ * generator must produce.
  */
 export function regexLengthBounds(pattern: string): LengthBounds {
   const frames: RegexFrame[] = [newRegexFrame(false)];
@@ -28,9 +41,14 @@ export function regexLengthBounds(pattern: string): LengthBounds {
     const char = pattern[index];
     const frame = frames[frames.length - 1];
     if (char === "|") {
-      frame.alternatives.push({ min: frame.min, max: frame.max });
+      frame.alternatives.push({
+        min: frame.min,
+        max: frame.max,
+        longest: frame.longest,
+      });
       frame.min = 0;
       frame.max = 0;
+      frame.longest = 0;
       index += 1;
       continue;
     }
@@ -67,37 +85,39 @@ export function regexLengthBounds(pattern: string): LengthBounds {
       atom = {
         min: multiplied(atom.min, quantifier.min),
         max: multiplied(atom.max, quantifier.max),
+        longest: multiplied(atom.longest, quantifier.generated),
       };
     }
-    const current = frames[frames.length - 1];
-    current.min = capped(current.min + atom.min);
-    current.max = capped(current.max + atom.max);
+    addBounds(frames[frames.length - 1], atom);
   }
 
   while (frames.length > 1) {
     const group = frames.pop();
     if (!group) break;
-    const bounds = closeRegexFrame(group);
-    const parent = frames[frames.length - 1];
-    parent.min = capped(parent.min + bounds.min);
-    parent.max = capped(parent.max + bounds.max);
+    addBounds(frames[frames.length - 1], closeRegexFrame(group));
   }
   return closeRegexFrame(frames[0]);
 }
 
+function addBounds(frame: RegexFrame, atom: LengthBounds): void {
+  frame.min = capped(frame.min + atom.min);
+  frame.max = capped(frame.max + atom.max);
+  frame.longest = capped(frame.longest + atom.longest);
+}
+
 function newRegexFrame(zeroWidth: boolean): RegexFrame {
-  return { min: 0, max: 0, alternatives: [], zeroWidth };
+  return { min: 0, max: 0, longest: 0, alternatives: [], zeroWidth };
 }
 
 function closeRegexFrame(frame: RegexFrame): LengthBounds {
   if (frame.zeroWidth) return EMPTY;
-  let min = frame.min;
-  let max = frame.max;
+  let { min, max, longest } = frame;
   for (const alternative of frame.alternatives) {
     min = Math.min(min, alternative.min);
     max = Math.max(max, alternative.max);
+    longest = Math.max(longest, alternative.longest);
   }
-  return { min, max };
+  return { min, max, longest };
 }
 
 function regexGroupPrefix(
@@ -167,32 +187,47 @@ function readRegexEscape(
       if (escaped >= "1" && escaped <= "9") {
         let next = index + 2;
         while (next < pattern.length && /\d/.test(pattern[next])) next += 1;
-        return { next, width: EMPTY };
+        return { next, width: BACKREFERENCE };
       }
       return { next: index + 2, width: SINGLE };
   }
 }
 
+interface RegexQuantifier {
+  min: number;
+  /** The upper bound, or the lower one when the quantifier is open. */
+  max: number;
+  /** The most repetitions json-schema-faker generates. */
+  generated: number;
+  next: number;
+}
+
 function readRegexQuantifier(
   pattern: string,
   index: number,
-): { min: number; max: number; next: number } | undefined {
+): RegexQuantifier | undefined {
   const char = pattern[index];
-  let quantifier: { min: number; max: number; next: number } | undefined;
-  if (char === "*") quantifier = { min: 0, max: 0, next: index + 1 };
-  else if (char === "+") quantifier = { min: 1, max: 1, next: index + 1 };
-  else if (char === "?") quantifier = { min: 0, max: 1, next: index + 1 };
-  else if (char === "{") {
+  const span = GENERATED_REPEAT_SPAN;
+  let quantifier: RegexQuantifier | undefined;
+  if (char === "*") {
+    quantifier = { min: 0, max: 0, generated: span, next: index + 1 };
+  } else if (char === "+") {
+    quantifier = { min: 1, max: 1, generated: span, next: index + 1 };
+  } else if (char === "?") {
+    quantifier = { min: 0, max: 1, generated: 1, next: index + 1 };
+  } else if (char === "{") {
     const counted = /\{(\d+)(,(\d*))?\}/y;
     counted.lastIndex = index;
     const match = counted.exec(pattern);
     if (match) {
       const min = Number(match[1]);
-      const max =
-        match[2] === undefined || match[3] === "" ? min : Number(match[3]);
+      const open = match[3] === "";
+      const max = match[2] === undefined || open ? min : Number(match[3]);
+      const upper = open ? Number.POSITIVE_INFINITY : Math.max(min, max);
       quantifier = {
         min,
         max: Math.max(min, max),
+        generated: Math.min(upper, capped(min + span)),
         next: index + match[0].length,
       };
     }

@@ -1797,7 +1797,14 @@ direct call, its method path included. faker scans the result again after each
 substitution, and a placeholder assembled there from another placeholder's
 output is not checked. The expanded `helpers.mustache` output and the explicit upper quantifier in
 `helpers.fromRegExp` must fit in 65,536 characters, and a schema `pattern`
-whose shortest match is longer than that is rejected at creation.
+whose shortest match is longer than that is rejected at creation. A `pattern`
+is also rejected, as `generated_chars`, when the longest string
+json-schema-faker could build from it passes the whole 16,777,216-character
+response budget on its own. json-schema-faker repeats `*`, `+` and `{n,}` up
+to five times past their lower bound, so nested open quantifiers multiply:
+`^(((a)+)+)+$` can build 125 characters, and twenty levels of it about
+95 trillion. A `faker`, `format`, `enum`, `const` or `default` on the same
+schema replaces the pattern, so it is never built and not checked.
 
 Limits inside `not`, an `if` with no sibling `then`, and unreferenced
 `$defs`/`definitions` do not reject a schema, because nothing is generated from

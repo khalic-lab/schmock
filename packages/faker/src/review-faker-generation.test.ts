@@ -214,6 +214,44 @@ describe("review: faker allocation ceilings (finding 78)", () => {
     ).not.toThrow();
   });
 
+  it("refuses a pattern whose nested open quantifiers outgrow the response budget", () => {
+    // json-schema-faker repeats each `+` up to five times, so the longest
+    // string it can build grows fivefold with every level of nesting while
+    // the shortest match stays one character.
+    const nested = (depth: number) =>
+      `^${"(".repeat(depth)}a${")+".repeat(depth)}$`;
+    expectResource(
+      captureFailure(() =>
+        validateSchema({ type: "string", pattern: nested(20) }),
+      ),
+      "generated_chars",
+    );
+    expect(() =>
+      validateSchema({ type: "string", pattern: nested(3) }),
+    ).not.toThrow();
+    // An open counted quantifier `{n,}` repeats up to five times past n, so
+    // it explodes the same way when nested.
+    const counted = (depth: number) =>
+      `^${"(".repeat(depth)}a${"){1,}".repeat(depth)}$`;
+    expectResource(
+      captureFailure(() =>
+        validateSchema({ type: "string", pattern: counted(20) }),
+      ),
+      "generated_chars",
+    );
+    expect(() =>
+      validateSchema({ type: "string", pattern: counted(3) }),
+    ).not.toThrow();
+    // A format replaces the pattern, so it is never built.
+    expect(() =>
+      validateSchema({
+        type: "string",
+        pattern: nested(20),
+        format: "email",
+      }),
+    ).not.toThrow();
+  });
+
   // A pattern that does not compile is never charged, so every pattern below
   // is checked to compile first; otherwise "does not throw" proves nothing.
   function patternCharge(pattern: string): unknown {
