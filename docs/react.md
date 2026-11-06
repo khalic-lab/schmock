@@ -68,6 +68,11 @@ A Suspense boundary above the provider that hides content it already showed
 provider keeps intercepting while the fallback shows, and keeps its dispatch
 position when the content is revealed.
 
+An `<Activity>` boundary is different. Hiding it runs the provider's effect
+cleanups, as an unmount does, so the provider releases its lease while hidden.
+Showing it again takes a new lease at the front, ahead of any lease another
+root or a manual `mock.intercept()` took after the provider first mounted.
+
 Calling `mock.reset()` while the provider is mounted clears routes, state,
 history, plugins, and listeners but preserves the provider's explicit
 interception lease. Re-register routes on the same mock without remounting the
