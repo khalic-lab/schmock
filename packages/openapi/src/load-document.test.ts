@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SchmockError, schmock } from "@schmock/core";
@@ -768,13 +768,25 @@ describe("loadDocument", () => {
         join(dir, "nested.json"),
         JSON.stringify(specWithResponseSchema({ $ref: "./pair.json" })),
       );
+      // `sub/pair.json`'s `./name.json` names `sub/name.json`, which read
+      // against the root would be a file that does not exist.
+      mkdirSync(join(dir, "sub"));
+      writeFileSync(join(dir, "sub", "name.json"), JSON.stringify(name));
+      writeFileSync(
+        join(dir, "sub", "pair.json"),
+        JSON.stringify(pair("./name.json")),
+      );
+      writeFileSync(
+        join(dir, "deep.json"),
+        JSON.stringify(specWithResponseSchema({ $ref: "./sub/pair.json" })),
+      );
     });
 
     afterAll(() => {
       rmSync(dir, { recursive: true, force: true });
     });
 
-    for (const file of ["root.json", "nested.json"]) {
+    for (const file of ["root.json", "nested.json", "deep.json"]) {
       it(`lets them win after a bare $ref to the same file (${file})`, async () => {
         const api = (await loadDocument(join(dir, file), {
           refs: { external: true },
