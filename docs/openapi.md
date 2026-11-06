@@ -853,7 +853,8 @@ const res = await mock.handle('GET', '/users', {
 ```
 
 Swagger 2.0 `produces` supplies those content types, operation level overriding
-root level. A Swagger 2.0 spec that declares `produces` therefore negotiates and
+root level; an empty operation list clears the root's, so that operation
+negotiates nothing. A Swagger 2.0 spec that declares `produces` therefore negotiates and
 sets `Content-Type` where it previously did neither.
 
 Each declared representation is scored by the **most specific** `Accept` range
@@ -1036,7 +1037,8 @@ can take a string: one with a `string` type or branch, such as `text/plain` with
 police request contracts at all.
 
 Swagger 2.0 declares its accepted media types with `consumes` (operation level
-overriding root level); an operation that declares none accepts anything.
+overriding root level, an empty operation list clearing the root's); an
+operation that declares none accepts anything.
 
 ## Response Validation
 

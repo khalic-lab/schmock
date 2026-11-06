@@ -344,6 +344,164 @@ describe("operation extraction", () => {
     });
   });
 
+  describe("Swagger 2.0 empty operation media type lists", () => {
+    it("clears the root consumes and produces", async () => {
+      const mock = schmock();
+      mock.pipe(
+        await openapi({
+          spec: {
+            ...swagger2({
+              "/x": {
+                post: {
+                  consumes: [],
+                  produces: [],
+                  parameters: [
+                    { in: "body", name: "b", schema: { type: "string" } },
+                  ],
+                  responses: {
+                    "200": { description: "ok", schema: { type: "string" } },
+                  },
+                },
+              },
+            }),
+            consumes: ["application/json"],
+            produces: ["application/json"],
+          },
+          validateRequests: true,
+        }),
+      );
+
+      const textBody = await mock.handle("POST", "/x", {
+        headers: { "content-type": "text/plain" },
+        body: "hi",
+      });
+      const textAccept = await mock.handle("POST", "/x", {
+        headers: { "content-type": "application/json", accept: "text/plain" },
+        body: "hi",
+      });
+
+      expect(textBody.status).toBe(200);
+      expect(textAccept.status).toBe(200);
+    });
+
+    it("clears the root lists when the operation's hold no media types", async () => {
+      const mock = schmock();
+      mock.pipe(
+        await openapi({
+          spec: {
+            ...swagger2({
+              "/x": {
+                post: {
+                  consumes: [1],
+                  produces: [null],
+                  parameters: [
+                    { in: "body", name: "b", schema: { type: "string" } },
+                  ],
+                  responses: {
+                    "200": { description: "ok", schema: { type: "string" } },
+                  },
+                },
+              },
+            }),
+            consumes: ["application/json"],
+            produces: ["application/json"],
+          },
+          validateRequests: true,
+        }),
+      );
+
+      const textBody = await mock.handle("POST", "/x", {
+        headers: { "content-type": "text/plain" },
+        body: "hi",
+      });
+      const textAccept = await mock.handle("POST", "/x", {
+        headers: { "content-type": "application/json", accept: "text/plain" },
+        body: "hi",
+      });
+
+      expect(textBody.status).toBe(200);
+      expect(textAccept.status).toBe(200);
+    });
+
+    it("still inherits the root lists when the operation declares none", async () => {
+      const mock = schmock();
+      mock.pipe(
+        await openapi({
+          spec: {
+            ...swagger2({
+              "/x": {
+                post: {
+                  parameters: [
+                    { in: "body", name: "b", schema: { type: "string" } },
+                  ],
+                  responses: {
+                    "200": { description: "ok", schema: { type: "string" } },
+                  },
+                },
+              },
+            }),
+            consumes: ["application/json"],
+            produces: ["application/json"],
+          },
+          validateRequests: true,
+        }),
+      );
+
+      const textBody = await mock.handle("POST", "/x", {
+        headers: { "content-type": "text/plain" },
+        body: "hi",
+      });
+      const textAccept = await mock.handle("POST", "/x", {
+        headers: { "content-type": "application/json", accept: "text/plain" },
+        body: "hi",
+      });
+
+      expect(textBody.status).toBe(415);
+      expect(textAccept.status).toBe(406);
+    });
+  });
+
+  describe("Swagger 2.0 malformed operation media type lists", () => {
+    it("keeps the root consumes and produces when the operation's are not arrays", async () => {
+      const mock = schmock();
+      mock.pipe(
+        await openapi({
+          spec: {
+            ...swagger2({
+              "/x": {
+                post: {
+                  consumes: "text/plain",
+                  produces: "text/plain",
+                  parameters: [
+                    { in: "body", name: "b", schema: { type: "string" } },
+                  ],
+                  responses: {
+                    "200": { description: "ok", schema: { type: "string" } },
+                  },
+                },
+              },
+            }),
+            consumes: ["application/json"],
+            produces: ["application/json"],
+          },
+          validateRequests: true,
+        }),
+      );
+
+      const textBody = await mock.handle("POST", "/x", {
+        headers: { "content-type": "text/plain" },
+        body: "hi",
+      });
+      const textAccept = await mock.handle("POST", "/x", {
+        headers: { "content-type": "application/json", accept: "text/plain" },
+        body: "hi",
+      });
+
+      expect(textBody.status).toBe(415);
+      expect(textAccept.status).toBe(406);
+    });
+  });
+
   describe("a request media type's encoding map", () => {
     async function encodingOf(
       content: Record<string, unknown>,

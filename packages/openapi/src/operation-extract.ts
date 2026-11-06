@@ -85,6 +85,17 @@ export function getStringArray(value: unknown): string[] | undefined {
   return entries.length > 0 ? entries : undefined;
 }
 
+/**
+ * A Swagger 2.0 operation's `consumes`/`produces`: its own list whenever it
+ * declares one, so an empty list clears the root's, else the root's.
+ */
+function operationMediaTypes(
+  declared: unknown,
+  root: string[] | undefined,
+): string[] | undefined {
+  return Array.isArray(declared) ? getStringArray(declared) : root;
+}
+
 export function getString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -265,7 +276,7 @@ export function extractRequestBody(
       requestBodyRequired:
         params.find((parameter) => parameter.in === "body")?.required ?? false,
       requestContent: buildSwagger2RequestContent(
-        getStringArray(operation.consumes) ?? ctx.rootConsumes,
+        operationMediaTypes(operation.consumes, ctx.rootConsumes),
         requestBody,
       ),
     };
@@ -427,7 +438,7 @@ export function extractResponses(
     : undefined;
   if (!responses) return result;
 
-  const produces = getStringArray(operation.produces) ?? ctx.rootProduces;
+  const produces = operationMediaTypes(operation.produces, ctx.rootProduces);
 
   for (const [statusCode, response] of Object.entries(responses)) {
     if (!isRecord(response)) {
