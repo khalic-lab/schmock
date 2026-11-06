@@ -467,20 +467,14 @@ function declaredArrayItems(
  * every list under `validateResponses`. The entry the list answers with is
  * rewritten for every media type, since an overridden list serves one shape
  * whatever the `Accept`; a shared `2XX` or `default` entry is left alone and an
- * exact one is added in front of it. The same in-place rewrite the `schemas`
+ * exact copy of it is added in front (see {@link setExactResponseSchema}), so
+ * the list keeps its media types: a bare entry served it with no Content-Type
+ * and accepted any `Accept`. The same in-place rewrite the `schemas`
  * option applies, and as idempotent when the plugin is piped twice.
  */
 function validateListAs(parsed: ParsedPath, schema: JSONSchema7): void {
   const status = findSuccessResponse(parsed.responses)?.[0] ?? 200;
-  const entry = parsed.responses.get(status);
-  if (!entry) {
-    parsed.responses.set(status, { schema, description: "" });
-    return;
-  }
-  entry.schema = schema;
-  for (const content of entry.content?.values() ?? []) {
-    content.schema = schema;
-  }
+  setExactResponseSchema(parsed.responses, status, schema);
 }
 
 /**

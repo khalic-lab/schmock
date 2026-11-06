@@ -1525,7 +1525,9 @@ shape it serves: `{ <listWrapProperty>: [<item>] }`, or `[<item>]` for
 `listFlat`. Each item is still checked against the item schema. The override
 rewrites the list operation's success response in the parsed spec, as a
 `schemas` key does, so `Prefer: dynamic=true` on that list generates the
-overridden shape too. An override that names the wrapper the spec already
+overridden shape too. A list declared only under `2XX` or `default` gets an
+exact `200` entry with the same media types, so it keeps its `Content-Type`
+and still answers `406` to an `Accept` it does not declare. An override that names the wrapper the spec already
 declares, or `listFlat` on a list that is already flat, changes nothing.
 
 `listWrapProperty` takes its item schema from the named property when the spec

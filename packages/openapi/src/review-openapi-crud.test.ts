@@ -1167,6 +1167,54 @@ describe("resource list overrides under validateResponses", () => {
     expect(posts.body).toEqual([{ id: 1, title: "P" }]);
   });
 
+  it.each([
+    ["2XX", { listFlat: true }, [{ id: 1, name: "A" }]],
+    ["default", { listFlat: true }, [{ id: 1, name: "A" }]],
+    ["2XX", { listWrapProperty: "items" }, { items: [{ id: 1, name: "A" }] }],
+  ] as const)(
+    "keeps the media types of a list declared under %s when %o reshapes it",
+    async (statusKey, override, expected) => {
+      const sharedSpec = spec({
+        "/users": {
+          get: {
+            responses: {
+              [statusKey]: {
+                description: "list",
+                content: json({
+                  type: "object",
+                  properties: { data: { type: "array", items: user } },
+                }),
+              },
+            },
+          },
+          post: {
+            responses: { "201": { description: "c", content: json(user) } },
+          },
+        },
+        "/users/{id}": {
+          get: {
+            responses: { "200": { description: "u", content: json(user) } },
+          },
+        },
+      });
+      const mock = await mockOf(sharedSpec, {
+        validateResponses: true,
+        seed: { users: [{ id: 1, name: "A" }] },
+        resources: { users: override },
+      });
+
+      const list = await mock.handle("GET", "/users");
+      expect(list.status).toBe(200);
+      expect(list.headers["content-type"]).toBe("application/json");
+      expect(list.body).toEqual(expected);
+
+      const xml = await mock.handle("GET", "/users", {
+        headers: { accept: "application/xml" },
+      });
+      expect(xml.status).toBe(406);
+    },
+  );
+
   it("keeps a list's per-media-type contracts under listFlat: false", async () => {
     const negotiatedSpec = spec({
       "/users": {
