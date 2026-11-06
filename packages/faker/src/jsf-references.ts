@@ -25,8 +25,13 @@ const TARGET_ONLY_KEYWORDS = [
   "definitions",
 ];
 
-/** A `$ref` json-schema-faker resolves itself: `#` or a `#/...` pointer. */
+/**
+ * A `$ref` json-schema-faker resolves itself: `#` or a `#/...` pointer. It
+ * walks a pointer's segments as written, without percent-decoding them, so a
+ * pointer holding a `%` escape is merged like any other reference.
+ */
 function isRootPointer(reference: string): boolean {
+  if (reference.includes("%")) return false;
   return reference === "#" || reference.startsWith("#/");
 }
 

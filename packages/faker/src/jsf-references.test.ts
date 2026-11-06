@@ -1,5 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
+import { generateFromSchema } from "./index.js";
 import { inlineUnfollowedReferences } from "./jsf-references.js";
 
 function withKeywords(
@@ -170,6 +171,25 @@ describe("inlineUnfollowedReferences", () => {
       const inlined = inlineUnfollowedReferences(schema);
 
       expect(propertyOf(inlined, "a")).toBe(propertyOf(inlined, "b"));
+    });
+  });
+
+  describe("generation follows each reference to the schema it names", () => {
+    it("follows a percent-encoded root JSON Pointer", async () => {
+      const schema: JSONSchema7 = {
+        $defs: { "Page<User>": { const: "P" }, "a b": { const: "S" } },
+        type: "object",
+        required: ["page", "spaced"],
+        properties: {
+          page: { $ref: "#/$defs/Page%3CUser%3E" },
+          spaced: { $ref: "#/$defs/a%20b" },
+        },
+      };
+
+      await expect(generateFromSchema({ schema })).resolves.toEqual({
+        page: "P",
+        spaced: "S",
+      });
     });
   });
 });
