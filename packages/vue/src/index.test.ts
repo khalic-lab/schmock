@@ -3,7 +3,15 @@
 import { schmock } from "@schmock/core";
 import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createApp, defineComponent, h, onMounted, ref } from "vue";
+import {
+  createApp,
+  defineComponent,
+  h,
+  onBeforeUnmount,
+  onMounted,
+  onUnmounted,
+  ref,
+} from "vue";
 import {
   restoreSchmockInterception,
   schmockPlugin,
@@ -83,6 +91,42 @@ describe("schmockPlugin", () => {
     expect(globalThis.fetch).toBe(savedFetch);
   });
 
+  it("intercepts fetches from components' unmount hooks", async () => {
+    const mock = schmock();
+    mock("POST /api/logout", () => ({ ok: true }));
+    const realFetch = vi.fn<typeof globalThis.fetch>(
+      async () => new Response("real"),
+    );
+    globalThis.fetch = realFetch;
+    const sent: Array<Promise<string>> = [];
+    const logout = (label: string) => {
+      sent.push(
+        fetch("http://localhost/api/logout", { method: "POST" })
+          .then((response) => response.text())
+          .then((body) => `${label}:${body}`),
+      );
+    };
+
+    const wrapper = mount(
+      defineComponent({
+        setup() {
+          onBeforeUnmount(() => logout("beforeUnmount"));
+          onUnmounted(() => logout("unmounted"));
+          return () => h("div");
+        },
+      }),
+      { global: { plugins: [[schmockPlugin, { mock }]] } },
+    );
+    wrapper.unmount();
+
+    expect(await Promise.all(sent)).toEqual([
+      'beforeUnmount:{"ok":true}',
+      'unmounted:{"ok":true}',
+    ]);
+    expect(realFetch).not.toHaveBeenCalled();
+    expect(globalThis.fetch).toBe(realFetch);
+  });
+
   it("releases interception for an app that never mounts", () => {
     const mock = schmock();
     const savedFetch = globalThis.fetch;
@@ -131,6 +175,26 @@ describe("schmockPlugin", () => {
 
     const container = document.createElement("div");
     expect(() => app.mount(container)).toThrow("setup failed");
+    expect(globalThis.fetch).toBe(savedFetch);
+  });
+
+  it("releases interception when unmount throws", () => {
+    const mock = schmock();
+    const savedFetch = globalThis.fetch;
+
+    const app = createApp(defineComponent({ render: () => h("div") }));
+    // Wrapped before the plugin installs, so the plugin's unmount calls an
+    // original that throws once the tree has unmounted cleanly.
+    const vueUnmount = app.unmount.bind(app);
+    app.unmount = () => {
+      vueUnmount();
+      throw new Error("unmount failed");
+    };
+    app.use(schmockPlugin, { mock });
+    app.mount(document.createElement("div"));
+    expect(globalThis.fetch).not.toBe(savedFetch);
+
+    expect(() => app.unmount()).toThrow("unmount failed");
     expect(globalThis.fetch).toBe(savedFetch);
   });
 

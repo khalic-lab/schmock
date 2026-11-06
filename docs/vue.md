@@ -34,7 +34,9 @@ lease. Re-register routes on the same mock without reinstalling the plugin.
 
 ### Releasing interception
 
-Unmounting the app releases its lease. For an app that never reaches an
+Unmounting the app releases its lease once the component tree has unmounted, so
+a fetch made from an `onBeforeUnmount` or `onUnmounted` hook (a logout call, an
+analytics flush) is still intercepted. For an app that never reaches an
 unmount — one that is never mounted, or whose `mount()` throws — release it
 explicitly:
 

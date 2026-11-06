@@ -56,7 +56,7 @@ export const schmockPlugin: Plugin<SchmockPluginOptions> = {
       try {
         mounted = mountApp(...args);
       } catch (error) {
-        // A failed mount never unmounts, so onUnmount would never fire.
+        // A failed mount never unmounts, so the unmount below never runs.
         restoreSchmockInterception(app);
         throw error;
       }
@@ -67,9 +67,17 @@ export const schmockPlugin: Plugin<SchmockPluginOptions> = {
       return mounted;
     };
 
-    app.onUnmount(() => {
-      restoreSchmockInterception(app);
-    });
+    // Released after the tree unmounts, not from app.onUnmount, which Vue
+    // runs before it, so fetches from onBeforeUnmount and onUnmounted hooks
+    // are still intercepted.
+    const unmountApp = app.unmount.bind(app);
+    app.unmount = () => {
+      try {
+        unmountApp();
+      } finally {
+        restoreSchmockInterception(app);
+      }
+    };
   },
 };
 
