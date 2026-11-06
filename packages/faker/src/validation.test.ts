@@ -282,6 +282,10 @@ describe("validateSchema", () => {
       ["string.nanoid", [{ min: 60_000, max: 60_000 }]],
       ["string.sample", [60_000]],
       ["internet.password", [{ length: 60_000 }]],
+      ["finance.accountNumber", [60_000]],
+      ["finance.pin", [{ length: 60_000 }]],
+      ["git.commitSha", [{ length: 60_000 }]],
+      ["airline.flightNumber", [{ length: { min: 60_000, max: 60_000 } }]],
     ])(
       "charges the %s length argument against the character budget",
       (method, args) => {
@@ -512,6 +516,105 @@ describe("validateSchema", () => {
         name: expect.any(String),
         code: expect.stringMatching(/^[A-Za-z]{5}-/),
       });
+    });
+  });
+
+  describe("size arguments outside the string module", () => {
+    function fakerString(method: string, args: unknown[]): JSONSchema7 {
+      return withKeywords({ type: "string" }, { faker: { [method]: args } });
+    }
+
+    it.each([
+      ["finance.accountNumber", [5_000_000], 5_000_000],
+      ["finance.accountNumber", [{ length: 5_000_000 }], 5_000_000],
+      ["finance.pin", [5_000_000], 5_000_000],
+      ["finance.pin", [{ length: 5_000_000 }], 5_000_000],
+      ["git.commitSha", [{ length: 5_000_000 }], 5_000_000],
+      [
+        "airline.flightNumber",
+        [{ length: { min: 1, max: 5_000_000 } }],
+        5_000_000,
+      ],
+      ["system.fileName", [{ extensionCount: 200_000 }], 200_000],
+      // An extension is at least ".c": 65536 / 2 = 32768 is the ceiling.
+      ["system.fileName", [{ extensionCount: 32_769 }], 32_769],
+    ])("rejects a %s size of %j at creation", (method, args, actual) => {
+      expectResource(
+        captureFailure(() =>
+          fakerPlugin({ schema: fakerString(method, args) }),
+        ),
+        { resource: "string_length", actual },
+      );
+    });
+
+    it.each([
+      ["lorem.paragraphs", [3, "x".repeat(60_000)], 120_000],
+      ["lorem.sentences", [{ min: 1, max: 5 }, "x".repeat(20_000)], 80_000],
+      ["lorem.paragraphs", [3, "x".repeat(32_769)], 65_538],
+      // A left-out count is faker's default: 6 sentences, 3 paragraphs.
+      ["lorem.sentences", [undefined, "x".repeat(13_108)], 65_540],
+      ["lorem.paragraphs", [undefined, "x".repeat(32_769)], 65_538],
+      // A null count is helpers.multiple's fallback of three units.
+      ["lorem.sentences", [null, "x".repeat(32_769)], 65_538],
+      ["lorem.paragraphs", [null, "x".repeat(32_769)], 65_538],
+    ])(
+      "rejects a %s separator repeated past the string limit",
+      (method, args, actual) => {
+        expectResource(
+          captureFailure(() =>
+            fakerPlugin({ schema: fakerString(method, args) }),
+          ),
+          { resource: "string_length", actual },
+        );
+      },
+    );
+
+    it.each([
+      ["lorem.paragraphs", [3, "x".repeat(32_768)]],
+      ["lorem.sentences", [undefined, "x".repeat(13_107)]],
+      ["lorem.paragraphs", [undefined, "x".repeat(32_768)]],
+      ["lorem.sentences", [null, "x".repeat(32_768)]],
+    ])("accepts a %s separator total at the string limit", (method, args) => {
+      expect(
+        captureFailure(() =>
+          fakerPlugin({ schema: fakerString(method, args) }),
+        ),
+      ).toBeUndefined();
+    });
+
+    it.each(["lorem.sentences", "lorem.paragraphs"])(
+      "joins three %s units when the count is null",
+      async (method) => {
+        const generated = await generateOnce(fakerString(method, [null, "|"]));
+
+        expect(String(generated).split("|")).toHaveLength(3);
+      },
+    );
+
+    it("accepts a system.fileName extensionCount at the ceiling", () => {
+      expect(
+        captureFailure(() =>
+          fakerPlugin({
+            schema: fakerString("system.fileName", [
+              { extensionCount: 32_768 },
+            ]),
+          }),
+        ),
+      ).toBeUndefined();
+    });
+
+    it.each([
+      ["finance.accountNumber", [12]],
+      ["finance.pin", [{ length: 6 }]],
+      ["git.commitSha", [{ length: 7 }]],
+      ["airline.flightNumber", [{ length: { min: 1, max: 4 } }]],
+      ["system.fileName", [{ extensionCount: 3 }]],
+      ["lorem.paragraphs", [3, "\n\n"]],
+      ["lorem.sentences", [{ min: 2, max: 6 }, " | "]],
+    ])("accepts a %s size that fits", async (method, args) => {
+      const generated = await generateOnce(fakerString(method, args));
+
+      expect(typeof generated).toBe("string");
     });
   });
 

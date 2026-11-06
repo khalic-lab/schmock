@@ -61,7 +61,7 @@ export function validateFakerConfig(config: unknown): void {
 interface AllocationRule {
   argumentIndex: number;
   direct: boolean;
-  property?: "count" | "length";
+  property?: "count" | "extensionCount" | "length";
   resource: "array_size" | "string_length";
   limit: number;
   /**
@@ -102,6 +102,8 @@ function countLimit(shortestUnit: number) {
 const WORD_COUNT = countLimit(2);
 const SENTENCE_COUNT = countLimit(7);
 const PARAGRAPH_COUNT = countLimit(21);
+/** A file extension is at least one letter and its dot (".c"): 2. */
+const EXTENSION_COUNT = countLimit(2);
 
 /** Faker 10.5 methods whose arguments directly control allocation size. */
 const FAKER_ALLOCATION_POLICIES: Readonly<
@@ -201,6 +203,46 @@ const FAKER_ALLOCATION_POLICIES: Readonly<
       ...EXACT_LENGTH,
     },
   ],
+  "finance.accountNumber": [
+    {
+      argumentIndex: 0,
+      direct: true,
+      property: "length",
+      ...EXACT_LENGTH,
+    },
+  ],
+  "finance.pin": [
+    {
+      argumentIndex: 0,
+      direct: true,
+      property: "length",
+      ...EXACT_LENGTH,
+    },
+  ],
+  "git.commitSha": [
+    {
+      argumentIndex: 0,
+      direct: false,
+      property: "length",
+      ...EXACT_LENGTH,
+    },
+  ],
+  "airline.flightNumber": [
+    {
+      argumentIndex: 0,
+      direct: false,
+      property: "length",
+      ...EXACT_LENGTH,
+    },
+  ],
+  "system.fileName": [
+    {
+      argumentIndex: 0,
+      direct: false,
+      property: "extensionCount",
+      ...EXTENSION_COUNT,
+    },
+  ],
   "helpers.uniqueArray": [{ argumentIndex: 1, direct: true, ...ARRAY_LIMIT }],
   "helpers.arrayElements": [{ argumentIndex: 1, direct: true, ...ARRAY_LIMIT }],
   "helpers.multiple": [
@@ -262,7 +304,44 @@ function validateFakerAllocationArguments(
     }
     for (const nested of Object.values(value)) pending.push(nested);
   }
+  validateSeparatorArguments(method, args);
   validateTemplateArguments(method, args);
+}
+
+/**
+ * Methods that join their units with a caller-supplied separator, and the
+ * count faker uses when the count argument is left out.
+ */
+const SEPARATED_COUNT_DEFAULTS: Readonly<Record<string, number>> = {
+  "lorem.sentences": 6,
+  "lorem.paragraphs": 3,
+};
+
+/**
+ * A null count skips the method's own default but not `helpers.multiple`'s:
+ * faker reads `count ?? 3`, so it still draws three units.
+ */
+const NULL_COUNT_UNITS = 3;
+
+/**
+ * A separator is written once between each pair of units, so the largest
+ * count draw carries at least `count - 1` copies of it whatever the units
+ * hold. The count and the separator each pass their own limit by then.
+ */
+function validateSeparatorArguments(method: string, args: unknown[]): void {
+  const defaultCount = SEPARATED_COUNT_DEFAULTS[method];
+  const separator = args[1];
+  if (defaultCount === undefined || typeof separator !== "string") return;
+  const count =
+    args[0] === undefined
+      ? defaultCount
+      : args[0] === null
+        ? NULL_COUNT_UNITS
+        : maximumCardinality(args[0]);
+  const length = capped(Math.max(0, count - 1) * separator.length);
+  if (length > MAX_STRING_LENGTH) {
+    throw new ResourceLimitError("string_length", MAX_STRING_LENGTH, length);
+  }
 }
 
 function maximumCardinality(value: unknown): number {

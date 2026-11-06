@@ -1738,7 +1738,8 @@ length is the largest of its `minLength`, the shortest match of its `pattern`,
 and the length argument of a faker method that always produces that many
 characters (`string.alpha`, `string.alphanumeric`, `string.numeric`,
 `string.binary`, `string.octal`, `string.hexadecimal`, `string.sample`,
-`string.nanoid`, `string.symbol`, `internet.password`). A `pattern` counts only
+`string.nanoid`, `string.symbol`, `internet.password`, `finance.accountNumber`,
+`finance.pin`, `git.commitSha`, `airline.flightNumber`). A `pattern` counts only
 up to the smallest `maxLength` on the schema or a branch json-schema-faker
 merges into it (`allOf`, `anyOf`, `oneOf`, `then`, `else`), and not at all when
 a `faker`, `format`, `enum`, `const` or `default` on the schema or such a
@@ -1755,6 +1756,13 @@ Faker arguments that set a size are held to the string limit:
 | `lorem.words`, `lorem.sentence`, `lorem.slug`, `word.words` (`count`) | 32,768 words |
 | `lorem.sentences`, `lorem.lines`, `lorem.paragraph` | 9,362 sentences |
 | `lorem.paragraphs` | 3,120 paragraphs |
+| `system.fileName` (`extensionCount`) | 32,768 extensions |
+
+The length argument of `finance.accountNumber`, `finance.pin`,
+`git.commitSha` and `airline.flightNumber` is held to 65,536 characters like
+the `string.*` lengths. The separator passed to `lorem.sentences` or
+`lorem.paragraphs` is written between each pair of units, so the largest
+count less one, times the separator's length, must fit in 65,536 characters.
 
 These limits are keyed by the method's own `module.method` name, and a faker
 method given by any longer path is rejected with `SCHEMA_VALIDATION_ERROR`:
