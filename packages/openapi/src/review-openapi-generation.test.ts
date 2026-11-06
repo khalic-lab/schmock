@@ -959,3 +959,81 @@ describe("access modes under a composition-only nullable", () => {
     expect(body).not.toHaveProperty("secret");
   });
 });
+
+describe("nullable list envelopes (hunt openapi-1-G15)", () => {
+  const pet = {
+    type: "object",
+    required: ["id", "name"],
+    properties: { id: { type: "integer" }, name: { type: "string" } },
+  };
+  const page = {
+    type: "object",
+    required: ["data", "total"],
+    properties: {
+      data: { type: "array", items: pet },
+      total: { type: "integer" },
+    },
+  };
+  const petsSpec = (envelope: Record<string, unknown>) => ({
+    openapi: "3.0.3",
+    info: { title: "Nullable envelope", version: "1.0.0" },
+    paths: {
+      "/pets": {
+        get: {
+          responses: {
+            "200": {
+              description: "list",
+              content: { "application/json": { schema: envelope } },
+            },
+          },
+        },
+      },
+      "/pets/{petId}": {
+        get: {
+          responses: {
+            "200": {
+              description: "pet",
+              content: { "application/json": { schema: pet } },
+            },
+          },
+        },
+      },
+    },
+  });
+  const forms: Record<string, Record<string, unknown>> = {
+    "a typed nullable object": { ...page, nullable: true },
+    "a nullable allOf": { nullable: true, allOf: [page] },
+  };
+
+  for (const [name, envelope] of Object.entries(forms)) {
+    it(`always answers ${name} envelope with the stored rows inside it`, async () => {
+      const mock = schmock({ state: {} });
+      mock.pipe(
+        await openapi({
+          spec: petsSpec(envelope),
+          seed: { pets: [{ id: 1, name: "a" }] },
+          validateResponses: true,
+        }),
+      );
+
+      // Faker rolls a nullable node to null ~5% of the time, so 200 unseeded
+      // requests reach that roll with near certainty.
+      const shapes = new Set<string>();
+      for (let i = 0; i < 200; i++) {
+        const response = await mock.handle("GET", "/pets");
+        const body = response.body;
+        shapes.add(
+          response.status !== 200
+            ? `status ${response.status}`
+            : Array.isArray(body)
+              ? "bare array"
+              : "envelope",
+        );
+        if (response.status === 200 && !Array.isArray(body)) {
+          expect(Object(body).data).toEqual([{ id: 1, name: "a" }]);
+        }
+      }
+      expect([...shapes]).toEqual(["envelope"]);
+    });
+  }
+});

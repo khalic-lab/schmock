@@ -27,6 +27,7 @@ import {
   findArrayProperty,
   isObjectShaped,
   listArrayHints,
+  nonNullable,
   propertyDeclarations,
   unwrapNullable,
 } from "./list-envelope.js";
@@ -377,9 +378,10 @@ export function createListGenerator(
     // Generate the wrapper's decoration without the array property — the live
     // items replace it anyway, and fabricating them first pushed tall item
     // schemas over the nesting limit and cost DEFAULT_ARRAY_COUNT throwaway
-    // items per request.
+    // items per request. A nullable envelope is generated from its non-null
+    // alternative: a rolled null left no envelope to put the items in.
     const skeleton = await generateWrapperSkeleton(
-      withoutPath(effective, wrapperPath),
+      withoutPath(nonNullable(effective), wrapperPath),
       hooks?.fakerSeed,
     );
     if (isRecord(skeleton)) {

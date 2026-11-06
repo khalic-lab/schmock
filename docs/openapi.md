@@ -514,6 +514,9 @@ used for seeds. The collection array is also found when composition makes it
 nullable (`anyOf: [{ type: array }, { type: null }]`, or 3.0 `allOf` with
 `nullable: true`), when it is a `oneOf` of array or object, and when it is
 `{ type: array }` without `items`. The envelope keeps its declared key order.
+An envelope that is itself nullable (`nullable: true`, or 3.0 `allOf` with
+`nullable: true`) always carries the collection: it is never answered as
+`null` or as the bare array.
 
 A list operation whose success schema is an object with no array (for example
 `GET /settings` next to `POST /settings`) answers with a body generated from

@@ -93,6 +93,28 @@ export function unwrapNullable(schema: JSONSchema7): JSONSchema7 {
 }
 
 /**
+ * The non-null alternative of a nullable schema, to generate a value that must
+ * be an object: the node inside the composition wrapper ({@link
+ * unwrapNullable}), or a copy of a typed `type: [T, "null"]` node without the
+ * `null` type and without the `schmockNullable` marker, which faker reads as
+ * "roll null ~5%" on its own. Only for generation: the copy defeats the
+ * identity-keyed lookups `unwrapNullable` preserves.
+ */
+export function nonNullable(schema: JSONSchema7): JSONSchema7 {
+  const node = unwrapNullable(schema);
+  if (node !== schema || !Array.isArray(node.type)) return node;
+  if (!node.type.includes("null")) return node;
+  const types = node.type.filter((type) => type !== "null");
+  if (types.length === 0) return node;
+  const copy: JSONSchema7 = {
+    ...node,
+    type: types.length === 1 ? types[0] : types,
+  };
+  Reflect.deleteProperty(copy, "schmockNullable");
+  return copy;
+}
+
+/**
  * Object-shaped by declaration: `type: object` (alone or in a union), no
  * `type` at all with `properties`/`allOf`, or an `anyOf`/`oneOf` whose every
  * non-null branch is object-shaped — a polymorphic `oneOf: [Cat, Dog]`, or the
