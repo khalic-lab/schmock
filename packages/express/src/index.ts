@@ -72,8 +72,8 @@ export interface ExpressAdapterOptions {
    * Request interceptor - called before handling request. The returned
    * `headers` and `query` are merged onto the request's own (a header
    * replaces one of the same name in any case); `method`, `path` and `body`
-   * replace. A hook declared to return `void` (one that writes its own
-   * response) is accepted.
+   * replace, though an `undefined` method or path keeps the request's. A hook
+   * declared to return `void` (one that writes its own response) is accepted.
    * @param req - Express request
    * @param res - Express response
    * @returns Modified request data or void
@@ -462,6 +462,9 @@ export function toExpress(
             ...requestData,
             ...intercepted,
             method: rewritten,
+            // An own `path: undefined` (a conditional rewrite) keeps the
+            // routed path, as an omitted one does.
+            path: intercepted.path ?? requestData.path,
             headers: intercepted.headers
               ? mergeHeaders(requestData.headers, intercepted.headers)
               : requestData.headers,

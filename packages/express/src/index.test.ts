@@ -334,6 +334,45 @@ describe("toExpress", () => {
       );
     });
 
+    it("keeps the routed path when an override's path is undefined", async () => {
+      const realMock = schmock();
+      realMock("GET /x", { ok: "x" });
+      realMock("GET /alt", { ok: "alt" });
+      const middleware = toExpress(realMock, {
+        passErrorsToNext: false,
+        beforeRequest: (incoming) => ({
+          path: incoming.query.alt ? String(incoming.query.alt) : undefined,
+        }),
+      });
+      const plain = createRes();
+      const rewritten = createRes();
+
+      await middleware(createReq({ path: "/x" }), plain, vi.fn());
+      await middleware(
+        createReq({ path: "/x", query: { alt: "/alt" } }),
+        rewritten,
+        vi.fn(),
+      );
+
+      expect(endedJson(plain)).toEqual({ ok: "x" });
+      expect(endedJson(rewritten)).toEqual({ ok: "alt" });
+    });
+
+    it("falls back to the routed path only for an undefined override path", async () => {
+      // An empty string is a defined rewrite, not an omitted one.
+      const mock = createMock(() =>
+        Promise.resolve({ status: 200, body: "ok", headers: {} }),
+      );
+
+      await toExpress(mock, { beforeRequest: () => ({ path: "" }) })(
+        createReq({ path: "/x" }),
+        createRes(),
+        vi.fn() as NextFunction,
+      );
+
+      expect(vi.mocked(mock.handle).mock.calls[0]?.[1]).toBe("");
+    });
+
     it("skips an override header whose value is undefined", async () => {
       // `req.params.tenant` is typed string but is undefined without a
       // `:tenant` mount, so the route must not see an undefined header.

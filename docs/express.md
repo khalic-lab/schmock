@@ -68,7 +68,8 @@ header adds it and keeps the rest (`authorization` included); a header the
 override names replaces the request's header of that name in any case.
 An override header whose value is `undefined` is skipped, so the request's
 header of that name, if any, is kept.
-`method`, `path` and `body` replace the request's. Because of the merge, an
+`method`, `path` and `body` replace the request's; a `method` or `path` that is
+`undefined` keeps the request's. Because of the merge, an
 override cannot remove a header or a query key; to drop one (`authorization`,
 say, to simulate an unauthenticated call), use `transformHeaders` or
 `transformQuery`, which build the records the override is merged onto. This
