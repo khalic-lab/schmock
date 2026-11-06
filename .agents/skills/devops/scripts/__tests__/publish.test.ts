@@ -234,6 +234,25 @@ describe("publish.sh", () => {
     rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
+  it("names only GitHub workflows that exist", () => {
+    // D59 removed the registry verification workflow; the skill and the
+    // release scripts must not send a maintainer to wait for it.
+    const repoRoot = join(__dirname, "..", "..", "..", "..", "..");
+    for (const file of [
+      ".agents/skills/devops/SKILL.md",
+      ".agents/skills/devops/scripts/publish.sh",
+      "scripts/publish.sh",
+    ]) {
+      const content = readFileSync(join(repoRoot, file), "utf-8");
+      for (const [path] of content.matchAll(
+        /\.github\/workflows\/[\w.-]+\.ya?ml/g,
+      )) {
+        expect(existsSync(join(repoRoot, path)), `${file}: ${path}`).toBe(true);
+      }
+      expect(content, file).not.toMatch(/Registry Verification workflow/i);
+    }
+  });
+
   it("is valid Bash", () => {
     const result = spawnSync("bash", ["-n", SCRIPT], { encoding: "utf-8" });
     expect(result.status).toBe(0);

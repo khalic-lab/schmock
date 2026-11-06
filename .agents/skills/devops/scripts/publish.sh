@@ -542,8 +542,8 @@ if [ "$TARGET" = "all" ]; then
   else
     create_release
   fi
-  # The Registry Verification workflow runs these on a published release, but
-  # nothing else installs the published tarballs, so name them here as well.
+  # Nothing else installs the published tarballs, so name the local checks
+  # here.
   echo ""
   echo "Verify what npm now serves (installs from the public registry):"
   echo "  SCHMOCK_VERSION=${VERSION} bun run test:smoke"

@@ -36,10 +36,9 @@ bun .agents/skills/devops/scripts/bump.ts check-lockfile
 ```
 
 CI is defined in `.github/workflows/ci.yml` for pushes and pull requests to
-`develop` and `main`, and `.github/workflows/registry-verification.yml` installs
-a published release from npm. Do not count on either having run: the release
-gate below runs ESLint, knip and the e2e suite itself, and step 8 runs the
-registry checks locally.
+`develop` and `main`. Do not count on it having run: the release gate below
+runs ESLint, knip and the e2e suite itself. No workflow installs a published
+release from npm; step 8 runs those registry checks locally.
 
 `bun run publish` (`scripts/publish.sh`) is the local entry point: with no
 arguments it runs steps 1, 4 and 5 below — preflight, the full quality gate, and
