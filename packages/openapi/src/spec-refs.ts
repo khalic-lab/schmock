@@ -7,9 +7,8 @@ import { isRecord } from "./utils.js";
 
 /**
  * What a `$ref` key is renamed to while its object is literal data. It must not
- * contain the text `"$ref"`: `dereferenceDocument` in load-document.ts decides
- * whether a document needs dereferencing at all by searching its JSON for
- * exactly that.
+ * be `$ref`: `dereferenceDocument` in load-document.ts decides whether a
+ * document needs dereferencing at all by looking for exactly that key.
  */
 const HIDDEN_REF_KEY = "\u0000schmock:literal-ref";
 

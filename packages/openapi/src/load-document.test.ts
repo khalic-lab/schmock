@@ -716,6 +716,29 @@ describe("loadDocument", () => {
     });
   });
 
+  describe("a spec object that is already dereferenced", () => {
+    it("serves a schema that holds itself as an object cycle", async () => {
+      // What `SwaggerParser.dereference` hands back for a recursive spec.
+      const node: Record<string, any> = {
+        type: "object",
+        required: ["name"],
+        properties: {
+          name: { type: "string" },
+          children: { type: "array", maxItems: 0, items: {} },
+        },
+      };
+      node.properties.children.items = node;
+      const spec = specWithResponseSchema(node, { Node: node });
+
+      const mock = schmock();
+      mock.pipe(await openapi({ spec }));
+      const response = await mock.handle("GET", "/x");
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty("name");
+    });
+  });
+
   describe("literal data in another document", () => {
     let dir: string;
 

@@ -744,8 +744,7 @@ async function dereferenceDocument({
 }: DereferenceDocumentArgs): Promise<OpenAPI.Document> {
   // Ref-free object sources keep their fast path: no resolver, no clone, no
   // validator. `browser-compat.test.ts` pins it.
-  const hasRefs =
-    baseUrl !== undefined || JSON.stringify(raw).includes('"$ref"');
+  const hasRefs = baseUrl !== undefined || containsRef(raw);
   if (!hasRefs && !strict) return raw;
 
   try {
@@ -801,6 +800,26 @@ async function dereferenceDocument({
       { spec: typeof source === "string" ? source : undefined },
     );
   }
+}
+
+/**
+ * Whether any object in `root` has a `$ref` key.
+ *
+ * A walk rather than a search of `JSON.stringify(root)`, which throws on a
+ * spec object that is already dereferenced (`SwaggerParser.dereference`
+ * output, or a JS-built recursive schema) and is therefore an object cycle.
+ */
+function containsRef(root: unknown): boolean {
+  const seen = new WeakSet<object>();
+  const stack: unknown[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (typeof node !== "object" || node === null || seen.has(node)) continue;
+    seen.add(node);
+    if (!Array.isArray(node) && Object.hasOwn(node, "$ref")) return true;
+    for (const child of Object.values(node)) stack.push(child);
+  }
+  return false;
 }
 
 /** ref-parser's `MissingPointerError`, recognised by its code. */
