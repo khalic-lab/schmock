@@ -222,22 +222,27 @@ describe("loadDocument agrees under the Node and browser resolvers", () => {
     }
   });
 
-  it("loads an anchor $ref whose anchor the document declares", async () => {
-    const spec = {
-      ...specWithResponseSchema(
-        { $ref: "#pet" },
-        { Pet: { $anchor: "pet", type: "object" } },
-      ),
-      openapi: "3.1.0",
-    };
+  for (const [ref, anchor] of [
+    ["#pet", "pet"],
+    ["#my%20pet", "my pet"],
+  ] as const) {
+    it(`loads the anchor $ref ${ref}, whose anchor the document declares`, async () => {
+      const spec = {
+        ...specWithResponseSchema(
+          { $ref: ref },
+          { Pet: { $anchor: anchor, type: "object" } },
+        ),
+        openapi: "3.1.0",
+      };
 
-    for (const build of BUILDS) {
-      const loadDocument = await loadDocumentFor(build);
-      await expect(loadDocument(structuredClone(spec), {})).resolves.toEqual(
-        expect.objectContaining({ openapi: "3.1.0" }),
-      );
-    }
-  });
+      for (const build of BUILDS) {
+        const loadDocument = await loadDocumentFor(build);
+        await expect(loadDocument(structuredClone(spec), {})).resolves.toEqual(
+          expect.objectContaining({ openapi: "3.1.0" }),
+        );
+      }
+    });
+  }
 
   for (const unrelatedRef of [true, false]) {
     it(`names discriminator branches that are component objects ${unrelatedRef ? "with" : "without"} a $ref elsewhere`, async () => {
