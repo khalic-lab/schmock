@@ -1676,4 +1676,18 @@ describe("invented pattern property keys", () => {
       }
     }
   });
+
+  it("never runs its own suffixed keys through a backtracking pattern", () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      additionalProperties: false,
+      patternProperties: {
+        "^(a+){10}$": { type: "integer" },
+        "^a+$": { type: "integer" },
+      },
+    };
+    const started = performance.now();
+    normalizeSchemaForJsf(schema, { patternKeySeed: 1 });
+    expect(performance.now() - started).toBeLessThan(1000);
+  }, 60_000);
 });

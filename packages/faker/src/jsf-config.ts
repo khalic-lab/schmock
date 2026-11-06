@@ -1853,8 +1853,12 @@ function addPatternPropertyKeys(request: PatternKeyRequest): void {
       );
       if (generated === undefined) break;
       // A pattern with no end anchor ("^x_") yields one string; a suffix keeps
-      // later keys distinct while still matching.
-      const key = attempt === 0 ? generated : `${generated}${attempt}`;
+      // later keys distinct while still matching. Only a key already taken
+      // gets one: a suffixed string can make a pattern backtrack for seconds.
+      const key =
+        attempt > 0 && taken.has(generated)
+          ? `${generated}${attempt}`
+          : generated;
       if (!fits(key, source)) continue;
       add(key, source);
       break;
