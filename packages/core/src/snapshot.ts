@@ -37,9 +37,16 @@ function removeSharedMemory(
     typeof SharedArrayBuffer !== "undefined" &&
     value.buffer instanceof SharedArrayBuffer
   ) {
-    const copy = Uint8Array.from(
+    // Private bytes, viewed the way the original was: an Int16Array or a
+    // DataView must not come back as a Uint8Array of its bytes.
+    const { buffer } = Uint8Array.from(
       new Uint8Array(value.buffer, value.byteOffset, value.byteLength),
     );
+    const View = value.constructor as new (
+      buffer: ArrayBuffer,
+    ) => ArrayBufferView;
+    const copy =
+      value instanceof DataView ? new DataView(buffer) : new View(buffer);
     seen.set(value, copy);
     return copy;
   }
