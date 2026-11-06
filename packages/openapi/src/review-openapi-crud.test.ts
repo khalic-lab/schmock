@@ -1879,3 +1879,97 @@ describe("count seeding on an id named __proto__ (hunt openapi-1-G38)", () => {
     expect((await mock.handle("GET", "/pets/3")).status).toBe(200);
   });
 });
+
+describe("minting ids past seeds the counter cannot continue", () => {
+  const usersSpec = (id: JSONSchema7) => {
+    const userSchema = {
+      type: "object",
+      properties: { id, name: { type: "string" } },
+    };
+    return spec({
+      "/users": {
+        get: {
+          responses: {
+            "200": {
+              description: "list",
+              content: json({ type: "array", items: userSchema }),
+            },
+          },
+        },
+        post: {
+          requestBody: { content: json(userSchema) },
+          responses: { "201": { description: "c", content: json(userSchema) } },
+        },
+      },
+      "/users/{id}": {
+        get: {
+          parameters: [{ name: "id", in: "path", required: true, schema: id }],
+          responses: { "200": { description: "u", content: json(userSchema) } },
+        },
+      },
+    });
+  };
+
+  async function createIds(
+    mock: Schmock.CallableMockInstance,
+    count: number,
+  ): Promise<unknown[]> {
+    const ids: unknown[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const created = await mock.handle("POST", "/users", {
+        body: { name: `n${index}` },
+      });
+      expect(created.status).toBe(201);
+      ids.push((created.body as { id: unknown }).id);
+    }
+    return ids;
+  }
+
+  it("mints distinct ids after a string id past Number.MAX_SAFE_INTEGER", async () => {
+    const seededId = "175928847299117063";
+    const mock = await mockOf(usersSpec({ type: "string" }), {
+      seed: { users: [{ id: seededId, name: "seed" }] },
+    });
+
+    const ids = await createIds(mock, 3);
+    expect(new Set([seededId, ...ids]).size).toBe(4);
+  });
+
+  it("does not mint an integer seed at 2^53 again", async () => {
+    const seededId = 2 ** 53;
+    const mock = await mockOf(usersSpec({ type: "integer", format: "int64" }), {
+      seed: { users: [{ id: seededId, name: "seed" }] },
+    });
+
+    const ids = await createIds(mock, 2);
+    expect(new Set([seededId, ...ids]).size).toBe(3);
+  });
+
+  it("refuses to mint an id the counter can no longer represent", async () => {
+    const mock = await mockOf(usersSpec({ type: "integer" }), {
+      seed: {
+        users: [{ id: Number.MAX_SAFE_INTEGER - 1, name: "seed" }],
+      },
+    });
+
+    const [last] = await createIds(mock, 1);
+    expect(last).toBe(Number.MAX_SAFE_INTEGER);
+    const exhausted = await mock.handle("POST", "/users", {
+      body: { name: "over" },
+    });
+    expect(exhausted.status).toBe(500);
+    const list = await mock.handle("GET", "/users");
+    expect((list.body as unknown[]).length).toBe(2);
+  });
+
+  it("keeps a synthetic uuid valid after a seed at the top node", async () => {
+    const seededId = "00000000-0000-4000-8000-999999999999";
+    const mock = await mockOf(usersSpec({ type: "string", format: "uuid" }), {
+      validateResponses: true,
+      seed: { users: [{ id: seededId, name: "seed" }] },
+    });
+
+    const ids = await createIds(mock, 2);
+    expect(new Set([seededId, ...ids]).size).toBe(3);
+  });
+});

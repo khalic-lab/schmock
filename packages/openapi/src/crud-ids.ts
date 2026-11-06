@@ -1,3 +1,4 @@
+import { SchmockError } from "@schmock/core";
 import type { CrudResource, IdKind } from "./crud-detector.js";
 import { isRecord } from "./utils.js";
 
@@ -97,22 +98,35 @@ export function shapeId(counter: number, idKind: IdKind): number | string {
 }
 
 /**
+ * The highest counter an id of this kind can carry: a synthetic uuid's node
+ * field holds 12 digits, and a number past `Number.MAX_SAFE_INTEGER` no
+ * longer has a distinct successor, so `counter + 1` would mint it again.
+ */
+function maxCounter(idKind: IdKind): number {
+  return idKind === "uuid" ? 999_999_999_999 : Number.MAX_SAFE_INTEGER;
+}
+
+/**
  * Recover the counter an identifier encodes, so the mint counter can resume
  * past the seed high-water mark regardless of id kind. Integer and string ids
  * carry the counter as their numeric value; a synthetic uuid carries it in the
  * node field. Returns `undefined` for an id this scheme did not mint (a real
- * uuid, a non-numeric string), which the caller simply skips.
+ * uuid, a non-numeric string), which the caller simply skips. So is an id the
+ * counter cannot continue past (a snowflake string or int64 beyond
+ * `Number.MAX_SAFE_INTEGER`, a synthetic uuid at the top node): resuming there
+ * minted the same rounded id on every create, or a 13-digit uuid node.
  */
 export function idCounter(value: unknown, idKind: IdKind): number | undefined {
+  let n: number;
   if (idKind === "uuid") {
     if (typeof value !== "string" || !value.startsWith(SYNTHETIC_UUID_PREFIX)) {
       return undefined;
     }
-    const n = Number(value.slice(SYNTHETIC_UUID_PREFIX.length));
-    return Number.isInteger(n) ? n : undefined;
+    n = Number(value.slice(SYNTHETIC_UUID_PREFIX.length));
+  } else {
+    n = typeof value === "number" ? value : Number(value);
   }
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : undefined;
+  return Number.isSafeInteger(n) && n < maxCounter(idKind) ? n : undefined;
 }
 
 /**
@@ -145,6 +159,15 @@ export function mintId(
   const next = getNextId(state, counterKey, () =>
     recoverCounter(state, collectionKey, resource.idProperty, resource.idKind),
   );
+  if (next > maxCounter(resource.idKind)) {
+    // Past this point every create would repeat the previous id (or mint a
+    // malformed uuid), so the create fails instead of storing a duplicate.
+    throw new SchmockError(
+      `Cannot mint a new ${resource.idKind} id for "${resource.idProperty}": the id counter is past ${maxCounter(resource.idKind)}`,
+      "OPENAPI_ID_COUNTER_EXHAUSTED",
+      { counter: next, idKind: resource.idKind },
+    );
+  }
   return shapeId(next, resource.idKind);
 }
 

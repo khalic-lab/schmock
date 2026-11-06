@@ -413,7 +413,12 @@ has it dropped.
 
 Seed rows written with the old path-parameter key (`{ planetId: 1, … }`) are
 rewritten onto the resolved id property when the collection is seeded, and the
-id counter continues past the highest seeded id.
+id counter continues past the highest seeded id. An id the counter cannot
+continue past is skipped, as a non-numeric id is: a number or numeric string
+from `Number.MAX_SAFE_INTEGER` up (a snowflake id, a large int64), and a
+synthetic uuid at the top node `…-999999999999`. A create that would need an id
+past that limit answers 500 with code `OPENAPI_ID_COUNTER_EXHAUSTED` and stores
+nothing, rather than repeating the previous id.
 
 ### Created bodies satisfy the declared contract
 
