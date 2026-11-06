@@ -578,6 +578,70 @@ describe("not bodies json-schema-faker misses (faker-2)", () => {
       expect(generated.nickname).not.toBe("");
     }
   });
+
+  it.each([
+    ["dependentRequired", { dependentRequired: { a: ["b"] } }, ["a"]],
+    ["array dependencies", { dependencies: { a: ["b"] } }, ["a"]],
+    [
+      "a schema dependencies required",
+      { dependencies: { a: { required: ["b"] } } },
+      ["a"],
+    ],
+    [
+      "a schema dependencies property",
+      { dependencies: { a: { properties: { b: { type: "string" } } } } },
+      ["a"],
+    ],
+    [
+      "a dependentSchemas required",
+      { dependentSchemas: { a: { required: ["b"] } } },
+      ["a"],
+    ],
+    [
+      "a dependentSchemas property",
+      { dependentSchemas: { a: { properties: { b: { type: "string" } } } } },
+      ["a"],
+    ],
+    [
+      "a chain of dependencies",
+      { dependentRequired: { c: ["a"], a: ["b"] } },
+      ["a", "c"],
+    ],
+  ] satisfies Array<[string, JSONSchema7, string[]]>)(
+    "leaves out what brings the omitted property back through %s",
+    async (_, dependencies, absent) => {
+      const schema: JSONSchema7 = {
+        type: "object",
+        properties: {
+          a: { type: "string" },
+          b: { type: "string" },
+          c: { type: "string" },
+        },
+        ...dependencies,
+        not: { required: ["b"] },
+      };
+      for (const value of await generateSeeds(schema, 10)) {
+        const generated = objectOf(value);
+        for (const name of ["b", ...absent]) {
+          expect(Object.hasOwn(generated, name)).toBe(false);
+        }
+      }
+    },
+  );
+
+  it("rejects a not.required whose property a required one depends on", async () => {
+    await expect(
+      generateFromSchema({
+        schema: {
+          type: "object",
+          properties: { a: { type: "string" }, b: { type: "string" } },
+          required: ["a"],
+          dependentRequired: { a: ["b"] },
+          not: { required: ["b"] },
+        },
+      }),
+    ).rejects.toMatchObject({ name: "SchemaValidationError" });
+  });
 });
 
 /** The string at `key` of every value generated from `schema`. */

@@ -1,6 +1,6 @@
 import type { JSONSchema7 } from "json-schema";
 import { type NullUnion, nullUnion } from "./root-array.js";
-import { isJSONSchema7 } from "./utils.js";
+import { isJSONSchema7, isRecord } from "./utils.js";
 
 /**
  * Keywords json-schema-faker generates from ahead of `not`. When a node holds
@@ -41,20 +41,96 @@ export function narrowTypeUnion(
 }
 
 /**
- * The first property `not.required` lists that `schema` declares in
- * `properties` without requiring it, which a copy can leave out. None when
- * a merge (`allOf`, `anyOf`, `oneOf`, `if`) could bring the property back.
+ * The properties `schema` lists for one property's presence to bring in: its
+ * `dependentRequired` or array `dependencies` entry, and the `required` and
+ * `properties` of its dependent schema (a `dependentSchemas` or schema
+ * `dependencies` entry) and of that schema's `allOf`/`anyOf`/`oneOf`
+ * branches, which json-schema-faker generates once the property is there.
+ */
+function dependencyEdges(schema: JSONSchema7): Map<string, string[]> {
+  const edges = new Map<string, string[]>();
+  const add = (trigger: string, names: string[]): void => {
+    edges.set(trigger, [...(edges.get(trigger) ?? []), ...names]);
+  };
+  const entries = (map: unknown): Array<[string, unknown]> =>
+    isRecord(map) ? Object.entries(map) : [];
+  const dependencies = [
+    ...entries(Reflect.get(schema, "dependentRequired")),
+    ...entries(schema.dependencies),
+    ...entries(Reflect.get(schema, "dependentSchemas")),
+  ];
+  for (const [trigger, dependency] of dependencies) {
+    if (Array.isArray(dependency)) {
+      add(
+        trigger,
+        dependency.filter((name) => typeof name === "string"),
+      );
+    } else if (isJSONSchema7(dependency)) {
+      add(trigger, dependentSchemaNames(dependency));
+    }
+  }
+  return edges;
+}
+
+/** The property names a dependent schema requires or declares. */
+function dependentSchemaNames(dependent: JSONSchema7): string[] {
+  const names: string[] = [];
+  const branches = [
+    dependent,
+    ...(dependent.allOf ?? []),
+    ...(dependent.anyOf ?? []),
+    ...(dependent.oneOf ?? []),
+  ];
+  for (const branch of branches) {
+    if (!isJSONSchema7(branch)) continue;
+    names.push(...(branch.required ?? []));
+    if (isJSONSchema7(branch.properties)) {
+      names.push(...Object.keys(branch.properties));
+    }
+  }
+  return names;
+}
+
+/** `names` and every property their presence brings in, transitively. */
+function broughtIn(
+  names: Iterable<string>,
+  edges: Map<string, string[]>,
+): Set<string> {
+  const reached = new Set<string>();
+  const pending = [...names];
+  while (pending.length > 0) {
+    const name = pending.pop();
+    if (name === undefined || reached.has(name)) continue;
+    reached.add(name);
+    pending.push(...(edges.get(name) ?? []));
+  }
+  return reached;
+}
+
+/**
+ * The properties a copy of `schema` leaves out to honour `not.required`: the
+ * first property it lists that `schema` declares in `properties` and neither
+ * requires nor brings in through the dependencies of a required property,
+ * with every property whose dependencies would bring it back. None when a
+ * merge (`allOf`, `anyOf`, `oneOf`, `if`) could bring the property back.
  */
 export function omittableNotRequired(
   schema: JSONSchema7,
   properties: unknown,
   not: JSONSchema7,
-): string | undefined {
+): string[] | undefined {
   if (mergesAheadOfNot(schema) || !isJSONSchema7(properties)) return undefined;
-  const required = new Set(schema.required ?? []);
-  return (not.required ?? []).find(
-    (name) => !required.has(name) && Object.hasOwn(properties, name),
+  const edges = dependencyEdges(schema);
+  const generated = broughtIn(schema.required ?? [], edges);
+  const omitted = (not.required ?? []).find(
+    (name) => !generated.has(name) && Object.hasOwn(properties, name),
   );
+  if (omitted === undefined) return undefined;
+  const bringers = [...edges.keys()].filter(
+    (trigger) =>
+      trigger !== omitted && broughtIn([trigger], edges).has(omitted),
+  );
+  return [omitted, ...bringers];
 }
 
 /**

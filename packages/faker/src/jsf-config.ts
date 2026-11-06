@@ -1009,11 +1009,13 @@ function narrowCopyTypes(
 }
 
 /**
- * Leave the first optional property `not.required` lists out of the copy. A
- * `false` schema is one json-schema-faker skips, even under
- * `alwaysFakeOptionals`. A merge would bring the property back, so a node
- * with `allOf`/`anyOf`/`oneOf`/`if` is left alone, as is one whose listed
- * properties are all required or undeclared.
+ * Leave the first optional property `not.required` lists out of the copy,
+ * with every property whose dependencies would bring it back
+ * (`omittableNotRequired`). A `false` schema is one json-schema-faker skips,
+ * even under `alwaysFakeOptionals`. A merge would bring the property back,
+ * so a node with `allOf`/`anyOf`/`oneOf`/`if` is left alone, as is one whose
+ * listed properties are all required, brought in by a required property, or
+ * undeclared.
  */
 function omitOneNotRequired(
   schema: JSONSchema7,
@@ -1024,12 +1026,14 @@ function omitOneNotRequired(
   const omitted = omittableNotRequired(schema, properties, not);
   if (omitted === undefined || !isJSONSchema7(properties)) return false;
   const kept: Record<string, JsonSchema> = { ...properties };
-  Object.defineProperty(kept, omitted, {
-    value: false,
-    writable: true,
-    enumerable: true,
-    configurable: true,
-  });
+  for (const name of omitted) {
+    Object.defineProperty(kept, name, {
+      value: false,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
   normalized.properties = kept;
   return true;
 }

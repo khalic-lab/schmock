@@ -1610,7 +1610,10 @@ register them the same way:
 - Generation avoids what `not` rejects when it is a lone `not.type` (a type
   union is narrowed, an untyped node gets another type), a `not.const` or
   `not.enum`, or a lone `not.required` (one optional listed property is left
-  out). A property whose schema is `{ not: {} }` is left out.
+  out, together with every property whose `dependentRequired`,
+  `dependencies` or `dependentSchemas` would bring it back). A listed
+  property that a required property's dependencies bring in is not
+  optional. A property whose schema is `{ not: {} }` is left out.
 - Any other `not` is rejected with `SCHEMA_VALIDATION_ERROR` at `<path>.not`
   when the plugin is created, because json-schema-faker would generate values
   it rejects. So is one of the forms above beside `allOf`, `anyOf`, `oneOf`,
