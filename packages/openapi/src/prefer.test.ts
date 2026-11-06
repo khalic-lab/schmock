@@ -332,3 +332,49 @@ describe("Prefer example under a default or range response", () => {
     },
   );
 });
+
+describe("Prefer example held only by a 1XX response", () => {
+  // Swagger 2.0 keys its examples by name, with no per-media-type lookup, and
+  // every response takes the operation's `produces`. A 1XX entry has no status
+  // a mock can answer with, so its example is never served: the request is
+  // answered by the 200, and content negotiation must judge it against that
+  // entry, not reject it against the 1XX one.
+  const spec = {
+    swagger: "2.0",
+    info: { title: "informational example", version: "1.0.0" },
+    produces: ["application/json"],
+    paths: {
+      "/info": {
+        get: {
+          responses: {
+            "1XX": {
+              description: "informational",
+              examples: { early: { stage: "early" } },
+            },
+            "200": {
+              description: "ok",
+              headers: {
+                "Content-Type": { type: "string", enum: ["text/plain"] },
+              },
+              schema: { type: "string", enum: ["hi"] },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  it("serves the 200 instead of rejecting the request against the 1XX", async () => {
+    const mock = schmock();
+    mock.pipe(await openapi({ spec }));
+
+    const response = await mock.handle("GET", "/info", {
+      headers: { accept: "text/plain", prefer: "example=early" },
+    });
+
+    expect({ status: response.status, body: response.body }).toEqual({
+      status: 200,
+      body: "hi",
+    });
+  });
+});
