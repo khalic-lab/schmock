@@ -2215,6 +2215,17 @@ describe("minting ids past seeds the counter cannot continue", () => {
     expect((list.body as unknown[]).length).toBe(2);
   });
 
+  it("mints whole ids after a fractional integer seed", async () => {
+    // A fractional id is no counter the scheme minted: resuming from it
+    // minted 3.5, 4.5, … for an integer id.
+    const mock = await mockOf(usersSpec({ type: "integer" }), {
+      seed: { users: [{ id: 2.5, name: "seed" }] },
+    });
+
+    const ids = await createIds(mock, 2);
+    expect(ids).toEqual([1, 2]);
+  });
+
   it("keeps a synthetic uuid valid after a seed at the top node", async () => {
     const seededId = "00000000-0000-4000-8000-999999999999";
     const mock = await mockOf(usersSpec({ type: "string", format: "uuid" }), {
