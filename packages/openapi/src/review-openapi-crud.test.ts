@@ -1167,6 +1167,59 @@ describe("resource list overrides under validateResponses", () => {
     expect(posts.body).toEqual([{ id: 1, title: "P" }]);
   });
 
+  it("keeps a list's per-media-type contracts under listFlat: false", async () => {
+    const negotiatedSpec = spec({
+      "/users": {
+        get: {
+          responses: {
+            "200": {
+              description: "list",
+              content: {
+                ...json({ type: "array", items: user }),
+                "application/vnd.page+json": {
+                  schema: {
+                    type: "object",
+                    required: ["items"],
+                    properties: {
+                      items: { type: "array", items: user },
+                      total: { type: "integer" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          responses: { "201": { description: "c", content: json(user) } },
+        },
+      },
+      "/users/{id}": {
+        get: {
+          responses: { "200": { description: "u", content: json(user) } },
+        },
+      },
+    });
+    const mock = await mockOf(negotiatedSpec, {
+      validateResponses: true,
+      seed: { users: [{ id: 1, name: "A" }] },
+      resources: { users: { listFlat: false } },
+    });
+
+    const page = await mock.handle("GET", "/users", {
+      headers: { accept: "application/vnd.page+json" },
+    });
+    expect(page.status).toBe(200);
+    expect(page.headers["content-type"]).toBe("application/vnd.page+json");
+    expect(page.body).toMatchObject({ items: [{ id: 1, name: "A" }] });
+
+    const flat = await mock.handle("GET", "/users", {
+      headers: { accept: "application/json" },
+    });
+    expect(flat.status).toBe(200);
+    expect(flat.body).toEqual([{ id: 1, name: "A" }]);
+  });
+
   it("still checks the overridden list's items against the item contract", async () => {
     const mock = schmock({
       state: { "openapi:collections:/users": [{ id: 1 }] },

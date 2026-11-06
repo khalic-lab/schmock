@@ -310,10 +310,11 @@ export function applyOverrides(
   resource: CrudResource,
   override: Schmock.ResourceOverride,
 ): void {
-  if (
-    override.listWrapProperty !== undefined ||
-    override.listFlat !== undefined
-  ) {
+  // Only an override that names a list shape rewrites the list: a
+  // `listFlat: false` or an empty `listWrapProperty` describes none, and
+  // dropping the per-media-type contracts for it served the default shape
+  // under every negotiated media type.
+  if (override.listFlat === true || override.listWrapProperty) {
     for (const route of resource.routes) {
       if (route.op !== "list") continue;
       const listMeta = route.meta;

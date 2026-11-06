@@ -1509,7 +1509,9 @@ operation's success response. Only when none applies is the body the built-in
 
 `listWrapProperty` and `listFlat` describe one list shape, so they also discard
 the operation's per-media-type response contracts: an overridden list answers
-with the overridden shape regardless of the negotiated `Accept`.
+with the overridden shape regardless of the negotiated `Accept`. A
+`listFlat: false` or an empty `listWrapProperty` names no shape, so it leaves
+the list and its contracts as the spec declares them.
 
 With `validateResponses: true`, an overridden list is validated against the
 shape it serves: `{ <listWrapProperty>: [<item>] }`, or `[<item>]` for
