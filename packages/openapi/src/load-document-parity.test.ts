@@ -148,6 +148,29 @@ describe("loadDocument agrees under the Node and browser resolvers", () => {
     }
   });
 
+  it("refuses strict: true in a browser whether or not the spec has a $ref", async () => {
+    for (const schema of [
+      { type: "string" },
+      { $ref: "#/components/schemas/Name" },
+    ]) {
+      const spec = specWithResponseSchema(schema, {
+        Name: { type: "string" },
+      });
+
+      const browser = await loadDocumentFor("browser");
+      const failure = await browser(structuredClone(spec), {
+        strict: true,
+      }).catch((error: unknown) => error);
+      expect((failure as { code?: unknown }).code).toBe("OPENAPI_NODE_ONLY");
+      expect((failure as Error).message).toContain("strict: true");
+
+      const node = await loadDocumentFor("node");
+      await expect(
+        node(structuredClone(spec), { strict: true }),
+      ).resolves.toBeDefined();
+    }
+  });
+
   it("refuses a $ref to nothing with the same code", async () => {
     const spec = specWithResponseSchema({
       $ref: "#/components/schemas/Missing",
