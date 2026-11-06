@@ -67,6 +67,33 @@ export function arrayCountRange(schema: JSONSchema7): {
   least: number;
   most: number;
 } {
+  const range = declaredCountRange(schema);
+  // A closed tuple can't hold more items than it has positions; a minItems
+  // past them is left to fail loudly in json-schema-faker.
+  const closed = closedTupleLength(schema);
+  if (closed === undefined) return range;
+  const cap = Math.max(closed, schema.minItems ?? 0);
+  return { least: Math.min(range.least, cap), most: Math.min(range.most, cap) };
+}
+
+/**
+ * The positions of a tuple that allows nothing after them: a Draft-7 `items`
+ * list with `additionalItems: false`, or `prefixItems` with `items: false`.
+ */
+function closedTupleLength(schema: JSONSchema7): number | undefined {
+  if (Array.isArray(schema.items)) {
+    return schema.additionalItems === false ? schema.items.length : undefined;
+  }
+  const prefixItems: unknown = Reflect.get(schema, "prefixItems");
+  return Array.isArray(prefixItems) && schema.items === false
+    ? prefixItems.length
+    : undefined;
+}
+
+function declaredCountRange(schema: JSONSchema7): {
+  least: number;
+  most: number;
+} {
   const single = (count: number) => ({ least: count, most: count });
   if (schema.minItems !== undefined && schema.maxItems !== undefined) {
     const min = schema.minItems;

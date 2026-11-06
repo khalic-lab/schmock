@@ -1411,7 +1411,9 @@ interface FakerPluginOptions {
 `count` sizes the root array, including one the root reaches through a `$ref`,
 a single-entry `allOf` or an `anyOf`/`oneOf` union with `{ type: 'null' }`. A
 `count` above `MAX_ARRAY_SIZE` for such a root is rejected with
-`ResourceLimitError` (`array_size`) when the plugin is created.
+`ResourceLimitError` (`array_size`) when the plugin is created. Without a
+`count`, a root tuple closed by `additionalItems: false` (or `prefixItems`
+with `items: false`) gets no more items than it has positions.
 A root tuple without `count`, `minItems` or `maxItems` generates its prefix
 items (Draft 7 `items` array or 2020-12 `prefixItems`). A closed tuple
 (`additionalItems: false`, or `items: false` beside `prefixItems`) never

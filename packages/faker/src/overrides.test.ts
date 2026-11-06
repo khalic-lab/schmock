@@ -36,6 +36,47 @@ describe("determineArrayCount", () => {
     const count = determineArrayCount(schema);
     expect(count).toBe(5);
   });
+
+  it.each([
+    [
+      "a Draft-7 tuple with additionalItems false",
+      {
+        type: "array",
+        items: [{ type: "string" }, { type: "integer" }],
+        additionalItems: false,
+        minItems: 2,
+      },
+    ],
+    [
+      "a prefixItems tuple with items false",
+      {
+        type: "array",
+        prefixItems: [{ type: "string" }, { type: "integer" }],
+        items: false,
+        minItems: 2,
+      },
+    ],
+    [
+      "a prefixItems tuple with items false and no minItems",
+      {
+        type: "array",
+        prefixItems: [{ type: "string" }, { type: "integer" }],
+        items: false,
+      },
+    ],
+  ] satisfies Array<[string, JSONSchema7]>)(
+    "generates a root %s at no more than its positions",
+    async (_, schema) => {
+      for (let seed = 1; seed <= 5; seed += 1) {
+        const generated = await generateFromSchema({ schema, seed });
+        expect(Array.isArray(generated)).toBe(true);
+        const [first, second, ...rest] = generated as unknown[];
+        expect(typeof first).toBe("string");
+        expect(Number.isInteger(second)).toBe(true);
+        expect(rest).toEqual([]);
+      }
+    },
+  );
 });
 
 describe("a closed tuple at the root", () => {
