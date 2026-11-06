@@ -1750,6 +1750,11 @@ from `@schmock/faker`.
 it draws before trimming the array to `maxItems`, so each draw also counts
 against `generated_nodes`.
 
+json-schema-faker draws a string with no `maxLength` up to ten characters past
+its `minLength`, so a `minLength` within ten of `MAX_STRING_LENGTH` is
+generated with the limit as its `maxLength`, and `minLength: 65536` always
+gives exactly 65,536 characters.
+
 `string_length` covers object keys too. At creation, the shortest match of
 each `patternProperties` pattern is charged as a key generation invents,
 unless the object's `const`, `enum` or `default` is returned instead.

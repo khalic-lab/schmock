@@ -1,7 +1,7 @@
 import type { JSONSchema7 } from "json-schema";
 import { registerFormat } from "json-schema-faker";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MAX_NESTING_DEPTH } from "./constants.js";
+import { MAX_NESTING_DEPTH, MAX_STRING_LENGTH } from "./constants.js";
 import { generateFromSchema } from "./index.js";
 import {
   createFakerInstance,
@@ -1852,6 +1852,85 @@ describe("invented pattern property keys", () => {
     };
     for (const value of await generateSeeds(schema, 3)) {
       expect(Object.keys(objectOf(value)).sort()).toEqual(["x_", "x_1"]);
+    }
+  });
+});
+
+describe("a minLength at the string limit with no maxLength", () => {
+  it("never generates past the string limit", async () => {
+    for (const minLength of [MAX_STRING_LENGTH - 4, MAX_STRING_LENGTH]) {
+      for (let seed = 0; seed < 10; seed += 1) {
+        const generated = await generateFromSchema({
+          schema: { type: "string", minLength },
+          seed,
+        });
+        expect(typeof generated).toBe("string");
+        expect((generated as string).length).toBeGreaterThanOrEqual(minLength);
+        expect((generated as string).length).toBeLessThanOrEqual(
+          MAX_STRING_LENGTH,
+        );
+      }
+    }
+  });
+
+  it("still draws lengths past minLength, up to the limit", async () => {
+    const minLength = MAX_STRING_LENGTH - 4;
+    const lengths = new Set<number>();
+    for (let seed = 0; seed < 10; seed += 1) {
+      const generated = await generateFromSchema({
+        schema: { type: "string", minLength },
+        seed,
+      });
+      lengths.add((generated as string).length);
+    }
+    expect(Math.max(...lengths)).toBeGreaterThan(minLength);
+  });
+
+  it("keeps an explicit maxLength below the limit", async () => {
+    const maxLength = MAX_STRING_LENGTH - 5;
+    for (let seed = 0; seed < 10; seed += 1) {
+      const generated = await generateFromSchema({
+        schema: { type: "string", minLength: MAX_STRING_LENGTH - 6, maxLength },
+        seed,
+      });
+      expect((generated as string).length).toBeGreaterThanOrEqual(
+        MAX_STRING_LENGTH - 6,
+      );
+      expect((generated as string).length).toBeLessThanOrEqual(maxLength);
+    }
+  });
+
+  it("leaves a minLength whose open draw ends at the limit unbounded", () => {
+    expect(
+      normalizeSchemaForJsf({
+        type: "string",
+        minLength: MAX_STRING_LENGTH - 10,
+      }).maxLength,
+    ).toBeUndefined();
+    expect(
+      normalizeSchemaForJsf({
+        type: "string",
+        minLength: MAX_STRING_LENGTH - 9,
+      }).maxLength,
+    ).toBe(MAX_STRING_LENGTH);
+  });
+
+  it("never holds a node below its own minLength", () => {
+    expect(
+      normalizeSchemaForJsf({
+        type: "string",
+        minLength: MAX_STRING_LENGTH + 1,
+      }).maxLength,
+    ).toBe(MAX_STRING_LENGTH + 1);
+  });
+
+  it("holds a minLength merged in from allOf to the limit too", async () => {
+    for (let seed = 0; seed < 10; seed += 1) {
+      const generated = await generateFromSchema({
+        schema: { type: "string", allOf: [{ minLength: MAX_STRING_LENGTH }] },
+        seed,
+      });
+      expect((generated as string).length).toBe(MAX_STRING_LENGTH);
     }
   });
 });

@@ -7,7 +7,11 @@ import {
   type JsonSchema,
   type Random,
 } from "json-schema-faker-private";
-import { DETERMINISTIC_REF_DATE, JSF_MAX_DEPTH } from "./constants.js";
+import {
+  DETERMINISTIC_REF_DATE,
+  JSF_MAX_DEPTH,
+  MAX_STRING_LENGTH,
+} from "./constants.js";
 import { narrowTypeUnion, omittableNotRequired } from "./not-support.js";
 import { assertOutputWithinLimits } from "./output-limits.js";
 import { resolveLocalRef } from "./post-process.js";
@@ -109,6 +113,27 @@ function boundByteLength(normalized: JsfObjectSchema): void {
   if (least > most) return;
   normalized.pattern = `^(?:[A-Za-z0-9+/]{${BASE64_BLOCK}}){${least},${most}}$`;
   delete normalized.format;
+}
+
+/**
+ * How far past `minLength` json-schema-faker draws a length when no
+ * `maxLength` bounds it.
+ */
+const OPEN_LENGTH_SPAN = 10;
+
+/**
+ * Without a `maxLength`, json-schema-faker draws a string's length up to
+ * `minLength + 10`, so a `minLength` the string limit admits still came out
+ * past that limit on most requests. Hold such a node to the limit, which
+ * every length it must reach fits within. Only the JSF copy changes, and an
+ * `allOf` merge takes the smaller `maxLength`, so an entry carrying the
+ * `minLength` is held too.
+ */
+function holdOpenLengthToLimit(normalized: JsfObjectSchema): void {
+  const { minLength, maxLength } = normalized;
+  if (typeof minLength !== "number" || maxLength !== undefined) return;
+  if (minLength + OPEN_LENGTH_SPAN <= MAX_STRING_LENGTH) return;
+  normalized.maxLength = Math.max(minLength, MAX_STRING_LENGTH);
 }
 
 /** ISO 8601 duration units, each with the largest value generated for it. */
@@ -942,6 +967,7 @@ function normalizeSchemaNodeForJsf(
   integerizeStep(normalized);
   keepTighterBounds(normalized);
   boundByteLength(normalized);
+  holdOpenLengthToLimit(normalized);
 
   // Bespoke pre-step: a Draft-7 tuple's list becomes `prefixItems`, and its
   // `additionalItems` becomes `items` (`true` when absent or malformed).
