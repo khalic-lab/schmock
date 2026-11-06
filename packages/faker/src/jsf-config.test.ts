@@ -1796,8 +1796,36 @@ describe("invented pattern property keys", () => {
         "^a+$": { type: "integer" },
       },
     };
+    const test = RegExp.prototype.test;
+    const backtracked: string[] = [];
+    const spy = vi
+      .spyOn(RegExp.prototype, "test")
+      .mockImplementation(function (this: RegExp, input: string) {
+        if (this.source === "^(a+){10}$") backtracked.push(String(input));
+        return test.call(this, input);
+      });
     const started = performance.now();
-    normalizeSchemaForJsf(schema, { patternKeySeed: 1 });
+    try {
+      normalizeSchemaForJsf(schema, { patternKeySeed: 1 });
+    } finally {
+      spy.mockRestore();
+    }
+    // Every key the backtracking pattern saw is one JSF generated from it,
+    // never a suffixed string ("aaaa1") that makes it backtrack.
+    expect(backtracked.length).toBeGreaterThan(0);
+    for (const key of backtracked) expect(key).toMatch(/^a+$/);
     expect(performance.now() - started).toBeLessThan(1000);
   }, 60_000);
+
+  it("suffixes a generated key only once it is taken", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      minProperties: 3,
+      patternProperties: { "^x_": { type: "integer" } },
+      additionalProperties: false,
+    };
+    for (const value of await generateSeeds(schema, 3)) {
+      expect(Object.keys(objectOf(value))).toEqual(["x_", "x_1", "x_2"]);
+    }
+  });
 });
