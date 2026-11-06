@@ -645,10 +645,25 @@ function createFetchResponse(
     serializeNormalizedResponseBody(normalized) ?? null,
     { status: normalized.status, headers: normalized.headers },
   );
-  // A constructed Response has an empty url. Real fetch reports the request
-  // URL, and code resolving links with `new URL(next, res.url)` needs it.
-  Object.defineProperty(response, "url", { value: context.url });
   context.draft.response = normalized;
+  return withResponseUrl(response, context.url);
+}
+
+/**
+ * A constructed Response has an empty url. Real fetch reports the request
+ * URL, and code resolving links with `new URL(next, res.url)` needs it. The
+ * platform's `clone()` copies only internal state, so it is wrapped to carry
+ * the url onto every clone as well.
+ */
+function withResponseUrl(response: Response, url: string): Response {
+  Object.defineProperty(response, "url", { value: url });
+  Object.defineProperty(response, "clone", {
+    value: (): Response =>
+      withResponseUrl(
+        Reflect.apply(Response.prototype.clone, response, []),
+        url,
+      ),
+  });
   return response;
 }
 

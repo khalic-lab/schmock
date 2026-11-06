@@ -424,7 +424,7 @@ A method outside `HTTP_METHODS` (`PROPFIND`, `PURGE`, …), including one a
 `passthrough` is `true` and gets 404 `ROUTE_NOT_FOUND` when it is `false`.
 
 A mocked `Response` reports `response.url` as the request URL without its
-fragment. `statusText` is `''`.
+fragment, and so does every `response.clone()`. `statusText` is `''`.
 
 Interception is a lease, not a lock. A mock may hold any number of concurrent
 leases — nested providers, separate roots, or an adapter alongside a manual

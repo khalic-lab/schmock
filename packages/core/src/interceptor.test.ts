@@ -27,6 +27,26 @@ describe("mock.intercept()", () => {
     handle.restore();
   });
 
+  it("keeps the request URL on clones of a mocked Response", async () => {
+    mock("GET /api/users", [{ id: 1 }]);
+    const handle = mock.intercept();
+
+    try {
+      const res = await fetch("http://localhost/api/users?page=1#top");
+      const clone = res.clone();
+      expect(res.url).toBe("http://localhost/api/users?page=1");
+      expect(clone.url).toBe("http://localhost/api/users?page=1");
+      expect(clone.clone().url).toBe("http://localhost/api/users?page=1");
+      expect(new URL("?page=2", clone.url).href).toBe(
+        "http://localhost/api/users?page=2",
+      );
+      expect(await clone.json()).toEqual([{ id: 1 }]);
+      expect(await res.json()).toEqual([{ id: 1 }]);
+    } finally {
+      handle.restore();
+    }
+  });
+
   it("returns browser binary bodies without JSON serialization", async () => {
     const bytes = new Uint8Array([1, 2, 3]);
     mock("GET /api/binary", bytes);
