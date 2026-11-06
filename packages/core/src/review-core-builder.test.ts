@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it, vi } from "vitest";
-import { awaitWithAbort } from "./abort";
+import { awaitHookWithAbort, awaitWithAbort } from "./abort";
 import { CallableMockInstance } from "./builder";
 import { canonicalizePath } from "./constants";
 import { schmock } from "./index";
@@ -239,6 +239,64 @@ describe("abort contract (docs/api.md: rejects with the signal reason)", () => {
     controller.abort(reason);
 
     await expect(pending).rejects.toBe(reason);
+  });
+
+  it("never calls the generator once the signal has aborted", async () => {
+    const mock = schmock();
+    const generator = vi.fn(() => ({ ok: true }));
+    mock("GET /late", generator);
+    const controller = new AbortController();
+    const reason = new Error("aborted in a microtask");
+
+    const pending = mock.handle("GET", "/late", { signal: controller.signal });
+    queueMicrotask(() => controller.abort(reason));
+
+    await expect(pending).rejects.toBe(reason);
+    expect(generator).not.toHaveBeenCalled();
+  });
+
+  it("observes a pending value when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    const reason = new Error("already gone");
+    controller.abort(reason);
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      const failure = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("settles later")), 0);
+      });
+      await expect(awaitWithAbort(failure, controller.signal)).rejects.toBe(
+        reason,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
+  });
+
+  it("observes a pending hook value a tracker leaves alone when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    const reason = new Error("already gone");
+    controller.abort(reason);
+    const unhandled = vi.fn();
+    const tracked: PromiseLike<unknown>[] = [];
+    process.on("unhandledRejection", unhandled);
+    try {
+      const failure = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("settles later")), 0);
+      });
+      await expect(
+        awaitHookWithAbort(failure, controller.signal, (pending) => {
+          tracked.push(pending);
+        }),
+      ).rejects.toBe(reason);
+      expect(tracked).toHaveLength(1);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
   });
 
   it("removes its abort listener once the awaited value resolves", async () => {

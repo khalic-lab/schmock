@@ -1366,6 +1366,26 @@ describe("mock.intercept()", () => {
     }
   });
 
+  it("leaves no unhandled rejection when request:start aborts the fetch", async () => {
+    mock("GET /api/users", [{ id: 1 }]);
+    const controller = new AbortController();
+    mock.on("request:start", () => controller.abort());
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    const handle = mock.intercept();
+
+    try {
+      await expect(
+        fetch("http://localhost/api/users", { signal: controller.signal }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+      handle.restore();
+    }
+  });
+
   it("keeps the route generation admitted before an async request hook", async () => {
     let announceHookStart = () => {};
     let releaseHook = () => {};

@@ -767,6 +767,8 @@ export class CallableMockInstance {
     try {
       let result: unknown;
       if (isGeneratorFunction(match.route.generator)) {
+        // An abort since the preflight must not run route code at all.
+        throwIfAborted(signal);
         result = await awaitWithAbort(match.route.generator(context), signal);
       } else {
         // Static data is one object shared by every request; plugins get

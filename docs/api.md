@@ -1267,7 +1267,9 @@ else.
 
 `awaitWithAbort(value, signal)` settles with `value`, or rejects with the
 signal's abort reason as soon as it aborts. An already-aborted signal gives a
-rejected promise rather than a synchronous throw. `abortReason(signal)` is the
+rejected promise rather than a synchronous throw, and a promise `value` is
+still observed, so one that rejects later never becomes an unhandled
+rejection. `abortReason(signal)` is the
 signal's `reason`, or a generic `AbortError` on runtimes whose signals predate
 `reason`.
 

@@ -19,14 +19,19 @@ export function throwIfAborted(signal?: AbortSignal): void {
  * Settle with `value`, or reject with the signal's abort reason as soon as the
  * signal aborts, whichever comes first. Without a signal it only awaits the
  * value. An already-aborted signal rejects instead of throwing, so a caller
- * that does not `await` the result still sees the abort as a rejection.
+ * that does not `await` the result still sees the abort as a rejection. The
+ * value is observed either way: a promise the abort abandons may still reject,
+ * and that must never surface as an unhandled rejection.
  */
 export function awaitWithAbort<T>(
   value: T | PromiseLike<T>,
   signal?: AbortSignal,
 ): Promise<T> {
   if (!signal) return Promise.resolve(value);
-  if (signal.aborted) return Promise.reject(abortReason(signal));
+  if (signal.aborted) {
+    Promise.resolve(value).catch(() => {});
+    return Promise.reject(abortReason(signal));
+  }
 
   return new Promise<T>((resolve, reject) => {
     let settled = false;
