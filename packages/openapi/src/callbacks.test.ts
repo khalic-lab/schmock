@@ -81,6 +81,29 @@ describe("dispatchCallbacks", () => {
     ]);
   });
 
+  it("masks an encoded credential name and keeps the fragment after a masked value", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const dispatcher = vi.fn((_request: Schmock.OpenApiCallbackRequest) =>
+      Promise.reject(new Error("ECONNREFUSED")),
+    );
+    // access%5Ftoken is access_token as a server decodes it; the credential
+    // right before the fragment must not swallow it.
+    const callbackUrl =
+      "https://client.example/hook?page=2&access%5Ftoken=SECRET123&api_key=KEY456#frag";
+
+    await dispatchCallbacks(
+      [{ urlExpression: "{$request.body#/callbackUrl}", method: "POST" }],
+      dispatcher,
+      makeContext({ body: { callbackUrl } }),
+      { id: 1 },
+    );
+
+    const printed = warnSpy.mock.calls.map((call) => String(call[0]));
+    expect(printed).toEqual([
+      "[@schmock/openapi] Callback dispatcher failed for POST https://client.example/hook?page=2&access%5Ftoken=[redacted]&api_key=[redacted]#frag:",
+    ]);
+  });
+
   it("skips callbacks whose runtime URL resolves to an empty value", async () => {
     const dispatcher = vi.fn((_request: Schmock.OpenApiCallbackRequest) => {});
 
