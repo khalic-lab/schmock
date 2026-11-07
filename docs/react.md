@@ -74,12 +74,19 @@ Its routes go to older leases or the network, and `fetch` is restored once no
 other lease is held. Showing it again takes the lease back at the dispatch
 position the provider committed with: behind any lease another root or a
 manual `mock.intercept()` took after the provider first mounted, ahead of any
-older one. While React renders the hidden content (right after the hide, and on
-every re-render while hidden), the provider takes a render-time lease at that
-same position for one task, so a fetch started by that render is mocked without
-outranking a newer lease. A provider mounted hidden gets its position when it
-is first shown, and a new `mock` prop takes a new position at the front, hidden
-or not.
+older one. A hidden provider holds no lease between renders, but it does
+answer while React renders its hidden content (right after the hide, and on
+every re-render while hidden): each such render takes a render-time lease at
+that same position for one task, so a fetch started by that render is mocked.
+For that task the provider answers every route that no newer lease claims.
+
+A provider mounted hidden has not committed yet, so its first render takes a
+lease at the front, and every later render, hidden or the reveal, keeps the
+position of that first one. Leases taken after it mounted stay ahead of it.
+React renders hidden content after the visible content of the same update, so a
+pane mounted hidden sits ahead of the visible panes mounted with it, and on a
+route both serve it answers for one task after each re-render of the hidden
+pane. A new `mock` prop takes a new position at the front, hidden or not.
 
 Calling `mock.reset()` while the provider is mounted clears routes, state,
 history, plugins, and listeners but preserves the provider's explicit
