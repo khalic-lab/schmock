@@ -10,7 +10,8 @@
     ".": {
       "entry": [
         "benchmarks/*.ts",
-        "scripts/*.{js,mjs,ts}"
+        "scripts/*.{js,mjs,ts}",
+        "scripts/smoke-tests/registry-fixture.mjs"
       ],
       "ignoreDependencies": [
         "@angular/common",
