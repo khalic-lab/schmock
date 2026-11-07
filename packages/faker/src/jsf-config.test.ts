@@ -1770,6 +1770,18 @@ describe("invented pattern property keys", () => {
     }
   });
 
+  it("invents no key when the propertyNames pattern does not compile", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      patternProperties: { "^x_": { type: "integer" } },
+      propertyNames: { pattern: "(" },
+      additionalProperties: false,
+    };
+    for (const value of await generateSeeds(schema, 5)) {
+      expect(Object.keys(objectOf(value))).toEqual([]);
+    }
+  });
+
   it("invents no key a propertyNames keyword it cannot check could reject", async () => {
     for (const names of [
       { not: { const: "ab" } },
