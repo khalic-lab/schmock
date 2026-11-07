@@ -37,11 +37,15 @@ export function routeHeaderSeed(
   route: Schmock.RouteConfig,
 ): HeaderSeed | undefined {
   const value: unknown = route[HEADER_SEED_KEY];
-  return isRecord(value) &&
+  return isHeaderSeed(value) ? value : undefined;
+}
+
+function isHeaderSeed(value: unknown): value is HeaderSeed {
+  return (
+    isRecord(value) &&
     typeof value.seed === "number" &&
     typeof value.next === "function"
-    ? (value as unknown as HeaderSeed)
-    : undefined;
+  );
 }
 
 export function createHeaderSeed(seed?: number): HeaderSeed | undefined {
