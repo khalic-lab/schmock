@@ -14,6 +14,20 @@ function unavailableValue(value: unknown): Record<string, string> {
   };
 }
 
+/**
+ * A typed array of `view`'s own kind (Int16Array, Float64Array, ...) over
+ * `buffer`, falling back to bytes when its constructor builds no view.
+ */
+function sameKindOfView(
+  view: ArrayBufferView,
+  buffer: ArrayBuffer,
+): ArrayBufferView {
+  const View: unknown = view.constructor;
+  if (typeof View !== "function") return new Uint8Array(buffer);
+  const copy: unknown = Reflect.construct(View, [buffer]);
+  return ArrayBuffer.isView(copy) ? copy : new Uint8Array(buffer);
+}
+
 function removeSharedMemory(
   value: unknown,
   seen = new WeakMap<object, unknown>(),
@@ -42,11 +56,10 @@ function removeSharedMemory(
     const { buffer } = Uint8Array.from(
       new Uint8Array(value.buffer, value.byteOffset, value.byteLength),
     );
-    const View = value.constructor as new (
-      buffer: ArrayBuffer,
-    ) => ArrayBufferView;
     const copy =
-      value instanceof DataView ? new DataView(buffer) : new View(buffer);
+      value instanceof DataView
+        ? new DataView(buffer)
+        : sameKindOfView(value, buffer);
     seen.set(value, copy);
     return copy;
   }
