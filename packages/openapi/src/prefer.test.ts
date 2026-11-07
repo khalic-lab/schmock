@@ -378,3 +378,51 @@ describe("Prefer example held only by a 1XX response", () => {
     });
   });
 });
+
+describe("Prefer example under a range whose only free status is x99", () => {
+  // 400 through 498 are all declared, so the one status the 4XX entry still
+  // covers is 499: the scan of the class must reach its last code.
+  const declared = Object.fromEntries(
+    Array.from({ length: 99 }, (_, i) => [
+      String(400 + i),
+      { description: `declared ${400 + i}` },
+    ]),
+  );
+  const spec = {
+    openapi: "3.1.0",
+    info: { title: "last free status", version: "1.0.0" },
+    paths: {
+      "/last": {
+        get: {
+          responses: {
+            "200": { description: "ok" },
+            ...declared,
+            "4XX": {
+              description: "other client error",
+              content: {
+                "application/json": {
+                  schema: { type: "object" },
+                  examples: { last: { value: { error: "last" } } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  it("serves the 4XX example with status 499", async () => {
+    const mock = schmock();
+    mock.pipe(await openapi({ spec, validateResponses: true }));
+
+    const response = await mock.handle("GET", "/last", {
+      headers: { prefer: "example=last" },
+    });
+
+    expect({ status: response.status, body: response.body }).toEqual({
+      status: 499,
+      body: { error: "last" },
+    });
+  });
+});
