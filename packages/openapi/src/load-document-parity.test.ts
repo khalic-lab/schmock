@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -230,6 +233,29 @@ describe("loadDocument agrees under the Node and browser resolvers", () => {
       expect(browser).toEqual(node);
     });
   }
+
+  it("leaves a $ref into another document, fragment and all, to the Node resolver", async () => {
+    // Only a `$ref` that starts with `#` is a fragment of THIS document; the
+    // text after another document's first character is not an anchor name.
+    const dir = mkdtempSync(join(tmpdir(), "schmock-parity-"));
+    try {
+      writeFileSync(
+        join(dir, "other.json"),
+        JSON.stringify({ Pet: { type: "string" } }),
+      );
+      const loadDocument = await loadDocumentFor("node");
+      const api = (await loadDocument(
+        specWithResponseSchema({ $ref: `${join(dir, "other.json")}#/Pet` }),
+        { refs: { external: true } },
+      )) as unknown as { paths: Record<string, any> };
+
+      expect(
+        api.paths["/x"].get.responses["200"].content["application/json"].schema,
+      ).toEqual({ type: "string" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   for (const version of ["3.0.3", "3.1.0"]) {
     it(`refuses a self-pointing $ref with siblings with the same code (${version})`, async () => {
