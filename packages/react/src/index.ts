@@ -49,6 +49,19 @@ interface InterceptionLease {
 interface LeaseSlots {
   committed: InterceptionLease | null;
   pending: InterceptionLease | null;
+  /**
+   * The lease a commit last claimed, kept after it is released. A lease taken
+   * again for the same mock goes to its place in the dispatch order.
+   */
+  placed: InterceptionLease | null;
+}
+
+/** The place for a new lease of `mock`: the lease last committed for it, or the front. */
+function placeFor(
+  slots: LeaseSlots,
+  mock: Schmock.CallableMockInstance,
+): Schmock.InterceptHandle | undefined {
+  return slots.placed?.mock === mock ? slots.placed.handle : undefined;
 }
 
 interface InterceptionInstallerProps {
@@ -73,14 +86,19 @@ interface InterceptionReleaserProps {
  * so a render-created promise that awaits one mocked response and then fetches
  * again (a token, then the data) is still intercepted while a Suspense
  * boundary above the provider shows its fallback.
+ *
+ * `at` is the lease the provider last committed for this mock, so a render
+ * after an Activity hide takes its lease at that lease's position, not the
+ * front.
  */
 function acquireRenderLease(
   mock: Schmock.CallableMockInstance,
   options: Schmock.InterceptOptions,
+  at: Schmock.InterceptHandle | undefined,
 ): InterceptionLease {
   const lease: InterceptionLease = {
     mock,
-    handle: mock.intercept(options),
+    handle: mock.intercept(options, at),
     committed: false,
   };
   setTimeout(() => {
@@ -117,13 +135,17 @@ function InterceptionInstaller({
     slots.committed?.mock !== mock &&
     !(slots.pending?.mock === mock && slots.pending.handle.active)
   ) {
-    slots.pending = acquireRenderLease(mock, {
-      baseUrl,
-      passthrough,
-      beforeRequest,
-      beforeResponse,
-      errorFormatter,
-    });
+    slots.pending = acquireRenderLease(
+      mock,
+      {
+        baseUrl,
+        passthrough,
+        beforeRequest,
+        beforeResponse,
+        errorFormatter,
+      },
+      placeFor(slots, mock),
+    );
   }
 
   // The lease is keyed on the mock alone. A different mock is a genuinely new
@@ -138,6 +160,12 @@ function InterceptionInstaller({
   // keeps its passive effects, so a layout cleanup would leave fetch unpatched
   // for as long as the fallback shows, and lose the provider its dispatch
   // position.
+  //
+  // An `<Activity>` hide runs the passive cleanup too, so the lease is
+  // released while hidden. Every lease taken again for the same mock (this
+  // effect's fresh lease on a reveal or after StrictMode's simulated unmount,
+  // and the render-time lease) goes to the place of the lease last committed
+  // (`slots.placed`), so a reveal never jumps ahead of a lease taken since.
   useCommitEffect(() => {
     if (!hasDom()) return;
 
@@ -145,8 +173,9 @@ function InterceptionInstaller({
     const committed = slots.committed;
     if (committed?.mock === mock && committed.handle.active) return;
 
-    // Claim the render's lease; take a fresh one when there is none — after
-    // StrictMode's simulated unmount, or once an uncommitted lease lapsed.
+    // Claim the render's lease; take a fresh one at the committed place when
+    // there is none — after StrictMode's simulated unmount, after an Activity
+    // hide whose render lease lapsed, or once an uncommitted lease lapsed.
     const pending = slots.pending;
     let lease: InterceptionLease;
     if (pending?.mock === mock && pending.handle.active) {
@@ -155,12 +184,13 @@ function InterceptionInstaller({
     } else {
       lease = {
         mock,
-        handle: mock.intercept(optionsRef.current),
+        handle: mock.intercept(optionsRef.current, placeFor(slots, mock)),
         committed: true,
       };
     }
     slots.pending = null;
     slots.committed = lease;
+    slots.placed = lease;
   }, [mock]);
 
   // Declared after the lease effect so the handle exists on the first commit.
@@ -210,7 +240,11 @@ export function SchmockProvider({
   options,
   children,
 }: SchmockProviderProps) {
-  const slots = useRef<LeaseSlots>({ committed: null, pending: null }).current;
+  const slots = useRef<LeaseSlots>({
+    committed: null,
+    pending: null,
+    placed: null,
+  }).current;
   return createElement(
     SchmockContext.Provider,
     { value: mock },

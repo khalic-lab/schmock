@@ -52,3 +52,12 @@ Feature: React Adapter
     When its content suspends again on a plain update
     Then the Suspense fallback should be shown
     And requests should still be answered by the provider's mock
+
+  # Hiding an Activity runs the provider's passive cleanups, so the provider
+  # releases its lease; showing it again takes the lease back at the position
+  # its first commit took.
+  Scenario: A provider shown again by an Activity boundary keeps its dispatch position
+    Given a provider inside a visible Activity boundary and a newer interception of another mock on the same route
+    When the Activity boundary is hidden and shown again
+    Then the newer interception should still answer the shared route
+    And the provider's mock should answer it once the newer interception is released

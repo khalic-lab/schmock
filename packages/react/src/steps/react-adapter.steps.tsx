@@ -3,7 +3,14 @@
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { schmock } from "@schmock/core";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
-import { Suspense, use, useEffect, useLayoutEffect, useState } from "react";
+import {
+  Activity,
+  Suspense,
+  use,
+  useEffect,
+  useLayoutEffect,
+  useState,
+} from "react";
 import { expect, type Mock, vi } from "vitest";
 import { SchmockProvider, useSchmock } from "../index.js";
 
@@ -444,6 +451,64 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         async () => {
           const response = await fetch("http://localhost/api/suspended");
           expect(await response.json()).toEqual({ source: "mock" });
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A provider shown again by an Activity boundary keeps its dispatch position",
+    ({ Given, When, Then, And }) => {
+      let showProvider: (visible: boolean) => void = () => {};
+      let newer: Schmock.InterceptHandle | undefined;
+
+      Given(
+        "a provider inside a visible Activity boundary and a newer interception of another mock on the same route",
+        () => {
+          originalFetch = globalThis.fetch;
+          globalThis.fetch = vi.fn(async () =>
+            Response.json({ source: "net" }),
+          );
+          mock = schmock();
+          mock("GET /api/shared", { source: "provider" });
+          const newerMock = schmock();
+          newerMock("GET /api/shared", { source: "newer" });
+
+          const tree = (visible: boolean) => (
+            <Activity mode={visible ? "visible" : "hidden"}>
+              <SchmockProvider mock={mock}>
+                <div />
+              </SchmockProvider>
+            </Activity>
+          );
+          const view = render(tree(true));
+          showProvider = (visible) => view.rerender(tree(visible));
+          newer = newerMock.intercept();
+        },
+      );
+
+      When("the Activity boundary is hidden and shown again", async () => {
+        showProvider(false);
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+        showProvider(true);
+      });
+
+      Then(
+        "the newer interception should still answer the shared route",
+        async () => {
+          const response = await fetch("http://localhost/api/shared");
+          expect(await response.json()).toEqual({ source: "newer" });
+        },
+      );
+
+      And(
+        "the provider's mock should answer it once the newer interception is released",
+        async () => {
+          newer?.restore();
+          const response = await fetch("http://localhost/api/shared");
+          expect(await response.json()).toEqual({ source: "provider" });
         },
       );
     },

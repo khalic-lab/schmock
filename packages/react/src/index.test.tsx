@@ -369,6 +369,238 @@ describe("SchmockProvider", () => {
     await new Promise((settle) => setTimeout(settle, 0));
     expect(globalThis.fetch).toBe(savedFetch);
   });
+
+  describe("under an <Activity> boundary", () => {
+    let realFetch: typeof globalThis.fetch;
+    const manual: Schmock.InterceptHandle[] = [];
+
+    beforeEach(() => {
+      realFetch = vi.fn(async () => new Response("network"));
+      globalThis.fetch = realFetch;
+    });
+
+    afterEach(() => {
+      for (const handle of manual.splice(0)) handle.restore();
+    });
+
+    /** A lease taken outside the provider, released after the test if it is not. */
+    const keep = (handle: Schmock.InterceptHandle) => {
+      manual.push(handle);
+      return handle;
+    };
+
+    const serving = (name: string, paths = ["/x"]) => {
+      const mock = schmock();
+      for (const path of paths) mock(`GET ${path}` as Schmock.RouteKey, name);
+      return mock;
+    };
+
+    const text = async (path = "/x") =>
+      (await fetch(`http://localhost${path}`)).text();
+
+    const tick = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+    const activeLeases = (spy: {
+      mock: { results: Array<{ value: unknown }> };
+    }) =>
+      spy.mock.results.filter(
+        (result) => (result.value as Schmock.InterceptHandle).active,
+      ).length;
+
+    function App({
+      mode,
+      mock,
+    }: {
+      mode: "visible" | "hidden";
+      mock: Schmock.CallableMockInstance;
+    }) {
+      return (
+        <Activity mode={mode}>
+          <SchmockProvider mock={mock}>{null}</SchmockProvider>
+        </Activity>
+      );
+    }
+
+    it("keeps its place behind a lease taken after it mounted when a hidden Activity is shown again", async () => {
+      const a = serving("A");
+      const b = serving("B");
+      const { rerender, unmount } = render(<App mode="visible" mock={a} />);
+      const hb = keep(b.intercept());
+
+      rerender(<App mode="hidden" mock={a} />);
+      await tick();
+      rerender(<App mode="visible" mock={a} />);
+
+      expect(await text()).toBe("B");
+      hb.restore();
+      expect(await text()).toBe("A");
+      unmount();
+      expect(globalThis.fetch).toBe(realFetch);
+    });
+
+    it("does not outrank a newer lease while React renders the hidden Activity", async () => {
+      const a = serving("A", ["/x", "/y"]);
+      const b = serving("B");
+      const { rerender } = render(<App mode="visible" mock={a} />);
+      keep(b.intercept());
+
+      // The offscreen render right after the hide takes a one-task lease.
+      rerender(<App mode="hidden" mock={a} />);
+      expect(await text("/x")).toBe("B");
+      expect(await text("/y")).toBe("A");
+
+      await tick();
+      expect(await text("/y")).toBe("network");
+    });
+
+    it("stays behind a lease taken while it was hidden, after fetch was restored", async () => {
+      const a = serving("A");
+      const c = serving("C");
+      const { rerender, unmount } = render(<App mode="visible" mock={a} />);
+
+      rerender(<App mode="hidden" mock={a} />);
+      await tick();
+      expect(globalThis.fetch).toBe(realFetch);
+
+      const hc = keep(c.intercept());
+      rerender(<App mode="visible" mock={a} />);
+      expect(await text()).toBe("C");
+      hc.restore();
+      expect(await text()).toBe("A");
+      unmount();
+      expect(globalThis.fetch).toBe(realFetch);
+    });
+
+    it("holds one lease at its place under StrictMode across an Activity hide and reveal", async () => {
+      const a = serving("A");
+      const b = serving("B");
+      const spy = vi.spyOn(a, "intercept");
+      const tree = (mode: "visible" | "hidden") => (
+        <StrictMode>
+          <App mode={mode} mock={a} />
+        </StrictMode>
+      );
+      const { rerender, unmount } = render(tree("visible"));
+      const hb = keep(b.intercept());
+
+      await tick();
+      expect(activeLeases(spy)).toBe(1);
+      rerender(tree("hidden"));
+      await tick();
+      expect(activeLeases(spy)).toBe(0);
+      rerender(tree("visible"));
+      await tick();
+      expect(activeLeases(spy)).toBe(1);
+
+      expect(await text()).toBe("B");
+      hb.restore();
+      expect(await text()).toBe("A");
+      unmount();
+      expect(activeLeases(spy)).toBe(0);
+    });
+
+    it("keeps a lease older than the provider below it across a hide and reveal", async () => {
+      const o = serving("O");
+      const a = serving("A");
+      keep(o.intercept());
+      const { rerender } = render(<App mode="visible" mock={a} />);
+      expect(await text()).toBe("A");
+
+      rerender(<App mode="hidden" mock={a} />);
+      await tick();
+      expect(await text()).toBe("O");
+
+      rerender(<App mode="visible" mock={a} />);
+      expect(await text()).toBe("A");
+    });
+
+    it("gives a changed mock the front and keeps that place across a hide and reveal", async () => {
+      const a = serving("A");
+      const a2 = serving("A2");
+      const b = serving("B");
+      const { rerender } = render(<App mode="visible" mock={a} />);
+      keep(b.intercept());
+
+      rerender(<App mode="visible" mock={a2} />);
+      expect(await text()).toBe("A2");
+
+      const hd = keep(serving("D").intercept());
+      rerender(<App mode="hidden" mock={a2} />);
+      await tick();
+      rerender(<App mode="visible" mock={a2} />);
+      expect(await text()).toBe("D");
+      hd.restore();
+      expect(await text()).toBe("A2");
+    });
+
+    it("leaves no lease when unmounted while hidden", async () => {
+      const a = serving("A");
+      const spy = vi.spyOn(a, "intercept");
+      const { rerender, unmount } = render(<App mode="visible" mock={a} />);
+
+      rerender(<App mode="hidden" mock={a} />);
+      unmount();
+      await tick();
+
+      expect(globalThis.fetch).toBe(realFetch);
+      expect(spy.mock.results.length).toBeGreaterThan(0);
+      expect(activeLeases(spy)).toBe(0);
+    });
+
+    it("lets the visible pane's provider answer when two Activity panes serve one route", async () => {
+      const a = serving("A");
+      const b = serving("B");
+      function Panes({ tab }: { tab: "a" | "b" }) {
+        return (
+          <>
+            <Activity mode={tab === "a" ? "visible" : "hidden"}>
+              <SchmockProvider mock={a}>{null}</SchmockProvider>
+            </Activity>
+            <Activity mode={tab === "b" ? "visible" : "hidden"}>
+              <SchmockProvider mock={b}>{null}</SchmockProvider>
+            </Activity>
+          </>
+        );
+      }
+      const { rerender, unmount } = render(<Panes tab="a" />);
+      await tick();
+      expect(await text()).toBe("A");
+
+      rerender(<Panes tab="b" />);
+      await tick();
+      expect(await text()).toBe("B");
+
+      rerender(<Panes tab="a" />);
+      await tick();
+      expect(await text()).toBe("A");
+      unmount();
+      expect(globalThis.fetch).toBe(realFetch);
+    });
+
+    it("gives a mock changed while hidden the front on reveal and releases the old one", async () => {
+      const a = serving("A");
+      const b = serving("B");
+      const c = serving("C");
+      const spyA = vi.spyOn(a, "intercept");
+      const { rerender, unmount } = render(<App mode="visible" mock={a} />);
+      const hb = keep(b.intercept());
+
+      rerender(<App mode="hidden" mock={a} />);
+      rerender(<App mode="hidden" mock={c} />);
+      await tick();
+      expect(await text()).toBe("B");
+
+      rerender(<App mode="visible" mock={c} />);
+      expect(await text()).toBe("C");
+      expect(activeLeases(spyA)).toBe(0);
+      hb.restore();
+      unmount();
+      expect(globalThis.fetch).toBe(realFetch);
+    });
+  });
 });
 
 describe("useSchmock", () => {

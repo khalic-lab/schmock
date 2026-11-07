@@ -70,8 +70,16 @@ position when the content is revealed.
 
 An `<Activity>` boundary is different. Hiding it runs the provider's effect
 cleanups, as an unmount does, so the provider releases its lease while hidden.
-Showing it again takes a new lease at the front, ahead of any lease another
-root or a manual `mock.intercept()` took after the provider first mounted.
+Its routes go to older leases or the network, and `fetch` is restored once no
+other lease is held. Showing it again takes the lease back at the dispatch
+position the provider committed with: behind any lease another root or a
+manual `mock.intercept()` took after the provider first mounted, ahead of any
+older one. While React renders the hidden content (right after the hide, and on
+every re-render while hidden), the provider takes a render-time lease at that
+same position for one task, so a fetch started by that render is mocked without
+outranking a newer lease. A provider mounted hidden gets its position when it
+is first shown, and a new `mock` prop takes a new position at the front, hidden
+or not.
 
 Calling `mock.reset()` while the provider is mounted clears routes, state,
 history, plugins, and listeners but preserves the provider's explicit
