@@ -121,6 +121,9 @@ type ExchangeObservationOpener = () => ExchangeObserver | undefined;
 
 interface RegisteredInterceptor {
   token: symbol;
+  // Dispatch order: session.interceptors stays sorted by rank and is read
+  // from the end, so the highest rank is consulted first.
+  rank: number;
   // Identifies the mock behind the lease. Leases sharing an owner ask it each
   // distinct effective request once; undefined means the lease stands alone.
   owner?: symbol;
@@ -144,6 +147,29 @@ interface InterceptorSession {
 }
 
 let activeSession: InterceptorSession | undefined;
+
+// Dispatch ranks. Module-wide and never reset, so a rank taken before the
+// stack emptied still sorts below every lease registered since.
+let lastLeaseRank = 0;
+const leaseRanks = new WeakMap<Schmock.InterceptHandle, number>();
+
+function rankOfLease(handle: Schmock.InterceptHandle): number {
+  const rank = leaseRanks.get(handle);
+  if (rank === undefined) {
+    throw new TypeError(
+      "intercept(): `at` must be a handle returned by intercept()",
+    );
+  }
+  return rank;
+}
+
+/** Make `handle`, a wrapper around `lease`, a valid `at` with its rank. */
+export function shareLeaseRank(
+  handle: Schmock.InterceptHandle,
+  lease: Schmock.InterceptHandle,
+): void {
+  leaseRanks.set(handle, rankOfLease(lease));
+}
 
 /**
  * Holds taken through acquireFetchRelay(). Module-wide rather than per
@@ -372,7 +398,11 @@ function registerInterceptor(
   applyOptions: (options?: Schmock.InterceptOptions) => void,
   owner?: symbol,
   observe?: ExchangeObservationOpener,
+  at?: Schmock.InterceptHandle,
 ): Schmock.InterceptHandle {
+  // Resolved before the session is touched, so a foreign `at` throws without
+  // patching fetch.
+  const rank = at === undefined ? ++lastLeaseRank : rankOfLease(at);
   let session = activeSession;
   if (!session || globalThis.fetch !== session.dispatchFetch) {
     session = createInterceptorSession();
@@ -381,10 +411,16 @@ function registerInterceptor(
   }
 
   const token = Symbol("schmock.fetch.interceptor");
-  session.interceptors.push({ token, owner, intercept, observe });
+  // Sorted by rank, read from the end. A fresh rank is the highest, so it
+  // appends; a lease taken at an earlier rank goes after any lease of the
+  // same rank, so the later of the two is consulted first.
+  const interceptors = session.interceptors;
+  let slot = interceptors.length;
+  while (slot > 0 && interceptors[slot - 1].rank > rank) slot -= 1;
+  interceptors.splice(slot, 0, { token, rank, owner, intercept, observe });
   let active = true;
 
-  return {
+  const handle: Schmock.InterceptHandle = {
     restore() {
       if (!active) return;
 
@@ -417,6 +453,8 @@ function registerInterceptor(
       return active;
     },
   };
+  leaseRanks.set(handle, rank);
+  return handle;
 }
 
 /**
@@ -792,6 +830,7 @@ interface FetchLeaseSpec {
   admitRequest?: () => Schmock.RequestAdmission;
   owner?: symbol;
   observe?: ExchangeObservationOpener;
+  at?: Schmock.InterceptHandle;
 }
 
 export function createFetchLease(
@@ -800,8 +839,9 @@ export function createFetchLease(
   const { handle, admitRequest, owner, observe } = spec;
   // The options live in a mutable cell that each request reads once at its
   // start. Reconfiguring a lease in place is what lets an adapter apply new
-  // hooks without re-registering — re-registration would move the lease to the
-  // front of the dispatch order and steal precedence from other mocks.
+  // hooks without re-registering — a plain re-registration would move the
+  // lease to the front of the dispatch order and steal precedence from other
+  // mocks.
   let currentOptions: Schmock.InterceptOptions = spec.options ?? {};
 
   return registerInterceptor(
@@ -1077,5 +1117,6 @@ export function createFetchLease(
     },
     owner,
     observe,
+    spec.at,
   );
 }

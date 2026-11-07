@@ -677,13 +677,24 @@ declare namespace Schmock {
      * A mock may hold any number of concurrent leases — nested providers,
      * separate roots, or an adapter alongside a manual call. Each lease owns
      * its own options and is released independently; the newest lease is
-     * consulted first.
+     * consulted first, unless a lease was taken at an earlier one's position.
      *
      * @param options - Intercept configuration
+     * @param at - A handle an earlier `intercept()` returned, for any mock,
+     *   active or restored. The new lease takes that lease's place in the
+     *   dispatch order instead of the front: after every lease registered
+     *   later than it, before every live lease registered earlier, even when
+     *   every lease was released in between. Of two leases at one place, the
+     *   later is consulted first. Any other value throws a TypeError and
+     *   patches nothing.
      * @returns Handle with restore() to release this lease and update() to
-     *   change its options without changing its position in the stack
+     *   change its options without changing its position in the stack. The
+     *   handle is itself a valid `at`, also once restored.
      */
-    intercept(options?: InterceptOptions): InterceptHandle;
+    intercept(
+      options?: InterceptOptions,
+      at?: InterceptHandle,
+    ): InterceptHandle;
   }
 
   /**
@@ -777,7 +788,10 @@ declare namespace Schmock {
   }
 
   interface InterceptHandle {
-    /** Release this lease; restores original fetch once the last lease goes */
+    /**
+     * Release this lease; restores original fetch once the last lease goes.
+     * A restored handle can still be passed to `intercept()` as `at`.
+     */
     restore(): void;
     /**
      * Reconfigure this lease in place, keeping its position in the

@@ -313,7 +313,7 @@ What changes on this path:
   keep route keys without the prefix on both paths, give the mock
   `namespace: '/api'` and leave the Angular adapter's `baseUrl` unset.
 - `transformRequest` and `transformResponse` do not apply. Use the
-  [`intercept()` options](./api.md#interceptoptions) `beforeRequest`,
+  [`intercept()` options](./api.md#interceptoptions-at) `beforeRequest`,
   `beforeResponse` and `errorFormatter`, whose hooks receive an
   `AdapterRequest` rather than Angular's `HttpRequest`.
 - With `passthrough: false`, an unrouted request gets

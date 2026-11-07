@@ -1999,3 +1999,145 @@ describe("mock.intercept()", () => {
     expect(globalThis.fetch).toBe(replacementFetch);
   });
 });
+
+describe("intercept(options, at)", () => {
+  let originalFetch: typeof globalThis.fetch;
+  let baseline: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    baseline = vi.fn().mockResolvedValue(new Response("real backend"));
+    globalThis.fetch = baseline;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const serving = (source: string) => {
+    const mock = schmock();
+    mock("GET /api/shared", { source });
+    return mock;
+  };
+  const shared = async () =>
+    (await fetch("http://localhost/api/shared")).json();
+
+  it("re-takes a restored lease at its dispatch position behind a later lease", async () => {
+    const older = serving("older");
+    const newer = serving("newer");
+    const first = older.intercept();
+    const later = newer.intercept();
+    first.restore();
+    const again = older.intercept({}, first);
+    let third: Schmock.InterceptHandle | undefined;
+    let chained: Schmock.InterceptHandle | undefined;
+    try {
+      expect(await shared()).toEqual({ source: "newer" });
+      later.restore();
+      expect(await shared()).toEqual({ source: "older" });
+
+      // The re-taken handle is itself an anchor at the same position.
+      third = serving("third").intercept();
+      again.restore();
+      chained = older.intercept({}, again);
+      expect(await shared()).toEqual({ source: "third" });
+    } finally {
+      later.restore();
+      again.restore();
+      third?.restore();
+      chained?.restore();
+    }
+    expect(globalThis.fetch).toBe(baseline);
+  });
+
+  it("keeps a re-taken lease ahead of leases registered before it", async () => {
+    const older = serving("older");
+    const newer = serving("newer");
+    const before = older.intercept();
+    const first = newer.intercept();
+    first.restore();
+    const again = newer.intercept({}, first);
+    try {
+      expect(await shared()).toEqual({ source: "newer" });
+    } finally {
+      again.restore();
+      before.restore();
+    }
+  });
+
+  it("orders a re-taken lease below leases taken after the stack emptied", async () => {
+    const older = serving("older");
+    const newer = serving("newer");
+    const first = older.intercept();
+    first.restore();
+    expect(globalThis.fetch).toBe(baseline);
+
+    const later = newer.intercept();
+    const again = older.intercept({}, first);
+    try {
+      expect(await shared()).toEqual({ source: "newer" });
+      later.restore();
+      expect(await shared()).toEqual({ source: "older" });
+    } finally {
+      later.restore();
+      again.restore();
+    }
+    expect(globalThis.fetch).toBe(baseline);
+  });
+
+  it("consults the later of two leases at one position first", async () => {
+    const mock = serving("mock");
+    const other = serving("other");
+    const tag =
+      (lease: string): Schmock.InterceptOptions["beforeResponse"] =>
+      (response) => ({ ...response, body: { lease } });
+    const first = mock.intercept({ beforeResponse: tag("first") });
+    const later = other.intercept();
+    const second = mock.intercept({ beforeResponse: tag("second") }, first);
+    try {
+      expect(await shared()).toEqual({ source: "other" });
+      later.restore();
+      expect(await shared()).toEqual({ lease: "second" });
+      second.restore();
+      expect(await shared()).toEqual({ lease: "first" });
+    } finally {
+      later.restore();
+      second.restore();
+      first.restore();
+    }
+  });
+
+  it("throws a TypeError for an `at` intercept() did not return, patching nothing", () => {
+    const mock = serving("mock");
+    const forged = { restore() {}, update() {}, active: true };
+    let leaked: Schmock.InterceptHandle | undefined;
+    try {
+      expect(() => {
+        leaked = mock.intercept({}, forged);
+      }).toThrow(TypeError);
+      expect(() => {
+        leaked = mock.intercept({}, null as never);
+      }).toThrow(TypeError);
+      expect(globalThis.fetch).toBe(baseline);
+    } finally {
+      leaked?.restore();
+    }
+  });
+
+  it("accepts a createFetchInterceptor handle as `at`", async () => {
+    const older = serving("older");
+    const newer = serving("newer");
+    const raw = createFetchInterceptor(async () =>
+      Response.json("raw", { status: 200 }),
+    );
+    const later = newer.intercept();
+    raw.restore();
+    const again = older.intercept({}, raw);
+    try {
+      expect(await shared()).toEqual({ source: "newer" });
+    } finally {
+      later.restore();
+      again.restore();
+    }
+  });
+});

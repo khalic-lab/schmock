@@ -335,12 +335,12 @@ has no HTTP server, so it bundles neither `node:http` nor the Node polyfills
 some bundlers would inline for it. That build exports the same names, and its
 mocks behave the same in every other way, but `listen()` returns a promise that
 rejects with `SERVER_UNAVAILABLE` and `close()` does nothing. In a browser, use
-[`.intercept()`](#interceptoptions) instead. Node.js and Bun never apply the
+[`.intercept()`](#interceptoptions-at) instead. Node.js and Bun never apply the
 `browser` condition, so servers and tests there get the full build. A test
 environment that applies it as well gets the browser build too: Jest's `jsdom`
 environment does by default, through its `customExportConditions` option.
 
-#### `.intercept(options?)`
+#### `.intercept(options?, at?)`
 
 Patch `globalThis.fetch` and route matching requests through the mock:
 
@@ -451,6 +451,29 @@ its position in the dispatch order: an adapter can apply new hooks without
 stealing precedence from a mock that registered later. Options are replaced
 wholesale — omitted fields fall back to their defaults, so `update({})` restores
 `passthrough: true`. Calling it on a released lease does nothing.
+
+`intercept(options, at)` takes the new lease at the dispatch position of `at`
+instead of at the front. `at` is a handle that an earlier `intercept()` or
+`createFetchInterceptor()` returned, for any mock, active or restored. The new
+lease is consulted after every lease registered later than `at`'s lease, and
+before every live lease registered earlier, even if every lease was released
+and `fetch` restored in between. Two leases at one position are consulted
+latest first, and the new handle can serve as `at` in turn. Any other value,
+`null` included, throws a `TypeError` and patches nothing. An adapter that has
+to give a lease up for a while uses this to come back where it was, as
+`SchmockProvider` does when an `<Activity>` hides it.
+
+```typescript
+const first = mock.intercept()
+const later = other.intercept()
+first.restore()
+mock.intercept({}, first) // consulted after `later`, as `first` was
+```
+
+Positions order the leases of one interception. A lease taken after a
+third-party library replaced `fetch` starts a new interception around that
+library and runs ahead of the leases beneath it, whatever its position, as any
+new lease does.
 
 Restoration does not overwrite a later third-party fetch replacement, and
 `reset()` does not release an explicit interception lease.

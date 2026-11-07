@@ -54,8 +54,10 @@ export function createCallableMock(
       getState: instance.getState.bind(instance),
       listen: instance.listen.bind(instance),
       close: instance.close.bind(instance),
-      intercept: (options?: Schmock.InterceptOptions) =>
-        instance.intercept(options),
+      intercept: (
+        options?: Schmock.InterceptOptions,
+        at?: Schmock.InterceptHandle,
+      ) => instance.intercept(options, at),
     },
   );
 

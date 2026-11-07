@@ -29,6 +29,7 @@ import {
   createFetchLease,
   type ExchangeObserver,
   NORMALIZED_ADMISSION_KEY,
+  shareLeaseRank,
 } from "./interceptor.js";
 import {
   assertValidPlugin,
@@ -492,7 +493,10 @@ export class CallableMockInstance {
 
   // ===== Fetch Interceptor =====
 
-  intercept(options?: Schmock.InterceptOptions): Schmock.InterceptHandle {
+  intercept(
+    options?: Schmock.InterceptOptions,
+    at?: Schmock.InterceptHandle,
+  ): Schmock.InterceptHandle {
     // Ownership is a lease, not a lock: nested providers, separate roots, and
     // a manual intercept() alongside an adapter each get their own registry
     // slot with their own options, released independently. The owner symbol
@@ -504,6 +508,7 @@ export class CallableMockInstance {
       admitRequest: () => this.createRequestAdmission(),
       owner: this.interceptOwner,
       observe: () => this.#openExchangeObservation(),
+      at,
     });
 
     const handle: Schmock.InterceptHandle = {
@@ -524,6 +529,7 @@ export class CallableMockInstance {
       },
     };
 
+    shareLeaseRank(handle, lease);
     this.interceptHandles.add(handle);
     this.logger.log(
       "lifecycle",

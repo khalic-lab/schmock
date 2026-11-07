@@ -369,7 +369,7 @@ Interception is a lease, not a lock: a mock can hold several concurrent leases â
 nested providers, or a framework adapter alongside a manual `intercept()` â€” each
 with its own options and its own idempotent `restore()`. Leases are consulted
 newest-first, and the original `fetch` returns only once the last one is
-released. See the [API reference](./api.md#interceptoptions) for `update()` and
+released. See the [API reference](./api.md#interceptoptions-at) for `update()` and
 dispatch-order details.
 
 ## Standalone HTTP Server
