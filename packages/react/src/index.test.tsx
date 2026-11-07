@@ -600,6 +600,25 @@ describe("SchmockProvider", () => {
       unmount();
       expect(globalThis.fetch).toBe(realFetch);
     });
+
+    it("keeps a provider mounted hidden behind a lease taken after it mounted", async () => {
+      const a = serving("A");
+      const n = serving("N");
+      const { rerender, unmount } = render(<App mode="hidden" mock={a} />);
+      await tick();
+      const hn = keep(n.intercept());
+
+      rerender(<App mode="hidden" mock={a} />);
+      expect(await text()).toBe("N");
+      await tick();
+
+      rerender(<App mode="visible" mock={a} />);
+      expect(await text()).toBe("N");
+      hn.restore();
+      expect(await text()).toBe("A");
+      unmount();
+      expect(globalThis.fetch).toBe(realFetch);
+    });
   });
 });
 

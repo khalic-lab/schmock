@@ -144,7 +144,11 @@ function InterceptionInstaller({
         beforeResponse,
         errorFormatter,
       },
-      placeFor(slots, mock),
+      // Never committed for this mock (mounted hidden, or a suspended first
+      // mount): take the lapsed render lease's place, so each re-render keeps
+      // the position of the first one instead of taking the front again.
+      placeFor(slots, mock) ??
+        (slots.pending?.mock === mock ? slots.pending.handle : undefined),
     );
   }
 
