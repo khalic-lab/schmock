@@ -1810,12 +1810,13 @@ describe("invented pattern property keys", () => {
     };
     const test = RegExp.prototype.test;
     const backtracked: string[] = [];
-    const spy = vi
-      .spyOn(RegExp.prototype, "test")
-      .mockImplementation(function (this: RegExp, input: string) {
-        if (this.source === "^(a+){10}$") backtracked.push(String(input));
-        return test.call(this, input);
-      });
+    const spy = vi.spyOn(RegExp.prototype, "test").mockImplementation(function (
+      this: RegExp,
+      input: string,
+    ) {
+      if (this.source === "^(a+){10}$") backtracked.push(String(input));
+      return test.call(this, input);
+    });
     const started = performance.now();
     try {
       normalizeSchemaForJsf(schema, { patternKeySeed: 1 });
@@ -1838,6 +1839,19 @@ describe("invented pattern property keys", () => {
     };
     for (const value of await generateSeeds(schema, 3)) {
       expect(Object.keys(objectOf(value))).toEqual(["x_", "x_1", "x_2"]);
+    }
+  });
+
+  it("suffixes a generated key a required name already takes", async () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      required: ["x_"],
+      minProperties: 2,
+      patternProperties: { "^x_": { type: "integer" } },
+      additionalProperties: false,
+    };
+    for (const value of await generateSeeds(schema, 3)) {
+      expect(Object.keys(objectOf(value)).sort()).toEqual(["x_", "x_1"]);
     }
   });
 });
