@@ -311,7 +311,7 @@ A `$ref` that names nothing fails with `OPENAPI_INVALID_REF` on both builds with
 - `baseUrl` keeps both meanings (#104): it filters only under `mock.intercept()` (React, Vue) and filters and strips in the Angular adapter. `schmock({ namespace })` is the portable way to keep a prefix out of route keys. The Angular adapter's `baseUrl` and a mock `namespace` don't compose, so a namespaced mock is used with Angular with `baseUrl` unset. A `stripPrefix` flag waits until someone moving from Angular to fetch asks for it.
 - `@schmock/angular`'s rxjs peer mirrors `@angular/common` 15's, `^6.5.3 || ^7.4.0`, because the adapter uses only `Observable` and `Subscriber`; a test pins it so a dependency sweep can't raise it again.
 - Angular keeps its local `isPromiseLike` (wave-3 #28, no change): core has no thenable helper meant for adapter hooks, and widening core's `isThenable` would change plugin and listener semantics.
-- `SchmockProvider` releases its lease from a passive cleanup, so a Suspense boundary that hides it again keeps interception and dispatch position.
+- `SchmockProvider` releases its lease from a passive cleanup, so a Suspense boundary that hides it again keeps interception and dispatch position. (Activity: D60)
 
 ### D53: Core packaging and response serialization (2026-10-23)
 
@@ -368,6 +368,17 @@ A keyword beside a `$ref` (on an `allOf` entry, a property declaration, or a cha
 ### D59: Only the CI workflow stays on GitHub (2026-11-06)
 
 `.github/workflows/registry-verification.yml` is removed, along with the `resolve-version` command in `scripts/smoke-tests/registry-fixture.mjs` that read its release and dispatch inputs. GitHub never ran it (D55), and registry verification doesn't need it. After a release, `SCHMOCK_VERSION=X.Y.Z bun run test:smoke` and `bun run test:consumer` install the published packages and check them locally. `ci.yml` stays as the testing workflow, and nothing in the release depends on it because the local gate already runs the same checks.
+
+### D60: A lease can be taken back at an earlier lease's dispatch position (2026-11-07)
+
+Hiding an `<Activity>` above `SchmockProvider` runs its passive cleanups, so the provider releases its lease (D52). Showing it again took a new lease at the front, ahead of leases taken after the provider first mounted (#1).
+
+- `mock.intercept(options, at)` takes a lease at the rank of `at`. Ranks come from a module-wide counter that is never reset. An interception keeps its leases sorted by rank, and dispatch still starts from the highest. The new lease is consulted after every lease registered later than `at`'s and before every live lease registered earlier, also after the stack emptied and fetch was restored. Of two leases with the same rank, the later is consulted first. The rank isn't tied to a mock.
+- A value that no `intercept()` or `createFetchInterceptor()` returned, `null` included, throws a TypeError before anything is patched. Ranks order leases within one interception only, so a lease taken over a third-party fetch wrapper nests as before. `createFetchInterceptor` keeps its signature and its handles are valid anchors. There is no new type and no new handle member.
+- The provider keeps the lease it last committed and passes it as `at` for every lease it takes again for the same mock: the commit effect's fresh lease and the render-time lease. Hiding still releases, so a hidden provider answers nothing and an unmount while hidden leaves nothing behind. Each hidden render still takes a one-task render lease, now at the provider's position instead of the front: a render can't tell a hidden re-render from a reveal, the reveal's render-time fetches need the lease, and Activity's pre-render may fetch data. A new `mock` prop takes the front. The kept restored handle holds its torn-down interception object until the provider goes away.
+- Rejected: keeping the lease while hidden and releasing it from a `useInsertionEffect` cleanup. React 19.2.0 and later run insertion cleanups when a hidden tree is deleted and never on a hide or on StrictMode's simulated unmount; 19.0 and 19.1 skip them under a hidden boundary (`commitDeletionEffectsOnFiber`, checked in the react-dom bundles). That is undocumented and changed in 19.2, and a regression would leak a lease with fetch patched until reload. Checking `"Activity" in React` gates on the version, not the behaviour. Hidden Activity panes would also keep answering for visible ones on shared routes.
+- Rejected: `pause()`/`resume()`, which needs two methods, a paused state, and an epoch guard against stale render-lease timers. An opaque `InterceptPosition` on `handle.position`, which carries the same rank plus a new type and a required handle member. Deferring the release by a task, since a real hide outlasts it. A public numeric rank, which could be forged.
+- `@schmock/vue` is unaffected: its lease is per app, taken at plugin install and released on `app.unmount`.
 
 ### D61: Only multipart/form-data decodes as a form (2026-11-26)
 
