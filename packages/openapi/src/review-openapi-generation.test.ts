@@ -960,7 +960,7 @@ describe("access modes under a composition-only nullable", () => {
   });
 });
 
-describe("nullable list envelopes (hunt openapi-1-G15)", () => {
+describe("nullable list envelopes", () => {
   const pet = {
     type: "object",
     required: ["id", "name"],
@@ -1038,7 +1038,7 @@ describe("nullable list envelopes (hunt openapi-1-G15)", () => {
   }
 });
 
-describe("nullable composed list envelope key order (hunt openapi-1-G39)", () => {
+describe("nullable composed list envelope key order", () => {
   const pet = { $ref: "#/components/schemas/Pet" };
   const json = (schema: Record<string, unknown>) => ({
     "application/json": { schema },
@@ -1183,7 +1183,7 @@ describe("nullable composed list envelope key order (hunt openapi-1-G39)", () =>
   });
 });
 
-describe("a nested list envelope marked nullable (hunt openapi-1-G17)", () => {
+describe("a nested list envelope marked nullable", () => {
   const petRef = { $ref: "#/components/schemas/Pet" };
   const json = (schema: Record<string, unknown>) => ({
     "application/json": { schema },

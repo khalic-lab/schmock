@@ -1986,7 +1986,7 @@ describe("the errorSchema override under validateResponses", () => {
   );
 });
 
-describe("a 3.1 contract closed with unevaluatedProperties (hunt openapi-1-G18)", () => {
+describe("a 3.1 contract closed with unevaluatedProperties", () => {
   const petRef = { $ref: "#/components/schemas/Pet" };
   const closedSpec = {
     openapi: "3.1.0",
@@ -2072,7 +2072,7 @@ describe("a 3.1 contract closed with unevaluatedProperties (hunt openapi-1-G18)"
   });
 });
 
-describe("a typed nullable create contract (hunt openapi-1-G16)", () => {
+describe("a typed nullable create contract", () => {
   const nullablePet = {
     type: "object",
     nullable: true,
@@ -2132,7 +2132,7 @@ describe("a typed nullable create contract (hunt openapi-1-G16)", () => {
   });
 });
 
-describe("count seeding on an id named __proto__ (hunt openapi-1-G38)", () => {
+describe("count seeding on an id named __proto__", () => {
   // Built from JSON so `__proto__` is an OWN key, as a parsed spec file has it.
   const protoPet = JSON.parse(`{
     "type": "object",
