@@ -436,7 +436,8 @@ Interception is a lease, not a lock. A mock may hold any number of concurrent
 leases — nested providers, separate roots, or an adapter alongside a manual
 `intercept()` — and each one carries its own options and its own idempotent
 `restore()`. Leases are consulted newest-first regardless of which mock owns
-them, and the original `fetch` returns once the last lease is released. A mock
+them, except a lease taken at an earlier one's position with `at` (below), and
+the original `fetch` returns once the last lease is released. A mock
 is consulted once per distinct effective method and path across its leases, so
 its handler and lifecycle events run once per request it is asked.
 

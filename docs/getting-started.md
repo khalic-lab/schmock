@@ -368,7 +368,8 @@ adapters can re-register routes without patching fetch again.
 Interception is a lease, not a lock: a mock can hold several concurrent leases —
 nested providers, or a framework adapter alongside a manual `intercept()` — each
 with its own options and its own idempotent `restore()`. Leases are consulted
-newest-first, and the original `fetch` returns only once the last one is
+newest-first, unless one was taken back at an earlier lease's position, and the
+original `fetch` returns only once the last one is
 released. See the [API reference](./api.md#interceptoptions-at) for `update()` and
 dispatch-order details.
 
