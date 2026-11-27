@@ -49,12 +49,13 @@ provider.
 
 Every lease of the same mock applies its own `baseUrl` and `beforeRequest`.
 The mock is then asked each distinct resulting request (method and path) once,
-newest lease first. An outer provider whose `beforeRequest` strips `/api`
-therefore keeps serving its routes under a nested provider or
+newest lease first, except a lease taken back at an earlier lease's position,
+as after an `<Activity>` hide (below). An outer provider whose `beforeRequest`
+strips `/api` therefore keeps serving its routes under a nested provider or
 `renderWithSchmock({ mock })`. When two leases produce the same method and
-path, the newest lease's `passthrough`, `beforeResponse` and `errorFormatter`
-apply to it. An older `passthrough: false` lease does not turn a newer
-`passthrough: true` lease's miss into a 404.
+path, the `passthrough`, `beforeResponse` and `errorFormatter` of the lease
+asked first apply to it. A `passthrough: false` lease asked later does not turn
+the first lease's `passthrough: true` miss into a 404.
 
 Changing `options` (including a fresh inline `beforeRequest` on every render)
 reconfigures the existing lease in place; it does not re-register it. The
@@ -87,6 +88,11 @@ React renders hidden content after the visible content of the same update, so a
 pane mounted hidden sits ahead of the visible panes mounted with it, and on a
 route both serve it answers for one task after each re-render of the hidden
 pane. A new `mock` prop takes a new position at the front, hidden or not.
+
+A transition can hold its commit after the render, for example until a
+stylesheet it adds has loaded, and the render's one-task lease can lapse
+meanwhile. The commit then takes its lease at the position that render's
+lease had, so a lease taken in between stays ahead of it.
 
 Calling `mock.reset()` while the provider is mounted clears routes, state,
 history, plugins, and listeners but preserves the provider's explicit

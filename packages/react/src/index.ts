@@ -180,6 +180,8 @@ function InterceptionInstaller({
     // Claim the render's lease; take a fresh one at the committed place when
     // there is none — after StrictMode's simulated unmount, after an Activity
     // hide whose render lease lapsed, or once an uncommitted lease lapsed.
+    // Never committed for this mock, the fresh lease takes the lapsed render
+    // lease's place, as a re-render does, rather than the front.
     const pending = slots.pending;
     let lease: InterceptionLease;
     if (pending?.mock === mock && pending.handle.active) {
@@ -188,7 +190,11 @@ function InterceptionInstaller({
     } else {
       lease = {
         mock,
-        handle: mock.intercept(optionsRef.current, placeFor(slots, mock)),
+        handle: mock.intercept(
+          optionsRef.current,
+          placeFor(slots, mock) ??
+            (pending?.mock === mock ? pending.handle : undefined),
+        ),
         committed: true,
       };
     }

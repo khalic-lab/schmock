@@ -5,6 +5,7 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import {
   Activity,
   StrictMode,
+  startTransition,
   useEffect,
   useLayoutEffect,
   useState,
@@ -618,6 +619,220 @@ describe("SchmockProvider", () => {
       expect(await text()).toBe("A");
       unmount();
       expect(globalThis.fetch).toBe(realFetch);
+    });
+
+    it("keeps its place when a transition reveal commits after its render lease lapsed", async () => {
+      const a = serving("A");
+      const b = serving("B");
+      const spy = vi.spyOn(a, "intercept");
+      const href = "/reveal.css";
+      const links = (rel: string) =>
+        document.head.querySelectorAll(`link[rel="${rel}"][href="${href}"]`);
+
+      type Step = "shown" | "hidden" | "revealed";
+      let go!: (step: Step) => void;
+      function Host() {
+        const [step, setStep] = useState<Step>("shown");
+        go = setStep;
+        return (
+          <Activity mode={step === "hidden" ? "hidden" : "visible"}>
+            <SchmockProvider mock={a}>
+              {step === "revealed" ? (
+                <link rel="stylesheet" href={href} precedence="default" />
+              ) : null}
+            </SchmockProvider>
+          </Activity>
+        );
+      }
+
+      const { unmount } = render(<Host />);
+      const hb = keep(b.intercept());
+
+      act(() => go("hidden"));
+      await tick();
+      expect(activeLeases(spy)).toBe(0);
+
+      // React holds a transition's commit until the stylesheets it adds have
+      // loaded, but not inside act(), so the reveal is scheduled outside it.
+      const actEnvironment = Reflect.get(
+        globalThis,
+        "IS_REACT_ACT_ENVIRONMENT",
+      );
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", false);
+      try {
+        const reveals = spy.mock.calls.length;
+        startTransition(() => go("revealed"));
+        await waitFor(() => {
+          expect(links("preload")).toHaveLength(1);
+        });
+        // The reveal rendered and took its render lease, which lapses while
+        // the commit waits for the stylesheet.
+        expect(spy.mock.calls.length).toBe(reveals + 1);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(activeLeases(spy)).toBe(0);
+        expect(links("stylesheet")).toHaveLength(0);
+      } finally {
+        Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+      }
+
+      const load = (rel: string) =>
+        act(() => {
+          for (const link of links(rel)) link.dispatchEvent(new Event("load"));
+        });
+      load("preload");
+      load("stylesheet");
+      expect(links("stylesheet")).toHaveLength(1);
+      expect(activeLeases(spy)).toBe(1);
+
+      expect(await text()).toBe("B");
+      hb.restore();
+      expect(await text()).toBe("A");
+      unmount();
+      expect(globalThis.fetch).toBe(realFetch);
+      for (const link of [...links("preload"), ...links("stylesheet")]) {
+        link.remove();
+      }
+    });
+
+    it("keeps a provider mounted hidden behind a newer lease when its transition reveal commits after its render lease lapsed", async () => {
+      const a = serving("A");
+      const n = serving("N");
+      const spy = vi.spyOn(a, "intercept");
+      const href = "/reveal-mounted-hidden.css";
+      const links = (rel: string) =>
+        document.head.querySelectorAll(`link[rel="${rel}"][href="${href}"]`);
+
+      let reveal!: () => void;
+      function Host() {
+        const [revealed, setRevealed] = useState(false);
+        reveal = () => setRevealed(true);
+        return (
+          <Activity mode={revealed ? "visible" : "hidden"}>
+            <SchmockProvider mock={a}>
+              {revealed ? (
+                <link rel="stylesheet" href={href} precedence="default" />
+              ) : null}
+            </SchmockProvider>
+          </Activity>
+        );
+      }
+
+      const { unmount } = render(<Host />);
+      await tick();
+      expect(activeLeases(spy)).toBe(0);
+      const hn = keep(n.intercept());
+
+      const actEnvironment = Reflect.get(
+        globalThis,
+        "IS_REACT_ACT_ENVIRONMENT",
+      );
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", false);
+      try {
+        const renders = spy.mock.calls.length;
+        startTransition(() => reveal());
+        await waitFor(() => {
+          expect(links("preload")).toHaveLength(1);
+        });
+        expect(spy.mock.calls.length).toBe(renders + 1);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(activeLeases(spy)).toBe(0);
+        expect(links("stylesheet")).toHaveLength(0);
+      } finally {
+        Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+      }
+
+      const load = (rel: string) =>
+        act(() => {
+          for (const link of links(rel)) link.dispatchEvent(new Event("load"));
+        });
+      load("preload");
+      load("stylesheet");
+      expect(links("stylesheet")).toHaveLength(1);
+      expect(activeLeases(spy)).toBe(1);
+
+      expect(await text()).toBe("N");
+      hn.restore();
+      expect(await text()).toBe("A");
+      unmount();
+      expect(globalThis.fetch).toBe(realFetch);
+      for (const link of [...links("preload"), ...links("stylesheet")]) {
+        link.remove();
+      }
+    });
+
+    it("commits a changed mock at the place its render took when the commit waits past that render's lease", async () => {
+      const a = serving("A");
+      const b = serving("B");
+      const c = serving("C");
+      const d = serving("D");
+      const spyA = vi.spyOn(a, "intercept");
+      const spyC = vi.spyOn(c, "intercept");
+      const href = "/changed-mock.css";
+      const links = (rel: string) =>
+        document.head.querySelectorAll(`link[rel="${rel}"][href="${href}"]`);
+
+      let change!: () => void;
+      function Host() {
+        const [changed, setChanged] = useState(false);
+        change = () => setChanged(true);
+        return (
+          <SchmockProvider mock={changed ? c : a}>
+            {changed ? (
+              <link rel="stylesheet" href={href} precedence="default" />
+            ) : null}
+          </SchmockProvider>
+        );
+      }
+
+      const { unmount } = render(<Host />);
+      expect(await text()).toBe("A");
+      // Taken after the old mock committed and before the new mock rendered,
+      // so the new mock goes ahead of it, not to the old mock's place behind.
+      const hb = keep(b.intercept());
+
+      const actEnvironment = Reflect.get(
+        globalThis,
+        "IS_REACT_ACT_ENVIRONMENT",
+      );
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", false);
+      try {
+        startTransition(() => change());
+        await waitFor(() => {
+          expect(links("preload")).toHaveLength(1);
+        });
+        // The new mock's render took one lease, which lapses while the commit
+        // waits for the stylesheet; the old mock is still committed.
+        expect(spyC.mock.calls.length).toBe(1);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(activeLeases(spyC)).toBe(0);
+        expect(links("stylesheet")).toHaveLength(0);
+      } finally {
+        Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+      }
+
+      // Taken after the new mock rendered, so it stays ahead of the new mock,
+      // which does not take the front when it commits.
+      const hd = keep(d.intercept());
+      const load = (rel: string) =>
+        act(() => {
+          for (const link of links(rel)) link.dispatchEvent(new Event("load"));
+        });
+      load("preload");
+      load("stylesheet");
+      expect(links("stylesheet")).toHaveLength(1);
+      expect(activeLeases(spyC)).toBe(1);
+      expect(activeLeases(spyA)).toBe(0);
+
+      expect(await text()).toBe("D");
+      hd.restore();
+      expect(await text()).toBe("C");
+      hb.restore();
+      expect(await text()).toBe("C");
+      unmount();
+      expect(globalThis.fetch).toBe(realFetch);
+      for (const link of [...links("preload"), ...links("stylesheet")]) {
+        link.remove();
+      }
     });
   });
 });
