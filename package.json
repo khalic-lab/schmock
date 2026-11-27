@@ -50,7 +50,7 @@
   "devDependencies": {
     "@amiceli/vitest-cucumber": "^8.0.0",
     "@arethetypeswrong/cli": "0.18.5",
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.7",
     "@types/bun": "1.4.4",
     "@types/express": "^5.0.6",
     "@types/supertest": "^7.2.1",

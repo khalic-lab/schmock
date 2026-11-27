@@ -1,5 +1,12 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "includes": [
+      "**",
+      "!**/__fixtures__/**/*.yaml",
+      "!**/__fixtures__/**/*.yml"
+    ]
+  },
   "assist": {
     "actions": {
       "source": {
@@ -44,6 +51,23 @@
     "formatWithErrors": true,
     "indentStyle": "space"
   },
+  "yaml": {
+    "formatter": {
+      "enabled": false
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.test.tsx", "**/*.steps.tsx"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noComponentHookFactories": "off"
+          }
+        }
+      }
+    }
+  ],
   "vcs": {
     "enabled": true,
     "clientKind": "git",
