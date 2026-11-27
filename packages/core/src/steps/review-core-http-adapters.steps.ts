@@ -202,6 +202,63 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   );
 
   Scenario(
+    "A multipart/related upload reaches the handler as the bytes sent",
+    ({ Given, When, Then }) => {
+      Given("a listening mock that records the body of POST /echo", () =>
+        listenRecordingEcho(),
+      );
+
+      When(
+        'I POST the bytes 2d 2d 62 0d 0a ff d8 00 to /echo as "multipart/related; boundary=b"',
+        () =>
+          post(hexBytes("2d 2d 62 0d 0a ff d8 00"), {
+            "content-type": "multipart/related; boundary=b",
+          }),
+      );
+
+      Then(
+        "the recorded body should be an ArrayBuffer holding 2d 2d 62 0d 0a ff d8 00",
+        () => {
+          expect(response?.status).toBe(200);
+          expectArrayBufferHolding(recorded, "2d 2d 62 0d 0a ff d8 00");
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "The fetch interceptor hands a handler a multipart/mixed body as the bytes sent",
+    ({ Given, When, Then }) => {
+      Given(
+        "an intercepting mock that records the body and form of POST /echo",
+        () => {
+          mock = formRecordingMock();
+          interception = mock.intercept({ passthrough: false });
+        },
+      );
+
+      When(
+        'I fetch POST /echo with the bytes 2d 2d 62 0d 0a ff d8 00 as "multipart/mixed; boundary=b"',
+        async () => {
+          response = await fetch("http://localhost/echo", {
+            method: "POST",
+            headers: { "content-type": "multipart/mixed; boundary=b" },
+            body: hexBytes("2d 2d 62 0d 0a ff d8 00"),
+          });
+        },
+      );
+
+      Then(
+        "the recorded body should be an ArrayBuffer holding 2d 2d 62 0d 0a ff d8 00",
+        () => {
+          expect(response?.status).toBe(200);
+          expectArrayBufferHolding(recorded, "2d 2d 62 0d 0a ff d8 00");
+        },
+      );
+    },
+  );
+
+  Scenario(
     "A deeply nested JSON body is rejected before any handler runs",
     ({ Given, When, Then, And }) => {
       Given("a listening mock that records the body of POST /echo", () =>

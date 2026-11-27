@@ -661,6 +661,79 @@ describe("request body validation", () => {
       expect(result.status).toBe(201);
     });
 
+    describe("a multipart body other than multipart/form-data", () => {
+      const relatedType =
+        'multipart/related; type="application/json"; boundary=b';
+      const relatedBody = () =>
+        new TextEncoder().encode(
+          '--b\r\nContent-Type: application/json\r\n\r\n{"name":"Rex"}\r\n--b--\r\n',
+        );
+
+      it("does not validate a multipart/related body sent through the fetch interceptor against its object schema", async () => {
+        const mock = await validatingMock({
+          "multipart/related": { schema: objectSchema },
+        });
+
+        const result = await interceptedPost(mock, {
+          body: relatedBody(),
+          headers: { "content-type": relatedType },
+        });
+
+        expect(result.status).toBe(201);
+      });
+
+      it("does not validate multipart/mixed bytes handed to mock.handle() against its object schema", async () => {
+        const mock = await validatingMock({
+          "multipart/mixed": { schema: objectSchema },
+        });
+
+        const response = await mock.handle("POST", "/uploads", {
+          body: relatedBody().buffer,
+          headers: { "content-type": "multipart/mixed; boundary=b" },
+        });
+
+        expect(response.status).toBe(201);
+      });
+
+      it("does not validate bytes labelled multipart/form-data-x against its object schema", async () => {
+        const mock = await validatingMock({
+          "multipart/form-data-x": { schema: objectSchema },
+        });
+
+        const response = await mock.handle("POST", "/uploads", {
+          body: relatedBody().buffer,
+          headers: { "content-type": "multipart/form-data-x; boundary=b" },
+        });
+
+        expect(response.status).toBe(201);
+      });
+
+      it("still checks the media type of a multipart/related body", async () => {
+        const mock = await validatingMock({
+          "multipart/form-data": { schema: objectSchema },
+        });
+
+        const response = await mock.handle("POST", "/uploads", {
+          body: relatedBody().buffer,
+          headers: { "content-type": relatedType },
+        });
+
+        expect(response.status).toBe(415);
+      });
+
+      it("still validates a multipart/form-data body as the record of its fields", async () => {
+        const mock = await validatingMock({
+          "multipart/form-data": { schema: objectSchema },
+        });
+        const form = new FormData();
+        form.set("other", "value");
+
+        const result = await interceptedPost(mock, { body: form });
+
+        expect(result.status).toBe(400);
+      });
+    });
+
     it("does not validate CSV text against an object schema behind */*", async () => {
       const mock = await validatingMock({
         "*/*": { schema: { type: "object" } },

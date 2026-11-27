@@ -210,6 +210,17 @@ describe("Angular request bodies reach handlers as the backend sends them", () =
         contentType: "multipart/mixed",
       });
     });
+
+    it("still hands a FormData body labelled with another multipart subtype to the route as FormData", async () => {
+      const form = new FormData();
+      form.set("name", "Rex");
+      const request = new HttpRequest("POST", "/echo", form, {
+        headers: new HttpHeaders({ "Content-Type": "multipart/mixed" }),
+      });
+      const { body } = await received(request);
+      expect(body).toBeInstanceOf(FormData);
+      expect((body as FormData).get("name")).toBe("Rex");
+    });
   });
 
   describe("headers the caller set", () => {
@@ -303,6 +314,62 @@ describe("Angular request bodies reach handlers as the backend sends them", () =
       const { body } = await received(new HttpRequest("PUT", "/echo", blob));
       expect(body).toBeInstanceOf(FormData);
       expect((body as FormData).get("name")).toBe("Rex");
+    });
+
+    /**
+     * A multipart/related body whose file part is not valid UTF-8, so a body
+     * that round-trips through text would not match.
+     */
+    const relatedBytes = (boundary: string): Uint8Array<ArrayBuffer> => {
+      const head = new TextEncoder().encode(
+        `--${boundary}\r\nContent-Type: image/jpeg\r\n\r\n`,
+      );
+      const tail = new TextEncoder().encode(`\r\n--${boundary}--\r\n`);
+      const bytes = new Uint8Array(head.byteLength + 4 + tail.byteLength);
+      bytes.set(head, 0);
+      bytes.set([0xff, 0xd8, 0x00, 0x80], head.byteLength);
+      bytes.set(tail, head.byteLength + 4);
+      return bytes;
+    };
+
+    it("hands a multipart/related Blob to the route as the bytes sent", async () => {
+      const contentType = 'multipart/related; type="image/jpeg"; boundary=xyz';
+      const blob = new Blob([relatedBytes("xyz")], { type: contentType });
+      const seen = await received(new HttpRequest("PUT", "/echo", blob));
+      if (!(seen.body instanceof ArrayBuffer)) {
+        throw new Error("Expected an ArrayBuffer body");
+      }
+      expect(new Uint8Array(seen.body)).toEqual(relatedBytes("xyz"));
+      expect(seen.contentType).toBe(contentType);
+    });
+
+    it("hands a multipart/mixed string to the route as its UTF-8 bytes", async () => {
+      const text = multipart("xyz");
+      const request = new HttpRequest("POST", "/echo", text, {
+        headers: new HttpHeaders({
+          "Content-Type": "multipart/mixed; boundary=xyz",
+        }),
+      });
+      const seen = await received(request);
+      if (!(seen.body instanceof ArrayBuffer)) {
+        throw new Error("Expected an ArrayBuffer body");
+      }
+      expect(new Uint8Array(seen.body)).toEqual(new TextEncoder().encode(text));
+      expect(seen.contentType).toBe("multipart/mixed; boundary=xyz");
+    });
+
+    it("hands a string labelled multipart/form-data-x to the route as its UTF-8 bytes", async () => {
+      const text = multipart("xyz");
+      const request = new HttpRequest("POST", "/echo", text, {
+        headers: new HttpHeaders({
+          "Content-Type": "multipart/form-data-x; boundary=xyz",
+        }),
+      });
+      const seen = await received(request);
+      if (!(seen.body instanceof ArrayBuffer)) {
+        throw new Error("Expected an ArrayBuffer body");
+      }
+      expect(new Uint8Array(seen.body)).toEqual(new TextEncoder().encode(text));
     });
 
     it("passes an unmocked request through without reading its body", async () => {

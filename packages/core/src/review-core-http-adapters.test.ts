@@ -66,6 +66,35 @@ describe("collectBody media types (interceptor parity)", () => {
     expect(body.get("name")).toBe("Rex");
   });
 
+  it.each([
+    "multipart/mixed; boundary=b",
+    'multipart/related; type="application/json"; boundary=b',
+    "multipart/form-data-x; boundary=b",
+  ])("returns a %s body as the bytes sent", async (contentType) => {
+    const wire = Buffer.concat([
+      Buffer.from("--b\r\nContent-Type: image/jpeg\r\n\r\n"),
+      Buffer.from([0xff, 0xd8, 0x00, 0x80]),
+      Buffer.from("\r\n--b--\r\n"),
+    ]);
+    const body = await collect(wire, contentType);
+    if (!(body instanceof ArrayBuffer)) throw new Error("expected bytes");
+    expect(Buffer.from(body).equals(wire)).toBe(true);
+  });
+
+  it("parses a multipart/form-data body labelled in mixed case into FormData", async () => {
+    const wire = [
+      "--b",
+      'Content-Disposition: form-data; name="name"',
+      "",
+      "Rex",
+      "--b--",
+      "",
+    ].join("\r\n");
+    const body = await collect(wire, "Multipart/Form-Data; boundary=b");
+    if (!(body instanceof FormData)) throw new Error("expected FormData");
+    expect(body.get("name")).toBe("Rex");
+  });
+
   it("rejects a malformed multipart body with a structured 400", async () => {
     await expect(
       collect("not multipart at all", "multipart/form-data; boundary=missing"),

@@ -1124,3 +1124,73 @@ describe("validationPlugin decimal multipleOf", () => {
     });
   });
 });
+
+describe("validationPlugin multipart bodies other than multipart/form-data", () => {
+  const bytes = () =>
+    new Uint8Array([
+      ...new TextEncoder().encode("--b\r\nContent-Type: image/jpeg\r\n\r\n"),
+      0xff,
+      0xd8,
+      0x00,
+      0x80,
+      ...new TextEncoder().encode("\r\n--b--\r\n"),
+    ]);
+
+  /** POST `bytes()` as `contentType` through the fetch interceptor. */
+  async function intercepted(
+    schema: Schmock.JSONSchema7,
+    contentType: string,
+  ): Promise<{ status: number; body: unknown; routed: unknown }> {
+    const mock = schmock();
+    let routed: unknown;
+    mock.pipe(validationPlugin({ request: { body: schema } }));
+    mock("POST /upload", ({ body }) => {
+      routed = body;
+      return { ok: true };
+    });
+    const handle = mock.intercept({ passthrough: false });
+    try {
+      const response = await fetch("http://localhost/upload", {
+        method: "POST",
+        headers: { "content-type": contentType },
+        body: bytes(),
+      });
+      return { status: response.status, body: await response.json(), routed };
+    } finally {
+      handle.restore();
+    }
+  }
+
+  it("routes a multipart/related body an object schema accepts as the bytes sent", async () => {
+    const related = await intercepted(
+      { type: "object" },
+      'multipart/related; type="image/jpeg"; boundary=b',
+    );
+
+    expect(related.status).toBe(200);
+    if (!(related.routed instanceof ArrayBuffer)) {
+      throw new Error("Expected the route to receive an ArrayBuffer");
+    }
+    expect(new Uint8Array(related.routed)).toEqual(bytes());
+  });
+
+  it.each([
+    ["an object schema", { type: "object" }],
+    [
+      "an object schema with a required field",
+      { type: "object", required: ["name"] },
+    ],
+  ] satisfies Array<[string, Schmock.JSONSchema7]>)(
+    "judges a multipart/related body against %s as application/octet-stream bytes are judged",
+    async (_, schema) => {
+      const related = await intercepted(
+        schema,
+        'multipart/related; type="image/jpeg"; boundary=b',
+      );
+      const octets = await intercepted(schema, "application/octet-stream");
+
+      expect(related.status).toBe(octets.status);
+      expect(related.body).toEqual(octets.body);
+    },
+  );
+});

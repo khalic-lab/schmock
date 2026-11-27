@@ -774,10 +774,12 @@ function numericCoercionErrors(
 }
 
 /**
- * Core delivers a `multipart/*` body as `FormData`, which has no own
+ * Core delivers a `multipart/form-data` body as `FormData`, which has no own
  * properties for Ajv to judge. Its fields are validated as a record instead:
  * each name maps to its value, a repeated name to an array of its values in
- * order, and a file part to its `File`. Any other body yields `undefined`.
+ * order, and a file part to its `File`. Any other body yields `undefined`,
+ * including the `ArrayBuffer` core delivers for every other multipart subtype
+ * (`mixed`, `related`), which is judged as received like any other bytes.
  */
 function formRecord(body: unknown): Record<string, unknown> | undefined {
   if (typeof FormData === "undefined" || !(body instanceof FormData)) {
@@ -941,10 +943,10 @@ export function validationPlugin(
       coerceTypes: false,
     });
   }
-  // A multipart body validates through its own copy of request.body: form
+  // A FormData body validates through its own copy of request.body: form
   // fields arrive as strings, so it coerces scalar types like the query and
   // header slots, and a file part satisfies `format: 'binary'`. It replaces
-  // the strict body inventory and compiles on the first multipart request.
+  // the strict body inventory and compiles on the first FormData request.
   let formBodyValidator: ValidateFunction | undefined;
   function formBodyValidate(): ValidateFunction | undefined {
     if (!requestBodyInventory) return undefined;

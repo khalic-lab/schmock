@@ -383,7 +383,7 @@ With `passthrough: true` and no `beforeRequest` hook, a request that no route
 matches is never read or parsed. The interceptor checks the mock's routes
 first and forwards the original request untouched, while `request:start`,
 `request:notfound` and `request:end` still fire. An unreadable body (malformed
-multipart, an erroring stream) sent to an unmocked URL therefore reaches the
+`multipart/form-data`, an erroring stream) sent to an unmocked URL therefore reaches the
 network instead of rejecting the fetch. A matched route still reads it, and a
 failure there still rejects or goes to `errorFormatter`.
 
@@ -502,8 +502,8 @@ mock('POST /search', ({ body, form }) => ({
 
 The CLI, `mock.listen()`, `mock.intercept()` (React, Vue and the DevTools
 relay) and the Angular adapter set `form` for every urlencoded body; it is
-absent for any other body. A multipart body is a `FormData`, which keeps
-repeated names itself. A `beforeRequest` (or Angular `transformRequest`) hook
+absent for any other body. A `multipart/form-data` body is a `FormData`,
+which keeps repeated names itself. A `beforeRequest` (or Angular `transformRequest`) hook
 that returns a different body leaves the route without a `form`, since it no
 longer describes the body. Express hands the mock what its body parser built:
 `express.urlencoded()` already makes a repeated name an array, and the
@@ -906,8 +906,15 @@ same request, or `undefined` for an empty body:
 | `application/json`, `+json` | the parsed value |
 | `application/x-www-form-urlencoded` | a flat object; a repeated key keeps its last value |
 | `text/*` | a string |
-| `multipart/*` | `FormData` |
+| `multipart/form-data` | `FormData` |
 | anything else, or none | an `ArrayBuffer` |
+
+Only `multipart/form-data` is decoded as a form. Every other multipart subtype
+(`multipart/mixed`, `multipart/related`, ...) arrives as an `ArrayBuffer` of
+the exact bytes sent, with its `content-type`, boundary included, left in the
+headers for the route to split the parts itself. The platform's `formData()`
+parser accepts only `multipart/form-data`, and the parts of the other subtypes
+need not carry the field names a `FormData` is keyed by.
 
 It reads `content-type` and `content-length` from `headers` case-insensitively.
 For an urlencoded body it resolves to the record only, as its return type
@@ -922,7 +929,7 @@ It rejects with `HttpIngressError`, which carries `status` and `code`:
 |------|--------|-------|
 | `MALFORMED_JSON` | 400 | a JSON body that does not parse |
 | `JSON_TOO_DEEP` | 400 | a JSON body nested more than 256 levels |
-| `MALFORMED_MULTIPART` | 400 | a multipart body that does not parse |
+| `MALFORMED_MULTIPART` | 400 | a `multipart/form-data` body that does not parse |
 | `PAYLOAD_TOO_LARGE` | 413 | a declared or received size above `maxBodySize` |
 
 `HttpIngressError` extends `Error`, not `SchmockError`, so
@@ -1256,9 +1263,9 @@ decodes one itself (the Angular adapter does) hands a route the same value.
 `requestBodyKindOf(contentType)` names the shape a media type decodes to,
 ignoring parameters and case: `json` for `application/json` and any `+json`
 type (the parsed value), `form` for `application/x-www-form-urlencoded` (a flat
-object), `text` for `text/*` (a string), `multipart` for `multipart/*`
-(`FormData`), and `binary` for anything else, no content type included (an
-`ArrayBuffer`). `parseJsonBody(text)` parses a JSON body, or throws
+object), `text` for `text/*` (a string), `multipart` for
+`multipart/form-data` (`FormData`), and `binary` for anything else, no content
+type and every other multipart subtype included (an `ArrayBuffer`). `parseJsonBody(text)` parses a JSON body, or throws
 `HttpIngressError` with status 400 and code `MALFORMED_JSON` when the text does
 not parse, or `JSON_TOO_DEEP` when it nests deeper than 256 levels. Core
 answers either with that status and a `{ error, code }` envelope when it owns
@@ -1878,8 +1885,8 @@ slot (`'request.body'`, `'request.query'`, `'request.headers'` or
 Request rules run before the route generator. Set `bodyRequired: true` when an
 absent body must be rejected; supplied bodies are always validated.
 
-A `multipart/*` body arrives as `FormData`, so `request.body` validates a
-record of its fields instead: each name maps to its value, a name sent more
+A `multipart/form-data` body arrives as `FormData`, so `request.body`
+validates a record of its fields instead: each name maps to its value, a name sent more
 than once maps to an array of its values in order, and a file part maps to its
 `File`. Form fields always arrive as strings, so this record coerces scalar
 types under the same rules as query and header values, described next, and
@@ -1889,7 +1896,9 @@ idiom `type: 'string', format: 'binary'`, alone or as `items` of an array, as
 well as `type: 'object'` and `{}`. On such a binary slot, `maxLength` and
 `minLength` bound a file part's size in bytes (as `@schmock/openapi` does),
 while `pattern` applies only to a text value. The coercion happens on a copy, so the
-route still receives the original `FormData`.
+route still receives the original `FormData`. Any other multipart subtype
+(`multipart/mixed`, `multipart/related`) arrives as an `ArrayBuffer` and is
+validated as received, like any other bytes, with no coercion.
 
 Query and header values always arrive as strings, so their schemas coerce
 scalar types: `'2'` satisfies `type: 'integer'`, `'25'` satisfies

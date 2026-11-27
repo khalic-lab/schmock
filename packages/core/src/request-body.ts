@@ -39,8 +39,13 @@ const MAX_JSON_BODY_DEPTH = 256;
  *   duplicate wins; the transports also pass every field as sent, as
  *   `RequestOptions.form`
  * - `text` (`text/*`): a UTF-8 string
- * - `multipart` (`multipart/*`): `FormData`
- * - `binary` (anything else, including no content type): an `ArrayBuffer`
+ * - `multipart` (`multipart/form-data`): `FormData`
+ * - `binary` (anything else, including no content type and every other
+ *   `multipart/*` subtype, such as `mixed` or `related`): an `ArrayBuffer`
+ *
+ * Only `multipart/form-data` is a form: the platform's `formData()` parser
+ * refuses every other multipart subtype, and their parts need not carry a
+ * field name, so they reach a handler as the bytes that were sent.
  */
 export type RequestBodyKind = "json" | "form" | "text" | "multipart" | "binary";
 
@@ -59,7 +64,7 @@ export function requestBodyKindOf(
   }
   if (mediaType === "application/x-www-form-urlencoded") return "form";
   if (mediaType.startsWith("text/")) return "text";
-  if (mediaType.startsWith("multipart/")) return "multipart";
+  if (mediaType === "multipart/form-data") return "multipart";
   return "binary";
 }
 

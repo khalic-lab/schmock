@@ -935,14 +935,17 @@ uses `express.raw()` (or another parser that yields a `Buffer`); behind
 relay) and the Angular interceptor decode a form body the same way:
 `multipart/form-data` to a `FormData`, `application/x-www-form-urlencoded` to a
 record of strings in which a repeated name keeps its last value, with the whole
-form beside it as [`form`](./api.md#request-context). The plugin reads an
+form beside it as [`form`](./api.md#request-context). Other multipart subtypes
+(`multipart/mixed`, `multipart/related`) are not forms: they arrive as the
+bytes sent (see [Per-media-type request schemas and
+415](#per-media-type-request-schemas-and-415)). The plugin reads an
 urlencoded body from that form. Under Express the body is whatever the app's
 parser produced (`express.urlencoded()` builds arrays from repeated names and,
 with `extended: true`, nested objects from brackets; multipart needs a parser
 such as multer), and it is read through the schema the same way. Validation
 reads the body as the object its schema describes:
 
-- A multipart field sent once is its value; a name sent more than once is an
+- A `multipart/form-data` field sent once is its value; a name sent more than once is an
   array of its values. A file part satisfies `type: string, format: binary`,
   and fails any schema that does not accept a string. Its size in bytes counts
   as its length, so `minLength` and `maxLength` bound the upload (sizes past
@@ -1019,7 +1022,7 @@ CRUD create, `PUT` and `PATCH` store a form body read the same way, through the
 request schema declared for its media type, whether `validateRequests` is on
 or off: `name=Tom&age=4` stores `age: 4` against an `integer` property,
 `tags=a&tags=b` stores `tags: ['a', 'b']` against an array property, and a
-multipart create stores its text fields. When a plugin piped after
+`multipart/form-data` create stores its text fields. When a plugin piped after
 `@schmock/openapi` replaces the body in its own `beforeRequest`, the
 replacement is what gets stored, read through the same request schema but not
 validated again: `validateRequests` checked the body as it was before the
@@ -1057,7 +1060,10 @@ A body in a media type the transports do not parse (`text/*` arrives as a
 string, XML and everything else that is neither JSON nor a form as bytes) is
 checked against the declared media types, so it can still answer 415, but not
 against an object schema it cannot satisfy: an XML body under a schema with
-`required` properties is accepted. Text is validated only against a schema that
+`required` properties is accepted. Only `multipart/form-data` counts as a form,
+so a `multipart/mixed` or `multipart/related` body (an OData `$batch`, a
+metadata-plus-file upload) arrives as bytes and is accepted under its object
+schema the same way. Text is validated only against a schema that
 can take a string: one with a `string` type or branch, such as `text/plain` with
 `type: string, maxLength: 140`, or one that declares no type at all.
 

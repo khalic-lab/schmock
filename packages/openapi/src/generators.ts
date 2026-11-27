@@ -759,8 +759,8 @@ function wrappedItemSchema(
  * Fields are returned as entries, for the caller to define as own properties:
  * a JSON `__proto__` key assigned with `=` re-prototyped the stored row.
  *
- * A file part of a multipart body (one `Blob`/`File`, or a list of them) is
- * never stored: it would serialize as `{}` on every later read.
+ * A file part of a `multipart/form-data` body (one `Blob`/`File`, or a list
+ * of them) is never stored: it would serialize as `{}` on every later read.
  */
 function acceptedFields(
   body: Record<string, unknown>,

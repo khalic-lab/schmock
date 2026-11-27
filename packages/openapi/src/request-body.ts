@@ -7,9 +7,9 @@ import { hasType, isRecord, normalizeMediaType } from "./utils.js";
  * The request body as the operation's schema reads it.
  *
  * Core decodes a body by media type and stops there: an urlencoded form is a
- * record of strings, a multipart form is a `FormData`. Neither is the instance
- * the spec describes, so validating either as-is rejected valid form posts and
- * let invalid ones through. This module turns those two shapes into the
+ * record of strings, a `multipart/form-data` form is a `FormData`. Neither is
+ * the instance the spec describes, so validating either as-is rejected valid
+ * form posts and let invalid ones through. This module turns those two shapes into the
  * record the schema means, once: request validation checks that value, and
  * keeps it for the CRUD generators to read through `readRequestBody()`.
  */
@@ -23,6 +23,7 @@ import { hasType, isRecord, normalizeMediaType } from "./utils.js";
 export const NORMALIZED_BODY_STATE_KEY = "openapi:normalizedBody";
 
 const URLENCODED_MEDIA_TYPE = "application/x-www-form-urlencoded";
+const MULTIPART_FORM_MEDIA_TYPE = "multipart/form-data";
 
 /**
  * Plain decimal notation, the only numeric spelling a form field is coerced
@@ -82,10 +83,15 @@ export interface SubmittedForm {
   encoding?: FormEncodingMap;
 }
 
-/** True for the media types core decodes into form fields. */
+/**
+ * True for the media types core decodes into form fields: urlencoded and
+ * `multipart/form-data`. Every other multipart subtype (`mixed`, `related`)
+ * arrives as the bytes that were sent, like any type core does not parse.
+ */
 export function isFormMediaType(mediaType: string): boolean {
   return (
-    mediaType === URLENCODED_MEDIA_TYPE || mediaType.startsWith("multipart/")
+    mediaType === URLENCODED_MEDIA_TYPE ||
+    mediaType === MULTIPART_FORM_MEDIA_TYPE
   );
 }
 
@@ -97,10 +103,11 @@ export function isJsonMediaType(mediaType: string): boolean {
 /**
  * The request body in the shape `schema` describes.
  *
- * - A `FormData` (multipart on every transport) or `URLSearchParams` becomes a
- *   plain record; a name sent more than once becomes an array of its values.
- * - A form record (urlencoded, or multipart already parsed by an Express
- *   middleware) is copied, never changed in place.
+ * - A `FormData` (`multipart/form-data` on every transport) or
+ *   `URLSearchParams` becomes a plain record; a name sent more than once
+ *   becomes an array of its values.
+ * - A form record (urlencoded, or `multipart/form-data` already parsed by an
+ *   Express middleware) is copied, never changed in place.
  * - Bracket keys are nested when the schema declares their base property as an
  *   object or array and does not declare the literal key: `metadata[order]=42`
  *   becomes `{ metadata: { order: "42" } }`, `tags[]=a` becomes `{ tags: ["a"] }`.

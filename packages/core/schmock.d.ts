@@ -397,8 +397,9 @@ declare namespace Schmock {
      *
      * Set by `mock.listen()`, the CLI, `mock.intercept()` (React, Vue, the
      * DevTools relay) and the Angular adapter, or by a `handle()` caller
-     * through `RequestOptions.form`. Absent for every other body; a multipart
-     * body is already a `FormData`, which keeps repeated names itself.
+     * through `RequestOptions.form`. Absent for every other body; a
+     * `multipart/form-data` body is already a `FormData`, which keeps
+     * repeated names itself.
      *
      * @example
      * ```typescript

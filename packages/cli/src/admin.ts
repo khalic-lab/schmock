@@ -161,8 +161,9 @@ function redactEntries(
  * A recorded body as the history projection shows it. `JSON.stringify` turns
  * an `ArrayBuffer` into `{}`, indistinguishable from an empty JSON object, and
  * a typed array into one key per byte, so a binary body is shown by its size.
- * (A multipart body needs nothing here: core records a `FormData` as its own
- * `{ kind: "unavailable" }` descriptor.)
+ * (A `multipart/form-data` body needs nothing here: core records a `FormData`
+ * as its own `{ kind: "unavailable" }` descriptor. Every other multipart
+ * subtype arrives as bytes, and is described by its size like them.)
  */
 function describeBody(body: unknown): unknown {
   if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {

@@ -28,6 +28,16 @@ Feature: Node ingress matches the fetch interceptor
     When I POST a multipart form with field "name" set to "Rex" and a 3-byte file "photo" to /echo
     Then the recorded body should be form data whose "name" is "Rex" and whose "photo" file holds 3 bytes
 
+  Scenario: A multipart/related upload reaches the handler as the bytes sent
+    Given a listening mock that records the body of POST /echo
+    When I POST the bytes 2d 2d 62 0d 0a ff d8 00 to /echo as "multipart/related; boundary=b"
+    Then the recorded body should be an ArrayBuffer holding 2d 2d 62 0d 0a ff d8 00
+
+  Scenario: The fetch interceptor hands a handler a multipart/mixed body as the bytes sent
+    Given an intercepting mock that records the body and form of POST /echo
+    When I fetch POST /echo with the bytes 2d 2d 62 0d 0a ff d8 00 as "multipart/mixed; boundary=b"
+    Then the recorded body should be an ArrayBuffer holding 2d 2d 62 0d 0a ff d8 00
+
   Scenario: A deeply nested JSON body is rejected before any handler runs
     Given a listening mock that records the body of POST /echo
     When I POST a JSON body nested 300 levels deep to /echo

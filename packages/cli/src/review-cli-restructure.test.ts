@@ -895,3 +895,107 @@ describe("the cli.ts facade after the split", () => {
     ]);
   });
 });
+
+describe("CLI multipart bodies other than multipart/form-data", () => {
+  let server: CliServer | undefined;
+  let tempDir: string | undefined;
+
+  afterEach(async () => {
+    await server?.close();
+    server = undefined;
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+    tempDir = undefined;
+  });
+
+  const objectSchema = {
+    type: "object",
+    required: ["name"],
+    properties: { name: { type: "string" } },
+  };
+
+  /** A validating, admin-enabled CLI server whose POST /uploads takes both multipart types. */
+  async function uploadServer(): Promise<CliServer> {
+    tempDir = mkdtempSync(join(tmpdir(), "schmock-cli-multipart-"));
+    const specPath = join(tempDir, "uploads.json");
+    writeFileSync(
+      specPath,
+      JSON.stringify({
+        openapi: "3.0.3",
+        info: { title: "uploads", version: "1.0.0" },
+        paths: {
+          "/uploads": {
+            post: {
+              requestBody: {
+                required: true,
+                content: {
+                  "multipart/related": { schema: objectSchema },
+                  "multipart/form-data": { schema: objectSchema },
+                },
+              },
+              responses: {
+                "201": {
+                  description: "stored",
+                  content: {
+                    "application/json": {
+                      schema: { type: "object" },
+                      example: { ok: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+    return createCliServer({
+      spec: specPath,
+      port: 0,
+      admin: true,
+      errors: true,
+    });
+  }
+
+  it("answers a multipart/related upload and records it as its bytes", async () => {
+    server = await uploadServer();
+    const body = new Uint8Array([
+      ...new TextEncoder().encode("--b\r\nContent-Type: image/jpeg\r\n\r\n"),
+      0xff,
+      0xd8,
+      0x00,
+      0x80,
+      ...new TextEncoder().encode("\r\n--b--\r\n"),
+    ]);
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/uploads`, {
+      method: "POST",
+      headers: {
+        "content-type": 'multipart/related; type="image/jpeg"; boundary=b',
+      },
+      body,
+    });
+    expect(response.status).toBe(201);
+
+    const history = await fetch(
+      `http://127.0.0.1:${server.port}/schmock-admin/history`,
+      { headers: { authorization: `Bearer ${server.adminToken}` } },
+    );
+    const records: Array<{ body: unknown }> = await history.json();
+    expect(records.map((record) => record.body)).toEqual([
+      { kind: "binary", byteLength: body.byteLength },
+    ]);
+  });
+
+  it("still validates a multipart/form-data upload as the record of its fields", async () => {
+    server = await uploadServer();
+    const form = new FormData();
+    form.set("other", "value");
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/uploads`, {
+      method: "POST",
+      body: form,
+    });
+
+    expect(response.status).toBe(400);
+  });
+});

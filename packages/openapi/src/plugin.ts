@@ -386,7 +386,8 @@ function shouldDispatchCallbacks(
  * Leave the request body, read the way the operation's request schema reads
  * it, where the CRUD generators look for it (`readRequestBody`). Request
  * validation does this itself; this is the same step when it is off, so a
- * multipart or urlencoded create stores the submitted fields either way.
+ * `multipart/form-data` or urlencoded create stores the submitted fields
+ * either way.
  */
 function storeNormalizedBody(context: Schmock.PluginContext): void {
   if (context.body === undefined) return;

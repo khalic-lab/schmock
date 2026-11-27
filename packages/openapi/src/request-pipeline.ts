@@ -66,7 +66,8 @@ function getRouteRequestBody(
 
 /**
  * A body core handed over undecoded: a string for `text/*`, bytes for every
- * other media type it does not parse as JSON or as a form.
+ * other media type it does not parse as JSON or as a form, multipart subtypes
+ * other than `multipart/form-data` included.
  */
 function isUndecodedBody(body: unknown, mediaType: string): boolean {
   if (isJsonMediaType(mediaType) || isFormMediaType(mediaType)) return false;
@@ -629,10 +630,11 @@ export function validateRequestBody(
     return undefined;
   }
 
-  // XML, CSV and other media types core does not parse arrive as the text or
-  // bytes that were sent, which no object schema can describe: the media type
-  // was already checked above. Text is still checked against a schema that
-  // can take a string: one with a string branch, or one that declares no type.
+  // XML, CSV, multipart other than multipart/form-data, and other media types
+  // core does not parse arrive as the text or bytes that were sent, which no
+  // object schema can describe: the media type was already checked above.
+  // Text is still checked against a schema that can take a string: one with a
+  // string branch, or one that declares no type.
   if (
     rawContentType &&
     isUndecodedBody(context.body, normalizeMediaType(rawContentType)) &&

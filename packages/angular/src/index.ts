@@ -646,8 +646,8 @@ function decodeBodyBytes(
 }
 
 /**
- * A `multipart/*` body read into `FormData` by the platform's own parser, as
- * the fetch interceptor reads one; a body it cannot parse rejects, and that
+ * A `multipart/form-data` body read into `FormData` by the platform's own
+ * parser, as the fetch interceptor reads one; a body it cannot parse rejects, and that
  * rejection fails the request. Without a fetch `Response` (an old jsdom)
  * there is no parser, so the body is delivered as it came.
  */
@@ -679,9 +679,10 @@ async function decodeMultipart(
  * own decode table and JSON parser (`@schmock/core/adapter`), the ones
  * `mock.listen()` and the fetch interceptor use: JSON parsed, a urlencoded
  * form a flat object (with every field as sent beside it, as `form`),
- * `text/*` a string, `multipart/*` and `FormData` a
- * `FormData`, anything else an `ArrayBuffer`. A `Blob` or a multipart body
- * can only be read asynchronously; every other body is decoded at once.
+ * `text/*` a string, `multipart/form-data` and `FormData` a `FormData`,
+ * anything else an `ArrayBuffer`, every other multipart subtype included. A
+ * `Blob` or a `multipart/form-data` body can only be read asynchronously;
+ * every other body is decoded at once.
  */
 function routedRequestBody(
   request: HttpRequest<unknown>,

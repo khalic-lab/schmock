@@ -479,8 +479,11 @@ describe('UserService', () => {
   `mock.listen()` and the fetch interceptor decode it, with the same table and
   JSON parser from `@schmock/core/adapter`. JSON is parsed, a urlencoded form
   (an `HttpParams` body included) becomes a flat object, `text/*` a string,
-  `FormData` and a `multipart/*`-labelled string or `Blob` arrive as
-  `FormData`, and anything else is an `ArrayBuffer`. The urlencoded object
+  `FormData` and a `multipart/form-data`-labelled string or `Blob` arrive as
+  `FormData`, and anything else is an `ArrayBuffer`, including a string or
+  `Blob` labelled with another multipart subtype (`multipart/mixed`,
+  `multipart/related`), which arrives as the bytes sent. A `FormData` body
+  arrives as the `FormData` whatever `Content-Type` the caller set. The urlencoded object
   keeps the last value of a repeated name, and the whole form arrives beside
   it as [`form`](./api.md#request-context), every field included, unless a
   `transformRequest` or `beforeRequest` hook replaced the body, which drops
@@ -490,8 +493,9 @@ describe('UserService', () => {
   `passthrough: false` the request gets a 400 `HttpErrorResponse` whose body is
   `{ error, code }` with code `MALFORMED_JSON` or `JSON_TOO_DEEP`, after `Sent`
   and before any hook or route runs; with `passthrough: true` its text is
-  routed instead, as the fetch interceptor routes it. A multipart body the
-  platform cannot parse (a missing boundary) fails the request with a 500.
+  routed instead, as the fetch interceptor routes it. A
+  `multipart/form-data` body the platform cannot parse (a missing boundary)
+  fails the request with a 500.
   With `passthrough: true` and no `transformRequest` or `beforeRequest` hook,
   a request no route answers is passed to the real backend without its body
   being read, so such a body only fails a request the mock would answer.

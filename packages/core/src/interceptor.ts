@@ -568,8 +568,9 @@ interface ExtractedBody {
  * by the shared decode table and JSON parser. An empty body of any type is no
  * body at all, as the Node ingress reads it. A refused JSON body is reported
  * rather than thrown, so the lease can answer it 400 or route its text.
- * Multipart is read with the platform's own parser, whose rejection
- * propagates as before.
+ * A `multipart/form-data` body is read with the platform's own parser, whose
+ * rejection propagates as before; every other multipart subtype arrives as
+ * its bytes.
  */
 async function extractBody(
   normalizedRequest: NormalizedFetchRequest,

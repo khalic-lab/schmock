@@ -430,8 +430,9 @@ A binary body (an `ArrayBuffer`, which is what the server hands the mock for
 `application/octet-stream` and any other unrecognised content type, or a typed
 array) is shown by its size, as `{ "kind": "binary", "byteLength": 1000 }`, in
 the request `body` and in `response.body`. Serialized as is, it used to read
-`{}`, the same as an empty JSON object. A multipart body is shown as core
-records it, `{ "kind": "unavailable", "reason": "not-structured-cloneable",
+`{}`, the same as an empty JSON object. A `multipart/mixed` or
+`multipart/related` body arrives as bytes and is shown the same way. A
+`multipart/form-data` body is shown as core records it, `{ "kind": "unavailable", "reason": "not-structured-cloneable",
 "type": "[object FormData]" }`.
 
 ### Binding beyond loopback
@@ -484,8 +485,8 @@ The same rules apply to `mock.listen()`:
 | `application/json` and any `+json` type | The parsed value. Malformed JSON gives 400 `MALFORMED_JSON`; nesting deeper than 256 levels gives 400 `JSON_TOO_DEEP` |
 | `application/x-www-form-urlencoded` | A flat object of strings; the last duplicate key wins. The whole form, every value of a repeated key included, also reaches the route as [`form`](./api.md#request-context) |
 | `text/*` | A UTF-8 string (the `charset` parameter is ignored) |
-| `multipart/*` | `FormData`. Malformed multipart gives 400 `MALFORMED_MULTIPART` |
-| Anything else, including no content type | An `ArrayBuffer` |
+| `multipart/form-data` | `FormData`. A malformed one gives 400 `MALFORMED_MULTIPART` |
+| Anything else, including no content type and every other multipart subtype (`multipart/mixed`, `multipart/related`) | An `ArrayBuffer` of the bytes sent; the `content-type`, boundary included, stays in the headers |
 | Empty body | `undefined` |
 
 Every response with a body carries `Content-Length` rather than chunked framing,

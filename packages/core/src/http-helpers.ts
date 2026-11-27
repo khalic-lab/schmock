@@ -153,7 +153,8 @@ function concatChunks(
  * Collect and parse the request body from a Node.js IncomingMessage.
  * The body takes the shape the fetch interceptor gives it: parsed JSON for
  * application/json and +json, an object for urlencoded forms, a string for
- * text/*, FormData for multipart/*, and an ArrayBuffer for anything else.
+ * text/*, FormData for multipart/form-data, and an ArrayBuffer for anything
+ * else, every other multipart subtype included.
  * Returns undefined for empty bodies.
  * @param req - Node.js IncomingMessage
  * @param headers - Parsed request headers; content-length and content-type
