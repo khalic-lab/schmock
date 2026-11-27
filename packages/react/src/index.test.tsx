@@ -4,11 +4,16 @@ import { schmock } from "@schmock/core";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import {
   Activity,
+  memo,
+  type ReactNode,
   StrictMode,
   startTransition,
+  use,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SchmockProvider, useSchmock } from "./index.js";
@@ -644,6 +649,35 @@ describe("SchmockProvider", () => {
       expect(globalThis.fetch).toBe(realFetch);
     });
 
+    it("keeps a provider mounted hidden under StrictMode behind a lease taken after it mounted", async () => {
+      const a = serving("A");
+      const n = serving("N");
+      const spy = vi.spyOn(a, "intercept");
+      const tree = (mode: "visible" | "hidden") => (
+        <StrictMode>
+          <App mode={mode} mock={a} />
+        </StrictMode>
+      );
+      const { rerender, unmount } = render(tree("hidden"));
+      await tick();
+      expect(activeLeases(spy)).toBe(0);
+      const hn = keep(n.intercept());
+
+      rerender(tree("hidden"));
+      expect(await text()).toBe("N");
+      await tick();
+
+      rerender(tree("visible"));
+      await tick();
+      expect(activeLeases(spy)).toBe(1);
+      expect(await text()).toBe("N");
+      hn.restore();
+      expect(await text()).toBe("A");
+      unmount();
+      expect(activeLeases(spy)).toBe(0);
+      expect(globalThis.fetch).toBe(realFetch);
+    });
+
     it("keeps its place when a transition reveal commits after its render lease lapsed", async () => {
       const a = serving("A");
       const b = serving("B");
@@ -956,6 +990,376 @@ describe("SchmockProvider", () => {
         }
       },
     );
+
+    it("keeps a provider mounted hidden behind later leases when React drops an interrupted render of another mock before the reveal", async () => {
+      const m = serving("M");
+      const n = serving("N");
+      const c = serving("C");
+      const d = serving("D");
+      const spyM = vi.spyOn(m, "intercept");
+      const spyN = vi.spyOn(n, "intercept");
+
+      let setMock!: (mock: Schmock.CallableMockInstance) => void;
+      let interrupt = false;
+      let switchedBack = false;
+      // Once armed, keeps React busy past its frame so the render yields, and
+      // switches the mock back before React resumes, so React restarts the
+      // render and drops the one of the other mock.
+      function Busy() {
+        if (interrupt) {
+          interrupt = false;
+          const start = Date.now();
+          while (Date.now() - start < 20) {
+            // spin
+          }
+          queueMicrotask(() => {
+            setMock(m);
+            switchedBack = true;
+          });
+        }
+        return null;
+      }
+      // The provider element is memoized on the mock, so the restarted render
+      // bails out above the provider and never renders it with `m` again.
+      const Inner = memo(function MockOwner() {
+        // A mock is callable, so it goes in and out of state through functions.
+        const [mock, setMockState] = useState(() => m);
+        setMock = (next) => setMockState(() => next);
+        return useMemo(
+          () => (
+            <SchmockProvider mock={mock}>
+              <Busy />
+            </SchmockProvider>
+          ),
+          [mock],
+        );
+      });
+      const inner = <Inner />;
+      let reveal!: () => void;
+      function Host() {
+        const [visible, setVisible] = useState(false);
+        reveal = () => setVisible(true);
+        return (
+          <Activity mode={visible ? "visible" : "hidden"}>{inner}</Activity>
+        );
+      }
+
+      const { unmount } = render(<Host />);
+      await tick();
+      expect(activeLeases(spyM)).toBe(0);
+      const hc = keep(c.intercept());
+      const mounted = spyM.mock.calls.length;
+
+      // act() renders without yielding, so the interrupted render runs outside it.
+      const actEnvironment = Reflect.get(
+        globalThis,
+        "IS_REACT_ACT_ENVIRONMENT",
+      );
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", false);
+      try {
+        interrupt = true;
+        setMock(n);
+        await waitFor(() => {
+          expect(switchedBack).toBe(true);
+          expect(spyN.mock.calls.length).toBe(1);
+          expect(activeLeases(spyN)).toBe(0);
+        });
+      } finally {
+        Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+      }
+      await tick();
+      // React rendered the provider with `n` once, dropped that render, and
+      // did not render the provider again.
+      expect(spyN.mock.calls.length).toBe(1);
+      expect(spyM.mock.calls.length).toBe(mounted);
+
+      // Taken after the provider mounted hidden, like `c`, so the reveal goes
+      // behind both.
+      const hd = keep(d.intercept());
+      act(() => reveal());
+      expect(activeLeases(spyM)).toBe(1);
+      expect(activeLeases(spyN)).toBe(0);
+      expect(await text()).toBe("D");
+      hd.restore();
+      expect(await text()).toBe("C");
+      hc.restore();
+      expect(await text()).toBe("M");
+      unmount();
+      expect(activeLeases(spyM)).toBe(0);
+      expect(globalThis.fetch).toBe(realFetch);
+    });
+
+    it("gives a changed mock the front under a hidden Activity after React dropped a render of it that took a lease", async () => {
+      const a = serving("A");
+      const c = serving("C");
+      const x = serving("X");
+      const spyC = vi.spyOn(c, "intercept");
+      const never = new Promise<never>(() => {});
+
+      let renders = 0;
+      function Counter() {
+        renders += 1;
+        return null;
+      }
+      function Held() {
+        use(never);
+        return null;
+      }
+      let setMock!: (mock: Schmock.CallableMockInstance) => void;
+      let setHeld!: (held: boolean) => void;
+      function Host() {
+        // A mock is callable, so it goes in and out of state through functions.
+        const [mock, setMockState] = useState(() => a);
+        const [held, setHeldState] = useState(false);
+        setMock = (next) => setMockState(() => next);
+        setHeld = setHeldState;
+        return (
+          <SchmockProvider mock={mock}>
+            <Counter />
+            {held ? <Held /> : null}
+          </SchmockProvider>
+        );
+      }
+      let reveal!: () => void;
+      function Shell() {
+        const [visible, setVisible] = useState(false);
+        reveal = () => setVisible(true);
+        return (
+          <Activity mode={visible ? "visible" : "hidden"}>
+            <Host />
+          </Activity>
+        );
+      }
+
+      const { unmount } = render(<Shell />);
+      await tick();
+
+      // A transition to the new mock suspends for good, so React never
+      // commits it, and the lease its render took lapses.
+      const actEnvironment = Reflect.get(
+        globalThis,
+        "IS_REACT_ACT_ENVIRONMENT",
+      );
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", false);
+      try {
+        startTransition(() => {
+          setMock(c);
+          setHeld(true);
+        });
+        await waitFor(() => {
+          expect(spyC.mock.calls.length).toBe(1);
+          expect(activeLeases(spyC)).toBe(0);
+        });
+      } finally {
+        Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+      }
+
+      // Switching back drops that render. The state ends where it was, so
+      // React does not render the provider again.
+      const before = renders;
+      act(() => {
+        setMock(a);
+        setHeld(false);
+      });
+      await tick();
+      expect(renders).toBe(before);
+
+      // Taken before the new mock renders again, so the new mock goes ahead of
+      // it rather than to the dropped render's place behind it.
+      const hx = keep(x.intercept());
+      act(() => setMock(c));
+      expect(spyC.mock.calls.length).toBe(2);
+      expect(await text()).toBe("C");
+      await tick();
+      expect(await text()).toBe("X");
+
+      act(() => reveal());
+      expect(activeLeases(spyC)).toBe(1);
+      expect(await text()).toBe("C");
+      hx.restore();
+      expect(await text()).toBe("C");
+      unmount();
+      expect(activeLeases(spyC)).toBe(0);
+      expect(globalThis.fetch).toBe(realFetch);
+    });
+
+    it("keeps a mock switched away and back while hidden behind a lease taken after it committed", async () => {
+      const m = serving("M");
+      const n = serving("N");
+      const x = serving("X");
+      const spyM = vi.spyOn(m, "intercept");
+      const spyN = vi.spyOn(n, "intercept");
+      const { rerender, unmount } = render(<App mode="visible" mock={m} />);
+      expect(await text()).toBe("M");
+
+      rerender(<App mode="hidden" mock={m} />);
+      await tick();
+      expect(globalThis.fetch).toBe(realFetch);
+      const hx = keep(x.intercept());
+
+      // The other mock never commits while hidden; its render lease lapses.
+      rerender(<App mode="hidden" mock={n} />);
+      expect(spyN.mock.calls.length).toBe(1);
+      await tick();
+      expect(activeLeases(spyN)).toBe(0);
+      expect(await text()).toBe("X");
+
+      // One render switches back and reveals, so the mock gets a new record
+      // and only its committed place keeps it behind the newer lease.
+      rerender(<App mode="visible" mock={m} />);
+      expect(activeLeases(spyM)).toBe(1);
+      expect(await text()).toBe("X");
+      hx.restore();
+      expect(await text()).toBe("M");
+      unmount();
+      expect(activeLeases(spyM)).toBe(0);
+      expect(activeLeases(spyN)).toBe(0);
+      expect(globalThis.fetch).toBe(realFetch);
+    });
+
+    it("keeps a mock changed while hidden behind a later lease when React drops its first render of it for a torn store read", async () => {
+      const a = serving("A");
+      const c = serving("C");
+      const x = serving("X");
+      const spyC = vi.spyOn(c, "intercept");
+
+      // Once armed, changes the store right after reading it. React finds the
+      // torn read when the hidden render completes, drops that render and
+      // renders the tree again in the same task, where the read holds.
+      let snapshot = 0;
+      let armed = false;
+      let reads = 0;
+      const subscribe = () => () => {};
+      function TornRead() {
+        useSyncExternalStore(subscribe, () => snapshot);
+        reads += 1;
+        if (armed) {
+          armed = false;
+          snapshot += 1;
+        }
+        return null;
+      }
+      const tree = (
+        mode: "visible" | "hidden",
+        mock: Schmock.CallableMockInstance,
+      ) => (
+        <Activity mode={mode}>
+          <SchmockProvider mock={mock}>
+            <TornRead />
+          </SchmockProvider>
+        </Activity>
+      );
+
+      const { rerender, unmount } = render(tree("hidden", a));
+      await tick();
+
+      // A transition renders without blocking, so React checks the read.
+      armed = true;
+      const before = reads;
+      startTransition(() => rerender(tree("hidden", c)));
+      // React rendered the new mock twice, and the second render reused the
+      // live lease the dropped one took.
+      expect(reads - before).toBe(2);
+      expect(spyC.mock.calls.length).toBe(1);
+      await tick();
+      expect(activeLeases(spyC)).toBe(0);
+      const hx = keep(x.intercept());
+
+      rerender(tree("hidden", c));
+      expect(spyC.mock.calls.length).toBe(2);
+      expect(await text()).toBe("X");
+      await tick();
+
+      rerender(tree("visible", c));
+      expect(activeLeases(spyC)).toBe(1);
+      expect(await text()).toBe("X");
+      hx.restore();
+      expect(await text()).toBe("C");
+      unmount();
+      expect(activeLeases(spyC)).toBe(0);
+      expect(globalThis.fetch).toBe(realFetch);
+    });
+
+    it("keeps a mock switched away and back while hidden behind a later lease when its reveal renders before the DOM is back", async () => {
+      const m = serving("M");
+      const n = serving("N");
+      const x = serving("X");
+      const spyM = vi.spyOn(m, "intercept");
+      const spyN = vi.spyOn(n, "intercept");
+      const descriptor = Object.getOwnPropertyDescriptor(
+        globalThis,
+        "document",
+      );
+      expect(descriptor?.configurable).toBe(true);
+
+      // Once armed, the provider renders with no global document, which its
+      // child puts back before React commits. The child records how many
+      // leases of `m` exist by then, so the test sees the render took none.
+      let armed = false;
+      let leasesBeforeDom: number | undefined;
+      function NoDom({ children }: { children: ReactNode }) {
+        if (armed) Reflect.deleteProperty(globalThis, "document");
+        return children;
+      }
+      function DomBack() {
+        if (armed && descriptor) {
+          armed = false;
+          leasesBeforeDom = spyM.mock.calls.length;
+          Object.defineProperty(globalThis, "document", descriptor);
+        }
+        return null;
+      }
+      const tree = (
+        mode: "visible" | "hidden",
+        mock: Schmock.CallableMockInstance,
+      ) => (
+        <Activity mode={mode}>
+          <NoDom>
+            <SchmockProvider mock={mock}>
+              <DomBack />
+            </SchmockProvider>
+          </NoDom>
+        </Activity>
+      );
+
+      try {
+        const { rerender, unmount } = render(tree("visible", m));
+        expect(await text()).toBe("M");
+
+        rerender(tree("hidden", m));
+        await tick();
+        expect(globalThis.fetch).toBe(realFetch);
+        const hx = keep(x.intercept());
+
+        // The other mock never commits while hidden; its render lease lapses.
+        rerender(tree("hidden", n));
+        expect(spyN.mock.calls.length).toBe(1);
+        await tick();
+        expect(activeLeases(spyN)).toBe(0);
+
+        // One render switches back and reveals, so the mock gets a new record
+        // and takes no render lease. The commit takes the only lease, and only
+        // the committed place keeps it behind the newer lease.
+        const before = spyM.mock.calls.length;
+        armed = true;
+        rerender(tree("visible", m));
+        expect(typeof document).toBe("object");
+        expect(leasesBeforeDom).toBe(before);
+        expect(spyM.mock.calls.length).toBe(before + 1);
+        expect(activeLeases(spyM)).toBe(1);
+        expect(await text()).toBe("X");
+        hx.restore();
+        expect(await text()).toBe("M");
+        unmount();
+        expect(activeLeases(spyM)).toBe(0);
+        expect(globalThis.fetch).toBe(realFetch);
+      } finally {
+        armed = false;
+        if (descriptor && !Object.hasOwn(globalThis, "document")) {
+          Object.defineProperty(globalThis, "document", descriptor);
+        }
+      }
+    });
   });
 });
 

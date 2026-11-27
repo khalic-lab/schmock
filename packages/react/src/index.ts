@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
 } from "react";
 
@@ -56,6 +57,19 @@ interface LeaseSlots {
   placed: InterceptionLease | null;
 }
 
+/**
+ * The first render lease of `mock` in the renders React kept, the place of a
+ * lease taken before the provider committed one for that mock. It lives in
+ * the installer's memoized state, not in the slots, which are a ref and keep
+ * whatever an abandoned render wrote: React drops memoized state with a render
+ * it abandons and keeps it for a render whose tree it commits, hidden or not.
+ * Should React ever drop the memo on its own, the next lease takes the front.
+ */
+interface FirstRenderLease {
+  mock: Schmock.CallableMockInstance;
+  handle: Schmock.InterceptHandle | undefined;
+}
+
 /** The place for a new lease of `mock`: the lease last committed for it, or the front. */
 function placeFor(
   slots: LeaseSlots,
@@ -87,9 +101,10 @@ interface InterceptionReleaserProps {
  * again (a token, then the data) is still intercepted while a Suspense
  * boundary above the provider shows its fallback.
  *
- * `at` is the lease the provider last committed for this mock, so a render
- * after an Activity hide takes its lease at that lease's position, not the
- * front.
+ * `at` is the lease the provider last committed for this mock, or before
+ * that its first render lease in a render React kept, so a render after an
+ * Activity hide, or a hidden re-render, takes its lease at that lease's
+ * position, not the front.
  */
 function acquireRenderLease(
   mock: Schmock.CallableMockInstance,
@@ -128,33 +143,41 @@ function InterceptionInstaller({
     errorFormatter,
   });
 
+  // A new mock gets a new record, and a render React abandons takes its
+  // record with it, so a later render of that mock takes the front again.
+  const first = useMemo<FirstRenderLease>(
+    () => ({ mock, handle: undefined }),
+    [mock],
+  );
+
   // Idempotent: a re-render, or StrictMode's second render call, finds the
-  // lease it already holds for this mock and takes no other.
-  if (
-    hasDom() &&
-    slots.committed?.mock !== mock &&
-    !(slots.pending?.mock === mock && slots.pending.handle.active)
-  ) {
-    slots.pending = acquireRenderLease(
-      mock,
-      {
-        baseUrl,
-        passthrough,
-        beforeRequest,
-        beforeResponse,
-        errorFormatter,
-      },
-      // Never committed for this mock while nothing is committed (mounted
-      // hidden, a suspended first mount, a mock changed while hidden): take
-      // the lapsed render lease's place, so each re-render keeps the position
-      // of the first one instead of taking the front again. While another
-      // mock is committed, the lapsed lease may come from a render React
-      // abandoned, so a new render of this mock takes the front.
-      placeFor(slots, mock) ??
-        (slots.committed === null && slots.pending?.mock === mock
-          ? slots.pending.handle
-          : undefined),
-    );
+  // lease it already holds for this mock and takes no other. The record keeps
+  // whichever lease the render holds, so a render that reuses a live lease
+  // (one a dropped render took earlier in the same task, say) keeps its place.
+  if (hasDom() && slots.committed?.mock !== mock) {
+    const held =
+      slots.pending?.mock === mock && slots.pending.handle.active
+        ? slots.pending
+        : null;
+    const lease =
+      held ??
+      acquireRenderLease(
+        mock,
+        {
+          baseUrl,
+          passthrough,
+          beforeRequest,
+          beforeResponse,
+          errorFormatter,
+        },
+        // Never committed for this mock (mounted hidden, a mock changed while
+        // hidden): take the place of the first render lease of a render React
+        // kept, so each re-render keeps that position instead of taking the
+        // front again.
+        placeFor(slots, mock) ?? first.handle,
+      );
+    slots.pending = lease;
+    first.handle ??= lease.handle;
   }
 
   // The lease is keyed on the mock alone. A different mock is a genuinely new
@@ -186,7 +209,8 @@ function InterceptionInstaller({
     // there is none — after StrictMode's simulated unmount, after an Activity
     // hide whose render lease lapsed, or once an uncommitted lease lapsed.
     // Never committed for this mock, the fresh lease takes the place of the
-    // render lease that lapsed before this commit, rather than the front.
+    // first render lease of the render being committed, rather than the front,
+    // whatever another mock's dropped render left in `slots.pending`.
     const pending = slots.pending;
     let lease: InterceptionLease;
     if (pending?.mock === mock && pending.handle.active) {
@@ -197,8 +221,7 @@ function InterceptionInstaller({
         mock,
         handle: mock.intercept(
           optionsRef.current,
-          placeFor(slots, mock) ??
-            (pending?.mock === mock ? pending.handle : undefined),
+          placeFor(slots, mock) ?? first.handle,
         ),
         committed: true,
       };

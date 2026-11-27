@@ -83,7 +83,8 @@ For that task the provider answers every route that no newer lease claims.
 
 A provider mounted hidden has not committed yet, so its first render takes a
 lease at the front, and every later render, hidden or the reveal, keeps the
-position of that first one. Leases taken after it mounted stay ahead of it.
+position of that first one. Leases taken after it mounted stay ahead of it,
+also when React started a render of another mock in between and dropped it.
 React renders hidden content after the visible content of the same update, so a
 pane mounted hidden sits ahead of the visible panes mounted with it, and on a
 route both serve it answers for one task after each re-render of the hidden
@@ -92,9 +93,11 @@ pane. A new `mock` prop takes a new position at the front, hidden or not.
 A transition can hold its commit after the render, for example until a
 stylesheet it adds has loaded, and the render's one-task lease can lapse
 meanwhile. The commit then takes its lease at the position that render's
-lease had, so a lease taken in between stays ahead of it. If the app switches
-back to the committed mock before that commit, React drops the render, and the
-new mock takes the front the next time it renders.
+lease had, so a lease taken in between stays ahead of it. A render that React
+drops sets no position, except that a render of the same mock in the same task
+reuses its one-task lease and keeps that lease's place. If the app switches
+back before a held or suspended transition commits, React drops the render,
+and the new mock takes the front the next time it renders, hidden or not.
 
 Calling `mock.reset()` while the provider is mounted clears routes, state,
 history, plugins, and listeners but preserves the provider's explicit
