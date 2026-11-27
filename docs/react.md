@@ -92,7 +92,9 @@ pane. A new `mock` prop takes a new position at the front, hidden or not.
 A transition can hold its commit after the render, for example until a
 stylesheet it adds has loaded, and the render's one-task lease can lapse
 meanwhile. The commit then takes its lease at the position that render's
-lease had, so a lease taken in between stays ahead of it.
+lease had, so a lease taken in between stays ahead of it. If the app switches
+back to the committed mock before that commit, React drops the render, and the
+new mock takes the front the next time it renders.
 
 Calling `mock.reset()` while the provider is mounted clears routes, state,
 history, plugins, and listeners but preserves the provider's explicit

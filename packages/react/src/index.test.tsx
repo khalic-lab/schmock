@@ -602,6 +602,29 @@ describe("SchmockProvider", () => {
       expect(globalThis.fetch).toBe(realFetch);
     });
 
+    it("keeps a mock changed while hidden behind a lease taken after its first hidden render", async () => {
+      const a = serving("A");
+      const c = serving("C");
+      const n = serving("N");
+      const { rerender, unmount } = render(<App mode="visible" mock={a} />);
+
+      rerender(<App mode="hidden" mock={a} />);
+      rerender(<App mode="hidden" mock={c} />);
+      await tick();
+      const hn = keep(n.intercept());
+
+      rerender(<App mode="hidden" mock={c} />);
+      expect(await text()).toBe("N");
+      await tick();
+
+      rerender(<App mode="visible" mock={c} />);
+      expect(await text()).toBe("N");
+      hn.restore();
+      expect(await text()).toBe("C");
+      unmount();
+      expect(globalThis.fetch).toBe(realFetch);
+    });
+
     it("keeps a provider mounted hidden behind a lease taken after it mounted", async () => {
       const a = serving("A");
       const n = serving("N");
@@ -671,26 +694,28 @@ describe("SchmockProvider", () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(activeLeases(spy)).toBe(0);
         expect(links("stylesheet")).toHaveLength(0);
+        Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+
+        const load = (rel: string) =>
+          act(() => {
+            for (const link of links(rel))
+              link.dispatchEvent(new Event("load"));
+          });
+        load("preload");
+        load("stylesheet");
+        expect(links("stylesheet")).toHaveLength(1);
+        expect(activeLeases(spy)).toBe(1);
+
+        expect(await text()).toBe("B");
+        hb.restore();
+        expect(await text()).toBe("A");
+        unmount();
+        expect(globalThis.fetch).toBe(realFetch);
       } finally {
         Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
-      }
-
-      const load = (rel: string) =>
-        act(() => {
-          for (const link of links(rel)) link.dispatchEvent(new Event("load"));
-        });
-      load("preload");
-      load("stylesheet");
-      expect(links("stylesheet")).toHaveLength(1);
-      expect(activeLeases(spy)).toBe(1);
-
-      expect(await text()).toBe("B");
-      hb.restore();
-      expect(await text()).toBe("A");
-      unmount();
-      expect(globalThis.fetch).toBe(realFetch);
-      for (const link of [...links("preload"), ...links("stylesheet")]) {
-        link.remove();
+        for (const link of [...links("preload"), ...links("stylesheet")]) {
+          link.remove();
+        }
       }
     });
 
@@ -737,26 +762,28 @@ describe("SchmockProvider", () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(activeLeases(spy)).toBe(0);
         expect(links("stylesheet")).toHaveLength(0);
+        Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+
+        const load = (rel: string) =>
+          act(() => {
+            for (const link of links(rel))
+              link.dispatchEvent(new Event("load"));
+          });
+        load("preload");
+        load("stylesheet");
+        expect(links("stylesheet")).toHaveLength(1);
+        expect(activeLeases(spy)).toBe(1);
+
+        expect(await text()).toBe("N");
+        hn.restore();
+        expect(await text()).toBe("A");
+        unmount();
+        expect(globalThis.fetch).toBe(realFetch);
       } finally {
         Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
-      }
-
-      const load = (rel: string) =>
-        act(() => {
-          for (const link of links(rel)) link.dispatchEvent(new Event("load"));
-        });
-      load("preload");
-      load("stylesheet");
-      expect(links("stylesheet")).toHaveLength(1);
-      expect(activeLeases(spy)).toBe(1);
-
-      expect(await text()).toBe("N");
-      hn.restore();
-      expect(await text()).toBe("A");
-      unmount();
-      expect(globalThis.fetch).toBe(realFetch);
-      for (const link of [...links("preload"), ...links("stylesheet")]) {
-        link.remove();
+        for (const link of [...links("preload"), ...links("stylesheet")]) {
+          link.remove();
+        }
       }
     });
 
@@ -806,34 +833,129 @@ describe("SchmockProvider", () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(activeLeases(spyC)).toBe(0);
         expect(links("stylesheet")).toHaveLength(0);
+        Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+
+        // Taken after the new mock rendered, so it stays ahead of the new mock,
+        // which does not take the front when it commits.
+        const hd = keep(d.intercept());
+        const load = (rel: string) =>
+          act(() => {
+            for (const link of links(rel))
+              link.dispatchEvent(new Event("load"));
+          });
+        load("preload");
+        load("stylesheet");
+        expect(links("stylesheet")).toHaveLength(1);
+        expect(activeLeases(spyC)).toBe(1);
+        expect(activeLeases(spyA)).toBe(0);
+
+        expect(await text()).toBe("D");
+        hd.restore();
+        expect(await text()).toBe("C");
+        hb.restore();
+        expect(await text()).toBe("C");
+        unmount();
+        expect(globalThis.fetch).toBe(realFetch);
       } finally {
         Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
-      }
-
-      // Taken after the new mock rendered, so it stays ahead of the new mock,
-      // which does not take the front when it commits.
-      const hd = keep(d.intercept());
-      const load = (rel: string) =>
-        act(() => {
-          for (const link of links(rel)) link.dispatchEvent(new Event("load"));
-        });
-      load("preload");
-      load("stylesheet");
-      expect(links("stylesheet")).toHaveLength(1);
-      expect(activeLeases(spyC)).toBe(1);
-      expect(activeLeases(spyA)).toBe(0);
-
-      expect(await text()).toBe("D");
-      hd.restore();
-      expect(await text()).toBe("C");
-      hb.restore();
-      expect(await text()).toBe("C");
-      unmount();
-      expect(globalThis.fetch).toBe(realFetch);
-      for (const link of [...links("preload"), ...links("stylesheet")]) {
-        link.remove();
+        for (const link of [...links("preload"), ...links("stylesheet")]) {
+          link.remove();
+        }
       }
     });
+
+    it.each([
+      ["re-renders the provider", true],
+      ["leaves the provider unrendered", false],
+    ])(
+      "gives a changed mock the front after an abandoned render of it took a lease, when the switch back %s",
+      async (_, rerendersProvider) => {
+        const a = serving("A");
+        const c = serving("C");
+        const x = serving("X");
+        const spyC = vi.spyOn(c, "intercept");
+        const href = `/abandoned-mock-${rerendersProvider}.css`;
+        const links = (rel: string) =>
+          document.head.querySelectorAll(`link[rel="${rel}"][href="${href}"]`);
+
+        let renders = 0;
+        function Counter() {
+          renders += 1;
+          return null;
+        }
+        let setMock!: (mock: Schmock.CallableMockInstance) => void;
+        let setStyled!: (styled: boolean) => void;
+        let bump!: () => void;
+        function Host() {
+          // A mock is callable, so it goes in and out of state through functions.
+          const [mock, setMockState] = useState(() => a);
+          const [styled, setStyledState] = useState(false);
+          const [, setRevision] = useState(0);
+          setMock = (next) => setMockState(() => next);
+          setStyled = setStyledState;
+          bump = () => setRevision((revision) => revision + 1);
+          return (
+            <SchmockProvider mock={mock}>
+              <Counter />
+              {styled ? (
+                <link rel="stylesheet" href={href} precedence="default" />
+              ) : null}
+            </SchmockProvider>
+          );
+        }
+
+        const { unmount } = render(<Host />);
+        expect(await text()).toBe("A");
+
+        const actEnvironment = Reflect.get(
+          globalThis,
+          "IS_REACT_ACT_ENVIRONMENT",
+        );
+        Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", false);
+        try {
+          startTransition(() => {
+            setMock(c);
+            setStyled(true);
+          });
+          await waitFor(() => {
+            expect(links("preload")).toHaveLength(1);
+          });
+          // The render of the new mock took a lease, which lapses while the
+          // commit waits for the stylesheet.
+          expect(spyC.mock.calls.length).toBe(1);
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          expect(activeLeases(spyC)).toBe(0);
+
+          // Switching back to the committed mock abandons that render.
+          Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+          const before = renders;
+          act(() => {
+            setMock(a);
+            setStyled(false);
+            if (rerendersProvider) bump();
+          });
+          expect(renders > before).toBe(rerendersProvider);
+          expect(await text()).toBe("A");
+
+          // Taken before the new mock renders again, so the new mock goes ahead
+          // of it rather than to the abandoned render's place behind it.
+          const hx = keep(x.intercept());
+          act(() => setMock(c));
+          expect(activeLeases(spyC)).toBe(1);
+          expect(await text()).toBe("C");
+          hx.restore();
+          expect(await text()).toBe("C");
+          unmount();
+          expect(activeLeases(spyC)).toBe(0);
+          expect(globalThis.fetch).toBe(realFetch);
+        } finally {
+          Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+          for (const link of [...links("preload"), ...links("stylesheet")]) {
+            link.remove();
+          }
+        }
+      },
+    );
   });
 });
 

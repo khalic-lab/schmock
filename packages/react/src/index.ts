@@ -144,11 +144,16 @@ function InterceptionInstaller({
         beforeResponse,
         errorFormatter,
       },
-      // Never committed for this mock (mounted hidden, or a suspended first
-      // mount): take the lapsed render lease's place, so each re-render keeps
-      // the position of the first one instead of taking the front again.
+      // Never committed for this mock while nothing is committed (mounted
+      // hidden, a suspended first mount, a mock changed while hidden): take
+      // the lapsed render lease's place, so each re-render keeps the position
+      // of the first one instead of taking the front again. While another
+      // mock is committed, the lapsed lease may come from a render React
+      // abandoned, so a new render of this mock takes the front.
       placeFor(slots, mock) ??
-        (slots.pending?.mock === mock ? slots.pending.handle : undefined),
+        (slots.committed === null && slots.pending?.mock === mock
+          ? slots.pending.handle
+          : undefined),
     );
   }
 
@@ -180,8 +185,8 @@ function InterceptionInstaller({
     // Claim the render's lease; take a fresh one at the committed place when
     // there is none — after StrictMode's simulated unmount, after an Activity
     // hide whose render lease lapsed, or once an uncommitted lease lapsed.
-    // Never committed for this mock, the fresh lease takes the lapsed render
-    // lease's place, as a re-render does, rather than the front.
+    // Never committed for this mock, the fresh lease takes the place of the
+    // render lease that lapsed before this commit, rather than the front.
     const pending = slots.pending;
     let lease: InterceptionLease;
     if (pending?.mock === mock && pending.handle.active) {
