@@ -3,6 +3,7 @@ import type { JSONSchema7 } from "json-schema";
 import { describe, expect, it } from "vitest";
 import { MAX_ARRAY_SIZE } from "./constants.js";
 import { fakerPlugin } from "./index.js";
+import { generatedLengthCeiling } from "./regex-bounds.js";
 import { validateFakerMethod, validateSchema } from "./validation.js";
 
 function captureFailure(run: () => unknown): unknown {
@@ -353,10 +354,6 @@ describe("validateSchema", () => {
 
     it.each([
       [
-        "a maxLength that truncates the pattern",
-        { type: "string", pattern: "^[a-z]{60000}$", maxLength: 10 },
-      ],
-      [
         "a format that replaces the pattern",
         { type: "string", pattern: "^[a-z]{60000}$", format: "uuid" },
       ],
@@ -373,14 +370,6 @@ describe("validateSchema", () => {
         { type: ["string", "null"], pattern: "^[a-z]{60000}$" },
       ],
       [
-        "an allOf maxLength that truncates the pattern",
-        {
-          type: "string",
-          pattern: "^[a-z]{60000}$",
-          allOf: [{ maxLength: 10 }],
-        },
-      ],
-      [
         "an anyOf enum that replaces the pattern",
         { type: "string", pattern: "^[a-z]{60000}$", anyOf: [{ enum: ["x"] }] },
       ],
@@ -394,14 +383,697 @@ describe("validateSchema", () => {
           then: { const: "x" },
         },
       ],
-      [
-        "a NaN maxLength",
-        { type: "string", pattern: "^[a-z]{60000}$", maxLength: Number.NaN },
-      ],
     ] satisfies Array<[string, JSONSchema7]>)(
       "does not charge a pattern floor under %s",
       (_, item) => {
         expect(() => fakerPlugin({ schema: rowsOf(item, 300) })).not.toThrow();
+      },
+    );
+
+    // json-schema-faker draws a pattern match up to 50 times, throwing away
+    // each one longer than maxLength, then draws once more and slices that
+    // one: a maxLength below the shortest match costs 51 full matches.
+    it.each([
+      [
+        "its own maxLength",
+        { type: "string", pattern: "^[a-z]{60000}$", maxLength: 10 },
+      ],
+      [
+        "an allOf maxLength",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          allOf: [{ maxLength: 10 }],
+        },
+      ],
+      [
+        "an allOf maxLength below its own",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          maxLength: 65_000,
+          allOf: [{ maxLength: 10 }],
+        },
+      ],
+      [
+        "its own maxLength below an allOf one",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          maxLength: 10,
+          allOf: [{ maxLength: 65_000 }],
+        },
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "charges every match json-schema-faker draws for a pattern longer than %s",
+      (_, item) => {
+        expectResource(
+          captureFailure(() => fakerPlugin({ schema: rowsOf(item, 300) })),
+          { resource: "generated_chars", actual: 300 * 51 * 60_000 },
+        );
+      },
+    );
+
+    it("charges the discarded matches of each item a root array count asks for", () => {
+      const schema: JSONSchema7 = {
+        type: "array",
+        items: { type: "string", pattern: "^a{65536}$", maxLength: 1 },
+      };
+
+      expectResource(
+        captureFailure(() => fakerPlugin({ schema, count: 100 })),
+        { resource: "generated_chars", actual: 100 * 51 * 65_536 },
+      );
+    });
+
+    it("charges a 64-character hash held to 32 characters for 51 hashes", () => {
+      const hash: JSONSchema7 = {
+        type: "string",
+        pattern: "^[0-9a-f]{64}$",
+        maxLength: 32,
+      };
+
+      // 51 x 64 = 3,264 characters a string: 5,140 of them fit the
+      // 16,777,216-character budget and 5,141 do not.
+      expect(() => validateSchema(rowsOf(hash, 5140))).not.toThrow();
+      expectResource(
+        captureFailure(() => validateSchema(rowsOf(hash, 5141))),
+        { resource: "generated_chars", actual: 5141 * 3264 },
+      );
+    });
+
+    it("charges 51 hashes when maxLength is one character short of the hash", () => {
+      // Every 64-character draw is one character too long for 63, so
+      // json-schema-faker discards all 50 before slicing the 51st.
+      const hash: JSONSchema7 = {
+        type: "string",
+        pattern: "^[0-9a-f]{64}$",
+        maxLength: 63,
+      };
+
+      expectResource(
+        captureFailure(() => validateSchema(rowsOf(hash, 5141))),
+        { resource: "generated_chars", actual: 5141 * 3264 },
+      );
+    });
+
+    it("still generates a pattern a little longer than its maxLength", async () => {
+      const hash = await generateOnce({
+        type: "string",
+        pattern: "^[0-9a-f]{64}$",
+        maxLength: 32,
+      });
+      expect(hash).toMatch(/^[0-9a-f]{32}$/);
+
+      const words = await generateOnce(
+        rowsOf({ type: "string", pattern: "[a-z]{20}", maxLength: 10 }, 3),
+      );
+      expect(words).toEqual({
+        rows: [
+          expect.stringMatching(/^[a-z]{10}$/),
+          expect.stringMatching(/^[a-z]{10}$/),
+          expect.stringMatching(/^[a-z]{10}$/),
+        ],
+      });
+    });
+
+    it.each([
+      [
+        "only one anyOf branch caps",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          anyOf: [{ maxLength: 10 }, { minLength: 1 }],
+        },
+      ],
+      [
+        "only one oneOf branch caps",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          oneOf: [{ maxLength: 10 }, { minLength: 1 }],
+        },
+      ],
+      [
+        "its maxLength is NaN, which json-schema-faker never applies",
+        { type: "string", pattern: "^[a-z]{60000}$", maxLength: Number.NaN },
+      ],
+      [
+        "a NaN maxLength meets an allOf one, which json-schema-faker's merge makes NaN",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          maxLength: Number.NaN,
+          allOf: [{ maxLength: 10 }],
+        },
+      ],
+      [
+        "its maxLength equals the shortest match, which json-schema-faker keeps",
+        { type: "string", pattern: "^[a-z]{60000}$", maxLength: 60_000 },
+      ],
+      [
+        "only an else with no if caps it, which json-schema-faker never merges",
+        { type: "string", pattern: "^[a-z]{60000}$", else: { maxLength: 10 } },
+      ],
+      [
+        "only a then that an anyOf shadows caps it, which json-schema-faker skips",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          anyOf: [{ minLength: 1 }],
+          if: { minLength: 0 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { maxLength: 10 },
+        },
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "charges one full match when %s",
+      (_, item) => {
+        expectResource(
+          captureFailure(() => fakerPlugin({ schema: rowsOf(item, 300) })),
+          { resource: "generated_chars", actual: 300 * 60_000 },
+        );
+      },
+    );
+
+    it.each([
+      [
+        "a const under a nested anyOf",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          maxLength: 10,
+          allOf: [{ anyOf: [{ const: "x" }, { const: "y" }] }],
+        },
+      ],
+      [
+        "a const under a nested oneOf",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          maxLength: 10,
+          allOf: [{ oneOf: [{ const: "x" }, { const: "y" }] }],
+        },
+      ],
+      [
+        "a const under a nested allOf",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          maxLength: 10,
+          allOf: [{ allOf: [{ const: "x" }] }],
+        },
+      ],
+      [
+        "an enum behind a $dynamicRef",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          maxLength: 10,
+          allOf: [withKeywords({}, { $dynamicRef: "#code" })],
+          $defs: {
+            code: withKeywords(
+              { enum: ["x", "y"] },
+              { $dynamicAnchor: "code" },
+            ),
+          },
+        },
+      ],
+      [
+        "an enum behind a $ref",
+        {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          maxLength: 10,
+          allOf: [{ $ref: "#/$defs/code" }],
+          $defs: { code: { enum: ["x", "y"] } },
+        },
+      ],
+      [
+        "an integer branch beside an untyped pattern",
+        {
+          pattern: "^[a-z]{60000}$",
+          maxLength: 10,
+          anyOf: [{ type: "integer" }, { minLength: 1 }],
+        },
+      ],
+      [
+        "a not with a type beside an untyped pattern",
+        {
+          pattern: "^[a-z]{60000}$",
+          maxLength: 10,
+          not: { type: "integer" },
+        },
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "charges only the cut length when %s may stand in for the pattern",
+      (_, item) => {
+        expect(() => fakerPlugin({ schema: rowsOf(item, 300) })).not.toThrow();
+      },
+    );
+
+    it("keeps the cut-length charge when an if with a then holds a keyword the charge cannot read", () => {
+      // D62 residual: the if's anyOf is not read path by path, so the charge
+      // falls back to the match cut to maxLength, like the table above.
+      const item: JSONSchema7 = {
+        type: "string",
+        pattern: "^[a-z]{60000}$",
+        if: { minLength: 1, anyOf: [{ minLength: 0 }] },
+        // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+        then: { maxLength: 10 },
+      };
+
+      expect(() => fakerPlugin({ schema: rowsOf(item, 300) })).not.toThrow();
+    });
+
+    it("charges every match when a string's own not names another type", () => {
+      // json-schema-faker answers a typed not by merging in another type,
+      // and its merge keeps string when that type shares nothing with it.
+      const item: JSONSchema7 = {
+        type: "string",
+        pattern: "^[a-z]{60000}$",
+        maxLength: 10,
+        not: { type: "integer" },
+      };
+
+      expectResource(
+        captureFailure(() => fakerPlugin({ schema: rowsOf(item, 300) })),
+        { resource: "generated_chars", actual: 300 * 51 * 60_000 },
+      );
+    });
+
+    it("charges every match when a branch's other type cannot displace string", () => {
+      // json-schema-faker's merge keeps the schema's own type when a branch's
+      // shares nothing with it, so both branches build the pattern.
+      const item: JSONSchema7 = {
+        type: "string",
+        pattern: "^[a-z]{60000}$",
+        maxLength: 10,
+        anyOf: [{ type: "integer" }, { minLength: 1 }],
+      };
+
+      expectResource(
+        captureFailure(() => fakerPlugin({ schema: rowsOf(item, 300) })),
+        { resource: "generated_chars", actual: 300 * 51 * 60_000 },
+      );
+    });
+
+    it.each([
+      [
+        "its not names no type",
+        { pattern: "^[a-z]{60000}$", maxLength: 10, not: { const: "x" } },
+      ],
+      [
+        "a branch is typed string",
+        {
+          pattern: "^[a-z]{60000}$",
+          maxLength: 10,
+          anyOf: [{ type: "string" }, { minLength: 1 }],
+        },
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "charges every match for an untyped pattern when %s",
+      (_, item) => {
+        expectResource(
+          captureFailure(() => fakerPlugin({ schema: rowsOf(item, 300) })),
+          { resource: "generated_chars", actual: 300 * 51 * 60_000 },
+        );
+      },
+    );
+
+    // json-schema-faker's merge copies no `not`, `if`, `then` or `else` from
+    // a branch, so none of them can stand in for the pattern.
+    it.each([
+      ["a not", { allOf: [{ type: "string", not: { type: "integer" } }] }],
+      ["a false not", { allOf: [{ not: false }] }],
+      ["an if", { allOf: [{ if: { const: "x" } }] }],
+      [
+        "a then",
+        // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+        { allOf: [{ then: { const: "x" } }] },
+      ],
+      ["an else", { allOf: [{ else: { const: "x" } }] }],
+      [
+        "an if and then on an anyOf branch",
+        {
+          anyOf: [
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            { if: { minLength: 1 }, then: { const: "x" } },
+            {},
+          ],
+        },
+      ],
+      [
+        "an if and then inside its then",
+        {
+          if: { minLength: 1 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { if: { minLength: 1 }, then: { const: "x" } },
+        },
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "charges every match when a merged branch carries %s",
+      (_, keywords) => {
+        const item: JSONSchema7 = {
+          type: "string",
+          pattern: "^[a-z]{60000}$",
+          maxLength: 10,
+          ...keywords,
+        };
+
+        expectResource(
+          captureFailure(() => fakerPlugin({ schema: rowsOf(item, 300) })),
+          { resource: "generated_chars", actual: 300 * 51 * 60_000 },
+        );
+      },
+    );
+
+    it("keeps the full match when a NaN maxLength meets an allOf one", async () => {
+      const value = await generateOnce({
+        type: "string",
+        pattern: "^[a-z]{20}$",
+        maxLength: Number.NaN,
+        allOf: [{ maxLength: 10 }],
+      });
+
+      expect(value).toMatch(/^[a-z]{20}$/);
+    });
+
+    it("builds the pattern whatever then a merged branch carries", async () => {
+      const value = await generateOnce({
+        type: "string",
+        pattern: "^[a-z]{20}$",
+        maxLength: 10,
+        // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+        allOf: [{ if: { minLength: 1 }, then: { const: "x" } }],
+      });
+
+      expect(value).toMatch(/^[a-z]{10}$/);
+    });
+
+    it("holds string_length to what a pattern cut by maxLength emits", async () => {
+      // 51 x 70,000 = 3,570,000 discarded characters fit the response budget,
+      // and the string it returns is 10 characters long.
+      const schema: JSONSchema7 = {
+        type: "string",
+        pattern: "^a{70000}$",
+        maxLength: 10,
+      };
+
+      expect(() => fakerPlugin({ schema })).not.toThrow();
+      expect(await generateOnce(schema)).toBe("aaaaaaaaaa");
+    });
+
+    // string_length refuses a schema when any path json-schema-faker can
+    // take returns too long a string, as it does for an anyOf minLength.
+    it.each([
+      [
+        "its maxLength is NaN",
+        { type: "string", pattern: "^a{70000}$", maxLength: Number.NaN },
+      ],
+      [
+        "a NaN maxLength meets an allOf one",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          maxLength: Number.NaN,
+          allOf: [{ maxLength: 10 }],
+        },
+      ],
+      [
+        "an allOf maxLength is NaN",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          maxLength: 10,
+          allOf: [{ maxLength: Number.NaN }],
+        },
+      ],
+      [
+        "only one anyOf branch caps it",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          anyOf: [{ maxLength: 10 }, { minLength: 1 }],
+        },
+      ],
+      [
+        "only one oneOf branch caps it",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          oneOf: [{ maxLength: 10 }, { minLength: 1 }],
+        },
+      ],
+      [
+        "an anyOf branch's NaN maxLength meets its own",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          maxLength: 10,
+          anyOf: [{ maxLength: Number.NaN }, { minLength: 1 }],
+        },
+      ],
+      [
+        "only an anyOf beside an allOf caps it",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          allOf: [{ minLength: 1 }],
+          anyOf: [{ maxLength: 10 }, { minLength: 1 }],
+        },
+      ],
+      [
+        "only an else that a then shadows caps it",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          if: { minLength: 0 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { minLength: 1 },
+          else: { maxLength: 10 },
+        },
+      ],
+      [
+        "only an else with no if caps it",
+        { type: "string", pattern: "^a{70000}$", else: { maxLength: 10 } },
+      ],
+      [
+        "the other oneOf entry is false",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          oneOf: [false, { maxLength: 10 }],
+        },
+      ],
+      [
+        "only an anyOf that a oneOf shadows caps it",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          oneOf: [{ minLength: 1 }],
+          anyOf: [{ maxLength: 10 }],
+        },
+      ],
+      [
+        "only a then that an anyOf shadows caps it",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          anyOf: [{ minLength: 1 }],
+          if: { minLength: 0 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { maxLength: 10 },
+        },
+      ],
+      [
+        "an anyOf of false entries leaves the path a oneOf beside an allOf takes",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          allOf: [{ minLength: 1 }],
+          oneOf: [{ minLength: 1 }],
+          anyOf: [false],
+        },
+      ],
+    ] satisfies Array<[string, JSONSchema7]>)(
+      "holds string_length to the full match when %s",
+      (_, schema) => {
+        expectResource(
+          captureFailure(() => fakerPlugin({ schema })),
+          { resource: "string_length", actual: 70_000 },
+        );
+      },
+    );
+
+    it("holds string_length to the full match of an if whose parent maxLength is NaN", () => {
+      const schema: JSONSchema7 = {
+        type: "string",
+        maxLength: Number.NaN,
+        if: { pattern: "^a{70000}$" },
+        // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+        then: { minLength: 1 },
+      };
+
+      expectResource(
+        captureFailure(() => fakerPlugin({ schema })),
+        { resource: "string_length", actual: 70_000 },
+      );
+    });
+
+    it.each([
+      [
+        "every anyOf branch caps it",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          anyOf: [{ maxLength: 10 }, { maxLength: 20 }],
+        },
+        20,
+      ],
+      [
+        "every oneOf branch caps it",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          oneOf: [{ maxLength: 10 }, { maxLength: 20 }],
+        },
+        20,
+      ],
+      [
+        "every anyOf branch beside an allOf caps it",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          allOf: [{ minLength: 1 }],
+          anyOf: [{ maxLength: 10 }, { maxLength: 20 }],
+        },
+        20,
+      ],
+      [
+        // json-schema-faker merges a false entry into `{ not: {} }` and
+        // generates a short value without the pattern.
+        "the other anyOf entry is false",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          anyOf: [false, { maxLength: 10 }],
+        },
+        100,
+      ],
+      [
+        "a then caps it",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          if: { minLength: 0 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { maxLength: 10 },
+        },
+        10,
+      ],
+      [
+        "an else with no then caps it",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          if: { minLength: 0 },
+          else: { maxLength: 10 },
+        },
+        10,
+      ],
+      // A branch holding a composition or reference the charge does not read
+      // leaves string_length at the smallest cap, which here every path meets.
+      [
+        "a nested anyOf caps the other anyOf branch",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          anyOf: [
+            { maxLength: 10 },
+            { anyOf: [{ maxLength: 10 }, { maxLength: 5 }] },
+          ],
+        },
+        10,
+      ],
+      [
+        "a nested allOf caps the other anyOf branch",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          anyOf: [{ maxLength: 10 }, { allOf: [{ maxLength: 10 }] }],
+        },
+        10,
+      ],
+      [
+        "a $ref target caps the other anyOf branch",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          anyOf: [{ maxLength: 10 }, { $ref: "#/$defs/short" }],
+          $defs: { short: { maxLength: 10 } },
+        },
+        10,
+      ],
+      [
+        "an enum behind a $ref stands in on the other anyOf branch",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          anyOf: [{ maxLength: 10 }, { $ref: "#/$defs/code" }],
+          $defs: { code: { enum: ["x", "y"] } },
+        },
+        10,
+      ],
+      [
+        "a then beside an allOf and an anyOf caps it",
+        {
+          type: "string",
+          pattern: "^a{70000}$",
+          allOf: [{ minLength: 1 }],
+          anyOf: [{ minLength: 1 }],
+          if: { minLength: 0 },
+          // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+          then: { maxLength: 10 },
+        },
+        10,
+      ],
+    ] satisfies Array<[string, JSONSchema7, number]>)(
+      "accepts a pattern too long for string_length when %s",
+      async (_, schema, cap) => {
+        expect(() => fakerPlugin({ schema })).not.toThrow();
+        for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+          const value = await fakerPlugin({ schema, seed }).process(context());
+          expect(String(value.response).length).toBeLessThanOrEqual(cap);
+        }
+      },
+    );
+
+    it("accepts the full match beside a NaN maxLength when it fits string_length", async () => {
+      const schema: JSONSchema7 = {
+        type: "string",
+        pattern: "^a{60000}$",
+        maxLength: Number.NaN,
+      };
+
+      expect(() => fakerPlugin({ schema })).not.toThrow();
+      expect(await generateOnce(schema)).toBe("a".repeat(60_000));
+    });
+
+    it.each([
+      ["^a{1,60000}$", 300],
+      ["^[a-z]+$", MAX_ARRAY_SIZE],
+      ["^[a-z]{5,200}$", 300],
+    ])(
+      "does not charge discarded matches for %s, whose draws fit maxLength 10",
+      (pattern, count) => {
+        // json-schema-faker repeats a quantifier at most five times past its
+        // lower bound, so none of these draws passes 10 characters.
+        expect(() =>
+          fakerPlugin({
+            schema: rowsOf({ type: "string", pattern, maxLength: 10 }, count),
+          }),
+        ).not.toThrow();
       },
     );
 
@@ -454,6 +1126,693 @@ describe("validateSchema", () => {
         expect(() => fakerPlugin({ schema: rowsOf(item, 300) })).not.toThrow();
       },
     );
+
+    describe("draws json-schema-faker discards on every path it merges", () => {
+      const long = "^[a-z]{60000}$";
+      // 300 strings of 51 full matches, against 300 of one.
+      const everyDraw = 300 * 51 * 60_000;
+      const oneMatch = 300 * 60_000;
+
+      // With no allOf, anyOf or oneOf before it, json-schema-faker merges an
+      // `if` with its `then`, or with its `else` when there is no `then`, on
+      // every path; beside an allOf, Schmock carries the `then` into it.
+      it.each([
+        [
+          "a then on an if with nothing before it",
+          {
+            type: "string",
+            pattern: long,
+            if: { minLength: 1 },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { maxLength: 10 },
+          },
+        ],
+        [
+          "an else on an if with no then",
+          {
+            type: "string",
+            pattern: long,
+            if: { minLength: 1 },
+            else: { maxLength: 10 },
+          },
+        ],
+        [
+          "a then beside an allOf",
+          {
+            type: "string",
+            pattern: long,
+            allOf: [{ minLength: 1 }],
+            if: { minLength: 0 },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { maxLength: 10 },
+          },
+        ],
+        [
+          // With no allOf, the if beside an else is not one of the merged
+          // branches the charge reads, so its anyOf leaves the count alone.
+          "an else on an if with no then and an anyOf in the if",
+          {
+            type: "string",
+            pattern: long,
+            if: { minLength: 1, anyOf: [{ minLength: 0 }] },
+            else: { maxLength: 10 },
+          },
+        ],
+        [
+          // With neither a then nor an else, json-schema-faker never merges
+          // the if, so the pattern nested in it replaces nothing.
+          "the schema's own maxLength beside an allOf and an if with neither a then nor an else",
+          {
+            type: "string",
+            pattern: long,
+            maxLength: 10,
+            allOf: [{ minLength: 1 }],
+            if: { allOf: [{ pattern: "^b{3}$" }] },
+          },
+        ],
+        [
+          "every anyOf branch",
+          {
+            type: "string",
+            pattern: long,
+            anyOf: [{ maxLength: 10 }, { maxLength: 20 }],
+          },
+        ],
+        [
+          "every oneOf branch",
+          {
+            type: "string",
+            pattern: long,
+            oneOf: [{ maxLength: 10 }, { maxLength: 20 }],
+          },
+        ],
+        [
+          "every anyOf branch beside an allOf",
+          {
+            type: "string",
+            pattern: long,
+            allOf: [{ minLength: 1 }],
+            anyOf: [{ maxLength: 10 }, { maxLength: 20 }],
+          },
+        ],
+        [
+          // With a false if, json-schema-faker skips the restated copy and
+          // generates from the schema itself, cap and pattern together.
+          "the schema's own maxLength beside an allOf and an if that is false",
+          {
+            type: "string",
+            pattern: long,
+            maxLength: 10,
+            allOf: [{ minLength: 1 }],
+            if: false,
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 1 },
+          },
+        ],
+        [
+          // Schmock restates the then as an allOf entry, and
+          // json-schema-faker skips a boolean allOf entry, so the false then
+          // never reaches the merge.
+          "the schema's own maxLength beside an allOf, an if and a then that is false",
+          {
+            type: "string",
+            pattern: long,
+            maxLength: 10,
+            allOf: [{ minLength: 1 }],
+            if: { minLength: 0 },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: false,
+          },
+        ],
+        [
+          // A false oneOf branch merges nothing, so that path still builds
+          // the pattern under the schema's own cap.
+          "the schema's own maxLength beside a oneOf with a false branch",
+          {
+            type: "string",
+            pattern: long,
+            maxLength: 10,
+            oneOf: [false, { minLength: 1 }],
+          },
+        ],
+      ] satisfies Array<[string, JSONSchema7]>)(
+        "charges every match when %s caps the pattern",
+        (_, item) => {
+          expectResource(
+            captureFailure(() => fakerPlugin({ schema: rowsOf(item, 300) })),
+            { resource: "generated_chars", actual: everyDraw },
+          );
+        },
+      );
+
+      it.each([
+        [
+          // Schmock gives the if a then holding the allOf, so no path
+          // merges the else.
+          "an else beside an allOf caps it with no then",
+          {
+            type: "string",
+            pattern: long,
+            allOf: [{ minLength: 1 }],
+            if: { minLength: 0 },
+            else: { maxLength: 10 },
+          },
+        ],
+        [
+          "an anyOf beside an allOf caps it where a oneOf comes first",
+          {
+            type: "string",
+            pattern: long,
+            allOf: [{ minLength: 1 }],
+            oneOf: [{ minLength: 2 }],
+            anyOf: [{ maxLength: 10 }],
+          },
+        ],
+        [
+          "a then caps it under an if that is false",
+          {
+            type: "string",
+            pattern: long,
+            if: false,
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { maxLength: 10 },
+          },
+        ],
+        [
+          // json-schema-faker merges a false anyOf entry into `{ not: {} }`
+          // and generates a value without the pattern there.
+          "a capped anyOf branch sits beside a false one",
+          {
+            type: "string",
+            pattern: long,
+            anyOf: [false, { maxLength: 10 }],
+          },
+        ],
+        [
+          "a capped oneOf branch sits beside a false one, which merges nothing",
+          {
+            type: "string",
+            pattern: long,
+            oneOf: [false, { maxLength: 10 }],
+          },
+        ],
+        [
+          "a capped anyOf branch sits beside a true one",
+          {
+            type: "string",
+            pattern: long,
+            anyOf: [true, { maxLength: 10 }],
+          },
+        ],
+        [
+          // Schmock moves the allOf into the then, and with a false if
+          // json-schema-faker composes nothing, so the cap is dropped.
+          "an allOf caps it beside an if that is false",
+          {
+            type: "string",
+            pattern: long,
+            allOf: [{ maxLength: 10 }],
+            if: false,
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 1 },
+          },
+        ],
+        [
+          // Every path builds no pattern, so the count stays at one match.
+          "its own maxLength caps it but its only anyOf entry is false",
+          {
+            type: "string",
+            pattern: long,
+            maxLength: 10,
+            anyOf: [false],
+          },
+        ],
+        [
+          // A then that is present stops json-schema-faker reading the else.
+          "an else would cap it but the if also has a then",
+          {
+            type: "string",
+            pattern: long,
+            if: { minLength: 1 },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 0 },
+            else: { maxLength: 10 },
+          },
+        ],
+        [
+          // The truthy not makes json-schema-faker compose the schema with a
+          // false if, which generates a value without the pattern.
+          "its own maxLength caps it beside an allOf, an if that is false and a not",
+          {
+            type: "string",
+            pattern: long,
+            maxLength: 10,
+            allOf: [{ minLength: 1 }],
+            if: false,
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 1 },
+            not: { minLength: 70_000 },
+          },
+        ],
+        [
+          // Without an allOf too, the truthy not is what makes
+          // json-schema-faker compose, and the false if then drops the
+          // pattern.
+          "its own maxLength caps it beside an if that is false, a then and a not",
+          {
+            type: "string",
+            pattern: long,
+            maxLength: 10,
+            if: false,
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 1 },
+            not: { minLength: 70_000 },
+          },
+        ],
+      ] satisfies Array<[string, JSONSchema7]>)(
+        "charges one full match when %s",
+        (_, item) => {
+          expectResource(
+            captureFailure(() => fakerPlugin({ schema: rowsOf(item, 300) })),
+            { resource: "generated_chars", actual: oneMatch },
+          );
+        },
+      );
+
+      // json-schema-faker's merge keeps the last pattern it meets: the
+      // schema's own, then the if's, each allOf entry's, the then's, and the
+      // oneOf or anyOf branch's.
+      it.each([
+        [
+          "an if's pattern under the schema's maxLength",
+          {
+            type: "string",
+            maxLength: 10,
+            if: { pattern: long },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 1 },
+          },
+        ],
+        [
+          "an allOf entry's pattern under the schema's maxLength",
+          { type: "string", maxLength: 10, allOf: [{ pattern: long }] },
+        ],
+        [
+          "a then's pattern that replaces the schema's own",
+          {
+            type: "string",
+            pattern: "^[a-z]{3}$",
+            maxLength: 10,
+            if: { minLength: 0 },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { pattern: long },
+          },
+        ],
+        [
+          "an allOf entry's pattern that replaces the schema's own",
+          {
+            type: "string",
+            pattern: "^[a-z]{3}$",
+            maxLength: 10,
+            allOf: [{ pattern: long }],
+          },
+        ],
+        [
+          "every anyOf branch's pattern under the schema's maxLength",
+          {
+            type: "string",
+            maxLength: 10,
+            anyOf: [{ pattern: long }, { pattern: "^[0-9]{60000}$" }],
+          },
+        ],
+        [
+          // Beside an allOf, the then is merged after the allOf entries.
+          "a then's pattern that replaces an allOf entry's",
+          {
+            type: "string",
+            maxLength: 10,
+            allOf: [{ pattern: "^[a-z]{3}$" }],
+            if: { minLength: 0 },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { pattern: long },
+          },
+        ],
+        [
+          // Beside an allOf, Schmock gives an if with only an else a then,
+          // so the if is merged.
+          "an if's pattern beside an allOf when the if has only an else",
+          {
+            type: "string",
+            maxLength: 10,
+            allOf: [{ minLength: 1 }],
+            if: { pattern: long },
+            else: { minLength: 1 },
+          },
+        ],
+      ] satisfies Array<[string, JSONSchema7]>)(
+        "charges every match for %s",
+        (_, item) => {
+          expectResource(
+            captureFailure(() => fakerPlugin({ schema: rowsOf(item, 300) })),
+            { resource: "generated_chars", actual: everyDraw },
+          );
+        },
+      );
+
+      it.each([
+        [
+          "an allOf entry's short pattern replaces the schema's long one",
+          {
+            type: "string",
+            pattern: long,
+            maxLength: 10,
+            allOf: [{ pattern: "^[a-z]{3}$" }],
+          },
+          /^[a-z]{3}$/,
+        ],
+        [
+          "an allOf entry's short pattern replaces an if's long one",
+          {
+            type: "string",
+            maxLength: 10,
+            allOf: [{ pattern: "^[a-z]{3}$" }],
+            if: { pattern: long },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 1 },
+          },
+          /^[a-z]{3}$/,
+        ],
+        [
+          "an if with no then is not merged",
+          {
+            type: "string",
+            maxLength: 10,
+            if: { pattern: long },
+            else: { minLength: 1 },
+          },
+          /^[A-Za-z0-9]{1,10}$/,
+        ],
+        [
+          // Beside an allOf, Schmock gives an if with only an else a then,
+          // so the if is merged, and the pattern in its own allOf replaces
+          // the schema's.
+          "an if beside an allOf and an else nests a short pattern in its own allOf",
+          {
+            type: "string",
+            maxLength: 10,
+            pattern: long,
+            allOf: [{ minLength: 1 }],
+            if: { allOf: [{ pattern: "^b{3}$" }] },
+            else: { minLength: 1 },
+          },
+          /^b{3}$/,
+        ],
+      ] satisfies Array<[string, JSONSchema7, RegExp]>)(
+        "charges only the pattern json-schema-faker keeps when %s",
+        async (_, item, shape) => {
+          expect(() =>
+            fakerPlugin({ schema: rowsOf(item, 300) }),
+          ).not.toThrow();
+          expect(await generateOnce(item)).toMatch(shape);
+        },
+      );
+
+      // json-schema-faker also throws away every draw shorter than minLength
+      // before it pads the 51st.
+      it.each([
+        [
+          "its longest match is shorter than minLength",
+          { type: "string", pattern: "^a{60000}$", minLength: 60_001 },
+          270,
+          270 * 51 * 60_000,
+        ],
+        [
+          "an allOf minLength passes its longest match",
+          {
+            type: "string",
+            pattern: "^a{60000}$",
+            allOf: [{ minLength: 60_001 }],
+          },
+          270,
+          270 * 51 * 60_000,
+        ],
+        [
+          "a then minLength passes its longest match",
+          {
+            type: "string",
+            pattern: "^a{60000}$",
+            if: { minLength: 0 },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 60_001 },
+          },
+          270,
+          270 * 51 * 60_000,
+        ],
+        [
+          // json-schema-faker merges minLength with Math.max, so a smaller
+          // one merged after the schema's own does not lower it.
+          "its own minLength passes its longest match beside a smaller allOf one",
+          {
+            type: "string",
+            pattern: "^a{60000}$",
+            minLength: 60_001,
+            allOf: [{ minLength: 1 }],
+          },
+          270,
+          270 * 51 * 60_000,
+        ],
+        [
+          "its own minLength passes its longest match beside a smaller then one",
+          {
+            type: "string",
+            pattern: "^a{60000}$",
+            minLength: 60_001,
+            if: { minLength: 0 },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 1 },
+          },
+          270,
+          270 * 51 * 60_000,
+        ],
+        [
+          // Each draw is 40 to 45 characters: too short for 44 or too long
+          // for 42.
+          "its minLength is above its maxLength",
+          {
+            type: "string",
+            pattern: "^[a-z]{40,60}$",
+            minLength: 44,
+            maxLength: 42,
+          },
+          9000,
+          9000 * 51 * 40,
+        ],
+      ] satisfies Array<[string, JSONSchema7, number, number]>)(
+        "charges every match when %s",
+        (_, item, count, actual) => {
+          expectResource(
+            captureFailure(() => fakerPlugin({ schema: rowsOf(item, count) })),
+            { resource: "generated_chars", actual },
+          );
+        },
+      );
+
+      it.each([
+        [
+          "allOf",
+          {
+            type: "string",
+            pattern: "^a{60000}$",
+            minLength: 60_001,
+            allOf: [{ minLength: 1 }],
+          },
+        ],
+        [
+          "then",
+          {
+            type: "string",
+            pattern: "^a{60000}$",
+            minLength: 60_001,
+            if: { minLength: 0 },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 1 },
+          },
+        ],
+      ] satisfies Array<[string, JSONSchema7]>)(
+        "sees json-schema-faker pad past the match when a smaller %s minLength follows the schema's own",
+        async (_, item) => {
+          // A padded value means every draw fell short of minLength 60001.
+          expect(String(await generateOnce(item))).toHaveLength(60_001);
+        },
+      );
+
+      it("sees json-schema-faker build no pattern under an if that is false beside a then and a not", async () => {
+        const value = String(
+          await generateOnce({
+            type: "string",
+            pattern: long,
+            maxLength: 10,
+            if: false,
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 1 },
+            not: { minLength: 70_000 },
+          }),
+        );
+
+        // A pattern draw cut to maxLength would be ten lowercase letters.
+        expect(value.length).toBeLessThanOrEqual(10);
+        expect(value).not.toMatch(/^[a-z]{10}$/);
+      });
+
+      // json-schema-faker's own regex parser reads these differently from a
+      // RegExp and builds more than the pattern matches, so a minLength just
+      // past the match is met by the first draw.
+      it.each([
+        ["^\\u0041[a-z]{6000}$", 6003, 6005],
+        ["^\\u{41}[a-z]{6000}$", 6003, 6041],
+        ["^\\x41[a-z]{6000}$", 6003, 6003],
+        ["^\\cA[a-z]{6000}$", 6002, 6002],
+        ["^\\p{L}[a-z]{6000}$", 6003, 6004],
+        ["^\\P{L}[a-z]{6000}$", 6003, 6004],
+        ["^(?<n>a)\\k<n>[a-z]{6000}$", 6003, 6005],
+        ["^(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)\\12[a-z]{6000}$", 6014, 6014],
+        ["^[a-z]{6000}(?<=x>a{100})$", 6050, 6100],
+        ["^[a-z]{6000}(?<!x>a{100})$", 6050, 6100],
+        ["^[a-z]{6000}(?=[)]x{100})", 6050, 6101],
+        // The range ends at the backslash, and the escaped ] closes the class.
+        ["^[!-\\]][a-z]{6000}$", 6002, 6002],
+      ])(
+        "does not charge discarded draws for %s at minLength %i, which json-schema-faker builds %i characters of",
+        async (pattern, minLength, built) => {
+          expect(() =>
+            fakerPlugin({
+              schema: rowsOf({ type: "string", pattern, minLength }, 60),
+            }),
+          ).not.toThrow();
+          expect(
+            String(await generateOnce({ type: "string", pattern })),
+          ).toHaveLength(built);
+        },
+      );
+
+      it.each([
+        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        "^(\\d{3}-)?\\d{3}-\\d{4}$",
+        "^([a-z0-9]{32}|[a-z0-9]{64})$",
+        "^[a-z]+(?:-[a-z]+)*$",
+        "^\\d{5}(-\\d{4})?$",
+        "^(?<year>\\d{4})-(?<month>\\d{2})$",
+        "^[\\w.+-]+@[\\w-]+\\.[a-z]{2,6}$",
+        "^\\S{2,}\\s?\\.\\*[^\\]]{0,3}$",
+      ])(
+        "never sees json-schema-faker build %s past its certain ceiling",
+        async (pattern) => {
+          const ceiling = generatedLengthCeiling(pattern);
+          expect(ceiling).toBeDefined();
+          for (let seed = 1; seed <= 50; seed += 1) {
+            const value = await fakerPlugin({
+              schema: { type: "string", pattern },
+              seed,
+            }).process(context());
+            expect(String(value.response).length).toBeLessThanOrEqual(
+              ceiling ?? 0,
+            );
+          }
+        },
+      );
+
+      it("sees json-schema-faker keep the merge the charge reads", async () => {
+        // The else is not applied beside a then: the full match comes back.
+        expect(
+          await generateOnce({
+            type: "string",
+            pattern: long,
+            if: { minLength: 1 },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 0 },
+            else: { maxLength: 10 },
+          }),
+        ).toHaveLength(60_000);
+        // A not beside a false if yields no string, so no pattern is built.
+        expect(
+          await generateOnce({
+            type: "string",
+            pattern: long,
+            maxLength: 10,
+            allOf: [{ minLength: 1 }],
+            if: false,
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { minLength: 1 },
+            not: { minLength: 70_000 },
+          }),
+        ).toBe(false);
+        // The then's pattern wins over the allOf entry's three letters.
+        expect(
+          await generateOnce({
+            type: "string",
+            maxLength: 10,
+            allOf: [{ pattern: "^[a-z]{3}$" }],
+            if: { minLength: 0 },
+            // biome-ignore lint/suspicious/noThenProperty: JSON Schema's conditional keyword is named "then"
+            then: { pattern: long },
+          }),
+        ).toMatch(/^[a-z]{10}$/);
+        // The if's pattern is generated and cut to the schema's maxLength.
+        expect(
+          await generateOnce({
+            type: "string",
+            maxLength: 10,
+            allOf: [{ minLength: 1 }],
+            if: { pattern: long },
+            else: { minLength: 1 },
+          }),
+        ).toMatch(/^[a-z]{10}$/);
+      });
+
+      // Each draw of ^[a-z]{40,60}$ is 40 to 45 characters long, so a bound
+      // that one of them meets exactly is kept by the first draw.
+      it.each([
+        [
+          "a minLength equal to its maxLength",
+          { minLength: 42, maxLength: 42 },
+          { minLength: 43, maxLength: 42 },
+          42,
+        ],
+        [
+          "a minLength equal to its certain ceiling",
+          { minLength: 45 },
+          { minLength: 46 },
+          45,
+        ],
+      ] satisfies Array<[string, JSONSchema7, JSONSchema7, number]>)(
+        "charges one match for %s, and every match one past it",
+        async (_, met, missed, built) => {
+          const pattern = "^[a-z]{40,60}$";
+          expect(generatedLengthCeiling(pattern)).toBe(45);
+          const at: JSONSchema7 = { type: "string", pattern, ...met };
+          expect(() => fakerPlugin({ schema: rowsOf(at, 9000) })).not.toThrow();
+          expect(await generateOnce(at)).toHaveLength(built);
+          expectResource(
+            captureFailure(() =>
+              fakerPlugin({
+                schema: rowsOf({ type: "string", pattern, ...missed }, 9000),
+              }),
+            ),
+            { resource: "generated_chars", actual: 9000 * 51 * 40 },
+          );
+        },
+      );
+
+      it("keeps a realistic minLength that the longest match meets uncharged", () => {
+        const zip: JSONSchema7 = {
+          type: "string",
+          pattern: "^\\d{5}(-\\d{4})?$",
+          minLength: 5,
+        };
+
+        expect(() => validateSchema(rowsOf(zip, MAX_ARRAY_SIZE))).not.toThrow();
+      });
+    });
   });
 
   describe("faker method paths", () => {

@@ -93,11 +93,13 @@ export const MAX_STRING_LENGTH = 65_536;
  * every one of them and still add up to 655M characters. 256 maximal strings
  * (16M code units, about 32 MB in memory) is far past any realistic mock body
  * and far short of what exhausts a process. Validation charges each string's
- * certain length against it: the largest of its `minLength`, the shortest
- * match of its `pattern`, the exact length a faker method is told to produce,
- * and the placeholder floors of a `helpers.fake` template. A schema that can
- * only overshoot is therefore refused when the plugin is created; the
- * generated value is checked against it too.
+ * certain length against it: the largest of its `minLength`, what its
+ * `pattern` makes json-schema-faker build (51 shortest matches when its
+ * `maxLength` or `minLength` makes it discard 50 and cut or pad the last), the
+ * exact length a faker method is told to produce, and the placeholder floors
+ * of a `helpers.fake` template. A schema whose generation can only overshoot
+ * is therefore refused when the plugin is created, even when the value it
+ * returns would be small; the generated value is checked against it too.
  */
 export const MAX_GENERATED_CHARS = MAX_STRING_LENGTH * 256;
 

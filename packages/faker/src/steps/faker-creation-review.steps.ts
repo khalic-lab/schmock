@@ -362,7 +362,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
   );
 
   Scenario(
-    "A pattern that maxLength truncates is charged only up to maxLength",
+    "A pattern far longer than its maxLength is charged for every match json-schema-faker builds",
     ({ Given, When, Then }) => {
       Given(
         "an object holding {int} strings whose pattern needs {int} characters but whose maxLength is {int}",
@@ -374,10 +374,36 @@ describeFeature(feature, ({ Scenario, ScenarioOutline }) => {
         },
       );
       When("I create a faker plugin for it", createPlugin);
-      Then("plugin creation succeeds", () => {
-        expect(creationError).toBeUndefined();
-        expect(plugin).toBeDefined();
-      });
+      Then(
+        "plugin creation fails with resource {string}",
+        (_, resource: string) => {
+          expectResourceFailure(creationError, resource);
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "A pattern a little longer than its maxLength still generates",
+    ({ Given, When, Then }) => {
+      Given(
+        "a string schema whose pattern needs {int} hex digits but whose maxLength is {int}",
+        (_, length: number, maxLength: number) => {
+          schema = {
+            type: "string",
+            pattern: `^[0-9a-f]{${length}}$`,
+            maxLength,
+          };
+        },
+      );
+      When("I create a faker plugin for it", createPlugin);
+      Then(
+        "the plugin generates {int} hex digits",
+        async (_, length: number) => {
+          expect(creationError).toBeUndefined();
+          expect(await generate()).toMatch(new RegExp(`^[0-9a-f]{${length}}$`));
+        },
+      );
     },
   );
 

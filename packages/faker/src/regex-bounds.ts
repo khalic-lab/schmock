@@ -7,7 +7,9 @@ interface LengthBounds {
    * The longest string json-schema-faker's own generator builds from the
    * pattern: it repeats a quantified atom at most five times past the
    * quantifier's lower bound and never past its upper bound, so nested open
-   * quantifiers multiply that cap level by level.
+   * quantifiers multiply that cap level by level. Read as a RegExp reads the
+   * pattern, so it can fall short where json-schema-faker reads it otherwise
+   * (`generatedLengthCeiling`).
    */
   longest: number;
 }
@@ -97,6 +99,85 @@ export function regexLengthBounds(pattern: string): LengthBounds {
     addBounds(frames[frames.length - 1], closeRegexFrame(group));
   }
   return closeRegexFrame(frames[0]);
+}
+
+/**
+ * The most characters json-schema-faker 0.6.3's own regex generator can build
+ * from `pattern`, or undefined when that is not certain. Its parser reads some
+ * syntax differently from a RegExp and builds more than `longest` counts:
+ * `\u`, `\x`, `\c`, `\p`, `\P` and `\k` emit their letter and read what
+ * follows as literals or a quantifier (`\u0041` builds five characters,
+ * `\u{41}` forty-one); a backreference emits its digits (`\12` builds two);
+ * a lookbehind is read as a named group up to the next `>`, and generated; a
+ * lookahead is skipped by counting parentheses, escaped and classed ones
+ * included; and a class range that ends in an escape (`[!-\]]`) closes the
+ * class early. A pattern that uses none of them is read the way `longest`
+ * reads it, so `longest` bounds every string built from it.
+ */
+export function generatedLengthCeiling(pattern: string): number | undefined {
+  return readAsWritten(pattern)
+    ? regexLengthBounds(pattern).longest
+    : undefined;
+}
+
+/** Escaped characters json-schema-faker reads differently from a RegExp. */
+const MISREAD_ESCAPES = "uxcpPk123456789";
+
+/**
+ * Whether json-schema-faker's parser reads `pattern` as `regexLengthBounds`
+ * does: no escape from `MISREAD_ESCAPES`, no `(?` group other than `(?:` and a
+ * named one, and no class whose range could end in an escape.
+ */
+function readAsWritten(pattern: string): boolean {
+  let index = 0;
+  while (index < pattern.length) {
+    const char = pattern[index];
+    if (char === "\\") {
+      const escaped = pattern[index + 1];
+      if (escaped === undefined || MISREAD_ESCAPES.includes(escaped)) {
+        return false;
+      }
+      index += 2;
+    } else if (char === "[") {
+      const end = readAsWrittenClassEnd(pattern, index);
+      if (end === undefined) return false;
+      index = end;
+    } else if (char === "(" && pattern[index + 1] === "?") {
+      const kind = pattern[index + 2];
+      const named =
+        kind === "<" &&
+        pattern[index + 3] !== "=" &&
+        pattern[index + 3] !== "!";
+      if (kind !== ":" && !named) return false;
+      index += 3;
+    } else {
+      index += 1;
+    }
+  }
+  return true;
+}
+
+/**
+ * The index past the class opening at `index`, or undefined when a `-` meets
+ * an escape inside it: json-schema-faker takes the backslash as the end of a
+ * range there and reads the escaped character on its own, a `]` included.
+ */
+function readAsWrittenClassEnd(
+  pattern: string,
+  index: number,
+): number | undefined {
+  let cursor = index + 1;
+  while (cursor < pattern.length && pattern[cursor] !== "]") {
+    if (pattern[cursor] === "\\") {
+      cursor += 2;
+      continue;
+    }
+    if (pattern[cursor] === "-" && pattern[cursor + 1] === "\\") {
+      return undefined;
+    }
+    cursor += 1;
+  }
+  return cursor + 1;
 }
 
 function addBounds(frame: RegexFrame, atom: LengthBounds): void {

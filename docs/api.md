@@ -1770,25 +1770,83 @@ each `patternProperties` pattern is charged as a key generation invents,
 unless the object's `const`, `enum` or `default` is returned instead.
 
 `generated_chars` counts every string and object key in one response. At
-creation it is checked against the least the schema can produce: each
+creation it is checked against the least generation must build: each
 string's certain length multiplied by its array counts. A string is a schema
 whose `type` names only `string`, or an untyped one that json-schema-faker
 reads as a string from its `minLength`, `maxLength`, `pattern`, `format` or
 `faker` (no object, array or number keyword, `const`, `enum` or `default`
-beside them). A string's certain
-length is the largest of its `minLength`, the shortest match of its `pattern`,
-and the length argument of a faker method that always produces that many
+beside them). A `type` list that adds another type, such as
+`['string', 'integer']` or `['string', 'null']`, is charged nothing, because
+json-schema-faker may pick the other type; each time it picks string it still
+builds the whole pattern. A string's certain length is the largest of its
+`minLength`, what its `pattern` builds, and the length argument of a faker
+method that always produces that many
 characters (`string.alpha`, `string.alphanumeric`, `string.numeric`,
 `string.binary`, `string.octal`, `string.hexadecimal`, `string.sample`,
 `string.nanoid`, `string.symbol`, `internet.password`, `finance.accountNumber`,
-`finance.pin`, `git.commitSha`, `airline.flightNumber`). A `pattern` counts only
-up to the smallest `maxLength` on the schema or a branch json-schema-faker
-merges into it (`allOf`, `anyOf`, `oneOf`, `then`, `else`), and not at all when
-a `faker`, `format`, `enum`, `const` or `default` on the schema or such a
-branch supplies the value instead. A `helpers.fake` template counts the
-certain length of each placeholder it calls plus its literal text (the
-placeholders alone when that text holds a brace), and an array of templates
-counts its shortest. Nested arrays are bounded by
+`finance.pin`, `git.commitSha`, `airline.flightNumber`). A `pattern` counts
+what json-schema-faker builds from it, which can be more than it returns. It
+builds the whole match before checking the length: it draws up to 50
+matches, throws away each one shorter than `minLength` or longer than
+`maxLength`, and slices or pads the 51st.
+
+The count follows the paths json-schema-faker merges. Without an `allOf`, it
+merges only the first of `oneOf`, `anyOf` and `if` it finds: one `oneOf` or
+`anyOf` branch, or the `if` with its `then`, or the `else` when there is no
+`then`. Beside an `allOf`, it merges every entry, the `if` with its `then`
+(never the `else`), and then one `oneOf` branch, or one `anyOf` branch when
+there is no `oneOf`. There a boolean `then` is skipped, like a boolean
+entry. Each path keeps the last `pattern` it merges, the smallest
+`maxLength` and the largest `minLength`. A path throws every draw
+away when its `maxLength` is below the pattern's shortest match, its
+`minLength` is above the longest string json-schema-faker can build from the
+pattern, or its `minLength` is above its `maxLength`. When every path does,
+the pattern counts 51 times its shortest match. Otherwise it counts its
+shortest match once.
+
+- A 64-hex-digit hash held to `maxLength: 32` counts 3,264 characters and
+  still generates.
+- `{ pattern: '^[a-z]{60000}$', maxLength: 10 }` counts 3,060,000, so 300 of
+  them are rejected. The same goes for that `maxLength` on a `then` with
+  nothing before its `if`, or on every `anyOf` branch, and for the pattern on
+  an `if` or an `allOf` entry under the schema's `maxLength`.
+- `{ pattern: '^a{60000}$', minLength: 60001 }` counts 3,060,000 as well.
+- `{ pattern: '^[0-9a-f]{32,}$', minLength: 40 }` counts 1,632.
+  json-schema-faker repeats a quantifier at most five times past its lower
+  bound, so every draw is at most 37 characters long and too short, and the
+  51st is padded with characters outside the pattern. 10,000 rows of two such
+  fields are rejected.
+- A `maxLength` on only one `anyOf` branch counts the match once, and so does
+  a NaN one, one on a `then` that an `anyOf` shadows, or one on an `else`
+  beside an `allOf`. A capped branch beside a `false` `anyOf` entry counts it
+  once too, because that entry generates a value without the pattern.
+
+json-schema-faker's regex parser reads some syntax differently from a
+RegExp and builds longer strings than the pattern matches: the `\u`, `\x`,
+`\c`, `\p`, `\P` and `\k` escapes, backreferences, lookbehinds, lookaheads,
+and a class range that ends in an escape. `^\u0041[a-z]{6000}$` builds 6,005
+characters, not 6,001. A pattern that uses any of them has no certain longest
+string, so its `minLength` throws nothing away for the count.
+
+Some schemas leave the count at the shortest match cut to the smallest
+`maxLength` on the schema or a merged branch (`allOf`, `anyOf`, `oneOf`,
+`then`, `else`), because another path may supply the value instead:
+
+- a branch with its own `allOf`, `anyOf`, `oneOf`, `$ref` or `$dynamicRef`;
+- a branch typed other than string beside a pattern with no `type`;
+- a pattern with no `type` whose own `not` names a type.
+
+A branch's own `not`, `if`, `then` or `else` changes nothing: json-schema-faker's
+merge drops them, and the pattern is built as if they were not there. A pattern
+whose draws only sometimes pass `maxLength` or fall short of `minLength` counts
+its shortest match once, however many draws json-schema-faker happens to throw
+away. A path counts no pattern at all when a `faker`, `format`, `enum`,
+`const` or `default` merged on it may supply the value instead.
+
+A `helpers.fake` template counts the certain length of each placeholder it
+calls plus its literal text (the placeholders alone when that text holds a
+brace), and an array of templates counts its shortest. Nested arrays are
+bounded by
 `generated_nodes`; there is no separate memory estimate. An array whose
 `allOf` entries carry its count or its items is charged as json-schema-faker
 merges them: the largest `minItems`, the smallest `maxItems` and the last
@@ -1821,10 +1879,25 @@ direct call, its method path included. faker scans the result again after each
 substitution, and a placeholder assembled there from another placeholder's
 output is not checked. The expanded `helpers.mustache` output and the explicit upper quantifier in
 `helpers.fromRegExp` must fit in 65,536 characters, and a schema `pattern`
-whose shortest match is longer than that is rejected at creation, counted as
-for `generated_chars`: only up to the smallest `maxLength`, and not at all when
-another keyword supplies the value. A `pattern`
-is also rejected, as `generated_chars`, when the longest string
+whose shortest match is longer than that is rejected at creation. This counts
+the longest string the pattern returns on any path: the shortest match cut to
+the loosest `maxLength` a path applies, and not at all when another keyword
+supplies the value. A NaN `maxLength` cuts nothing, and neither does an
+`anyOf` or `oneOf` entry without one, so `^a{70000}$` is rejected beside
+`maxLength: NaN` or `anyOf: [{ maxLength: 10 }, { minLength: 1 }]`, and
+accepted beside `anyOf: [{ maxLength: 10 }, { maxLength: 20 }]`. An `if` with a
+`then` merges the `then`, and the `else` only when there is no `then`.
+Without an `allOf` beside them, json-schema-faker merges only the first of
+`oneOf`, `anyOf` and `if` it finds, so a cap on the others cuts nothing;
+beside an `allOf`, all their caps are read as cutting. The schemas listed
+above for `generated_chars`, whose branches are not read path by path, are cut
+to the smallest `maxLength` instead, so `^a{70000}$` beside
+`anyOf: [{ maxLength: 10 }, { allOf: [{ minLength: 1 }] }]` is accepted, and
+the paths that return the full match fail the output check. A `false` `anyOf`
+entry generates without the pattern and is left out; a `false` `oneOf` entry
+returns the full match. The longer matches json-schema-faker builds and throws
+away count against `generated_chars` instead. A `pattern` is also rejected, as
+`generated_chars`, when the longest string
 json-schema-faker could build from it passes the whole 16,777,216-character
 response budget on its own. json-schema-faker repeats `*`, `+` and `{n,}` up
 to five times past their lower bound, so nested open quantifiers multiply:

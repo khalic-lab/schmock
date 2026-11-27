@@ -32,10 +32,16 @@ Feature: Faker creation-time checks
       | pattern      |
       | string.alpha |
 
-  Scenario: A pattern that maxLength truncates is charged only up to maxLength
+  # json-schema-faker builds and throws away 50 full matches before it cuts a 51st to maxLength
+  Scenario: A pattern far longer than its maxLength is charged for every match json-schema-faker builds
     Given an object holding 300 strings whose pattern needs 60000 characters but whose maxLength is 10
     When I create a faker plugin for it
-    Then plugin creation succeeds
+    Then plugin creation fails with resource "generated_chars"
+
+  Scenario: A pattern a little longer than its maxLength still generates
+    Given a string schema whose pattern needs 64 hex digits but whose maxLength is 32
+    When I create a faker plugin for it
+    Then the plugin generates 32 hex digits
 
   # Review 2026-10-23 faker-13: allocation limits are keyed by module.method
   Scenario Outline: A faker method reached through the faker back-reference is rejected at construction

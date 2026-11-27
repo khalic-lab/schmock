@@ -16,7 +16,7 @@ import { createReferenceViews } from "./jsf-references.js";
 import { findUnhonouredNot } from "./not-support.js";
 import { arrayCountRange } from "./overrides.js";
 import { createLocalRefResolver, type LocalRefResolver } from "./ref-index.js";
-import { regexLengthBounds } from "./regex-bounds.js";
+import { generatedLengthCeiling, regexLengthBounds } from "./regex-bounds.js";
 import { findRootArray } from "./root-array.js";
 import { capped } from "./saturating.js";
 import {
@@ -67,11 +67,14 @@ interface Estimate {
   nodes: number;
   /**
    * Characters this sub-schema is certain to generate: the certain length of
-   * every string it emits (`certainStringLength`), multiplied through array
-   * counts. A floor, never an estimate of the typical size, so charging it
-   * cannot reject a schema whose output would fit. The one exception is a
-   * pattern that a composition nested more than one level below it
-   * contradicts (`patternLengthFloor`), which can be over-charged.
+   * every string it builds (`certainStringLength`), multiplied through array
+   * counts. That includes the pattern matches json-schema-faker builds and
+   * throws away (`patternBuildLength`), so a schema whose output is small can
+   * still be refused for the work behind it. A floor, never an estimate of the
+   * typical size, so charging it cannot reject a schema whose generation would
+   * fit. The one exception is a pattern that a composition nested more than
+   * one level below it contradicts (`patternLengthFloor`), which can be
+   * over-charged.
    */
   chars: number;
 }
@@ -881,9 +884,10 @@ function isCertainString(schema: JSONSchema7): boolean {
 }
 
 /**
- * The fewest characters json-schema-faker emits for a string schema: the
- * largest of its `minLength`, the shortest match of the `pattern` it generates
- * from, and the length its faker method is told to produce.
+ * The fewest characters json-schema-faker builds for a string schema: the
+ * largest of its `minLength`, what the `pattern` it generates from makes it
+ * build (`patternBuildLength`), and the length its faker method is told to
+ * produce.
  */
 function certainStringLength(schema: FakerAwareSchema): number {
   // A NaN `minLength` is no floor; left in, it would turn the whole
@@ -894,7 +898,7 @@ function certainStringLength(schema: FakerAwareSchema): number {
       : 0;
   return Math.max(
     minLength,
-    patternLengthFloor(schema),
+    patternBuildLength(schema),
     fakerLengthFloor(schema.faker),
   );
 }
@@ -911,7 +915,8 @@ const PATTERN_OVERRIDES: readonly string[] = [
 /**
  * The subschemas json-schema-faker merges into a string schema before it
  * generates: every `allOf` entry, the `anyOf` or `oneOf` entry it picks, and
- * the `then` or `else` it applies (with the `if` beside a `then`).
+ * the `then` or `else` it applies (with the `if` beside a `then`, or beside
+ * an `allOf` and an `else`).
  */
 function mergedStringBranches(schema: JSONSchema7): JSONSchema7[] {
   const branches: unknown[] = [];
@@ -919,19 +924,26 @@ function mergedStringBranches(schema: JSONSchema7): JSONSchema7[] {
     const entries = schema[keyword];
     if (Array.isArray(entries)) branches.push(...entries);
   }
-  if (schema.then !== undefined) branches.push(schema.if, schema.then);
-  branches.push(schema.else);
+  // Beside an allOf, Schmock gives an if with only an else a then, so the
+  // if is merged there too.
+  if (
+    schema.then !== undefined ||
+    (Array.isArray(schema.allOf) && schema.else !== undefined)
+  ) {
+    branches.push(schema.if);
+  }
+  branches.push(schema.then, schema.else);
   return branches.filter(isJSONSchema7);
 }
 
 /**
- * The shortest string a `pattern` makes json-schema-faker generate. A
- * `faker`, `format`, `enum`, `const` or `default` replaces the pattern, and a
- * `maxLength` truncates its match. A merged branch can do either, so a branch
- * carrying one of those keywords (or a pattern of its own) drops the floor,
- * and the smallest `maxLength` among the schema and its branches caps it.
- * Branches are read one level deep; a deeper composition that contradicts
- * the pattern can still be charged more than it generates.
+ * The shortest match of the `pattern` json-schema-faker generates a string
+ * from, before any `maxLength` cuts it, or 0 when it does not generate from
+ * the pattern. A `faker`, `format`, `enum`, `const` or `default` replaces the
+ * pattern, and a merged branch can too, so a branch carrying one of those
+ * keywords (or a pattern of its own) drops the floor. Branches are read one
+ * level deep; a deeper composition that contradicts the pattern can still be
+ * charged more than it generates.
  */
 function patternLengthFloor(schema: FakerAwareSchema): number {
   if (
@@ -943,9 +955,8 @@ function patternLengthFloor(schema: FakerAwareSchema): number {
   ) {
     return 0;
   }
-  const branches = mergedStringBranches(schema);
   if (
-    branches.some((branch) =>
+    mergedStringBranches(schema).some((branch) =>
       ["pattern", ...PATTERN_OVERRIDES].some(
         (keyword) => Reflect.get(branch, keyword) !== undefined,
       ),
@@ -953,12 +964,298 @@ function patternLengthFloor(schema: FakerAwareSchema): number {
   ) {
     return 0;
   }
+  return regexLengthBounds(schema.pattern).min;
+}
+
+/**
+ * The shortest string a `pattern` makes json-schema-faker return on the path
+ * that keeps least of it: its shortest match, cut to the smallest `maxLength`
+ * on the schema or any branch merged into it. A NaN among them gives 0, the
+ * least this can say. Used where the merged branches cannot be read path by
+ * path, so it never charges more than some path returns.
+ */
+function patternCutLength(schema: FakerAwareSchema): number {
   const floor = cappedBy(
-    regexLengthBounds(schema.pattern).min,
-    mergedCaps(schema, ...branches).maxLength,
+    patternLengthFloor(schema),
+    mergedCaps(schema, ...mergedStringBranches(schema)).maxLength,
   );
-  // json-schema-faker truncates to a NaN maxLength as to zero.
   return Number.isNaN(floor) ? 0 : floor;
+}
+
+/**
+ * The longest string a `pattern` makes json-schema-faker return on any path:
+ * its shortest match, cut to the loosest `maxLength` a path applies
+ * (`loosestPathMaxLength`). A branch the charge does not read
+ * (`buildsPatternOnEveryPath`) leaves it at `patternCutLength`.
+ */
+function patternReturnedLength(schema: FakerAwareSchema): number {
+  if (!buildsPatternOnEveryPath(schema)) return patternCutLength(schema);
+  return Math.min(patternLengthFloor(schema), loosestPathMaxLength(schema));
+}
+
+/**
+ * The smallest of the `maxLength` keywords json-schema-faker merges on one
+ * path, as its merge computes it: `Math.min`, so a NaN stays NaN and caps
+ * nothing, since every comparison with it is false. Infinity when none of
+ * them declares one.
+ */
+function pathMaxLength(sources: readonly unknown[]): number {
+  let cap = Number.POSITIVE_INFINITY;
+  for (const source of sources) {
+    if (isJSONSchema7(source) && typeof source.maxLength === "number") {
+      cap = Math.min(cap, source.maxLength);
+    }
+  }
+  return cap;
+}
+
+/**
+ * The largest `maxLength` the value json-schema-faker returns meets on any
+ * path, or Infinity when some path applies none (or a NaN one). Its
+ * composition step (0.6.3 and 0.6.4) merges every `allOf` entry, and
+ * otherwise takes the first of `oneOf`, `anyOf` and `if` it finds: one
+ * `oneOf` or `anyOf` entry, or the `if` with its `then` and, only when there
+ * is no `then`, the `else`. An `else` with no `if` is never merged. Beside an
+ * `allOf`, Schmock restates the other keywords into it (`jsf-config.ts`), and
+ * every one of them is read as applying: a cap credited from a keyword that
+ * is then skipped can only let a schema through, never refuse one.
+ */
+function loosestPathMaxLength(schema: JSONSchema7): number {
+  const always: unknown[] = [schema, ...(schema.allOf ?? [])];
+  const choices: (readonly unknown[])[] = [];
+  const hasAllOf = Array.isArray(schema.allOf);
+  for (const keyword of ["oneOf", "anyOf"] as const) {
+    if (!Array.isArray(schema[keyword])) continue;
+    // A `false` anyOf entry merges into `{ not: {} }`, which generates
+    // without the pattern; a `false` oneOf entry still returns the full
+    // match (both measured), so only the anyOf one is left out.
+    const entries = (schema[keyword] ?? []).filter(
+      (entry) => keyword === "oneOf" || entry !== false,
+    );
+    if (entries.length === 0) continue;
+    choices.push(entries);
+    if (!hasAllOf) break;
+  }
+  if (schema.if !== undefined && (hasAllOf || choices.length === 0)) {
+    if (schema.then !== undefined) always.push(schema.if, schema.then);
+    else always.push(schema.else);
+  }
+  let cap = pathMaxLength(always);
+  for (const entries of choices) {
+    cap = Math.min(
+      cap,
+      Math.max(...entries.map((entry) => pathMaxLength([entry]))),
+    );
+  }
+  return Number.isNaN(cap) ? Number.POSITIVE_INFINITY : cap;
+}
+
+/**
+ * How many times json-schema-faker 0.6.3 draws a `pattern` match before it
+ * stops discarding them (0.6.4 reads the same). Its string generator, in
+ * dist/index.js, reads:
+ *
+ *   for (let z = 0; z < 50; z++) {
+ *     let L = m($.pattern, Z.random);
+ *     if (Y !== void 0 && L.length < Y) continue; // minLength
+ *     if (W !== void 0 && L.length > W) continue; // maxLength
+ *     return L;
+ *   }
+ *   let U = m($.pattern, Z.random), ...
+ *   if (W !== void 0 && U.length > W) return U.slice(0, W);
+ *
+ * `m` builds the whole match before either check, so a pattern whose every
+ * match is too long for `maxLength` or too short for `minLength` builds 50
+ * matches it throws away and a 51st it slices or pads.
+ */
+const JSF_PATTERN_TRIES = 50;
+
+/**
+ * Keywords on a merged branch whose subschemas or targets the pattern charge
+ * does not read, though they reach generation: json-schema-faker's merge
+ * copies a branch's `allOf`, `anyOf`, `oneOf` and `$ref`, and Schmock inlines
+ * a `$dynamicRef` target before it runs. The merge copies no `not`, `if`,
+ * `then` or `else` from a branch, so those never replace the pattern.
+ */
+const UNREAD_BRANCH_KEYWORDS: readonly string[] = [
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "$ref",
+  "$dynamicRef",
+];
+
+/**
+ * Whether every path json-schema-faker can take generates a string from the
+ * keywords the charge reads: no merged branch holds a subschema or reference
+ * the charge does not read
+ * (one may supply the value instead), and a schema that declares no type
+ * meets no branch type that leaves out string and no `not` with a type,
+ * which makes json-schema-faker pick another one. Its merge keeps the
+ * schema's own type when the other shares nothing with it.
+ */
+function buildsPatternOnEveryPath(schema: JSONSchema7): boolean {
+  if (
+    schema.type === undefined &&
+    isJSONSchema7(schema.not) &&
+    schema.not.type !== undefined
+  ) {
+    return false;
+  }
+  return mergedStringBranches(schema).every(
+    (branch) =>
+      (schema.type !== undefined ||
+        branch.type === undefined ||
+        hasType(branch, "string")) &&
+      UNREAD_BRANCH_KEYWORDS.every(
+        (keyword) => Reflect.get(branch, keyword) === undefined,
+      ),
+  );
+}
+
+/** One path json-schema-faker takes: the schemas it merges, in merge order. */
+type MergePath = readonly unknown[];
+
+/**
+ * The schemas json-schema-faker 0.6.3 merges into the string it generates,
+ * one list per path it can take, in the order its merge reads them, so a
+ * later `pattern` replaces an earlier one. Its composition step runs once an
+ * `allOf`, `anyOf`, `oneOf`, `not` or `if` is truthy. It merges every
+ * `allOf` entry (it skips a boolean one), and otherwise only the first of
+ * `oneOf`, `anyOf` and `if` it finds: one `oneOf` entry (a boolean one merges
+ * nothing), one `anyOf` entry, or the `if` with its `then`, or with no `then`
+ * the `else`. Beside an `allOf`, Schmock restates a `oneOf` or `anyOf` as one
+ * more entry and, when the `if` has a `then` or `else`, moves the entries
+ * into a `then` (`carryCompositionThroughAllOf`). A path there merges the
+ * schema, the `if`, the entries and the `then`, and last one branch of the
+ * `oneOf`, or of the `anyOf` when there is no `oneOf`; it never merges the
+ * `else`, and it skips a boolean `then`, which the restatement puts in the
+ * `allOf`. A `false` on a path turns the merge into `{ not: {} }`, which
+ * generates a value without the pattern.
+ */
+function jsfMergePaths(schema: JSONSchema7): MergePath[] {
+  const { allOf, oneOf, anyOf } = schema;
+  let shared: unknown[] = [schema];
+  if (Array.isArray(allOf)) {
+    const entries = allOf.filter(isJSONSchema7);
+    shared = [schema, ...entries];
+    if (
+      schema.if !== undefined &&
+      (schema.then !== undefined || schema.else !== undefined)
+    ) {
+      // The restated copy holds no `allOf`, so with a false `if` only a
+      // `not` still makes json-schema-faker compose.
+      if (!schema.if) return [schema.not ? [schema, false] : [schema]];
+      // The then joins the restated allOf, where a boolean one is skipped.
+      shared = [
+        schema,
+        schema.if,
+        ...entries,
+        ...(isJSONSchema7(schema.then) ? [schema.then] : []),
+      ];
+    }
+  } else if (!(oneOf || anyOf || schema.not || schema.if)) {
+    return [[schema]];
+  } else if (!Array.isArray(oneOf) && !Array.isArray(anyOf)) {
+    if (schema.if === undefined) return [[schema]];
+    if (schema.then !== undefined) return [[schema, schema.if, schema.then]];
+    return [schema.else === undefined ? [schema] : [schema, schema.else]];
+  }
+  const keyword = Array.isArray(oneOf) ? "oneOf" : "anyOf";
+  const branches = schema[keyword] ?? [];
+  if (branches.length === 0) return [shared];
+  return branches.map((branch) =>
+    keyword === "oneOf" && !isJSONSchema7(branch)
+      ? shared
+      : [...shared, branch],
+  );
+}
+
+/**
+ * The pattern json-schema-faker generates from on one path, the last one its
+ * merge meets, or undefined when a `faker`, `format`, `enum`, `const` or
+ * `default` there may supply the value instead or no pattern compiles.
+ */
+function pathPattern(path: MergePath): string | undefined {
+  let pattern: unknown;
+  for (const source of path) {
+    if (!isJSONSchema7(source)) continue;
+    if (
+      PATTERN_OVERRIDES.some(
+        (keyword) => Reflect.get(source, keyword) !== undefined,
+      )
+    ) {
+      return undefined;
+    }
+    if (source.pattern !== undefined) pattern = source.pattern;
+  }
+  return typeof pattern === "string" && compilePattern(pattern) !== undefined
+    ? pattern
+    : undefined;
+}
+
+/**
+ * The largest of the `minLength` keywords merged on one path, as
+ * json-schema-faker's merge computes it: `Math.max`, so a NaN stays NaN and
+ * discards nothing. -Infinity when none of them declares one.
+ */
+function pathMinLength(path: MergePath): number {
+  let floor = Number.NEGATIVE_INFINITY;
+  for (const source of path) {
+    if (isJSONSchema7(source) && typeof source.minLength === "number") {
+      floor = Math.max(floor, source.minLength);
+    }
+  }
+  return floor;
+}
+
+/**
+ * The characters json-schema-faker builds on one path, kept or not. Each draw
+ * is at least the shortest match long and at most `generatedLengthCeiling`,
+ * so when the merged `maxLength` is below the shortest match, the merged
+ * `minLength` above the ceiling, or the `minLength` above the `maxLength`,
+ * all `JSF_PATTERN_TRIES` draws are discarded and a last one is cut or
+ * padded: the shortest match is built that many times plus one. Otherwise
+ * one shortest match is certain. A pattern whose draws only straddle a bound
+ * is kept by chance and charged once, and so is one whose ceiling is not
+ * certain.
+ */
+function pathBuildLength(path: MergePath): number {
+  const pattern = pathPattern(path);
+  if (pattern === undefined) return 0;
+  const floor = regexLengthBounds(pattern).min;
+  const maxLength = pathMaxLength(path);
+  const minLength = pathMinLength(path);
+  const ceiling = generatedLengthCeiling(pattern);
+  const discardsEvery =
+    maxLength < floor ||
+    minLength > maxLength ||
+    (ceiling !== undefined && minLength > ceiling);
+  return discardsEvery ? capped(floor * (JSF_PATTERN_TRIES + 1)) : floor;
+}
+
+/**
+ * The characters a `pattern` makes json-schema-faker build, kept or not: the
+ * least any merge path builds (`pathBuildLength`). A path through a `false`
+ * builds no pattern at all. It is left out of that least, but then not every
+ * generation discards its draws, so each other path counts one shortest match
+ * only. A branch the charge does not read leaves the count at the shortest
+ * string some path returns (`patternCutLength`).
+ */
+function patternBuildLength(schema: FakerAwareSchema): number {
+  if (!buildsPatternOnEveryPath(schema)) return patternCutLength(schema);
+  const paths = jsfMergePaths(schema);
+  const building = paths.filter((path) => !path.includes(false));
+  if (building.length === 0) return patternLengthFloor(schema);
+  const count =
+    building.length < paths.length ? shortestPathMatch : pathBuildLength;
+  return Math.min(...building.map(count));
+}
+
+/** The shortest match of the pattern json-schema-faker keeps on one path. */
+function shortestPathMatch(path: MergePath): number {
+  const pattern = pathPattern(path);
+  return pattern === undefined ? 0 : regexLengthBounds(pattern).min;
 }
 
 function analyzeGraphPaths(
@@ -1292,14 +1589,22 @@ function recordStringLimit(
     }
     // json-schema-faker honours a pattern's explicit repetition floor
     // (`a{70000}`) and caps its upper bounds, so the shortest match is what a
-    // pattern forces it to generate, as far as a `maxLength` keeps it and
-    // unless another keyword supplies the value (`patternLengthFloor`).
+    // pattern forces it to generate, as far as the loosest path's `maxLength`
+    // keeps it and unless another keyword supplies the value
+    // (`patternReturnedLength`). The full matches it builds and discards
+    // before cutting one are work, not a value it returns, so they count
+    // against generated_chars (`patternBuildLength`) instead, which bounds
+    // them across the response. A NaN cap from the merge around an `if`
+    // stays NaN in json-schema-faker's merge and cuts nothing.
     if (
       typeof schema.pattern === "string" &&
       compilePattern(schema.pattern) !== undefined
     ) {
       recordStringViolation(
-        cappedBy(patternLengthFloor(schema), caps.maxLength),
+        cappedBy(
+          patternReturnedLength(schema),
+          Number.isNaN(caps.maxLength) ? undefined : caps.maxLength,
+        ),
         path,
         state,
       );
